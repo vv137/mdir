@@ -28,7 +28,12 @@ molecules within the cutoff in the minimum image, a site placed by its
 weights and its force moved by them), against which the general double
 route must agree within 1e-9 of the largest force and of the potential, and
 the units and the general mixed route are compared in the same way as
-against the general double one; the forces then need no projection, since
+against the general double one, the floor of the energy then the error
+model of one evaluation in f32 (2 gamma_n M + 8 u L D: M and D the sums of
+the magnitudes of the terms and of their derivatives in r, n their number,
+L the largest coordinate, u = 2^-24) in place of 1e-6 of the potential,
+which a small system's cancelling sum makes too small; the forces then need
+no projection, since
 the sites of [ virtual_sites3 ] of type 1 are linear in their frames.
 
 It prints, for each frame, the largest difference of each route and the
@@ -171,6 +176,10 @@ def oracle(state):
     n = len(x)
     forces = np.zeros((n, 3))
     energy = 0.0
+    # The error model of an evaluation in f32 (D405's oracle): the sum of
+    # the magnitudes of the terms M, of their derivatives in r D, and the
+    # number of terms.
+    magnitude, slope, terms = 0.0, 0.0, 0
     for i in range(n):
         for j in range(i + 1, n):
             if molecule[i] == molecule[j]:
@@ -186,9 +195,15 @@ def oracle(state):
                 sr6 = (sig / r) ** 6
                 energy += 4 * eps * (sr6 * sr6 - sr6)
                 du += 4 * eps * (-12 * sr6 * sr6 + 6 * sr6) / r
+                magnitude += 4 * eps * (sr6 * sr6 + sr6)
+                slope += 4 * eps * (12 * sr6 * sr6 + 6 * sr6) / r
+                terms += 1
             if charge[i] != 0.0 and charge[j] != 0.0:
                 energy += COULOMB * charge[i] * charge[j] / r
                 du += -COULOMB * charge[i] * charge[j] / (r * r)
+                magnitude += abs(COULOMB * charge[i] * charge[j] / r)
+                slope += abs(COULOMB * charge[i] * charge[j]) / (r * r)
+                terms += 1
             f = -du * d / r
             forces[i] += f
             forces[j] -= f
@@ -198,7 +213,11 @@ def oracle(state):
         forces[j] += wj * f
         forces[k] += wk * f
         forces[s] = 0.0
-    return forces, energy
+    u = 2.0 ** -24
+    gamma = terms * u / (1 - terms * u)
+    scale = float(np.abs(x).max())
+    floor = 2 * gamma * magnitude + 8 * u * scale * slope
+    return forces, energy, floor
 
 
 failed = False
@@ -211,7 +230,7 @@ for index, state in enumerate(states):
     fd, ed, _ = evaluate(False, mdir.Precision.Double, state)
     references = [("double", fd, ed)]
     if "--oracle" in flags:
-        fo, eo = oracle(state)
+        fo, eo, floor = oracle(state)
         scale = float(np.abs(fo).max())
         df, de = float(np.abs(fd - fo).max()), abs(ed - eo)
         ok = df <= 1e-9 * scale and de <= 1e-9 * max(1.0, abs(eo))
@@ -219,6 +238,7 @@ for index, state in enumerate(states):
               f"(bound {1e-9 * scale:.3e}), energy {de:.3e} of {eo:.6f}")
         failed |= not ok
         references.append(("oracle", fo, eo))
+        print(f"frame {index}: the floor of the energy from the error model {floor:.3e}")
     for label, fr, er in references:
         if label == "double":
             pu, pm, pr = project(fu, x, H), project(fm, x, H), project(fr, x, H)
@@ -228,7 +248,11 @@ for index, state in enumerate(states):
         du, dm = float(np.abs(pu - pr).max()), float(np.abs(pm - pr).max())
         bound = max(1.5 * dm, 1e-5 * scale)
         eu_d, em_d = abs(eu - er), abs(em - er)
-        ebound = max(1.5 * em_d, 1e-6 * abs(er))
+        # With the oracle, the floor of the energy is the error model of one
+        # evaluation in f32: 2 gamma_n M for the order of the sum and
+        # 8 u L D for the rounding of the displacements, L the largest
+        # coordinate (D405's oracle); 1e-6 of the potential otherwise.
+        ebound = max(1.5 * em_d, floor if "--oracle" in flags else 1e-6 * abs(er))
         ok = du <= bound and eu_d <= ebound
         worst = max(worst, du / bound, eu_d / ebound)
         print(f"frame {index} against {label}: forces units {du:.3e}, mixed {dm:.3e}, "
