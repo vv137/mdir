@@ -551,6 +551,8 @@ the cutoff once: a pair within $r_c$ is within $R$ at the build while the
 structure is valid (Section 7.1), so it has a bit, and a pair farther than
 $R$ has none.
 
+**Fixed-point design (D[groups-fixed-point]).** In a weighted site's transpose, round each component of the site force and its weighted member forces at the same scale. Assign their integer difference to the frame member with the largest absolute weight, taking the first in topology order at a tie. This preserves the molecule's quantized net force exactly, including for signed weights. The design targets a correction of at most one quantum per component and site. Four equal weights can require two quanta under independent ties-to-even rounding. The decision records this open bound. A correction along one component changes the torque about the molecular center by at most the correction magnitude times the selected member's distance from that center.
+
 **The schedule** (the SIMT lowering of `md_alg.traverse_pairs`,
 `lib/Conversion/MDExecKernels/TraversePairs.cpp`, which
 `convert-md-exec-to-gpu` calls where the op stands; D415).
@@ -642,7 +644,7 @@ two-ended loops of EAM over a matrix ([device-primitives.md](device-primitives.m
 Section 2.7). `pair-hash=auto` refuses it; `pair-hash=on` takes it.
 
 **Order of the sums.** The atomic additions make the sums depend on the
-order of the threads. In the default mode they are additions in the type
+order of the threads. The proposed weighted-site rule assigns the residual per site-pair contribution before the warp, record, and global sums. Integer addition then preserves both the net force and the choice of recipient under reordering, provided every partial sum fits. In the default mode they are additions in the type
 of the destination (D84). The deterministic mode does not take groups
 yet: the control file refuses `neighbor_structure = "GROUPS"` with
 `deterministic`, and the lowering refuses the loop (stage G2). The design

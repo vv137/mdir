@@ -74,6 +74,8 @@ kinetic energy and the virial, two runs with four threads then differed in
 up to 1.3e-15 of the positions after 200 steps, and the deterministic mode
 did not prevent it.
 
+For fixed-point pair accumulation (D[groups-fixed-point], proposed), a site distributes its force through $\mathsf W^{\mathsf T}$ (Section 2). For each component, add the difference between the quantized site force and the sum of the quantized weighted forces to the member of largest absolute weight, with topology order breaking ties. The integer sum on the molecule is then exactly the quantized site force, also for weights outside $[0,1]$. The extra torque is the cross product of the selected member's displacement from the molecular center with its force correction. For one component bounded by one force quantum, the added torque magnitude is bounded by that quantum times the member's distance from the center. Sum the contributions for the step. A simultaneous vector correction requires its vector norm in this bound. The scale budget must include both this redistribution and pair rounding. The intended one-quantum component bound needs an additional rounding decision for general frames: four weights of $1/4$ and a component of two quanta give four half-quanta, each of which rounds to zero under ties-to-even.
+
 A row of a loop over pairs on the CPU is summed in the order of its list,
 or, with the lanes of D402, $n_\text{lane}$ candidates at a
 time. Each lane adds the candidates whose place in the row is its own
