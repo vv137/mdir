@@ -58,8 +58,11 @@ std::string getSegmentsBuildName(bool triclinic, unsigned kinds);
 /// each particle of the rest, the last block of each list, the order of
 /// S1's layout, the records' entries, masks, groups, and counts, the
 /// offsets of the segments, and the sizes on the host.
+/// `columnUnits` is the number of units of a column of the plan of the
+/// columns, which the cubes cut along z (SegmentsPolicy, D420).
 void emitSegmentsBuild(mlir::ModuleOp module, bool triclinic,
-                       bool singlePassScan, unsigned kinds);
+                       bool singlePassScan, unsigned kinds,
+                       double columnUnits);
 
 } // namespace kernels
 } // namespace mdir

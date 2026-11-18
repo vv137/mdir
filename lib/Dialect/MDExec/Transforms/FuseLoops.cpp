@@ -8,6 +8,7 @@
 #include "mdir/Dialect/MD/MDTypes.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDRT/SegmentRegions.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
@@ -1015,6 +1016,119 @@ static void fuse(SegmentForOp first, SegmentForOp second) {
   second.erase();
 }
 
+/// Two sums of a loop over a list of units that no segment both yields, and
+/// whose results are only added together, become one sum, whose initial
+/// value is the sum of theirs (D[md-alg-segments-simt]). The pair term over
+/// segments is one sum for each segment (D405's generator); added in the
+/// loop, the segments' energies and virials take one accumulator each
+/// instead of one a segment. Returns whether it combined two.
+static bool combineSegmentSumsOnce(Block &block) {
+  for (Operation &op : block) {
+    auto loop = dyn_cast<SegmentForOp>(&op);
+    if (!loop || loop.isStorageForm())
+      continue;
+    unsigned o = loop.getOuts().size(), n = loop.getReduce().size();
+    unsigned regions = loop.getKernels().size();
+    // The sums that each region yields.
+    SmallVector<llvm::SmallDenseSet<unsigned>> yields(regions);
+    for (unsigned r = 0; r != regions; ++r)
+      for (const mdrt::SitePair &pair :
+           mdrt::getSitePairs(loop.getSites(), r))
+        for (unsigned value : pair.values)
+          if (value >= o)
+            yields[r].insert(value - o);
+    auto weight = [&](unsigned k) {
+      return loop.getWeights() ? (*loop.getWeights())[k] : 1.0;
+    };
+    for (unsigned i = 0; i != n; ++i)
+      for (unsigned j = i + 1; j != n; ++j) {
+        Value ri = loop.getResult(o + i), rj = loop.getResult(o + j);
+        if (!ri.hasOneUse() || !rj.hasOneUse() ||
+            ri.getType() != rj.getType() || weight(i) != weight(j) ||
+            (*loop.getExchange())[o + i] != (*loop.getExchange())[o + j])
+          continue;
+        auto add = dyn_cast<arith::AddFOp>(*ri.getUsers().begin());
+        if (!add || add != *rj.getUsers().begin())
+          continue;
+        if (llvm::any_of(yields, [&](const auto &set) {
+              return set.contains(i) && set.contains(j);
+            }))
+          continue;
+        // Value j of the loop is value i; those after it move down.
+        auto remap = [&](unsigned v) {
+          return v == o + j ? o + i : v > o + j ? v - 1 : v;
+        };
+        OpBuilder builder(loop);
+        Location loc = loop.getLoc();
+        SmallVector<Value> reduce(loop.getReduce());
+        reduce[i] = arith::AddFOp::create(builder, loc, reduce[i], reduce[j]);
+        reduce.erase(reduce.begin() + j);
+        SmallVector<double> weights;
+        for (unsigned k = 0; k != n; ++k)
+          if (k != j)
+            weights.push_back(weight(k));
+        SmallVector<Attribute> exchange(loop.getExchange()->begin(),
+                                        loop.getExchange()->end());
+        exchange.erase(exchange.begin() + o + j);
+        SmallVector<Attribute> tables;
+        // For each region, its yields in the order of the new masks.
+        SmallVector<SmallVector<unsigned>> orders;
+        for (unsigned r = 0; r != regions; ++r) {
+          SmallVector<mdrt::SitePair> pairs =
+              mdrt::getSitePairs(loop.getSites(), r);
+          SmallVector<unsigned> order;
+          unsigned operand = 0;
+          for (mdrt::SitePair &pair : pairs) {
+            SmallVector<std::pair<unsigned, unsigned>> moved;
+            for (unsigned value : pair.values)
+              moved.push_back({remap(value), operand++});
+            llvm::sort(moved);
+            pair.values.clear();
+            for (auto [value, from] : moved) {
+              pair.values.push_back(value);
+              order.push_back(from);
+            }
+          }
+          tables.push_back(mdrt::getSitesAttr(loop.getContext(), pairs));
+          orders.push_back(order);
+        }
+        SmallVector<Type> results;
+        for (unsigned k = 0; k != o; ++k)
+          results.push_back(loop.getResult(k).getType());
+        for (Value value : reduce)
+          results.push_back(value.getType());
+        auto combined = SegmentForOp::create(
+            builder, loc, results, loop.getList(), loop.getPositions(),
+            loop.getCell(), loop.getIns(), loop.getOuts(), reduce,
+            loop.getScratch(), loop.getCutoffAttr(),
+            builder.getDenseF64ArrayAttr(weights),
+            builder.getArrayAttr(exchange), loop.getOverwriteAttr(),
+            loop.getSegmentsAttr(), builder.getArrayAttr(tables), regions);
+        combined->setDiscardableAttrs(loop->getDiscardableAttrDictionary());
+        for (unsigned r = 0; r != regions; ++r) {
+          Region &region = combined.getKernels()[r];
+          region.takeBody(loop.getKernels()[r]);
+          Operation *yield = region.front().getTerminator();
+          SmallVector<Value> operands;
+          for (unsigned from : orders[r])
+            operands.push_back(yield->getOperand(from));
+          yield->setOperands(operands);
+        }
+        for (unsigned k = 0; k != o; ++k)
+          loop.getResult(k).replaceAllUsesWith(combined.getResult(k));
+        add.getResult().replaceAllUsesWith(combined.getResult(o + i));
+        add.erase();
+        for (unsigned k = 0; k != n; ++k)
+          if (k != i && k != j)
+            loop.getResult(o + k).replaceAllUsesWith(
+                combined.getResult(remap(o + k)));
+        loop.erase();
+        return true;
+      }
+  }
+  return false;
+}
+
 /// Fuses two loops over a list of units of `block`, if two can be fused.
 static bool fuseSegmentLoopsOnce(Block &block) {
   SmallVector<SegmentForOp> loops;
@@ -1067,6 +1181,8 @@ public:
       while (fuseOnce(*block))
         ;
       while (fuseSegmentLoopsOnce(*block))
+        ;
+      while (combineSegmentSumsOnce(*block))
         ;
       while (fuseTupleLoopsOnce(*block))
         ;

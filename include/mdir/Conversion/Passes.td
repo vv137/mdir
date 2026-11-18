@@ -501,6 +501,11 @@ def ConvertMDExecToGPU
            "With fuse-pruning: the least number of groups of the last build "
            "for which the loop prunes; below it the refresh prunes "
            "(D284)">,
+    Option<"segmentsColumnUnits", "segments-column-units", "int64_t",
+           /*default=*/"-1",
+           "The units of a column of the build over units (D419), which "
+           "its cubes cut along z; -1 takes the entry of the policy for "
+           "`arch` (SegmentsPolicy, D[md-alg-segments-simt])">,
     Option<"traverseOracle", "traverse-oracle", "std::string",
            /*default=*/"\"simt\"",
            "How md_alg.traverse_pairs is lowered: 'simt', its schedule; "

@@ -1,0 +1,23 @@
+# REQUIRES: python-api, cuda
+# The contract of md_alg.traverse_pairs over a list of units
+# (D[md-alg-segments-simt]; D417, Section 6): its SIMT schedule on a device
+# against its serial definition on the host over the same lists, and the
+# serial definition with its visit reversed, within the bound of the error
+# model of the transpose and a reordered sum (Inputs/segments_contract.py),
+# in mixed precision, on the test route (MDIR_RIGID_UNITS_TEST):
+#   - the rhombic dodecahedron of TIP3P of test/Driver/triclinic.test (one
+#     kind, three segments), the records and the inner records of a dual
+#     list, with a cutoff of 6 Angstrom, which its small cell takes;
+#   - the same dodecahedron, a third of its waters OPC with its site, ions,
+#     and molecules of the rest with anchors and excluded pairs
+#     (segments_coverage.py's mixture: two kinds, six segments);
+#   - alanine dipeptide in OPC and in TIP3P, its solute the rest, with its
+#     anchors and its excluded pairs.
+# RUN: %mdir_python %S/Inputs/segments_contract.py dodecahedron %S/../Driver/Inputs/triclinic/water.top %S/../Driver/Inputs/triclinic/dodecahedron.gro 1 outer 0.6 0.7 0.66 | FileCheck %s -DS=dodecahedron -DW=outer
+# RUN: %mdir_python %S/Inputs/segments_contract.py dodecahedron %S/../Driver/Inputs/triclinic/water.top %S/../Driver/Inputs/triclinic/dodecahedron.gro 1 dual 0.6 0.7 0.66 | FileCheck %s -DS=dodecahedron -DW=dual
+# RUN: rm -rf %t && mkdir -p %t/mixture
+# RUN: %mdir_python %S/Inputs/segments_coverage.py system mixture %S/../Driver/Inputs %t/mixture 1
+# RUN: %mdir_python %S/Inputs/segments_contract.py mixture %t/mixture/system.top %t/mixture/system.gro 1,2 dual | FileCheck %s -DS=mixture -DW=dual
+# RUN: %mdir_python %S/Inputs/segments_contract.py dipeptide-opc %S/../Driver/Inputs/opc/opc.prmtop %S/../Driver/Inputs/opc/opc.inpcrd 1 dual | FileCheck %s -DS=dipeptide-opc -DW=dual
+# RUN: %mdir_python %S/Inputs/segments_contract.py dipeptide-tip3p %S/../Driver/Inputs/dipeptide/dipeptide.prmtop %S/../Driver/Inputs/dipeptide/dipeptide.inpcrd 1 dual | FileCheck %s -DS=dipeptide-tip3p -DW=dual
+# CHECK: [[S]] [[W]]: the schedule and the reversed visit keep the serial order's sums within the bound

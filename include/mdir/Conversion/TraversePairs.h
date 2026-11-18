@@ -13,6 +13,8 @@
 #include "mlir/IR/Builders.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 
+#include <functional>
+
 namespace mdir::kernels {
 
 /// The inner list of a dual list of groups (D114), as the runtime holds it:
@@ -130,6 +132,55 @@ public:
 /// `owner`, a block that is not whole warps, and the buffer form.
 mlir::LogicalResult lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
                                            TraverseHost &host);
+
+/// The buffers of a list of units (D417, D419), as the runtime holds them
+/// now: the order of the places as the traversal reads it (the slot of a
+/// unit's first member in `members`, or the particle of the rest), their
+/// shifts, the records in the order of the segments (entries, masks,
+/// groups, counts), the first record of each segment, the members of the
+/// units of the taken kinds, and the place where each rank begins (the
+/// rest rank 0, kind f rank K - f, then the end of the places). A dual
+/// list adds its inner records and their active records.
+struct SegmentLists {
+  mlir::Value order, shifts, entries, masks, groups, counts, offsets;
+  mlir::Value members, rankPlaces;
+  InnerLists inner;
+  mlir::Value active, activeCount;
+  bool dual = false;
+};
+
+/// The pruning of a dual list of units in the loop that takes its refresh
+/// (D284; D417, Section 6), from the pass that calls the schedule: whether
+/// the refresh pruned at this step (`now`, on the host), what the kernels
+/// take, made on the host (`prepare`), the warp's pruning of a record, the
+/// survivors numbered from a cursor and those in [low, high) written to the
+/// inner records from an entry on (`pruneRecord`, the number kept), a
+/// record's count as an active one (`recordActive`), and the active units
+/// after the launch (`finish`).
+struct SegmentsFusedPruning {
+  mlir::Value now;
+  std::function<void(mlir::OpBuilder &)> prepare;
+  std::function<mlir::Value(mlir::OpBuilder &, mlir::Value record,
+                            mlir::Value lane, mlir::Value base,
+                            mlir::Value cursor, mlir::Value low,
+                            mlir::Value high)>
+      pruneRecord;
+  std::function<void(mlir::OpBuilder &, mlir::Value record, mlir::Value kept)>
+      recordActive;
+  std::function<void(mlir::OpBuilder &)> finish;
+};
+
+/// The SIMT schedule of a list of units (D[md-alg-segments-simt], D417,
+/// Section 6): a warp for each record of one segment, lanes u and u + 16
+/// holding the unit at place 16 g + u, the partners' frames, fields, masks,
+/// and the accumulators of their places turning through the half-warps;
+/// one guard and one slice of the region for each site pair of a segment's
+/// table; W^T at the write. `blockSize` and `rotation` are the entry of the
+/// tuning policy (D420). Refuses what the schedule does not take, by name.
+mlir::LogicalResult lowerTraversePairsSegmentsSIMT(
+    md_alg::TraversePairsOp op, TraverseHost &host, const SegmentLists &lists,
+    int64_t blockSize, int64_t rotation,
+    const SegmentsFusedPruning *fused = nullptr);
 
 /// The buffers that the serial definition of md_alg.traverse_pairs reads,
 /// all where the loop runs: the layout of the groups, the inner list and

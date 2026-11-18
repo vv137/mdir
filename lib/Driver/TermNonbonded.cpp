@@ -1,9 +1,12 @@
 // Primary, excluded, reciprocal, and within-selection nonbonded terms (#683).
 #include "BuilderImpl.h"
+#include "KindPairsIR.h"
 #include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Driver/RigidGroups.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/Matchers.h"
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
 namespace prolate = mdir::prolate;
@@ -1402,6 +1405,157 @@ static TermIRValues buildNonbondedPrimary(mlir::OpBuilder &builder, mlir::ValueR
 
 }
 
+
+//===----------------------------------------------------------------------===//
+// The pair term over the segments of rigid kinds, for tests only
+//===----------------------------------------------------------------------===//
+
+// With MDIR_RIGID_UNITS_TEST set to the numbers of rigid kinds of D403, as
+// `mdir check` numbers them from 1, comma-separated, the primary pair term
+// is built over the segments of those kinds (D405's generator), so that a
+// run takes the list of units of D417 and D419 and its traversal. It is the
+// route of D[md-alg-segments-simt] for the measurements and the contract of
+// slice S3, before S4b: S4b replaces it by `[performance] rigid_units` and
+// removes it, with no alias. Without it no program changes.
+
+namespace {
+/// The kinds that the variable takes, their copies, and the anchors of the
+/// rest with their covering radius.
+struct RigidUnitsTest {
+  KindPairsPlan plan;
+  std::vector<std::vector<unsigned>> copies;
+  std::vector<std::array<unsigned, 2>> anchored;
+  double radius = 0.0;
+};
+} // namespace
+
+/// The numerical margin of a covering radius over the exact distance of the
+/// places from their anchor (#795, ruling 5: 10^-3 Å).
+static constexpr double kRigidUnitsMargin = 1e-4;
+
+/// The covering radius of a kind about its anchor, the first frame atom:
+/// the largest distance of a place from it, from the constrained distances
+/// of the frame. A site at sum_k w_k x_k is at |sum_k w_k h_k| with
+/// h_k = x_k - x_0, and h_j . h_k = (d_0j^2 + d_0k^2 - d_jk^2) / 2.
+static double getRigidKindExtent(const RigidKind &kind) {
+  unsigned m = kind.frame.size();
+  auto distance = [&](unsigned a, unsigned b) -> double {
+    if (a == b)
+      return 0.0;
+    if (a > b)
+      std::swap(a, b);
+    // The pairs (a, b), a < b, in lexicographic order.
+    unsigned index = a * m - a * (a + 1) / 2 + (b - a - 1);
+    return kind.distances[index];
+  };
+  auto dot = [&](unsigned j, unsigned k) {
+    double dj = distance(0, j), dk = distance(0, k), djk = distance(j, k);
+    return 0.5 * (dj * dj + dk * dk - djk * djk);
+  };
+  double largest = 0.0;
+  for (unsigned k = 1; k < m; ++k)
+    largest = std::max(largest, distance(0, k));
+  for (const RigidKind::Site &site : kind.sites) {
+    double square = 0.0;
+    for (unsigned j = 1; j < m; ++j)
+      for (unsigned k = 1; k < m; ++k)
+        square += site.weights[j] * site.weights[k] * dot(j, k);
+    largest = std::max(largest, std::sqrt(std::max(square, 0.0)));
+  }
+  return largest + kRigidUnitsMargin;
+}
+
+/// The plan of MDIR_RIGID_UNITS_TEST, none without it, or the refusal of a
+/// combination that the route does not take, naming it.
+static llvm::Expected<std::optional<RigidUnitsTest>>
+planRigidUnitsTest(const TermInputs &context) {
+  const char *given = std::getenv("MDIR_RIGID_UNITS_TEST");
+  if (!given || !*given)
+    return std::nullopt;
+  auto refuse = [](const llvm::Twine &what) {
+    return makeError("MDIR_RIGID_UNITS_TEST (for tests only) does not take " +
+                     what);
+  };
+  const Control &control = context.getControl();
+  const System &system = context.getSystem();
+  if (control.target != Target::GPU)
+    return refuse("the CPU target: lists of units run on a GPU");
+  if (control.precision != Precision::Mixed)
+    return refuse("this precision: the segmented schedule takes MIXED");
+  if (control.deterministic)
+    return refuse("the deterministic mode");
+  if (control.minimize)
+    return refuse("a minimization");
+  if (!control.periodic)
+    return refuse("a cell that is not periodic");
+  if (!system.alchemical.empty())
+    return refuse("[free_energy]");
+  if (control.ljpme)
+    return refuse("LJPME");
+  if (control.pme && control.pmeKernel != PMEKernel::Gaussian)
+    return refuse("a kernel of PME other than the Gaussian");
+  if (control.frames || control.frameProduct || control.tunableGradient ||
+      control.dependentTerms || control.tunables ||
+      !control.observedTunables.empty() ||
+      llvm::any_of(control.observables, [](const Control::Observable &o) {
+        return !o.constant.empty();
+      }))
+    return refuse("frame, tunable, or derivative programs");
+  if (!system.topology)
+    return refuse("a system without a topology");
+  const Topology &topology = context.getTopology();
+  RigidGroups groups = findRigidGroups(topology);
+  llvm::SmallVector<StringRef> items;
+  StringRef(given).split(items, ',');
+  RigidUnitsTest test;
+  llvm::SmallVector<const RigidKind *> taken;
+  llvm::SmallVector<double> extents;
+  std::vector<bool> inKind(topology.getNumParticles(), false);
+  for (StringRef item : items) {
+    unsigned number = 0;
+    if (item.trim().getAsInteger(10, number) || number == 0 ||
+        number > groups.kinds.size())
+      return refuse("'" + item +
+                    "': the kinds of rigid groups of the system are "
+                    "numbered from 1 to " +
+                    llvm::Twine(groups.kinds.size()));
+    const RigidKind &kind = groups.kinds[number - 1];
+    if (llvm::is_contained(taken, &kind))
+      return refuse("kind " + llvm::Twine(number) + " twice");
+    taken.push_back(&kind);
+    extents.push_back(getRigidKindExtent(kind));
+    std::vector<unsigned> members(kind.members.begin(), kind.members.end());
+    for (unsigned particle : members)
+      inKind[particle] = true;
+    test.copies.push_back(std::move(members));
+  }
+  auto plan = planKindPairs(topology, taken, extents);
+  if (!plan)
+    return refuse(llvm::toString(plan.takeError()));
+  test.plan = std::move(*plan);
+  // The anchors of the rest (#799): a hydrogen whose bond to a heavy atom
+  // the constraints keep, and the hydrogens of a rigid water that no kind
+  // takes, belong to the unit of their heavy atom, within the longest of
+  // those lengths plus the margin.
+  double longest = 0.0;
+  auto anchor = [&](unsigned member, unsigned center, double length) {
+    if (inKind[member] || inKind[center])
+      return;
+    test.anchored.push_back({member, center});
+    longest = std::max(longest, length);
+  };
+  for (const Topology::Shake &shake : topology.shakes)
+    for (size_t k = 0; k != shake.hydrogens.size(); ++k)
+      anchor(shake.hydrogens[k], shake.center, shake.lengths[k]);
+  for (const Topology::Settle &settle : topology.settles) {
+    anchor(settle.oxygen + 1, settle.oxygen, settle.distanceOH);
+    anchor(settle.oxygen + 2, settle.oxygen, settle.distanceOH);
+  }
+  if (!test.anchored.empty())
+    test.radius = longest + kRigidUnitsMargin;
+  return std::optional<RigidUnitsTest>(std::move(test));
+}
+
 static TermIRValues buildNonbondedExcluded(mlir::OpBuilder &builder, mlir::ValueRange values, bool flags, bool alchemicalOnly, bool prolate, double beta, double cutoff, int64_t cells, int64_t polynomialTerms) {
   mlir::OpBuilder::InsertionGuard insertionGuard(builder);
 
@@ -1672,12 +1826,40 @@ static TermIRValues buildNonbondedCoulombReciprocal(mlir::OpBuilder &builder, ml
 
 }
 
-class NonbondedTermBuilder final : public TermBuilder, public TermNonbonded {
+class NonbondedTermBuilder final : public TermBuilder, public TermNonbonded,
+                                   public TermPreparation {
 public:
   NonbondedTermBuilder() {
     roles.nonbonded = this;
+    roles.preparation = this;
     tupleRank = 3;
     pairExclusion = "excluded";
+  }
+  llvm::Error validate(const TermInputs &context) const override {
+    if (llvm::Error error = planUnits(context))
+      return error;
+    return llvm::Error::success();
+  }
+  // The segments of the test route are logical domains, declared without
+  // tuples; the kinds' copies and the anchors are tuple sets of the program.
+  llvm::Error prepare(const TermInputs &context,
+                      mlir::OpBuilder &builder) const override {
+    if (!units)
+      return llvm::Error::success();
+    auto loc = builder.getUnknownLoc();
+    unsigned taken = units->plan.kinds.size();
+    for (unsigned f = 0; f <= taken; ++f)
+      for (unsigned g = 0; g <= f; ++g) {
+        unsigned arity = (f < taken ? units->plan.kinds[f].frame.size() : 1) +
+                         (g < taken ? units->plan.kinds[g].frame.size() : 1);
+        bool unordered = f == g && f == taken;
+        mdir::md::TupleSetOp::create(
+            builder, loc, getSegmentTupleSetName(f, g), "atoms", arity,
+            unordered ? mdir::md::Orientation::Unordered
+                      : mdir::md::Orientation::Ordered,
+            false);
+      }
+    return llvm::Error::success();
   }
   bool rejectsTunables(const TermInputs &context) const override {
     return context.getControl().ljpme;
@@ -1745,6 +1927,7 @@ public:
       }
   }
   void collectTupleSets(TermParameters &context) const override {
+    llvm::consumeError(planUnits(context));
     const auto &topology = context.getTopology();
     const auto &control = context.getControl();
     const auto &system = context.getSystem();
@@ -1758,6 +1941,25 @@ public:
     }
     // The pairs within the selection of [free_energy] that are not excluded,
     // whose Coulomb particle mesh Ewald adds back (D161).
+    if (units) {
+      for (unsigned f = 0, e = units->copies.size(); f != e; ++f) {
+        Program::TupleSet &set = addTupleSet(
+            context.getTupleSets(), getKindTupleSetName(f),
+            units->plan.kinds[f].getSize());
+        set.reversible = false;
+        for (unsigned particle : units->copies[f])
+          set.members.push_back(particle);
+      }
+      if (!units->anchored.empty()) {
+        Program::TupleSet &set =
+            addTupleSet(context.getTupleSets(), "kind_anchors", 2);
+        set.reversible = false;
+        set.oriented = true;
+        for (const auto &pair : units->anchored)
+          for (unsigned particle : pair)
+            set.members.push_back(particle);
+      }
+    }
     if (control.pme && !system.alchemicalPairs.empty()) {
       Program::TupleSet &set =
           addTupleSet(context.getTupleSets(), "alchemical_pairs", 2);
@@ -1980,7 +2182,15 @@ public:
             !config.coulombSpec.prolateSeries)
           config.prolateTable = operand(point.physical.table("pme_far"));
       }
-      add(buildNonbondedPrimary(builder, values, config).front());
+      if (units && !alchemicalOnly) {
+        // The route has refused what would give the kernel more inputs:
+        // [free_energy], tunables, LJPME, and the prolate kernel.
+        assert(!config.flags && !seeds && !config.ljpme &&
+               !config.prolateTable && "a pair term the route refuses");
+        add(buildUnitsPrimary(&context, builder, values, config, point));
+      } else {
+        add(buildNonbondedPrimary(builder, values, config).front());
+      }
 
     }
 
@@ -2088,6 +2298,117 @@ public:
   }
 
 private:
+  /// The plan of the test route, once.
+  /// The tuple sets are collected before the terms are validated, which
+  /// reports a refusal.
+  llvm::Error planUnits(const TermInputs &context) const {
+    if (!unitsPlanned) {
+      unitsPlanned = true;
+      auto plan = planRigidUnitsTest(context);
+      if (plan)
+        units = std::move(*plan);
+      else
+        unitsError = llvm::toString(plan.takeError());
+    }
+    if (!unitsError.empty())
+      return makeError(unitsError);
+    return llvm::Error::success();
+  }
+  /// The primary pair term over the segments of the taken kinds, its site
+  /// pairs those of the general pair kernel of each part, as
+  /// mdir-kind-pairs-test generates them (D405).
+  mlir::Value buildUnitsPrimary(const TermInputs *context,
+                                mlir::OpBuilder &builder,
+                                TermIRValues &values,
+                                const PrimaryNonbondedIRConfig &config,
+                                const TermNativeTopology &point) const {
+    // These temporary sums give the scalar expressions of each part only;
+    // none survives in the program.
+    std::array<mdir::md::SumRelationOp, 4> kernels;
+    unsigned enabled = unsigned(config.lj) | (unsigned(config.coulomb) << 1);
+    for (unsigned mask = 1; mask != 4; ++mask) {
+      if (mask & ~enabled)
+        continue;
+      PrimaryNonbondedIRConfig choice = config;
+      choice.lj = mask & 1;
+      choice.coulomb = mask & 2;
+      kernels[mask] = buildNonbondedPrimary(builder, values, choice)
+                          .front()
+                          .getDefiningOp<mdir::md::SumRelationOp>();
+    }
+    KindPairsInputs input;
+    for (unsigned f = 0, e = units->plan.kinds.size(); f != e; ++f)
+      input.kinds.push_back(point.relation(getKindTupleSetName(f)));
+    input.excluded = point.relation("excluded");
+    if (!units->anchored.empty()) {
+      input.anchored = point.relation("kind_anchors");
+      input.radius = units->radius;
+    }
+    input.positions = values[1];
+    input.cell = values[2];
+    input.types = values[3];
+    input.charges = values[4];
+    input.cutoff = config.cutoff;
+    input.lennardJones = config.lj;
+    input.coulomb = config.coulomb;
+    mlir::Value term = buildKindPairsTerm(
+        builder, units->plan, input,
+        [&](mlir::OpBuilder &ir, const KindSitePair &pair) -> mlir::Value {
+          unsigned mask =
+              unsigned(pair.lennardJones) | (unsigned(pair.coulomb) << 1);
+          return cloneKindPairEnergy(ir, kernels[mask].getKernel().front(),
+                                     pair);
+        });
+    for (auto kernel : kernels)
+      if (kernel)
+        kernel.erase();
+    // E3 of #795 (D417, Section 9, ruling 4): a taken kind's types are
+    // constants of its slices, so their Lennard-Jones coefficients are
+    // lookups at constant indices, which become constants. The tables are
+    // fixed for the run on this route: it refuses tunables and their
+    // derivatives.
+    if (config.lj) {
+      const Topology &topology = context->getTopology();
+      unsigned count = topology.getNumTypes();
+      std::pair<mlir::Value, const std::vector<double> *> tables[] = {
+          {values[config.sigmaTable], &topology.sigma},
+          {values[config.epsilonTable], &topology.epsilon}};
+      llvm::SmallVector<mdir::md::LookupOp> lookups;
+      builder.getInsertionBlock()->walk([&](mdir::md::LookupOp lookup) {
+        if (lookup->getParentOfType<mdir::md::SumSegmentWindowOp>())
+          lookups.push_back(lookup);
+      });
+      for (mdir::md::LookupOp lookup : lookups) {
+        llvm::SmallVector<int64_t, 2> at;
+        for (mlir::Value index : lookup.getIndices()) {
+          llvm::APInt constant;
+          if (!mlir::matchPattern(index, mlir::m_ConstantInt(&constant)))
+            break;
+          at.push_back(constant.getSExtValue());
+        }
+        if (at.size() != 2 || !lookup.getType().isF64())
+          continue;
+        for (auto [table, data] : tables) {
+          if (lookup.getTable() != table)
+            continue;
+          mlir::OpBuilder at0(lookup);
+          double value = (*data)[at[0] * count + at[1]];
+          lookup.getResult().replaceAllUsesWith(mlir::arith::ConstantOp::create(
+              at0, lookup.getLoc(), at0.getF64FloatAttr(value)));
+          lookup.erase();
+          break;
+        }
+      }
+    }
+    // The neighborhood of the particles is then read by no pair term.
+    if (mlir::Operation *neighborhood = values[0].getDefiningOp())
+      if (neighborhood->use_empty())
+        neighborhood->erase();
+    return term;
+  }
+  mutable bool unitsPlanned = false;
+  mutable std::optional<RigidUnitsTest> units;
+  mutable std::string unitsError;
   mutable std::optional<TermNonbondedData> state;
 };
 } // namespace mdir::driver::builder

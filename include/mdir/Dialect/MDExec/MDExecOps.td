@@ -17,6 +17,7 @@ include "mdir/Dialect/MDExec/MDExecAttrs.td"
 include "mdir/Dialect/MDExec/MDExecDialect.td"
 include "mdir/Dialect/MDExec/MDExecEnums.td"
 include "mdir/Dialect/MDExec/LoopEffects.td"
+include "mdir/Dialect/MDExec/PairKernelBody.td"
 include "mdir/Dialect/MDRT/MDRTTypes.td"
 
 def MDExec_Buffer : Type<
@@ -668,7 +669,8 @@ def MDExec_RefreshSegmentedPairsOp : MDExec_Op<"refresh_segmented_pairs", [
 
 def MDExec_SegmentForOp : MDExec_Op<"segment_for", [
     AttrSizedOperandSegments, RecursiveMemoryEffects,
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    DeclareOpInterfaceMethods<MDExec_PairKernelBodyOpInterface>]> {
   let summary = "Runs the regions of the segments over a list of units";
   let description = [{
     For each segment `s(f, g)` that the op names, each entry of its list,
@@ -1196,7 +1198,8 @@ def MDExec_TabulateOp : MDExec_Op<"tabulate", [
 def MDExec_PairForOp : MDExec_Op<"pair_for", [
     AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
-    DeclareOpInterfaceMethods<MDExec_LoopEffectOpInterface>
+    DeclareOpInterfaceMethods<MDExec_LoopEffectOpInterface>,
+    DeclareOpInterfaceMethods<MDExec_PairKernelBodyOpInterface>
   ]> {
   let summary = "Runs a kernel over the pairs of a neighbor structure";
   let description = [{

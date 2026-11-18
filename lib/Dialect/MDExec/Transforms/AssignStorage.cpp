@@ -1030,14 +1030,20 @@ LogicalResult Assignment::convertSegmentedList(Operation *op, Scope &scope) {
       return failure();
     Value result;
     if constexpr (std::is_same_v<decltype(source), BuildSegmentedPairsOp>) {
+      // A build in place, outside a loop over steps (the evaluation before
+      // the first step), takes storage of its own and one refresh, which
+      // builds it, as a build of groups does.
       Value positions;
       if (failed(getBuffer(source.getPositions(), scope, positions)))
         return failure();
-      result = BuildSegmentedPairsOp::create(
+      Value empty = EmptySegmentedPairsOp::create(
           builder, op->getLoc(), source.getResult().getType(), universe,
-          kinds, excluded, anchored, positions,
-          mapping.lookup(source.getCell()), source.getCutoffAttr(),
+          kinds, excluded, anchored, source.getCutoffAttr(),
           source.getSkinAttr(), source.getRadiusAttr());
+      result = RefreshSegmentedPairsOp::create(
+          builder, op->getLoc(), source.getResult().getType(), empty,
+          positions, mapping.lookup(source.getCell()), source.getCutoffAttr(),
+          source.getSkinAttr(), /*prune_skin, not dual=*/source.getSkinAttr());
     } else {
       result = EmptySegmentedPairsOp::create(
           builder, op->getLoc(), source.getResult().getType(), universe,

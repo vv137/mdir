@@ -82,6 +82,7 @@
 // emitters' code, emitted where they stand (CompactionEmitter.h).
 
 #include "mdir/Conversion/GroupsBuild.h"
+#include "mdir/Dialect/MDExec/DevicePolicy.h"
 
 #include "mdir/Conversion/CompactionEmitter.h"
 #include "mdir/Conversion/Passes.h"
@@ -428,13 +429,15 @@ public:
   /// The build over units of `kinds` taken rigid kinds and the rest
   /// (D419).
   GroupsBuild(OpBuilder &b, Location loc, bool tilted, bool singlePass,
-              unsigned kinds)
+              unsigned kinds, double columnUnits)
       : Code(b, loc), tilted(tilted), singlePass(singlePass), unitsMode(true),
-        K(kinds), S((kinds + 1) * (kinds + 2) / 2) {}
+        K(kinds), S((kinds + 1) * (kinds + 2) / 2), columnUnits(columnUnits) {}
 
   void emit();
 
 private:
+  /// Over units, the units of a column of the plan of the columns.
+  double columnUnits = 64.0;
   bool tilted, singlePass;
   // Over units: K taken kinds, the rest rank 0 and kind f at rank K - f,
   // and S = (K + 1)(K + 2) / 2 segments.
@@ -2698,16 +2701,21 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
 
 // The list kernels take blocks of 64 entries in the order of their atomics,
 // each named by its group and segment, g S + s, and its ordinal in that
-// list. A counting sort of the blocks by segment gives the records in the
-// order of the segments, in any order within each: record w is the block of the sort's place
-// w, copied, with its group and its own count; `segments[s]` is the first
-// record of segment s, and `segments[S]` their number.
+// list. A counting sort of the blocks by segment, and by group within a
+// segment, gives the records in the order of the segments, the records of
+// each row (a group in a segment) one after another, in any order within
+// the row: record w is the block of the sort's place w, copied, with its
+// group and its own count; `segments[s]` is the first record of segment s,
+// and `segments[S]` their number. A pruning re-chunks the survivors of a
+// row into its first records (#795's U10, D[md-alg-segments-simt]).
 void GroupsBuild::emitSegments(Value gridOfCapacity) {
   using P = CmpIPredicate;
   Value c2s = cx(2);
   Value blockCapacity = dim(units, c0);
-  Value segCount = cx(S);
-  Value segCount1 = cx(S + 1);
+  // A bin for each row: segment s, group g at s G + g.
+  Value groupCount = divui(capacity, cx(16));
+  Value segCount = muli(cx(S), groupCount);
+  Value segCount1 = addi(segCount, cx(1));
   Value segKey = alloc(buffer, blockCapacity);
   Value segOf = alloc(buffer, segCount);
   Value segStart = alloc(buffer, segCount1);
@@ -2727,12 +2735,15 @@ void GroupsBuild::emitSegments(Value gridOfCapacity) {
                     Value name = load(units, item);
                     Value segCount32 = ci(S);
                     Value seg = remui(name, segCount32);
-                    md_alg::BinOp::create(b, loc, seg);
+                    Value group = divui(name, segCount32);
+                    Value row = addi(
+                        muli(seg, indexCast(i32, groupCount)), group);
+                    md_alg::BinOp::create(b, loc, row);
                   },
                   [&] { md_alg::NoBinOp::create(b, loc); });
             },
             // The blocks came in the order of the atomics that took them:
-            // no order within a segment is kept.
+            // no order within a row is kept.
             md_alg::Order::Unordered);
   // A record a warp: its 64 entries a lane two at a time.
   Value c32r = cx(32);
@@ -2795,7 +2806,8 @@ void GroupsBuild::emitSegments(Value gridOfCapacity) {
     Value zeroS = cx(0);
     for (unsigned seg = 0; seg <= S; ++seg) {
       Value at = cx(seg);
-      auto span = md_alg::BinSpanOp::create(b, loc, segStart, zeroS, at);
+      auto span = md_alg::BinSpanOp::create(b, loc, segStart, zeroS,
+                                            muli(at, groupCount));
       store(span.getEnd(), segmentsOut, at);
     }
   });
@@ -2841,10 +2853,11 @@ void GroupsBuild::emitBuild() {
   if (unitsMode) {
     // After the reach: the covering reach of each segment and the end of
     // the units of each rank; after the shifts, the buffers of the units
-    // and of the records by segment.
+    // and of the records by segment, and the place where each rank begins,
+    // which the traversal reads (K + 2).
     inputs.insert(inputs.begin() + 3, S, f64);
     inputs.insert(inputs.begin() + 3 + S, K + 1, index);
-    inputs.insert(inputs.end() - 1, 10, buffer);
+    inputs.insert(inputs.end() - 1, 11, buffer);
   }
   std::string name = unitsMode ? kernels::getSegmentsBuildName(tilted, K)
                                : kernels::getGroupsBuildName(tilted);
@@ -2861,8 +2874,8 @@ void GroupsBuild::emitBuild() {
           unitRef = a[12], unitValue = a[13], unitOfParticle = a[14],
           lastOf = a[15], outOrder = a[16], finalEntries = a[17],
           finalMasks = a[18], finalUnits = a[19], finalCounts = a[20],
-          segmentsOut = a[21];
-          a.erase(a.begin() + 12, a.begin() + 22);
+          segmentsOut = a[21], rankPlaces = a[22];
+          a.erase(a.begin() + 12, a.begin() + 23);
         }
         x = a[0], box = a[1], reach = a[2], excluded = a[3], order = a[4],
         placeOf = a[5], entries = a[6], masks = a[7], counts = a[8],
@@ -2944,9 +2957,12 @@ void GroupsBuild::emitBuild() {
         // counts that are defined and fit memory (#168).
         Value lxy = mulf(lx, ly);
         Value volume = mulf(lxy, lz);
+        // Over units, the units of a column are an entry of the policy
+        // (SegmentsPolicy::columnUnits, D420).
+        double perCube = unitsMode ? columnUnits : 64.0;
         auto columnPlan = md_alg::GridPlanOp::create(
             b, loc, TypeRange{i64, i64}, ValueRange{lx, ly}, /*width=*/Value(),
-            volume, b.getF64FloatAttr(64.0), n, b.getF64FloatAttr(1.0),
+            volume, b.getF64FloatAttr(perCube), n, b.getF64FloatAttr(1.0),
             b.getF64FloatAttr(256.0), /*determinism=*/nullptr);
         ncx64 = columnPlan.getCounts()[0];
         ncy64 = columnPlan.getCounts()[1];
@@ -3040,10 +3056,6 @@ void GroupsBuild::emitBuild() {
         columnChunks = alloc(buffer, columns);
         Value gridOfColumns = call1(kGrid, index, {columns, block});
         sizesDevice = alloc(sizesType, {});
-        if (unitsMode) {
-          Value rankCount = cx(K + 2);
-          rankPlaces = alloc(buffer, rankCount);
-        }
         xp = alloc(placesType, capacity);
         gkey = alloc(buffer, capacity);
         gcount = alloc(buffer, gcells);
@@ -3251,8 +3263,6 @@ void GroupsBuild::emitBuild() {
         gpu::WaitOp::create(b, loc, Type(), copied);
 
         dealloc(wrapped);
-        if (unitsMode)
-          dealloc(rankPlaces);
         dealloc(sizesDevice);
         dealloc(xp);
         dealloc(gkey);
@@ -3305,9 +3315,12 @@ std::string kernels::getSegmentsBuildName(bool triclinic, unsigned kinds) {
 }
 
 void kernels::emitSegmentsBuild(ModuleOp module, bool triclinic,
-                                bool singlePassScan, unsigned kinds) {
+                                bool singlePassScan, unsigned kinds,
+                                double columnUnits) {
   OpBuilder b = OpBuilder::atBlockEnd(module.getBody());
-  GroupsBuild(b, module.getLoc(), triclinic, singlePassScan, kinds).emit();
+  GroupsBuild(b, module.getLoc(), triclinic, singlePassScan, kinds,
+              columnUnits)
+      .emit();
 }
 
 namespace mdir {
@@ -3333,7 +3346,9 @@ public:
       declared.erase();
     }
     if (kinds >= 0)
-      kernels::emitSegmentsBuild(module, triclinic, singlePassScan, kinds);
+      kernels::emitSegmentsBuild(
+          module, triclinic, singlePassScan, kinds,
+          mdir::md_exec::policy::kDefaultSegments.columnUnits);
     else
       kernels::emitGroupsBuild(module, triclinic, singlePassScan);
   }
