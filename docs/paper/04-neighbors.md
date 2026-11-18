@@ -1206,8 +1206,10 @@ segments nothing that the rest does not), `OFF` and `AUTO`, until its rule
 is measured, the general route. The theorem above needs every place within
 its radius at every evaluation, the first one included, which reads the
 positions of the input before any constraint has acted. The nominal radius
-of kind $f$ is $e_f = \max_p\lVert\mathbf c_pVert + \delta_\mathrm m$,
-$\lVert\mathbf c_pVert$ from the constrained distances of the frame and
+of kind $f$ is $e_f = \max_p\lVert\mathbf c_p
+Vert + \delta_\mathrm m$,
+$\lVert\mathbf c_p
+Vert$ from the constrained distances of the frame and
 $\delta_\mathrm m = 10^{-4}$ nm. Where the largest distance $\hat e_f$ of a
 place from its anchor at the input exceeds $e_f$, the run takes $\hat e_f +
 \delta_\mathrm m$ instead, measured in f64 with each bond in its image
@@ -1216,7 +1218,7 @@ is checked against half the least face width of the cell. The hypothesis
 then holds at the input, and after a constraint step, where every place is
 within $e_f$ of its anchor again, it holds a fortiori, which the writer
 checks. A coordinate file in nm to three decimals moves a hydrogen by up to
-$\sqrt3 \cdot 5	imes10^{-4}$ nm, more than $\delta_\mathrm m$, so the
+$\sqrt3 \cdot 5\times10^{-4}$ nm, more than $\delta_\mathrm m$, so the
 radius of such an input is widened: in the rhombic dodecahedron of the
 tests, from 0.0958 to 0.1010 nm.
 
