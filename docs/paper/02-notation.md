@@ -37,7 +37,7 @@ element.
 | $\mathbf S_p,\ \mathbf W_p$ | In Section 4.4, the whole cells that move the particle at place $p$, as it is kept, into the frame of its group, and the cells from its wrapped position to that frame |
 | $\mathbf y_g,\ \mathbf w_g$ | In Section 4.4, the center and the half-widths of the bounding box of group $g$ |
 | $\Delta\mathbf n$ | In Section 4.4, the image of a candidate relative to the one nearest to the center of a box, $\Delta\mathbf n \in \{-1, 0, 1\}^3$ |
-| $N_\text{col},\ d_\text{col};\ N_{\text{cell},a};\ t_y,\ t_z$ | In Section 4.4, the columns of the compact order and their side; the cells of the grid of the candidates along axis $a$; in a triclinic cell, the rows of that grid beyond a face of $y$ and of $z$ |
+| $N_\text{col},\ d_\text{col},\ n_\text{col};\ N_{\text{cell},a};\ t_y,\ t_z$ | In Section 4.4, the columns of the compact order, their side, and the particles of a cube of that side; the cells of the grid of the candidates along axis $a$; in a triclinic cell, the rows of that grid beyond a face of $y$ and of $z$ |
 | $\Delta_z,\ \Delta_y$ | In Section 4.4, in a triclinic cell, the gap along z between a row of z of the grid of the candidates and the box of a group, and along y between a row of y and the box |
 | $\delta_R,\ R' = R + \delta_R$ | In Sections 4.4 and 4.5, the widening of a reach that covers the rounding of a test in f32, and the widened reach that the tests in f32 take |
 | $\tilde{\mathbf x}_q;\ k_a$ | In Section 4.4, the position of the particle at place $q$ wrapped into the cell; the index of a cell of the grid of the candidates along axis $a$ (not the kernel $k$ or the step $k$ of Section 4.4.5, nor the count $k$ of Section 4.5) |
