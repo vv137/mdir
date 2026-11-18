@@ -185,33 +185,33 @@ static const ArrayRef<Entry<SegmentsPolicy>> kSegmentsTable = {};
 // The build of the groups (D[groups-columns])
 //===----------------------------------------------------------------------===//
 
-// The particles of a column of the compact order were swept over 64 (D89's
-// value), 80, 96, 112, 128, and 192 (#912), with the timing protocol, in NPT
-// on JAC, Factor IX, Cellulose, STMV, and a TIP3P box of 309,876 sites (JAC
-// and Cellulose at a relative RMS force error of about 4e-4). On RTX 4090s
-// (sm_89), 96 took the least time a step on each system or one within
-// 0.1% of it: 0.967 to 0.979 of 64's step on the four of the suite, 0.992
-// on the water box, with fewer entries (2 to 3%, and so fewer atomic
-// reductions, which bound the loop over pairs, #912) and a faster build.
+// The default is D89's value, 64 particles a column, the first build's and
+// not measured as a choice: an architecture without an entry of its own
+// keeps what its programs did before the table.
 const GroupsPolicy mdir::md_exec::policy::kDefaultGroups = {
-    /*columnParticles=*/96.0};
+    /*columnParticles=*/64.0};
 static const Measurement kGroupsDefaultBasis = {
-    "D[groups-columns]",
-    "JAC, Factor IX, Cellulose, STMV, and TIP3P (309,876 sites), NPT, RTX "
-    "4090",
-    "2026-11-18"};
-static const Measured kGroupsDefaultMeasured[] = {{8, 9}};
-// The major version 12 (the RTX 5090 and the RTX PRO 6000 Blackwell) keeps
-// D89's 64 until a measurement on one of them shows that 96 gains there:
-// the comparison of #912 could not run on either device when the entry was
-// made, so the entry was measured on none (a fallback on every sm_12x).
+    "D89", "not measured as a choice: the value of the first build",
+    "2026-10-01"};
+static const ArrayRef<Measured> kGroupsDefaultMeasured = {};
+
+// On sm_89 the particles of a column were swept over 64, 80, 96, 112, 128,
+// and 192 (#912), with the timing protocol, in NPT on JAC, Factor IX,
+// Cellulose, STMV, and a TIP3P box of 309,876 sites (JAC and Cellulose at a
+// relative RMS force error of about 4e-4). On RTX 4090s, 96 took the least
+// time a step on each system or one within 0.1% of it: 0.967 to 0.979 of
+// 64's step on the four of the suite, 0.992 on the water box, with fewer
+// entries (2 to 3%, and so fewer atomic reductions, which bound the loop
+// over pairs, #912) and a faster build.
+static const Measured kGroups89Measured[] = {{8, 9}};
 static const Entry<GroupsPolicy> kGroupsTable[] = {
-    {{12, -1, ""},
-     {/*columnParticles=*/64.0},
+    {{8, 9, ""},
+     {/*columnParticles=*/96.0},
      {"D[groups-columns]",
-      "not measured on sm_12x: D89's value, kept until a measurement",
+      "JAC, Factor IX, Cellulose, STMV, and TIP3P (309,876 sites), NPT, RTX "
+      "4090",
       "2026-11-18"},
-     {}},
+     kGroups89Measured},
 };
 
 //===----------------------------------------------------------------------===//

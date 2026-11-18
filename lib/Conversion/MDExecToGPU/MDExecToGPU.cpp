@@ -11340,6 +11340,15 @@ public:
     lowering.segmentsColumnUnits = segmentsColumnUnits > 0
                                        ? double(segmentsColumnUnits)
                                        : policy.segments.columnUnits;
+    // -1 takes the policy's entry; any other value must be a count.
+    if (groupsColumnParticles != -1 && groupsColumnParticles <= 0) {
+      getOperation().emitError()
+          << "convert-md-exec-to-gpu: groups-column-particles="
+          << int64_t(groupsColumnParticles)
+          << " is not a number of particles: it takes -1 (the entry of the "
+             "tuning policy for the architecture) or a positive count";
+      return signalPassFailure();
+    }
     lowering.groupsColumnParticles = groupsColumnParticles > 0
                                          ? double(groupsColumnParticles)
                                          : policy.groups.columnParticles;

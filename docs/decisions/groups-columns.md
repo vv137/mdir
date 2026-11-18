@@ -2,7 +2,7 @@
 
 Recorded at its merge.
 
-**The particles of a column of the compact order of the groups' build (Section 2 of `docs/neighbor-groups.md`) are an entry of the tuning policies (D420), `GroupsPolicy::columnParticles`: 96 by default, measured on `sm_89`, where the build had 64 since D89. The major version 12 (the RTX 5090, the RTX PRO 6000 Blackwell) keeps 64 by an entry of its own, measured on none of its devices, until a comparison there shows that 96 gains. The option `groups-column-particles` of `convert-md-exec-to-gpu` overrides the entry; the build over units keeps its own entry (`SegmentsPolicy::columnUnits`, 128, D421).** Issue #912 (the maintainer's ruling of 2026-11-18 on its results).
+**The particles of a column of the compact order of the groups' build (Section 2 of `docs/neighbor-groups.md`) are an entry of the tuning policies (D420), `GroupsPolicy::columnParticles`: 96 on `sm_89`, by an entry of its own with the measurement behind it, and D89's 64 as the default, which every other architecture takes, measured on none of them, so that their programs keep their bytes. The option `groups-column-particles` of `convert-md-exec-to-gpu` overrides the entry; it takes -1 (the entry) or a positive count and refuses any other value. The build over units keeps its own entry (`SegmentsPolicy::columnUnits`, 128, D421).** Issue #912 (the maintainer's ruling of 2026-11-18 on its results).
 
 ## Why
 
@@ -25,7 +25,7 @@ JAC and Cellulose ran controls with a relative RMS force error of about 4e-4; Fa
 
 **Forces.** The forces with 96 differ from those with 64 by 3.2e-7 (JAC) and 5.3e-7 (Cellulose) of the RMS force, against 1.2e-7 and 3.8e-7 for 64 against itself. The order of the sums changed. The error against a double-precision reference is unchanged: 3.978e-4 and 4.203e-4.
 
-**Not measured on `sm_12x`.** The maintainer's ruling asked for the same comparison on an RTX 5090 or an RTX PRO 6000, against `main` on the same kind, with 64 kept there if 96 does not gain. Neither device could take a job while this PR was prepared: the RTX 5090's machine did not answer, and every core of the RTX PRO 6000's node was held by another job. The entry of the major version 12 therefore keeps 64, so the programs for `sm_12x` are those of before. Its measurement is open.
+**Not measured elsewhere.** The maintainer's ruling asked for the same comparison on an RTX 5090 or an RTX PRO 6000 as well, against `main` on the same kind. Neither device could take a job while this PR was prepared: the RTX 5090's machine did not answer, and every core of the RTX PRO 6000's node was held by another job. The review of #918 then ruled, with the maintainer's agreement, that an architecture that was not measured keeps D89's value: the default stays 64, marked as not measured, and only `sm_89` has an entry of 96. A measurement on another architecture adds an entry of its own.
 
 ## Gates
 
