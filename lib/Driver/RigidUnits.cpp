@@ -178,8 +178,6 @@ std::string getProgramReason(const Control &control, const System &system) {
         return !o.constant.empty();
       }))
     return "frame, tunable, or derivative programs";
-  if (!system.topology)
-    return "a system without a topology";
   return "";
 }
 

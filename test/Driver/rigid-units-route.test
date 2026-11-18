@@ -56,6 +56,17 @@
 # RUN: mdir check --json %t/dodecahedron.toml | %python -c "import json, sys; k = json.load(sys.stdin)['run']['rigid_units']['kinds'][0]; print('%%.4f %%.4f %%.4f' %% (k['radius_angstrom'], k['input_distance_angstrom'], k['widened_angstrom']))" | FileCheck %s --check-prefix=WIDENED-JSON
 # WIDENED-JSON: 1.0101 1.0091 0.0519
 #
+# A water split by a face of the cell at the input: its second atom moved by
+# the lattice vector c of the dodecahedron (tilted), and in another file by
+# a, as a file that wraps each atom on its own writes it. Each bond is taken
+# in its image nearest the anchor, so the radius is the same as above.
+# RUN: %python %S/Inputs/rigid_units_split.py %t/dodecahedron.gro %t/split-c.gro 2 c
+# RUN: %python %S/Inputs/rigid_units_split.py %t/dodecahedron.gro %t/split-a.gro 2 a
+# RUN: sed 's/"dodecahedron.gro"/"split-c.gro"/' %t/dodecahedron.toml > %t/split-c.toml
+# RUN: sed 's/"dodecahedron.gro"/"split-a.gro"/' %t/dodecahedron.toml > %t/split-a.toml
+# RUN: mdir check %t/split-c.toml | FileCheck %s --check-prefix=WIDENED
+# RUN: mdir check %t/split-a.toml | FileCheck %s --check-prefix=WIDENED
+#
 # A value that is not a choice.
 # RUN: sed 's/"ON"/"YES"/' %t/base.toml > %t/yes.toml
 # RUN: not mdir check %t/yes.toml 2>&1 | FileCheck %s --check-prefix=VALUE

@@ -4,7 +4,6 @@
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Driver/RigidGroups.h"
 #include "mdir/Driver/RigidUnits.h"
-#include <cstdio>
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/Builders.h"
@@ -1428,8 +1427,7 @@ struct RigidUnitsTest {
 };
 } // namespace
 
-/// The plan of the resolved route, none for the general route, or the
-/// refusal of a reach that does not fit the cell of the build.
+/// The plan of the resolved route, or none for the general route.
 static llvm::Expected<std::optional<RigidUnitsTest>>
 planRigidUnits(const TermInputs &context) {
   const Control &control = context.getControl();
@@ -1443,32 +1441,22 @@ planRigidUnits(const TermInputs &context) {
   RigidUnitsPlan resolved = getRigidUnitsPlan(route, topology);
   RigidUnitsTest test;
   llvm::SmallVector<const RigidKind *> taken;
-  double widest = resolved.restRadius;
-  for (auto [index, radius] : llvm::zip(resolved.taken, resolved.radii)) {
+  for (unsigned index : resolved.taken) {
     const RigidKind &kind = resolved.groups.kinds[index];
     taken.push_back(&kind);
     test.copies.emplace_back(kind.members.begin(), kind.members.end());
-    widest = std::max(widest, radius);
   }
-  // The reach against the cell of the build, whose pair list distance the
-  // search of the reaches may have changed since the resolution (D281);
-  // every build checks it again at its own cell.
-  double reach = control.pairlistDistance * units::length + 2.0 * widest;
-  if (route.halfWidth > 0.0 && reach > route.halfWidth) {
-    char message[512];
-    std::snprintf(message, sizeof message,
-                  "'rigid_units = \"ON\"' cannot apply: the covering reach, "
-                  "%.4g Ang (the pair list distance plus twice %.4g Ang, the "
-                  "largest covering radius of the units), exceeds half the "
-                  "least face width of the cell, %.4g Ang",
-                  reach / units::length, widest / units::length,
-                  route.halfWidth / units::length);
-    return makeError(message);
-  }
+  // The reach against the cell: resolveRigidUnits refused it at the input
+  // cell, and every build of the list checks it at its own (D419), also
+  // where the search of the reaches has changed the pair list distance
+  // since (D281).
+  // The resolution took only kinds that the segments take (D405's facts,
+  // at most two), so a refusal here is a defect.
   auto plan = planKindPairs(topology, taken, resolved.radii);
   if (!plan)
-    return makeError("'rigid_units = \"ON\"' cannot apply: " +
-                     llvm::toString(plan.takeError()));
+    return makeError("the kinds that 'rigid_units' took are refused by the "
+                     "segments (" + llvm::toString(plan.takeError()) +
+                     "); this is a defect of mdir");
   test.plan = std::move(*plan);
   test.anchored = std::move(resolved.anchored);
   test.radius = resolved.restRadius;
