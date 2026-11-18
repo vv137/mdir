@@ -74,21 +74,38 @@ The measurement is on the host, in f64, once. It changes no device code.
 
 ## 5. The records
 
-**`mdir check`**, after the rigid groups (the numbers are illustrative):
+**`mdir check`**, after the rigid groups. Alanine dipeptide in OPC (`test/Driver/rigid-units-route.test`), whose inpcrd lies within the nominal radii:
 
 ```text
-rigid units:        ON: the units (rigid_units = "ON")
-  kind 1:   taken, 2,148 units of 4 places (3 in the frame, 1 site), radius 0.8895 Ang
-  kind 2:   not taken: 12 molecules with a pair of their own that is not excluded
-  the rest: 22 particles, 12 anchored, radius 1.0901 Ang
+rigid units:        ON: the units (ON was given)
+  kind 1:   taken, 387 units of 4 places (3 in the frame, 1 site), radius 0.8734 Ang
+  the rest: 22 particles, 12 anchored, radius 1.0910 Ang
   reach:    12.18 Ang, half the least face width 12.58 Ang
 ```
 
-With a radius widened at the input, its line ends `radius 1.0091 Ang (0.9582 constrained, widened at the input)`. Under `AUTO`, the first line is `AUTO: general (AUTO takes the general route until its rule is measured)`, and the lines of the kinds say what `ON` would take. Under `OFF`, `OFF: general`, and no line of the kinds. `ON` that is refused is an error of `mdir check`, with its reason.
+The rhombic dodecahedron of the tests, whose .gro lies beyond them:
 
-The JSON report has an object `rigid_units`: `requested`, `route` (`units` or `general`), `reason`, `kinds` (for each kind: `kind`, `taken`, `reason`, `units`, `places`, `sites`, `radius_angstrom`, `constrained_radius_angstrom`), `rest` (`particles`, `anchored`, `radius_angstrom`), `reach_angstrom`, `half_least_face_width_angstrom`.
+```text
+  kind 1:   taken, 403 units of 3 places (3 in the frame, 0 sites), radius 1.0101 Ang (0.9582 constrained, widened by 0.052 Ang to the input's 1.0091)
+```
 
-**The log** prints the first line of `mdir check`'s report in its header, beside the line of the neighbor structure, and the lines of the taken kinds. **The manifest** has `rigid_units_requested`, `rigid_units`, and `rigid_units_reason`, beside `neighbor_structure_*`, and the kinds as in the JSON report.
+D405's mixture of four kinds under `AUTO` (`test/Driver/check-rigid-groups.test`):
+
+```text
+rigid units:        AUTO: general (AUTO takes the general route until its rule is measured)
+  kind 1:   ON would take: 3 units of 3 places (3 in the frame, 0 sites), radius 0.9582 Ang
+  kind 2:   ON would take: 2 units of 4 places (3 in the frame, 1 site), radius 0.9582 Ang
+  kind 3:   not taken: beyond the two most populous
+  kind 4:   not taken: one particle
+  the rest: 10 particles, 2 anchored, radius 1.2010 Ang
+  reach:    12.4 Ang, half the least face width 15 Ang
+```
+
+Under `OFF` the line is `OFF: general (OFF was given)`, with no line of the kinds. `ON` that is refused is an error of `mdir check`, with its reason. A kind of three atoms that no kind takes, as kind 3 above, is in the rest: its atoms anchored to its first, as D421's rest takes a rigid water.
+
+The JSON report has an object `run.rigid_units`: `requested`, `route` (`units` or `general`), `reason`, `kinds` (for each kind: `kind`, `taken` (by this run), `taken_by_on`, `reason`, `units`, `places`, `frame`, `sites`, and for a kind that `ON` takes `radius_angstrom`, `constrained_radius_angstrom`, `input_distance_angstrom`, `widened_angstrom`), `rest` (`particles`, `anchored`, and the same four lengths), `reach_angstrom`, `half_least_face_width_angstrom`.
+
+**The log** prints the first line of `mdir check`'s report in its header, beside the line of the neighbor structure, where the key is given or the units are taken, and under `ON` the lines of the kinds, with their widening. **The manifest** has `rigid_units_requested`, `rigid_units`, `rigid_units_reason`, and `rigid_units_route` (the JSON report's object), beside `neighbor_structure_*` (`docs/run-manifest.schema.json`). **Python**: `Program.plan["rigid_units"]`, `["rigid_units_requested"]`, `["rigid_units_reason"]`, and `["rigid_units_kinds"]`, the numbers of the kinds taken.
 
 **The fingerprint** (D172): `[performance] rigid_units` in its execution part, only where the key is given. A checkpoint of `main`, or of a run without the key, continues without a note; a change of the value between two runs is a change of execution, which a continuation may make.
 
@@ -97,7 +114,7 @@ The JSON report has an object `rigid_units`: `requested`, `route` (`units` or `g
 ## 6. The test route
 
 `MDIR_RIGID_UNITS_TEST` and its row in `docs/environment.md` are removed. Its tests move to the key:
-- `test/Driver/rigid-units-test-invalid.test` becomes the test of the key's refusals, one case for each row of Section 3, and the cases of the numbers of kinds, which no longer exist, become the cases of Section 2 (no kind, no eligible kind, a third eligible kind);
+- `test/Driver/rigid-units-test-invalid.test` becomes `rigid-units-route.test`, the test of the key's refusals, one case for each row of Section 3 but the written forces (`rigid-units-written-forces-gpu.test`), and the cases of the numbers of kinds, which no longer exist, become the cases of Section 2 (no rigid kind, a kind of one particle alone, three eligible kinds and an ion, the facts of D403 broken);
 - `segments_contract.py`, `segments_trajectory.py`, `segments-schedule-ptx.test`, and the sanitizer's `segments-traverse-gpu.test` take `rigid_units = "ON"` (Python: `Execution.rigid_units`).
 
 ## 7. The maintainer's ruling (2026-11-18, on #915)
