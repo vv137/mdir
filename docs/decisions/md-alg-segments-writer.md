@@ -76,16 +76,16 @@ No pair is without an entry, none is listed twice, none is in a wrong segment, a
 - the velocities compared at the step and projected onto the constraints, as in #795's fullVelocity;
 - the baseline is the largest difference of 5 general mixed runs at each sample, recorded once in `Inputs/segments_trajectory_bounds.json`. A baseline of one run changes from run to run, and the gate flickered (the leader's ruling on #906).
 
-| Case | Largest ratio to its bound | Repeats passed |
+| Case | Largest ratio to its bound (one run) | Runs within the bounds |
 |---|---:|---:|
-| OPC, velocity Verlet, NVE | (filled at the head) | 10 of 10 |
-| OPC, velocity Verlet, NPT | | 10 of 10 |
-| OPC, leapfrog, NVE | | 10 of 10 |
-| OPC, leapfrog, NPT | 0.87 | 10 of 10 |
-| TIP3P, velocity Verlet, NVE | | 10 of 10 |
-| TIP3P, velocity Verlet, NPT | | 10 of 10 |
-| TIP3P, leapfrog, NVE | | 10 of 10 |
-| TIP3P, leapfrog, NPT | | 10 of 10 |
+| OPC, velocity Verlet, NVE | 0.135 | 10 of 10 |
+| OPC, velocity Verlet, NPT | 0.196 | 10 of 10 |
+| OPC, leapfrog, NVE | 0.165 | 10 of 10 |
+| OPC, leapfrog, NPT | 0.877 | 10 of 10 |
+| TIP3P, velocity Verlet, NVE | 0.296 | 10 of 10 |
+| TIP3P, velocity Verlet, NPT | 0.180 | 10 of 10 |
+| TIP3P, leapfrog, NVE | 0.472 | 10 of 10 |
+| TIP3P, leapfrog, NPT | 0.232 | 10 of 10 |
 
 A mutation of the writer, each offset written to the row of the next member, takes the OPC case beyond its bounds at the first sample. Tried once and reverted.
 
@@ -95,8 +95,8 @@ A mutation of the writer, each offset written to the row of the next member, tak
 - **The coupling.** It takes the projected $\mathbf v_{n+1}$, so its kinetic energy does not depend on the route. In `DynamicsIR.cpp` the kick to $\mathbf v_{n+1}$ is projected before the thermostat, the barostat, the pressure, and the log read it, and `docs/dynamics.md` now says so. On alanine dipeptide in OPC the kinetic energy of the unprojected velocity is 8 to 13.5% above the projected one, and the log's agrees with the projected one within 0.3%.
 
 **The corpus** (D406, `check.py compare ... --stages lowered --targets cpu,gpu --kinds run,segments --precisions mixed,double --execution neighbor_structure=GROUPS --instances`, `MDIR_GPU_BINARY=ptx`, against a fresh tree of `main` at 79582a24):
-- `sm_89`: 4,388 cases, 4,388 identical (2,482 of them the same error in both);
-- `sm_120`: (filled at the head).
+- `sm_89`: 4,388 cases, 4,388 identical (2,482 of them the same error in both), at b5ac4ec3;
+- `sm_120`: 4,388 cases, 4,388 identical (2,482 the same error), at b5ac4ec3, whose code is the head's.
 
 **The sanitizer tier** (`test/Sanitizer/segments-writer-gpu.test`, and `segments-traverse-gpu.test`, whose runs take the writer of each step). memcheck, initcheck, and racecheck pass. It held an RTX 4090 for 81 s.
 
@@ -141,7 +141,20 @@ The units' wall falls below #795's and `main`'s on every system. In S3 it was ab
 
 It is met on the RTX 4090. The RTX 5090, where it was first defined, was down.
 
-**The evaluation a call**, units against #795: 0.885, 1.042, 0.887, 0.983, 1.069 (1.060–1.075), and 0.961 in the order of the table. In S3's round 2, rd-tip3p was 1.027 and opc-large 0.996. The kernel and the layout of its frames are those of S3. A likely cause, not checked: the frames are now written before the reciprocal sum, so they have left the L2 cache by the time the loop reads them, where S3 packed them just before the loop.
+**The evaluation a call**, units against #795: 0.885, 1.042, 0.887, 0.983, 1.069 (1.060–1.075), and 0.961 in the order of the table. In S3's round 2, rd-tip3p was 1.027 and opc-large 0.996. The kernel and the layout of its frames are those of S3.
+
+**The place of the writer is not the cause** (the leader's question on #906; the counters of Nsight Compute are not available on these devices). A tree with the writer right before the refresh, after the reciprocal sum and next to the loops that read the frames, ran against this placement in two jobs of two rounds, interleaved with #795, on rd-tip3p and the large OPC box. Placed next to the loop:
+- the evaluation a call did not change: 0.998 (0.994–1.002) and 0.999 (0.994–1.002) of this placement's;
+- the wall rose to 1.042 (1.040–1.043) and 1.023 (1.022–1.024) of this placement's, since the host then waits for the flags before it issues the reciprocal sum.
+
+The writer therefore stays after the last writer of the positions.
+
+**Against S3 in the same jobs.** `main` at 79582a24 on the test route (S3) and this branch ran on the large OPC box and rd-tip3p, interleaved, in two jobs, each with captures of 30,000 steps.
+- The kernels of the loop are the same: their PTX is identical, but for the kernels' names.
+- On rd-tip3p the evaluation a call is unchanged. The loop of a step took 37.98 against 38.13 µs and 38.90 against 38.15; the loop of the steps that prune, 49.57 against 51.13 and 50.96 against 50.86. S3's 1.027 of #795 and this table's 1.042 differ between measurements, not between the two trees.
+- On the large OPC box the loop of a step is 3.7% and 4.8% slower (80.75 against 77.87 µs, 79.77 against 76.14), while the loop of the steps that prune is 0.9% and 1.1% faster.
+
+So the same code, reading the same frames, runs slower there. The frames now live in the runtime's buffers of the list, written a thread a member and in the order of the units; S3 allocated them at each call and wrote them a thread a place. Which of the two (where the buffers lie, or the state of the cache that the writing leaves) costs the 4% is not measured, since the counters of Nsight Compute are not available here. It is open for S5 (Section 6), which starts from these numbers: 1.042 on rd-tip3p and 1.069 on the large OPC box.
 
 **The step**, ubiquitin in OPC. The ranges are of the four captures under NVE, and of one capture of 20,000 steps under NPT:
 
@@ -166,7 +179,26 @@ S3's per-step copy of the refresh's test (1.04 a step, 57 µs, and 37.4 µs of i
 
 The host waits 38 to 43 µs a step in all, while the device works. They are the waits that a later step to graphs of CUDA would have to move onto the device.
 
+**Two systems of the Amber suite** (the leader's request; a separate measurement of #906's head, 64eee745, by the same protocol on RTX 4090s, two jobs):
+- JAC under NPT (Gaussian of order 4, 72³): the units' wall is 0.943 and 0.947 of `main`'s.
+- Cellulose under NPT (the suite's setting): the units' wall is 1.115 and 1.120 of `main`'s, about 153 µs a step more. Against `main`, the loops over pairs take 207 µs a step more (571 + 155 µs in two kernels, against 278 + 245). The list takes 73 µs less, the writer 50 µs more, and the coupling 37 µs more.
+
+Cellulose holds 105,855 waters, the taken kind, and 91,044 atoms of cellulose and ions, the rest (one unit each). This branch's captures of 2,000 steps (one job) split the loop of a step, 749 µs a call against `main`'s 567 and 587, by leaving one segment out at a time. That is an experiment of a separate tree, wrong in its physics, for the shares of the time alone:
+- without the segment of two waters, $(0, 0)$: 344 µs, so it takes about 405 µs of the 749;
+- without that of the rest with the rest, $(1, 1)$: 556 µs, about 193;
+- without that of a water and the rest, $(1, 0)$: 672 µs, about 78.
+
+The loop of the steps that prune takes 1,486 µs a call, once in 8 steps. The writer takes 52.9 µs a call over 197,000 units.
+
+So the rest with itself, which runs this schedule and not D415's (D421, "the rest with itself"), is a fourth of the loop, but not the whole gap. The pairs of two waters take the most. At Cellulose's pair list distance of 1.1 nm and pruned distance of 0.86, every segment's reaches carry $e_f + e_g$ on top of the groups' (0.19 nm for two waters), so the units' inner lists hold far more pairs a site than the groups'.
+
 ## 6. Open
+
+- **S4b's rule for `AUTO`** must not take the units where they are slower. Cellulose under NPT is the counterexample: 1.115 to 1.120 of `main`'s wall.
+- **Candidates for Cellulose, to be measured in S5:**
+  - the rest with itself by D415's schedule, or by S5's one schedule;
+  - the entries of two waters at the inner reach, against the groups';
+  - the pruning loop, 1.5 ms a call.
 
 - The evaluation a call above S3's on the large OPC box and rd-tip3p (Section 5). Its cause is a hypothesis, to be measured with the candidates of #904.
 - The first evaluation of a run, at the positions of the input before any constraint, packs its frames at the refresh, which checks no extents. #795 measured the extents at the build there. The extents at the input are left to S4b, whose route reads inputs from files.
