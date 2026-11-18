@@ -1081,10 +1081,23 @@ LogicalResult Schedule::run() {
     });
   }
 
-  // The frames and fields of the places, in the room of the structure's
-  // places (D312).
-  Value room = memref::DimOp::create(builder, loc, lists.order, ix(builder, 0));
-  emitPack(builder, box, room);
+  // The frames and fields of the places: those that the writer of the list
+  // packed at these positions (D[md-alg-segments-writer]), or packed here,
+  // in the room of the structure's places (D312).
+  bool framed = static_cast<bool>(lists.frameAnchors) &&
+                (maxMembers == 1 || lists.frameOffsets);
+  for (auto [j, read] : llvm::enumerate(fieldRead))
+    framed &= !read || (j < lists.frameFields.size() && lists.frameFields[j]);
+  if (framed) {
+    anchors = lists.frameAnchors;
+    offsets = maxMembers > 1 ? lists.frameOffsets : Value();
+    for (auto [j, read] : llvm::enumerate(fieldRead))
+      fields.push_back(read ? lists.frameFields[j] : Value());
+  } else {
+    Value room =
+        memref::DimOp::create(builder, loc, lists.order, ix(builder, 0));
+    emitPack(builder, box, room);
+  }
 
   // A warp for each record, as many warps as particles at most (the
   // scratch of the sums has a row a particle); a warp takes the records
@@ -1306,13 +1319,17 @@ LogicalResult Schedule::run() {
   }
   (void)context;
 
-  // The packed frames are freed once the loop has read them.
-  SmallVector<Value> packed = {anchors};
-  if (offsets)
-    packed.push_back(offsets);
-  for (Value field : fields)
-    if (field)
-      packed.push_back(field);
+  // The packed frames are freed once the loop has read them; the writer's
+  // belong to the list.
+  SmallVector<Value> packed;
+  if (!framed) {
+    packed.push_back(anchors);
+    if (offsets)
+      packed.push_back(offsets);
+    for (Value field : fields)
+      if (field)
+        packed.push_back(field);
+  }
   for (Value buffer : packed) {
     auto memref = cast<MemRefType>(buffer.getType());
     Value plain = memref::MemorySpaceCastOp::create(
@@ -1324,6 +1341,29 @@ LogicalResult Schedule::run() {
   return host.finishSums(op, builder, op.getReduce(), op.getScratch(), warps);
 }
 } // namespace
+
+SmallVector<bool> kernels::getSegmentFieldsRead(md_alg::TraversePairsOp op) {
+  auto type = cast<mdrt::SegmentedPairsType>(op.getListType());
+  SmallVector<bool> read(op.getIns().size(), false);
+  for (unsigned r = 0, e = op.getSegmentKernels().size(); r != e; ++r) {
+    auto [f, g] = mdrt::getSegmentKinds(op.getSegmentsAttr(), r);
+    unsigned M = mdrt::getSitePairs(op.getSitesAttr(), r).size();
+    unsigned members = type.getNumMembers(f) + type.getNumMembers(g);
+    Block &kernel = op.getSegmentKernels()[r].front();
+    for (unsigned j = 0, ej = op.getIns().size(); j != ej; ++j)
+      for (unsigned k = 0; k != members; ++k)
+        read[j] = read[j] ||
+                  !kernel.getArgument(2 * M + j * members + k).use_empty();
+  }
+  return read;
+}
+
+unsigned kernels::getSegmentMaxMembers(mdrt::SegmentedPairsType type) {
+  unsigned most = 1;
+  for (unsigned f = 0, K = type.getNumKinds(); f <= K; ++f)
+    most = std::max(most, type.getNumMembers(f));
+  return most;
+}
 
 LogicalResult kernels::lowerTraversePairsSegmentsSIMT(
     md_alg::TraversePairsOp op, TraverseHost &host, const SegmentLists &lists,

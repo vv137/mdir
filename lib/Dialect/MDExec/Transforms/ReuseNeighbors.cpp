@@ -532,8 +532,9 @@ static bool reuseSegmented(scf::ForOp loop, double pruneSkin) {
       double prune = pruneSkin > 0.0 && pruneSkin < skin ? pruneSkin : skin;
       Value refreshed = RefreshSegmentedPairsOp::create(
           at, build.getLoc(), current.getType(), current,
-          build.getPositions(), build.getCell(), build.getCutoffAttr(),
-          build.getSkinAttr(), at.getF64FloatAttr(prune));
+          build.getPositions(), build.getCell(), /*moved=*/Value(),
+          /*stale=*/Value(), build.getCutoffAttr(), build.getSkinAttr(),
+          at.getF64FloatAttr(prune));
       build.getResult().replaceAllUsesWith(refreshed);
       build.erase();
       yielded.push_back(refreshed);

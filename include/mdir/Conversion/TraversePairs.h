@@ -147,7 +147,21 @@ struct SegmentLists {
   InnerLists inner;
   mlir::Value active, activeCount;
   bool dual = false;
+  /// The frames that the writer of the list packed at the loop's positions
+  /// (D[md-alg-segments-writer]): the anchors, the offsets of the members,
+  /// and, by the index of `ins`, each field that it packed (null for one it
+  /// did not). Without the anchors the schedule packs the frames itself.
+  mlir::Value frameAnchors, frameOffsets;
+  llvm::SmallVector<mlir::Value> frameFields;
 };
+
+/// Which fields of `ins` of the traversal over a list of units `op` some
+/// slice reads, at any member (D421; the writer packs those,
+/// D[md-alg-segments-writer]).
+llvm::SmallVector<bool> getSegmentFieldsRead(md_alg::TraversePairsOp op);
+
+/// The members of a unit at most, over the kinds of `type` and the rest.
+unsigned getSegmentMaxMembers(mdrt::SegmentedPairsType type);
 
 /// The pruning of a dual list of units in the loop that takes its refresh
 /// (D284; D417, Section 6), from the pass that calls the schedule: whether

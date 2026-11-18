@@ -634,7 +634,7 @@ def MDExec_EmptySegmentedPairsOp : MDExec_SegmentedListOp<"empty_segmented_pairs
 }
 
 def MDExec_RefreshSegmentedPairsOp : MDExec_Op<"refresh_segmented_pairs", [
-    AllTypesMatch<["list", "result"]>,
+    AllTypesMatch<["list", "result"]>, AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "A list of units that is valid for a configuration";
   let description = [{
@@ -653,11 +653,79 @@ def MDExec_RefreshSegmentedPairsOp : MDExec_Op<"refresh_segmented_pairs", [
             cutoff(0.9) skin(0.1) prune_skin(0.05)
             : !sp, !md.field<@atoms, 3 x f64>
     ```
+
+    With `moved` and `stale`, the results of the writer of the list
+    (`md_exec.write_unit_frames`) at the same positions, cell, and reaches,
+    the op makes no test of its own: `moved` tells that the list is not
+    valid, `stale` that its inner list is not (D[md-alg-segments-writer]).
+
+    ```mlir
+    %moved, %stale = md_exec.write_unit_frames %l0 at(%x, %cell)
+                       cutoff(0.9) skin(0.1) prune_skin(0.05)
+                       : !sp, !md.field<@atoms, 3 x f64>
+    %l1 = md_exec.refresh_segmented_pairs %l0 at(%x, %cell)
+            moved(%moved) stale(%stale)
+            cutoff(0.9) skin(0.1) prune_skin(0.05)
+            : !sp, !md.field<@atoms, 3 x f64>
+    ```
+  }];
+  let arguments = (ins MDRT_SegmentedPairsType:$list,
+      MDExec_FieldOrBuffer:$positions, MD_CellType:$cell,
+      Optional<I1>:$moved, Optional<I1>:$stale,
+      F64Attr:$cutoff, F64Attr:$skin, F64Attr:$prune_skin);
+  let results = (outs MDRT_SegmentedPairsType:$result);
+  let assemblyFormat = [{
+    $list `at` `(` $positions `,` $cell `)`
+    (`moved` `(` $moved^ `)`)? (`stale` `(` $stale^ `)`)?
+    `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
+    `prune_skin` `(` $prune_skin `)` attr-dict
+    `:` qualified(type($list)) `,` qualified(type($positions))
+  }];
+  let hasVerifier = 1;
+}
+
+def MDExec_WriteUnitFramesOp : MDExec_Op<"write_unit_frames", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let summary = "Writes the frames of the units of a list and tests it";
+  let description = [{
+    The writer of a list of units (D[md-alg-segments-writer]; D417,
+    Section 8, S4a). At the positions `positions` in `cell`, it writes the
+    list's frames, which the loops over the list read: for each unit the
+    position of its anchor in the frame of its place and the offsets of its
+    members from the anchor, the image of each bond nearest the anchor
+    (D417, Section 4.3). It returns:
+
+    - `moved`: whether a reference point of a unit has moved, since the list
+      was built, by more than the least half-margin of the segments,
+      `min_s (m (R + E_s) - (r_c + E_s)) / 2`, `R = cutoff + skin`,
+      `E_s = e_f + e_g`, `m` the least ratio of the edges to those of the
+      build (D419, Section 3); true for a list that has not been built;
+    - `stale`: the same against the last pruning of a dual list, with
+      `R_in = cutoff + prune_skin`; false for a list that is not dual.
+
+    The reference points of the units form one mobility group (#799). The op
+    stops the run where a place of a unit lies beyond the covering radius of
+    its unit (R5): a site whose weights all lie in [0, 1] lies in the convex
+    hull of its frame and is covered by the frame atoms; any other site is
+    checked itself (D417, Section 3).
+
+    It comes after the last op that writes the positions and before the
+    first loop that reads the list's frames, so that no loop reads a frame
+    whose extents were not checked. `md-exec-expose-validity` makes it for
+    each refresh of a list of units, and the refresh takes its results.
+
+    ```mlir
+    %moved, %stale = md_exec.write_unit_frames %l at(%x, %cell)
+                       cutoff(0.9) skin(0.1) prune_skin(0.05)
+                       : !sp, !md.field<@atoms, 3 x f64>
+    ```
+
+    In the storage form `positions` is a buffer.
   }];
   let arguments = (ins MDRT_SegmentedPairsType:$list,
       MDExec_FieldOrBuffer:$positions, MD_CellType:$cell,
       F64Attr:$cutoff, F64Attr:$skin, F64Attr:$prune_skin);
-  let results = (outs MDRT_SegmentedPairsType:$result);
+  let results = (outs I1:$moved, I1:$stale);
   let assemblyFormat = [{
     $list `at` `(` $positions `,` $cell `)`
     `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
@@ -665,6 +733,11 @@ def MDExec_RefreshSegmentedPairsOp : MDExec_Op<"refresh_segmented_pairs", [
     `:` qualified(type($list)) `,` qualified(type($positions))
   }];
   let hasVerifier = 1;
+  let extraClassDeclaration = [{
+    bool isStorageForm() {
+      return ::llvm::isa<::mlir::MemRefType>(getPositions().getType());
+    }
+  }];
 }
 
 def MDExec_SegmentForOp : MDExec_Op<"segment_for", [

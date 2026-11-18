@@ -201,6 +201,29 @@ void mdrtSegmentsStopReach(double reach, double widest, double half) {
   stopWith(message);
 }
 
+/* The writer of a list of units (D[md-alg-segments-writer]) found a
+   place of a unit beyond the covering radius of its unit after the
+   position constraints of a step: a site or frame atom of a copy of a rigid
+   kind, or a member of the rest farther from its anchor than the radius of
+   the rest. The list's reaches assume that none is (D417, R5), so pairs
+   within the cutoff may be missing. In a step with constraints the stop
+   waits for their test, whose failure it would follow from (D278). */
+void mdrtSegmentsStopExtent(void) {
+  const char *message =
+      "a unit of the list of units lies beyond its covering radius after the "
+      "constraints of a step, which the list's reaches assume it does not; "
+      "the run has failed (a constraint that does not hold the rigid kind, "
+      "or a defect of mdir)";
+  if (deferringStops) {
+    if (!hasPendingStop) {
+      snprintf(pendingStop, sizeof pendingStop, "%s", message);
+      hasPendingStop = 1;
+    }
+    return;
+  }
+  stopWith(message);
+}
+
 /* The excluded pairs of a list of units (D419) hold
    `count` pairs that its build cannot leave out: of a particle of the rest
    and a copy of a taken kind, or of two copies. D405 takes the kinds so that

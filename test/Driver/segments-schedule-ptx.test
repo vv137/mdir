@@ -19,10 +19,16 @@
 # CHECK: segment (1, 0): 2 lookups
 # CHECK: segment (1, 1): 2 lookups
 #
-# No load of a stored extra point: the frames are packed from three members
-# of a water and one particle of the rest, 12 loads of f64 positions; the
-# water's fourth place, the stored site, is not among them.
+# No load of a stored extra point: after a build the refresh packs the
+# frames from three members of a water and one particle of the rest, 12
+# loads of f64 positions; the water's fourth place, the stored site, is not
+# among them. The writer of each step (D[md-alg-segments-writer]), a thread a
+# member, loads 18: for a water the anchor, the member of its thread, and
+# the anchor's reference point; for a particle of the rest itself, its
+# reference point, and the anchor of an anchored member (each three). The
+# stored site would add three.
 # CHECK: packing: 12 loads of 64 bits
+# CHECK: writer: 18 loads of 64 bits
 #
 # The rotation and the table: the kernel of Lennard-Jones alone (the pairs
 # (O, O) of two waters, a water and an atom, two atoms: 3 guards), of
