@@ -551,7 +551,7 @@ the cutoff once: a pair within $r_c$ is within $R$ at the build while the
 structure is valid (Section 7.1), so it has a bit, and a pair farther than
 $R$ has none.
 
-**Fixed-point design (D[groups-fixed-point]).** In a weighted site's transpose, round each component of the site force and its weighted member forces at the same scale. Assign their integer difference to the frame member with the largest absolute weight, taking the first in topology order at a tie. This preserves the molecule's quantized net force exactly, including for signed weights. The design targets a correction of at most one quantum per component and site. Four equal weights can require two quanta under independent ties-to-even rounding. The decision records this open bound. A correction along one component changes the torque about the molecular center by at most the correction magnitude times the selected member's distance from that center.
+**Fixed-point design (D[groups-fixed-point]).** For each component, distribute the already quantized site force among its weighted members. Round each share and assign the integer residual to the member of largest absolute weight, breaking ties by topology order. The molecule receives the exact quantized site force, including for signed weights. For $k$ weighted members each share rounds by at most half a quantum, so the residual on its recipient is at most $k/2$ quanta per component and site (1.5 for three members). Its torque for that component is at most that force correction times the recipient's distance from the molecular center. The scale budget includes these corrections over the step alongside pair rounding.
 
 **The schedule** (the SIMT lowering of `md_alg.traverse_pairs`,
 `lib/Conversion/MDExecKernels/TraversePairs.cpp`, which
