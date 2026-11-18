@@ -13,7 +13,7 @@
 # ion; the two waters taken, the rest anchored), plain cutoffs of 0.9 nm.
 # RUN: rm -rf %t && mkdir -p %t/mixture
 # RUN: %python %S/Inputs/kind_pairs_mixture.py %t/mixture
-# RUN: %mdir_python %S/Inputs/rigid_units_frames.py mixture %t/mixture/system.top %t/mixture/system.gro 3 10 --oracle --floor | tee %t/mixture.txt | FileCheck %s -DS=mixture --check-prefixes=CHECK,ORACLE
+# RUN: %mdir_python %S/Inputs/rigid_units_frames.py mixture %t/mixture/system.top %t/mixture/system.gro 3 10 --oracle | tee %t/mixture.txt | FileCheck %s -DS=mixture --check-prefixes=CHECK,ORACLE
 #
 # The anchors of the rest, with PME: alanine dipeptide in OPC under NPT
 # (Amber's extra point, not linear in its frame, so compared from the first
@@ -27,11 +27,12 @@
 # the oracle as well, and with PME. Its input holds close contacts (a
 # Lennard-Jones energy of 12,380 kJ/mol there, 3,145 after 25 steps), where
 # the baseline of the other route does not bound the rounding of the
-# units' sums: the bounds take the floor of the error model of the sums in
-# f32 (--floor; Inputs/rigid_units_frames.py, D[rigid-units-route],
-# Section 8).
+# units' sums (with PME, 1.59 times it at the input): the PME case's bounds
+# take the floor of the error model of the sums in f32 as well (--floor;
+# Inputs/rigid_units_frames.py, D[rigid-units-route], Section 8). The other
+# cases keep the baseline alone, which the floor would make looser.
 # RUN: sed -e '/^#ifdef/,/^#else/d' -e '/^#endif/d' %S/Inputs/triclinic/water.top > %t/water.top
-# RUN: %mdir_python %S/Inputs/rigid_units_frames.py dodecahedron-cutoff %t/water.top %S/Inputs/triclinic/dodecahedron.gro 3 25 --oracle --floor --cutoff=0.6 --pairlist=0.7 --pruned=0.66 | tee %t/dodecahedron-cutoff.txt | FileCheck %s -DS=dodecahedron-cutoff --check-prefixes=CHECK,ORACLE
+# RUN: %mdir_python %S/Inputs/rigid_units_frames.py dodecahedron-cutoff %t/water.top %S/Inputs/triclinic/dodecahedron.gro 3 25 --oracle --cutoff=0.6 --pairlist=0.7 --pruned=0.66 | tee %t/dodecahedron-cutoff.txt | FileCheck %s -DS=dodecahedron-cutoff --check-prefixes=CHECK,ORACLE
 # RUN: %mdir_python %S/Inputs/rigid_units_frames.py dodecahedron %t/water.top %S/Inputs/triclinic/dodecahedron.gro 3 25 --floor --pme --cutoff=0.6 --pairlist=0.7 --pruned=0.66 | tee %t/dodecahedron.txt | FileCheck %s -DS=dodecahedron
 #
 # CHECK: [[S]]: kinds taken

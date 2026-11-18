@@ -238,7 +238,7 @@ def oracle(state):
 # quantity that depends on the roundings to first order through
 # sum_k a_k delta_k lies within lambda u sqrt(sum_k a_k^2), except with
 # probability at most 2 exp(-lambda^2 / 2) (the inequality of Hoeffding that
-# their analysis rests on); lambda = 6.5 makes that 4e-10. With u = 2^-24:
+# their analysis rests on); lambda = 6.5 makes that 1.3e-9. With u = 2^-24:
 #   - the evaluation of a term, k roundings of its magnitude: k = 28 for the
 #     Lennard-Jones (r^2 in three products and two sums, its inverse, the
 #     cube and the square: 6 (3 + 1) + 4) and k = 12 for Coulomb (erfc's
