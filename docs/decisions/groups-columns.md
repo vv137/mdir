@@ -27,7 +27,19 @@ JAC and Cellulose ran controls with a relative RMS force error of about 4e-4; Fa
 
 **Not measured on `sm_12x`.** The maintainer's ruling asked for the same comparison on an RTX 5090 or an RTX PRO 6000, against `main` on the same kind, with 64 kept there if 96 does not gain. Neither device could take a job while this PR was prepared: the RTX 5090's machine did not answer, and every core of the RTX PRO 6000's node was held by another job. The entry of the major version 12 therefore keeps 64, so the programs for `sm_12x` are those of before. Its measurement is open.
 
-GATES
+## Gates
+
+**The same programs elsewhere** (D406's method, `scripts/builder-equivalence/check.py compare --stages lowered`, GPU, the run and the segments, mixed and double, as written and with `neighbor_structure = "GROUPS"`; the examples, the tests, the Amber suite, and the cases; 2,194 cases a target):
+- On `sm_120`, every program is identical to the base's.
+- On `sm_89`, 1,380 are identical (892 of them stop with the same error in both). The other 814 are the programs that build groups, and each differs from the base's in one line, the occupancy of the plan of the columns: `6.400000e+01` becomes `9.600000e+01`.
+
+**The step at the head against its base** (the timing protocol, RTX 4090, NPT; µs a step, job 1 / job 2):
+
+| | JAC | Factor IX | Cellulose | STMV | TIP3P |
+|---|---|---|---|---|---|
+| base | 169.6 / 169.8 | 349.6 / 349.2 | 1314.8 / 1312.9 | 4132 / 4134 | 1048.5 / 1047.3 |
+| head | 165.8 / 165.9 | 342.1 / 341.9 | 1271.5 / 1272.9 | 4014 / 4014 | 1039.0 / 1040.2 |
+| ratio | 0.978 / 0.977 | 0.979 / 0.979 | 0.967 / 0.970 | 0.972 / 0.971 | 0.991 / 0.993 |
 
 ## Alternatives
 
