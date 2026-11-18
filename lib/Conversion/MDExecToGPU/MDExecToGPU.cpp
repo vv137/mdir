@@ -353,6 +353,10 @@ public:
   /// The units of a column of the build over units: the policy's, or the
   /// option's (`segments-column-units`).
   double segmentsColumnUnits = md_exec::policy::kDefaultSegments.columnUnits;
+  /// The particles of a column of the groups' build: the policy's, or the
+  /// option's (`groups-column-particles`).
+  double groupsColumnParticles =
+      md_exec::policy::kDefaultGroups.columnParticles;
   /// An opt-in compiler strategy for the integer scans of the groups build.
   bool singlePassGroupScan = false;
   /// Whether the loops over tuples of the module may add to their members
@@ -5164,7 +5168,8 @@ LogicalResult Lowering::addGroupsBuild(bool tilted) {
   // its own; its md_alg ops stay for convert-md-alg-to-gpu
   // (D408).
   OwningOpRef<ModuleOp> templates = ModuleOp::create(module.getLoc());
-  kernels::emitGroupsBuild(*templates, tilted, singlePassGroupScan);
+  kernels::emitGroupsBuild(*templates, tilted, singlePassGroupScan,
+                           groupsColumnParticles);
   // The helpers that the build over units shares are taken once.
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     auto symbol = dyn_cast<SymbolOpInterface>(op);
@@ -11335,6 +11340,18 @@ public:
     lowering.segmentsColumnUnits = segmentsColumnUnits > 0
                                        ? double(segmentsColumnUnits)
                                        : policy.segments.columnUnits;
+    // -1 takes the policy's entry; any other value must be a count.
+    if (groupsColumnParticles != -1 && groupsColumnParticles <= 0) {
+      getOperation().emitError()
+          << "convert-md-exec-to-gpu: groups-column-particles="
+          << int64_t(groupsColumnParticles)
+          << " is not a number of particles: it takes -1 (the entry of the "
+             "tuning policy for the architecture) or a positive count";
+      return signalPassFailure();
+    }
+    lowering.groupsColumnParticles = groupsColumnParticles > 0
+                                         ? double(groupsColumnParticles)
+                                         : policy.groups.columnParticles;
     lowering.tuplesMayReorder = tuplesMayReorder;
     lowering.keptTuples = keptTuples;
     lowering.deviceTuples = keptTuples && deviceTuples;

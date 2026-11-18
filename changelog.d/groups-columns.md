@@ -1,0 +1,3 @@
+### Changed
+
+- **On an RTX 4090 (`sm_89`) the groups of neighbors are built from columns of 96 particles a cube of their width, instead of 64, as an entry of the tuning policies** (D[groups-columns], #912). There the step takes 2.1 to 3.3% less time on the four systems of the Amber suite and 0.8% less on a water box of 310,000 sites. The lists hold 2 to 3% fewer entries, whose atomic reductions bound the loop over pairs, and the build is faster. The forces change by the order of their sums only. Every other architecture keeps 64, which was not measured against 96 there. The option `groups-column-particles` of `convert-md-exec-to-gpu` sets another count. See [docs/neighbor-groups.md](docs/neighbor-groups.md#2-the-compact-order).

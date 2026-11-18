@@ -1706,6 +1706,7 @@ only from that record. The tables are in
 | Scatter-accumulates | `tileMinPoints`, `tileEdge`, `hashLeast`, `hashProbes`, `pairHashLeast` | 500,000, 8, 100,000, 8, 0 | none | D282 and D283, 2026-10-18: the Amber suite on an RTX 4090 and an RTX PRO 6000; D291 for the loops over pairs |
 | Launches | `blockSize`, `rowLanes`, `stageBlockSize`, `blockMemoryBytes`, the gathering's lanes | 128, 16, 256, 48 KiB, 4 a particle up to order 4 and 8 above | none | Not measured as a choice; the lanes of the gathering in the prototype of #334 (Cellulose, RTX 4090; #411) |
 | The SIMT schedule of a list of units | `blockSize`, `rotationLanes`, `columnUnits` | 128, 16, 128 | none | D421, 2026-11-18: the block and rotation are #795's; the units of a column swept over 64 to 256 on #795's six systems on an RTX 4090 (`sm_89`); other architectures take it as a fallback |
+| The build of the groups | `columnParticles` | 64 | `sm_89`: 96 | The default is D89's, not measured as a choice; the entry of `sm_89` is D[groups-columns], 2026-11-18: the particles of a column swept over 64 to 192 on JAC, Factor IX, Cellulose, STMV, and a TIP3P box on an RTX 4090, NPT |
 
 ### 8.2 Key, selection, and fallback
 

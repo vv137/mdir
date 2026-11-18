@@ -306,8 +306,11 @@ The cost of a list grows with the volume within $R$ of its group (Section
 4.4.3), so every group must fill a small box whatever the positions. The
 build sorts the particles into a *compact order*:
 
-1. Columns of a grid in $x$–$y$ of side $d_\text{col} = (64/\rho)^{1/3}$,
-   the edge of a cube that holds 64 particles on average:
+1. Columns of a grid in $x$–$y$ of side $d_\text{col} =
+   (n_\text{col}/\rho)^{1/3}$, the edge of a cube that holds $n_\text{col}$
+   particles on average, $n_\text{col} = 96$ (an entry of the tuning
+   policies, D[groups-columns], measured on the RTX 4090; 64, the first
+   build's value, on every architecture where it was not measured):
    $N_\text{col} = \lfloor L_x/d_\text{col}\rfloor\lfloor
    L_y/d_\text{col}\rfloor$ columns, each count clamped to $[1, 256]$.
 2. Bins along $z$, $\max(1, \lfloor 2N/N_\text{col}\rfloor)$ a column, and a
@@ -325,10 +328,17 @@ not depend on the threads. A column has at most 63 empty places, in its
 last chunk, and a chunk of fewer than four particles leaves whole groups
 empty; the places are at most $N + 63N_\text{col}$. A chunk of 64
 particles of a column of cross section $d_\text{col}^2$ is about
-$d_\text{col}$ tall, so a group occupies a prism of about
-$\tfrac12 d_\text{col} \times \tfrac12 d_\text{col} \times d_\text{col}$,
-half-widths $\mathbf w \approx (\tfrac14, \tfrac14, \tfrac12)d_\text{col}$:
-in water ($\rho = 0.1$ Å$^{-3}$), $4.3 \times 4.3 \times 8.6$ Å. The order
+$(64/n_\text{col})\,d_\text{col}$ tall, so a group occupies a box of about
+$\tfrac12 d_\text{col} \times \tfrac12 d_\text{col} \times
+(64/n_\text{col})\,d_\text{col}$, half-widths $\mathbf w \approx (\tfrac14,
+\tfrac14, 32/n_\text{col})d_\text{col}$: in water ($\rho = 0.1$ Å$^{-3}$),
+$4.9 \times 4.9 \times 6.6$ Å. The size of the box trades two costs. A
+wider column gives a squatter box (1:1:2 at $n_\text{col} = 64$, a cube at
+128), whose volume within $R$ (Section 4.4.3), and with it the entries of
+the lists, is smaller, and fewer chunks to sort; but the column's cross
+section grows. On an RTX 4090, 96 took the least time a step among 64 to
+192 on the Amber suite and a water box (`docs/neighbor-groups.md`,
+Section 11.9). The order
 of the cells of the matrix gave boxes 12 Å long, and the loop over groups
 was then slower than the matrix (`docs/neighbor-groups.md`, Section 11.1).
 
@@ -394,19 +404,22 @@ $$
 $$
 
 using $N = 16 \times$ the groups, and the share within the cutoff is
-$\zeta_c \approx \zeta_R (r_c/R)^3$. For the prism of Section 4.4.2 the
-bound is 0.34 at STMV ($R$ = 9.5 Å) and 0.39 at JAC ($R$ = 11 Å); the
-blocks that the lists took, $\sum_g E_g \le 64B$, give $\zeta_R \ge
-N\bar n/(2048B)$, at least 0.42 at STMV and 0.65 at JAC (Section 4.4.7). The union of 16
+$\zeta_c \approx \zeta_R (r_c/R)^3$. For the box of Section 4.4.2,
+$\mathbf w = (\tfrac14, \tfrac14, \tfrac13)d_\text{col}$ at $n_\text{col} =
+96$, the bound is 0.35 at STMV ($R$ = 9.5 Å) and 0.40 at JAC ($R$ = 11 Å),
+against 0.34 and 0.39 for the prisms of $n_\text{col} = 64$; the blocks
+that the lists took with the prisms, $\sum_g E_g \le 64B$, give $\zeta_R
+\ge N\bar n/(2048B)$, at least 0.42 at STMV and 0.65 at JAC (Section 4.4.7). The union of 16
 balls is well inside the box widened by $R$, so the bound is loose, but its
 terms show what sets the length: at these reaches the quarter cylinders,
-which grow with $\sum_a w_a$, are about half of $V_R$, and a cube of the
-volume of the prism would make $V_R$ about 3% smaller. Without the box test
+which grow with $\sum_a w_a$, are about half of $V_R$; a cube of the
+volume of the prism makes $V_R$ about 3% smaller, and the lists measured
+with the columns of 96 hold 2 to 3% fewer entries than with the prisms. Without the box test
 each group would test every candidate of its window, about
 $\rho\prod_a(2w_{g,a} + 2R + L_a/N_{\text{cell},a})$ particles, half of
 them after the group, against the 16 members; on JAC that is about 1,800
 candidates against about $\tfrac12\rho V_R \approx 700$ that pass the
-box test (estimates for a uniform density and the prism).
+box test (estimates for a uniform density and the prism of 64).
 
 ### 4.4.4 Frames and images
 
@@ -572,13 +585,21 @@ beyond the cutoff, so that a single comparison, $r^2 < r_c^2$, masks it:
 the loop has no divergent branch. Two coefficients of Lennard–Jones read at
 the same entry of a type table are one load of 8 bytes (D96).
 
-**Its cost.** With these, the loop is bound by the pipe of loads and
-shuffles (Nsight Compute, 92% of its peak on Cellulose). A step shuffles
-each component of the entry's position, of its fields, and of the values
-it has received: 8 shuffles a pair on the nonbonded kernel. Its time is
-then that of the slots, $16\sum_g E_g$, of which the share $\zeta_c$ holds
-a pair within the cutoff (Section 4.4.3); the compact order raised that
-share on Cellulose at 9 Å from 23.8% to 29.7%.
+**Its cost.** A step shuffles each component of the entry's position, of
+its fields, and of the values it has received: 8 shuffles a pair on the
+nonbonded kernel. At the end of a round each entry adds what it received
+to its particle with an atomic reduction a component, 3 for a force. The
+throughput of those reductions bounds the loop (#912, by removal on an
+RTX 4090): with them predicated off the loop takes 0.67 to 0.72 of its
+time, with one of the three left 0.69 to 0.73, with two 0.77 to 0.80, and
+the arithmetic, the shuffles, and the loads overlap under that bound
+(removing the table loads gains 4 to 6%, five of the shuffles 2 to 4%).
+The time therefore follows the entries, $\sum_g E_g$, and then the
+slots, $16\sum_g E_g$, of which the share $\zeta_c$ holds a pair within
+the cutoff (Section 4.4.3); the compact order raised that share on
+Cellulose at 9 Å from 23.8% to 29.7%. An earlier reading with Nsight
+Compute on an RTX 3090, the loop bound by the pipe of loads and shuffles
+at 92% of its peak, does not hold for the current loop on the RTX 4090.
 
 ### 4.4.6 Tests in f32
 

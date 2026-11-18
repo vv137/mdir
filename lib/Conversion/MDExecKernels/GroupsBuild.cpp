@@ -424,8 +424,10 @@ constexpr StringLiteral kOffsetTriclinic = "mdrt_gpu_groups_offset_triclinic";
 /// take, by the names they have in the code.
 class GroupsBuild : public Code {
 public:
-  GroupsBuild(OpBuilder &b, Location loc, bool tilted, bool singlePass)
-      : Code(b, loc), tilted(tilted), singlePass(singlePass) {}
+  GroupsBuild(OpBuilder &b, Location loc, bool tilted, bool singlePass,
+              double columnParticles)
+      : Code(b, loc), columnParticles(columnParticles), tilted(tilted),
+        singlePass(singlePass) {}
   /// The build over units of `kinds` taken rigid kinds and the rest
   /// (D419).
   GroupsBuild(OpBuilder &b, Location loc, bool tilted, bool singlePass,
@@ -438,6 +440,8 @@ public:
 private:
   /// Over units, the units of a column of the plan of the columns.
   double columnUnits = 64.0;
+  /// Over particles, the particles of a column (GroupsPolicy).
+  double columnParticles = 64.0;
   bool tilted, singlePass;
   // Over units: K taken kinds, the rest rank 0 and kind f at rank K - f,
   // and S = (K + 1)(K + 2) / 2 segments.
@@ -2949,7 +2953,8 @@ void GroupsBuild::emitBuild() {
           freachMax = truncf(cellReachWide);
         }
 
-        // The columns: about 64 particles in a cube of their width.
+        // The columns: `columnParticles` particles in a cube of their
+        // width, about 96 (GroupsPolicy, D[groups-columns]).
         // At least one column and at most 256 along an edge
         // (md_alg.grid_plan), with maxnumf and minnumf, which take the
         // other operand for one that is not a number: a cell that is not a
@@ -2959,7 +2964,7 @@ void GroupsBuild::emitBuild() {
         Value volume = mulf(lxy, lz);
         // Over units, the units of a column are an entry of the policy
         // (SegmentsPolicy::columnUnits, D420).
-        double perCube = unitsMode ? columnUnits : 64.0;
+        double perCube = unitsMode ? columnUnits : columnParticles;
         auto columnPlan = md_alg::GridPlanOp::create(
             b, loc, TypeRange{i64, i64}, ValueRange{lx, ly}, /*width=*/Value(),
             volume, b.getF64FloatAttr(perCube), n, b.getF64FloatAttr(1.0),
@@ -3304,9 +3309,10 @@ std::string kernels::getGroupsBuildName(bool triclinic) {
 }
 
 void kernels::emitGroupsBuild(ModuleOp module, bool triclinic,
-                              bool singlePassScan) {
+                              bool singlePassScan, double columnParticles) {
   OpBuilder b = OpBuilder::atBlockEnd(module.getBody());
-  GroupsBuild(b, module.getLoc(), triclinic, singlePassScan).emit();
+  GroupsBuild(b, module.getLoc(), triclinic, singlePassScan, columnParticles)
+      .emit();
 }
 
 std::string kernels::getSegmentsBuildName(bool triclinic, unsigned kinds) {
@@ -3350,7 +3356,9 @@ public:
           module, triclinic, singlePassScan, kinds,
           mdir::md_exec::policy::kDefaultSegments.columnUnits);
     else
-      kernels::emitGroupsBuild(module, triclinic, singlePassScan);
+      kernels::emitGroupsBuild(
+          module, triclinic, singlePassScan,
+          mdir::md_exec::policy::kDefaultGroups.columnParticles);
   }
 };
 } // namespace

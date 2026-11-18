@@ -1,7 +1,7 @@
 # Groups of Neighbors: Design and Algorithm
 
 Status: accepted (2026-10-01), D89; kept current (last checked
-2026-11-11). G1 done; G2 done in the default mode (`neighbor_structure =
+2026-11-18). G1 done; G2 done in the default mode (`neighbor_structure =
 "GROUPS"`), while the deterministic mode does not take the groups yet: the
 control file refuses `GROUPS` with `deterministic`, and `AUTO` keeps the
 matrix there; G3 done (D261): `neighbor_structure = "AUTO"`, the default,
@@ -148,8 +148,12 @@ $\tilde{\mathbf x}_i$ the position wrapped into the cell and rounded to
 f32:
 
 1. **Columns.** The density is $\rho = N/V$, and the side of a column is
-   $d_\text{col} = (64/\rho)^{1/3}$, the edge of a cube that holds 64
-   particles on average. There are $N_x = \lfloor L_x/d_\text{col}\rfloor$
+   $d_\text{col} = (n_\text{col}/\rho)^{1/3}$, the edge of a cube that holds
+   $n_\text{col}$ particles on average: $n_\text{col} = 96$, an entry of the
+   tuning policies (`GroupsPolicy::columnParticles`, D[groups-columns]) on
+   `sm_89`, where it was measured, and D89's 64 on every other
+   architecture, the default, not measured as a choice; the option
+   `groups-column-particles` of `convert-md-exec-to-gpu` overrides it). There are $N_x = \lfloor L_x/d_\text{col}\rfloor$
    columns along $x$ and $N_y$ along $y$, each clamped to $[1, 256]$, so
    $N_\text{col} = N_xN_y$ columns of sides $L_x/N_x$ and $L_y/N_y$, at
    least $d_\text{col}$ unless the cell is narrower.
@@ -180,13 +184,13 @@ f32:
    places it leaves are empty (`order` $= -1$).
 
 ```text
-column (side >= d_col)       chunk of 64 (height about d_col)     4 groups
+column (side >= d_col)       chunk of 64 (about 2/3 d_col tall)   4 groups
    z                          sort by x, halve;                   +----+----+
    ^  +----------+            each half: sort by y, halve         | g2 | g3 |  y
    |  | chunk 2  |            ------------------------------>     +----+----+  ^
    |  | chunk 1  |                                                 | g0 | g1 |  |
    |  | chunk 0  |                                                 +----+----+  +--> x
-      +----------+                                                 each about d_col/2 x d_col/2 x d_col
+      +----------+                                                 each about d_col/2 x d_col/2 x 2/3 d_col
 ```
 
 The halves and the quarters are uneven only by one particle: a short chunk
@@ -197,7 +201,7 @@ particles leaves whole groups empty, and a chunk of 64 gives four groups of
 
 ```text
 order(x~):                                           # Section 2, one build
-  d_col <- (64 / rho)^(1/3)
+  d_col <- (n_col / rho)^(1/3)                     # n_col = 96 (GroupsPolicy)
   N_x, N_y <- clamp(floor(L / d_col), 1, 256);  N_z <- max(1, floor(2 N / (N_x N_y)))
   key_i <- (k_y N_x + k_x) N_z + k_z               # counting sort, then by number within a key
   for each column c, chunk t of it (a warp):
@@ -209,14 +213,25 @@ order(x~):                                           # Section 2, one build
 ```
 
 **The shape of a group.** A chunk of 64 consecutive particles of a column
-of cross section $d_\text{col}^2$ is about $d_\text{col}$ tall, so a group,
-a quarter of it in $x$ and $y$, occupies a prism of about
-$\tfrac12 d_\text{col} \times \tfrac12 d_\text{col} \times d_\text{col}$:
-1:1:2, not a cube. At $\rho = 0.1$ Å$^{-3}$ (water), $d_\text{col} = 8.6$
-Å, and the prism of $4.3 \times 4.3 \times 8.6$ Å has a half-diagonal of
-$\tfrac{\sqrt6}{4}d_\text{col} = 5.3$ Å. A cube of the same volume would
-reduce the volume that sets the length of a list (Section 8.4) by about 3%
-at a reach of 9.5 Å.
+of cross section $d_\text{col}^2$ is about $(64/n_\text{col})\,d_\text{col}$
+tall, so a group, a quarter of it in $x$ and $y$, occupies a box of about
+$\tfrac12 d_\text{col} \times \tfrac12 d_\text{col} \times
+(64/n_\text{col})\,d_\text{col}$, half-widths $\mathbf w = (\tfrac14,
+\tfrac14, 32/n_\text{col})\,d_\text{col}$: 1:1:1.33 at $n_\text{col} = 96$.
+At $\rho = 0.1$ Å$^{-3}$ (water), $d_\text{col} = 9.9$ Å, and the box of
+$4.9 \times 4.9 \times 6.6$ Å has a half-diagonal of 4.8 Å. With
+$n_\text{col} = 64$ the groups were 1:1:2 prisms of $4.3 \times 4.3 \times
+8.6$ Å (half-diagonal 5.3 Å); a cube is $n_\text{col} = 128$.
+
+**Why 96** (D[groups-columns], #912, Section 11.9). A shorter, wider box
+lowers the volume within $R$ of a group (Section 8.4), and so the entries
+of the lists and the atomic reductions of the loop over pairs, which bound
+the loop (Section 6.1); wider columns also leave fewer chunks to sort. On
+an RTX 4090 the columns of 96 took the least time a step among 64, 80, 96,
+112, 128, and 192 on JAC, Factor IX, Cellulose, STMV, and a TIP3P box (or
+one within 0.1% of it): 2 to 3% fewer entries, and 2.1 to 3.3% of the
+step on the four systems of the Amber suite. The cube (128) shortens the
+lists about as much but builds them more slowly.
 
 **Why this order.** The cost of a list grows with the volume of the points
 within $R$ of its group's box (Section 8.4), so the boxes must be small for
@@ -583,15 +598,27 @@ cutoff, so that one comparison masks it: the kernel sees a finite distance,
 its value is not taken, and the loop has no divergent branch. The loop
 tests $r^2 < r_c^2$, strictly; the build tests $\le R'^2$.
 
-**Its cost.** The kernel is bound by the pipe of loads and shuffles
-(Nsight Compute, 92% of its peak on Cellulose), so what a pair reads and
-turns is what it costs. A step shuffles each component of the entry's
-position, of its fields, and of what it has received: 8 shuffles a pair on
-the nonbonded kernel measured (D97), with two loads a pair (the radial
-table of D94). The coefficients of Lennard–Jones at one entry of a type
-table are one load of 8 bytes (D96), and the mask does not turn with the
-entry. The kernel is evaluated for every slot, 16 an entry; the share of
-them that hold a pair within the cutoff is $\zeta_c$ (Section 8.4).
+**Its cost.** The kernel is bound by the throughput of its atomic
+reductions (#912; measured by removal on an RTX 4090, since the
+performance counters are closed to users). An entry adds what it received
+to its particle with one f32 reduction a component at the end of each
+round, 3 for a force, and a member once a block. With those reductions
+predicated off (their values kept live) the loop took 0.67 to 0.72 of its
+time on JAC, Cellulose, and a TIP3P box; with one of the three components
+left 0.69 to 0.73, with two 0.77 to 0.80. The rest of the work, about 0.7
+of the time, overlaps under that bound, so removing it gains little: the
+radial table (D94) and the coefficients of Lennard–Jones (8 bytes, D96)
+replaced by constants 4 to 6%, 5 of the 8 shuffles a slot 2 to 4%, the
+gathers of the entries 7 to 10%. The cost of the loop therefore follows
+the entries of the lists (the reductions), with the slots second: the
+kernel is evaluated for every slot, 16 an entry, and the share of them
+that hold a pair within the cutoff is $\zeta_c$ (Section 8.4). Before
+#912 this paragraph read the loop as bound by the pipe of loads and
+shuffles (Nsight Compute, 92% of its peak on Cellulose, on an RTX 3090,
+for the kernel of that time); the removals on the RTX 4090 contradict it
+for the current loop. The hot step is 64 instructions a slot: 8 shuffles,
+one load of 16 bytes of the radial table, one of 8 bytes of the type pair,
+one reciprocal, about 30 of f32 and 12 of integers.
 
 **Warps and units.** The grid has a warp for each unit of work, as many
 warps as particles at most, a warp taking the units $w$, $w + W$, ...; the
@@ -975,7 +1002,7 @@ the sorts and the boxes, and for each group:
   $\tfrac12\rho V_R(\mathbf w_g)$ of them (Section 8.4).
 
 On JAC ($R$ = 11 Å, $\rho \approx 0.098$ Å$^{-3}$, $d_\text{col} \approx
-8.7$ Å, 11 cells of 5.66 Å a side), a group of the prism of Section 2 reads
+8.7$ Å with the columns of 64, 11 cells of 5.66 Å a side), a group of the prism of Section 2 reads
 about 3,600 places and tests about 1,800 against its box, of which about
 700 go on to the 16 point tests: the box test saves more than half
 of the point tests. These are estimates for a uniform density, not
@@ -1006,12 +1033,14 @@ V_R(\mathbf w) = 8w_xw_yw_z + 8(w_xw_y + w_yw_z + w_zw_x)R +
 2\pi(w_x + w_y + w_z)R^2 + \tfrac43\pi R^3 ,
 $$
 
-so $\zeta_R \gtrsim \tfrac43\pi R^3/V_R(\mathbf w_g)$. For the prism of
-Section 2, $\mathbf w = (\tfrac14, \tfrac14, \tfrac12)d_\text{col}$, this
-bound is 0.34 at STMV ($R$ = 9.5 Å) and 0.39 at JAC ($R$ = 11 Å). The
+so $\zeta_R \gtrsim \tfrac43\pi R^3/V_R(\mathbf w_g)$. For the box of
+Section 2, $\mathbf w = (\tfrac14, \tfrac14, \tfrac13)d_\text{col}$ at
+$n_\text{col} = 96$, this bound is 0.35 at STMV ($R$ = 9.5 Å) and 0.40 at
+JAC ($R$ = 11 Å); for the prisms of $n_\text{col} = 64$, $\mathbf w =
+(\tfrac14, \tfrac14, \tfrac12)d_\text{col}$, it was 0.34 and 0.39. The
 measured pools bound $\sum_g E_g$ by 64 times the blocks, and so give
 $\zeta_R \ge N\bar n/(2048B)$: at least 0.42 at STMV and 0.65 at JAC
-(Section 11.5), 1.2 and 1.7 times the bound: the union of 16 balls is
+(Section 11.5, with the columns of 64), 1.2 and 1.7 times the bound: the union of 16 balls is
 well inside the box widened by $R$, the more so the longer the reach. The
 bound still shows which terms set the length: at these reaches the quarter cylinders, which
 grow with the sum of the edges, take about half of $V_R$. The shares of
@@ -1420,6 +1449,74 @@ On JAC, without the keys and at constant energy over 1 ns (11 / 8.6 Å),
 the total energy changed by $1.7\times10^{-5}$ of its value: a fitted
 drift of 1.9 kcal/mol/ns, against fluctuations of 1.9 kcal/mol.
 
+### 11.9 What the loop's time is made of, and the columns (#912, D[groups-columns])
+
+RTX 4090, mixed precision; every comparison in two jobs with the variants
+interleaved, against `main` of the same job (`docs/workflow.md`,
+Performance). The details, the SASS, and the tables of every variant are
+on #912.
+
+**Removals** (a frozen configuration: NVE, steps of 1e-5 ps, the list
+never rebuilt; the kernels of the loop over the active units, per step;
+JAC, Cellulose, TIP3P of 309,876 sites):
+
+| Removed | The loop, relative to `main` |
+|---|---|
+| The 3 atomic reductions of an entry (predicated off) | 0.67 to 0.72 |
+| 2 of the 3 (x reduced only) | 0.69 to 0.73 |
+| 1 of the 3 (x and y reduced) | 0.77 to 0.80 |
+| The gathers of the entries (read at the lane's member) | 0.90 to 0.93 |
+| The coefficients of Lennard–Jones (a constant) | 0.95 to 0.96 |
+| 5 of the 8 shuffles (positions and fields) | 0.96 to 0.98 |
+| The radial table (a constant) | 0.98 to 0.995 |
+
+Variants measured slower or no faster and not taken: a polynomial in
+$r^2$ for the screened Coulomb functions (0.97 to 0.99 of the loop, the
+step unchanged, 3 to 5 times the table's error near the cutoff), the
+positions and fields of a round in the block's memory (3 to 5% slower at
+55 registers), two rounds of a block at once (4 to 7% slower, a spill).
+The time follows the rounds of 32 entries: the outer list alone takes
+1.29, 1.38, and 1.66 times the loop over the inner list, where a model of
+the lists counts 1.40, 1.40, and 1.69 times the rounds.
+
+**The columns** (NPT, JAC and Cellulose at a relative RMS force error of about 4e-4, the
+suite's of Factor IX and STMV, the TIP3P box; µs a step, the stationary
+rate of about 100 intervals a run, and its ratio to 64; job 1 / job 2):
+
+| Particles a column | JAC | Factor IX | Cellulose | STMV | TIP3P |
+|---|---|---|---|---|---|
+| 64 | 169.3 / 162.3 | 349.6 / 336.4 | 1312.7 / 1279.4 | 4133 / 4044 | 1047.9 / 1017.9 |
+| 80 | 0.978 / 0.979 | 0.982 / 0.983 | 0.984 / 0.982 | 0.992 / 0.993 | 0.996 / 0.997 |
+| **96** | **0.979 / 0.979** | **0.978 / 0.978** | **0.971 / 0.967** | **0.971 / 0.972** | **0.992 / 0.992** |
+| 112 | 0.988 / 0.987 | 0.987 / 0.986 | 0.970 / 0.968 | 0.989 / 0.987 | 0.993 / 0.991 |
+| 128 | 0.987 / 0.988 | | 0.979 / 0.978 | | 0.992 / 0.993 |
+| 192 | 0.998 / 0.996 | | 0.984 / 0.986 | | 1.008 / 1.010 |
+
+The rows of 128 and 192 are from jobs of their own, against their own 64;
+STMV had one round a job. From one capture a variant (µs a step; the pool's
+blocks at their largest):
+
+| Particles a column | JAC: blocks, loop, list | Cellulose | TIP3P |
+|---|---|---|---|
+| 64 | 11,065, 46.0, 22.3 | 194,051, 598.0, 100.9 | 211,475, 532.9, 57.6 |
+| 96 | 10,745, 43.9, 20.3 | 189,130, 572.8, 94.2 | 207,428, 526.1, 57.4 |
+| 128 | 10,743, 44.7, 21.3 | 188,720, 578.5, 99.2 | 207,182, 524.9, 58.1 |
+
+"Loop" includes the pruning in the loop; "list" the builds and the
+refreshes. A model of Section 2's order and Section 8.4's lists, from the
+inputs' coordinates, gives the pools of MDIR at the same coordinates
+(10,797 against 10,783 blocks on JAC, 191,829 against 191,722 on
+Cellulose, 211,268 against 211,235 on TIP3P) and, for the columns of 96,
+2.0 to 3.0% fewer entries and $\zeta_c$ = 0.248, 0.253, 0.230 against
+0.240, 0.246, 0.226. The forces with the columns of 96 differ from those
+of 64 by 3.2e-7 (JAC) and 5.3e-7 (Cellulose) of the RMS force (64 against
+itself: 1.2e-7 and 3.8e-7), the order of the sums; their error against
+a double-precision reference is unchanged (3.978e-4 and 4.203e-4).
+
+The entry is for `sm_89`. Every other architecture, the RTX 5090 and the
+RTX PRO 6000 Blackwell among them, keeps D89's 64, the default, until the
+same comparison runs there and adds an entry of its own (D[groups-columns]).
+
 ## 12. History and status
 
 ### 12.1 Decisions
@@ -1450,6 +1547,7 @@ drift of 1.9 kcal/mol/ns, against fluctuations of 1.9 kcal/mol.
 | D294 | A model in stages keeps the matrix | 6.3 |
 | D357 | Coverage across IR boundaries | 10.1 |
 | D419 | The build over units: lists of units in segments | 5.3 |
+| D[groups-columns] | Columns of 96 particles, an entry of the tuning policies | 2, 11.9 |
 
 **Where the sections moved** (2026-11-11). This document had the structure
 in Section 2, the loop in Section 3, what the loop reads in Section 4, the
@@ -1474,13 +1572,20 @@ build to 2 to 5, the IR to 10, the measurements to 11.
 
 ### 12.3 Open questions
 
-- The size of a group: 16 measured best among 16 and 32 on Cellulose; 8
-  is untried.
+- The size of a group: 16 measured best among 16 and 32 on Cellulose. A
+  model of the lists (#912, Section 11.9) gives groups of 8 21 to 24%
+  fewer slots but 53 to 57% more entries, so more of the reductions that
+  bound the loop: not built. Groups of 32 go the other way (29 to 39%
+  fewer entries, 22 to 42% more slots); the model does not decide them.
 - Why the same loop over groups of 16 measures 996 to 1034 µs in
   `supercluster.cu` and 1162 to 1209 in `groups.cu`.
 - The size of a unit of work (64 and 128 entries measured; Section 11.3).
-- The groups are 1:1:2 prisms (Section 2); a cube would shorten the lists
-  by a few percent by Section 8.4, not measured.
+- The shape of a group: measured (#912, Section 11.9); the columns of 96
+  give boxes of 1:1:1.33 (Section 2).
+- Fewer reductions an entry: x and y of an entry's force as one 64-bit
+  integer reduction of two fixed-point fields took the loop to 0.78 to
+  0.87 in a prototype of #912; the design (integer sums on both sides, the
+  range, the scale) is #917.
 
 ## Next
 
@@ -1490,18 +1595,23 @@ work (the cost of groups over single pairs, $\zeta_c$ of Section 8.4), and
 whether a pruning is bound by its loads or its arithmetic. Then: in the
 pruning, a test of the box of the group that keeps or drops an entry whole
 when its candidate is within $R_\text{in} - a$ or beyond $R_\text{in} + a$
-of the center, $a$ the half-diagonal of the box (at most about 5.3 Å for
-the prism of 16 atoms of water, Section 2), before its 16 distances; by the
-volume of the shell, a third or more of the outer entries lie beyond, and a
-pruning is about 6% of a step of Cellulose. The forces of the loop over
+of the center, $a$ the half-diagonal of the box (about 4.8 Å for 16 atoms
+of water, Section 2), before its 16 distances. #912 measured the shares
+in a model of the lists: that test settles 8 to 18% of the outer entries
+whole (the test against the box itself, nearest and farthest point, 19 to
+33%), but all 32 entries of a round of the pruning's warp only 0.6 to 2%
+of the time, so the SIMT pruning, a lane an entry, would skip less than
+0.4 µs a step; saving the settled entries' distances takes a compaction
+first. A pruning takes about 4.7 µs a step on JAC and 20 on Cellulose
+(RTX 4090). The forces of the loop over
 groups accumulated in 64-bit fixed point, as the grid of PME (D70), which
 makes groups deterministic (white paper, Section 13).
 
 Not now: lists of clusters along a Hilbert curve with indices stored as
 deltas in nibbles [[Thaler2026]](references.md#thaler2026), 3.6 bytes a
 particle, which on a GH200 were no faster than the lists the authors
-compare them with and slower than a full list. The loop over groups is bound by the pipe of loads and shuffles
-(92% of its peak on Cellulose, white paper, Section 10.2), not by the
+compare them with and slower than a full list. The loop over groups is bound by its atomic
+reductions (Section 6.1, #912), not by the
 bytes of its list, and the lists fit (Cellulose: 153,517 blocks of 64
 entries of 8 bytes, about 190 bytes a particle). The bytes of a list may
 matter for systems of hundreds of millions of particles across many

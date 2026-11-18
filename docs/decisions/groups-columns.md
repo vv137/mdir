@@ -1,0 +1,48 @@
+# D[groups-columns]
+
+Recorded at its merge.
+
+**The particles of a column of the compact order of the groups' build (Section 2 of `docs/neighbor-groups.md`) are an entry of the tuning policies (D420), `GroupsPolicy::columnParticles`: 96 on `sm_89`, by an entry of its own with the measurement behind it, and D89's 64 as the default, which every other architecture takes, measured on none of them, so that their programs keep their bytes. The option `groups-column-particles` of `convert-md-exec-to-gpu` overrides the entry; it takes -1 (the entry) or a positive count and refuses any other value. The build over units keeps its own entry (`SegmentsPolicy::columnUnits`, 128, D421).** Issue #912 (the maintainer's ruling of 2026-11-18 on its results).
+
+## Why
+
+#912 found by removal that the loop over groups is bound by the throughput of its atomic reductions: an entry adds what it received to its particle with one f32 reduction a component at the end of each round. With them predicated off the loop takes 0.67 to 0.72 of its time; the shuffles and the table loads, under that bound, are worth 2 to 6%. The cost of the loop therefore follows the entries of the lists. A column of 96 particles instead of 64 makes a group a box of about 1:1:1.33 instead of a 1:1:2 prism. Its volume within the reach is smaller, so the lists hold 2 to 3% fewer entries (a model of Section 8.4 that reproduces MDIR's pools to 0.1%), and the build sorts fewer chunks.
+
+## Measured
+
+RTX 4090, mixed precision, NPT, the timing protocol (two jobs, the variants interleaved, about 100 intervals a run, the stationary trimmed mean). Ratio of the step to the columns of 64, job 1 / job 2:
+
+| Particles a column | JAC | Factor IX | Cellulose | STMV | TIP3P (309,876 sites) |
+|---|---|---|---|---|---|
+| 64, µs a step | 169.3 / 162.3 | 349.6 / 336.4 | 1312.7 / 1279.4 | 4133 / 4044 | 1047.9 / 1017.9 |
+| 80 | 0.978 / 0.979 | 0.982 / 0.983 | 0.984 / 0.982 | 0.992 / 0.993 | 0.996 / 0.997 |
+| 96 | 0.979 / 0.979 | 0.978 / 0.978 | 0.971 / 0.967 | 0.971 / 0.972 | 0.992 / 0.992 |
+| 112 | 0.988 / 0.987 | 0.987 / 0.986 | 0.970 / 0.968 | 0.989 / 0.987 | 0.993 / 0.991 |
+| 128 (cubes) | 0.987 / 0.988 | | 0.979 / 0.978 | | 0.992 / 0.993 |
+| 192 | 0.998 / 0.996 | | 0.984 / 0.986 | | 1.008 / 1.010 |
+
+JAC and Cellulose ran controls with a relative RMS force error of about 4e-4; Factor IX and STMV the suite's controls. The details and the per-kernel split are in `docs/neighbor-groups.md`, Section 11.9.
+
+**Forces.** The forces with 96 differ from those with 64 by 3.2e-7 (JAC) and 5.3e-7 (Cellulose) of the RMS force, against 1.2e-7 and 3.8e-7 for 64 against itself. The order of the sums changed. The error against a double-precision reference is unchanged: 3.978e-4 and 4.203e-4.
+
+**Not measured elsewhere.** The maintainer's ruling asked for the same comparison on an RTX 5090 or an RTX PRO 6000 as well, against `main` on the same kind. Neither device could take a job while this PR was prepared: the RTX 5090's machine did not answer, and every core of the RTX PRO 6000's node was held by another job. The review of #918 then ruled, with the maintainer's agreement, that an architecture that was not measured keeps D89's value: the default stays 64, marked as not measured, and only `sm_89` has an entry of 96. A measurement on another architecture adds an entry of its own.
+
+## Gates
+
+**The same programs elsewhere** (D406's method, `scripts/builder-equivalence/check.py compare --stages lowered`, GPU, the run and the segments, mixed and double, as written and with `neighbor_structure = "GROUPS"`; the examples, the tests, the Amber suite, and the cases; 2,194 cases a target):
+- On `sm_120`, every program is identical to the base's.
+- On `sm_89`, 1,380 are identical (892 of them stop with the same error in both). The other 814 are the programs that build groups, and each differs from the base's in one line, the occupancy of the plan of the columns: `6.400000e+01` becomes `9.600000e+01`.
+
+**The step at the head against its base** (the timing protocol, RTX 4090, NPT; µs a step, job 1 / job 2):
+
+| | JAC | Factor IX | Cellulose | STMV | TIP3P |
+|---|---|---|---|---|---|
+| base | 169.6 / 169.8 | 349.6 / 349.2 | 1314.8 / 1312.9 | 4132 / 4134 | 1048.5 / 1047.3 |
+| head | 165.8 / 165.9 | 342.1 / 341.9 | 1271.5 / 1272.9 | 4014 / 4014 | 1039.0 / 1040.2 |
+| ratio | 0.978 / 0.977 | 0.979 / 0.979 | 0.967 / 0.970 | 0.972 / 0.971 | 0.991 / 0.993 |
+
+## Alternatives
+
+- **The cube (128).** It shortens the lists about as much and builds them more slowly: 0.978 to 0.993 of the step.
+- **Groups of 8.** By the model, 21 to 24% fewer slots but 53 to 57% more entries, so more reductions: not built (#912).
+- **Fewer reductions an entry.** These are a change of the arithmetic of the sums, #917.
