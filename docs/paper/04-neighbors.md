@@ -1158,3 +1158,78 @@ entry and the lane's unit once for each record. Where the refresh prunes,
 the traversal prunes too: each warp prunes the records of its row and keeps
 its 64 survivors, so that the inner records of a row hold full batches.
 
+**The test of a list of units.** Each unit $i$ of kind $f$ has a
+reference point $\mathbf a_i$, its anchor (or, for a member of the rest,
+the heavy atom that the constraints hold it to), and a covering radius
+$e_f$: every place of the unit lies within $e_f$ of $\mathbf a_i$. Segment
+$s(f, g)$ is built with the reach $R + E_s$, $E_s = e_f + e_g$, over the
+reference points (D417, D419).
+
+*Theorem (validity of a list of units).* Let every place of every unit lie
+within its covering radius of its reference point, and let each segment
+hold, from its build, every pair of reference points within $R + E_s$.
+With $\mathbf m$ and $d = \max_i \lVert\mathbf a_i - \mathbf m \odot
+\mathbf a_i^\text{ref}\rVert$ as in Section 4.1, if
+
+$$
+2d \le \min_s \bigl(\min(\mathbf m)\,(R + E_s) - (r_c + E_s)\bigr) ,
+$$
+
+the list holds every site pair within $r_c$.
+
+*Proof.* For each segment, the theorem of Section 4.1 over the reference
+points, with the reach $R + E_s$ and the cutoff $r_c + E_s$, gives every
+pair of reference points within $r_c + E_s$. A site pair $(p, q)$ of units
+$i$ and $j$ within $r_c$ has $\lVert\mathbf a_i - \mathbf a_j\rVert \le
+\lVert\mathbf x_p - \mathbf x_q\rVert + e_f + e_g \le r_c + E_s$ by the
+triangle inequality. $\square$
+
+The bound of each segment is linear in $E_s$ with the slope $\min(\mathbf
+m) - 1$, so a cell that shrinks takes the least at the largest $E_s$ and one
+that grows at the least $E_s$: every segment's is formed, and the least,
+$2\chi$, taken (D419). The reference points form one mobility group, since
+one test renews every segment.
+
+**The convex rule.** The theorem needs every place within its radius. A
+place $p$ whose weights all lie in $[0, 1]$ (with $\mathbf h_0 = 0$ and
+$\sum_k w_{pk} = 1$) has $\lVert\mathbf c_p\rVert \le \sum_k
+w_{pk}\lVert\mathbf h_k\rVert \le \max_k\lVert\mathbf h_k\rVert$, so the
+frame atoms within $e_f$ cover it. A site with a weight outside $[0, 1]$ can
+lie beyond every frame atom, and its own $\lVert\mathbf c_p\rVert$ is
+checked; which sites need it follows from the kind at compile time.
+
+**The writer** (D[md-alg-segments-writer]). After the last op of a step
+that writes the positions (the constraints, and a barostat's scaling), one
+kernel, a thread for each member of each unit, writes the frames that the
+loops read (the anchor moved into the frame of its place in f64 and
+narrowed, and each offset $\mathbf h_k$ formed in f64 as the image of its
+bond nearest the anchor and narrowed), checks every place against its radius
+as above, and tests each reference point. Its three results are flags that
+the host reads where the refresh needs them, after it has issued the
+reciprocal sum, so the test costs no copy and no wait of its own.
+
+The test is in f32. With $a = \mathrm{fl}(\mathbf a_i)$, $t =
+\mathrm{fl}(\mathrm{fl}(\mathbf a^\text{ref}_i)\,\mathrm{fl}(\mathbf m))$,
+and $\mathbf d = \mathrm{fl}(a - t)$, each component of $\mathbf d$ is
+within $8u(\lvert a_c\rvert + \lvert t_c\rvert)$ of the exact one,
+$u = 2^{-24}$, so
+
+$$
+\lVert\mathbf a_i - \mathbf m\odot\mathbf a^\text{ref}_i\rVert \le
+\lVert\mathbf d\rVert + \delta_\chi , \qquad
+\delta_\chi = 2^{-20}\,(\lVert a\rVert_1 + \lVert t\rVert_1) ,
+$$
+
+with room for the rounding of $\delta_\chi$ itself. The test passes where
+$\mathrm{fl}(\mathbf d\cdot\mathbf d) \le
+\mathrm{fl}(\mathrm{fl}(z^2)(1 - 2^{-18}))$, $z = \mathrm{fl}(\chi -
+\delta_\chi) > 0$, with $\chi$ narrowed below itself. The computed square is
+at least $\lVert\mathbf d\rVert^2(1 - \gamma_3)$ and the bound at most
+$(\chi - \delta_\chi)^2(1 + u)^4(1 - 2^{-18})$, whose ratio to
+$(1 - \gamma_3)$ is below 1, so a passing unit has $\lVert\mathbf d\rVert +
+\delta_\chi < \chi$: no unit that moved by more than $\chi$ passes. Within 3
+nm of the origin $\delta_\chi < 2^{-15}$ nm. The check of a radius $e$ in
+f32 compares $\mathrm{fl}(\mathbf h\cdot\mathbf h)$ with the largest f32 at
+most $e^2(1 - 2^{-20})$: the square of an offset narrowed from f64 is
+within $5u$ of the exact one, so no place beyond its radius passes.
+

@@ -1,0 +1,28 @@
+# The writer of a list of units (D[md-alg-segments-writer]) under
+# compute-sanitizer: alanine dipeptide in TIP3P, with anchors and excluded
+# pairs, over 12 frames of a general run, the refresh taking the writer's
+# test at the positions of every particle; and the probe of
+# Inputs/segments_writer.py with two taken kinds, one with a site outside
+# the hull of its frame, and an anchored member of the rest. Every frame
+# after the first runs the writer, a thread a member, its flags, and the
+# packing of the frames at a build. No access beyond a buffer, no read of
+# memory that nothing has written, and no race in shared memory. The runs on
+# the test route (segments-traverse-gpu.test) take the writer of each step.
+#
+# REQUIRES: cuda, compute-sanitizer
+#
+# RUN: rm -rf %t && mkdir -p %t/probe
+# RUN: %mdir_python %S/../Integration/Inputs/segments_coverage.py system dipeptide-tip3p %S/../Driver/Inputs %t 12
+# RUN: cd %t && mdir run control.toml > run.log
+# RUN: %mdir_python %S/../Integration/Inputs/segments_coverage.py emit dipeptide-tip3p %S/../Driver/Inputs %t --writer
+# RUN: mdir-opt %t/harness.mlir --convert-md-exec-to-gpu --convert-md-alg-to-gpu | mlir-opt %lower_gpu_to_llvm > %t/llvm.mlir
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 mlir-runner %t/llvm.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s
+# RUN: %compute_sanitizer --tool initcheck --error-exitcode 1 mlir-runner %t/llvm.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s
+# RUN: %compute_sanitizer --tool racecheck --error-exitcode 1 mlir-runner %t/llvm.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s --check-prefix=RACE
+# RUN: %mdir_python %S/../Integration/Inputs/segments_writer.py ok %t/probe
+# RUN: mdir-opt %t/probe/harness.mlir --convert-md-exec-to-gpu --convert-md-alg-to-gpu | mlir-opt %lower_gpu_to_llvm > %t/probe/llvm.mlir
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 mlir-runner %t/probe/llvm.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s
+# RUN: %compute_sanitizer --tool initcheck --error-exitcode 1 mlir-runner %t/probe/llvm.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s
+
+# CHECK: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)

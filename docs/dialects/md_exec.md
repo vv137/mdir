@@ -1637,6 +1637,7 @@ Syntax:
 
 ```
 operation ::= `md_exec.refresh_segmented_pairs` $list `at` `(` $positions `,` $cell `)`
+              (`moved` `(` $moved^ `)`)? (`stale` `(` $stale^ `)`)?
               `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
               `prune_skin` `(` $prune_skin `)` attr-dict
               `:` qualified(type($list)) `,` qualified(type($positions))
@@ -1658,6 +1659,23 @@ where it is.
         : !sp, !md.field<@atoms, 3 x f64>
 ```
 
+With `moved` and `stale`, the results of the writer of the list
+(`md_exec.write_unit_frames`) at the same positions, cell, and reaches,
+the op makes no test of its own: `moved` tells that the list is not
+valid, `stale` that its inner list is not (D[md-alg-segments-writer]).
+
+```mlir
+%moved, %stale = md_exec.write_unit_frames %l0 at(%x, %cell)
+                   cutoff(0.9) skin(0.1) prune_skin(0.05)
+                   : !sp, !md.field<@atoms, 3 x f64>
+%l1 = md_exec.refresh_segmented_pairs %l0 at(%x, %cell)
+        moved(%moved) stale(%stale)
+        cutoff(0.9) skin(0.1) prune_skin(0.05)
+        : !sp, !md.field<@atoms, 3 x f64>
+```
+
+Traits: `AttrSizedOperandSegments`
+
 Interfaces: `MemoryEffectOpInterface`
 
 #### Attributes:
@@ -1676,6 +1694,8 @@ Interfaces: `MemoryEffectOpInterface`
 | `list` | A neighbor structure over units, in the segments of rigid kinds (D417) |
 | `positions` | A per-particle field or buffer of a field |
 | `cell` | A simulation cell |
+| `moved` | 1-bit signless integer |
+| `stale` | 1-bit signless integer |
 
 #### Results:
 
@@ -2204,6 +2224,81 @@ Effects: `MemoryEffects::Effect{}`
 | Result | Description |
 | :----: | ----------- |
 | `result` | A physical neighbor structure |
+
+
+
+### `md_exec.write_unit_frames` (::mdir::md_exec::WriteUnitFramesOp)
+
+_Writes the frames of the units of a list and tests it_
+
+Syntax:
+
+```
+operation ::= `md_exec.write_unit_frames` $list `at` `(` $positions `,` $cell `)`
+              `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
+              `prune_skin` `(` $prune_skin `)` attr-dict
+              `:` qualified(type($list)) `,` qualified(type($positions))
+```
+
+The writer of a list of units (D[md-alg-segments-writer]; D417,
+Section 8, S4a). At the positions `positions` in `cell`, it writes the
+list's frames, which the loops over the list read: for each unit the
+position of its anchor in the frame of its place and the offsets of its
+members from the anchor, the image of each bond nearest the anchor
+(D417, Section 4.3). It returns:
+
+- `moved`: whether a reference point of a unit has moved, since the list
+  was built, by more than the least half-margin of the segments,
+  `min_s (m (R + E_s) - (r_c + E_s)) / 2`, `R = cutoff + skin`,
+  `E_s = e_f + e_g`, `m` the least ratio of the edges to those of the
+  build (D419, Section 3); true for a list that has not been built;
+- `stale`: the same against the last pruning of a dual list, with
+  `R_in = cutoff + prune_skin`; false for a list that is not dual.
+
+The reference points of the units form one mobility group (#799). The op
+stops the run where a place of a unit lies beyond the covering radius of
+its unit (R5): a site whose weights all lie in [0, 1] lies in the convex
+hull of its frame and is covered by the frame atoms; any other site is
+checked itself (D417, Section 3).
+
+It comes after the last op that writes the positions and before the
+first loop that reads the list's frames, so that no loop reads a frame
+whose extents were not checked. `md-exec-expose-validity` makes it for
+each refresh of a list of units, and the refresh takes its results.
+
+```mlir
+%moved, %stale = md_exec.write_unit_frames %l at(%x, %cell)
+                   cutoff(0.9) skin(0.1) prune_skin(0.05)
+                   : !sp, !md.field<@atoms, 3 x f64>
+```
+
+In the storage form `positions` is a buffer.
+
+Interfaces: `MemoryEffectOpInterface`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>prune_skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `list` | A neighbor structure over units, in the segments of rigid kinds (D417) |
+| `positions` | A per-particle field or buffer of a field |
+| `cell` | A simulation cell |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `moved` | 1-bit signless integer |
+| `stale` | 1-bit signless integer |
 
 
 
