@@ -187,8 +187,8 @@ static const ArrayRef<Entry<SegmentsPolicy>> kSegmentsTable = {};
 
 // The particles of a column of the compact order were swept over 64 (D89's
 // value), 80, 96, 112, 128, and 192 (#912), with the timing protocol, in NPT
-// at the force accuracy of the Amber suite's matched settings: JAC, Factor
-// IX, Cellulose, STMV, and a TIP3P box of 309,876 sites. On RTX 4090s
+// on JAC, Factor IX, Cellulose, STMV, and a TIP3P box of 309,876 sites (JAC
+// and Cellulose at a relative RMS force error of about 4e-4). On RTX 4090s
 // (sm_89), 96 took the least time a step on each system or one within
 // 0.1% of it: 0.967 to 0.979 of 64's step on the four of the suite, 0.992
 // on the water box, with fewer entries (2 to 3%, and so fewer atomic

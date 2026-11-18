@@ -150,8 +150,9 @@ f32:
 1. **Columns.** The density is $\rho = N/V$, and the side of a column is
    $d_\text{col} = (n_\text{col}/\rho)^{1/3}$, the edge of a cube that holds
    $n_\text{col}$ particles on average: $n_\text{col} = 96$, an entry of the
-   tuning policies (`GroupsPolicy::columnParticles`, D[groups-columns];
-   64 before it; the option `groups-column-particles` of
+   tuning policies (`GroupsPolicy::columnParticles`, D[groups-columns],
+   measured on `sm_89`; 64 before it, and still 64 on `sm_12x`, not yet
+   measured there; the option `groups-column-particles` of
    `convert-md-exec-to-gpu` overrides it). There are $N_x = \lfloor L_x/d_\text{col}\rfloor$
    columns along $x$ and $N_y$ along $y$, each clamped to $[1, 256]$, so
    $N_\text{col} = N_xN_y$ columns of sides $L_x/N_x$ and $L_y/N_y$, at
@@ -1478,7 +1479,7 @@ The time follows the rounds of 32 entries: the outer list alone takes
 1.29, 1.38, and 1.66 times the loop over the inner list, where a model of
 the lists counts 1.40, 1.40, and 1.69 times the rounds.
 
-**The columns** (NPT, the matched controls of JAC and Cellulose, the
+**The columns** (NPT, JAC and Cellulose at a relative RMS force error of about 4e-4, the
 suite's of Factor IX and STMV, the TIP3P box; µs a step, the stationary
 rate of about 100 intervals a run, and its ratio to 64; job 1 / job 2):
 
@@ -1512,7 +1513,9 @@ of 64 by 3.2e-7 (JAC) and 5.3e-7 (Cellulose) of the RMS force (64 against
 itself: 1.2e-7 and 3.8e-7), the order of the sums; their error against
 a double-precision reference is unchanged (3.978e-4 and 4.203e-4).
 
-SM120ROWS
+The entry is for `sm_89`: the major version 12 (the RTX 5090, the RTX PRO
+6000 Blackwell) keeps 64 by an entry of its own until the same comparison
+runs on one of them (D[groups-columns]).
 
 ## 12. History and status
 
