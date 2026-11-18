@@ -1220,7 +1220,12 @@ within $e_f$ of its anchor again, it holds a fortiori, which the writer
 checks. A coordinate file in nm to three decimals moves a hydrogen by up to
 $\sqrt3 \cdot 5\times10^{-4}$ nm, more than $\delta_\mathrm m$, so the
 radius of such an input is widened: in the rhombic dodecahedron of the
-tests, from 0.0958 to 0.1010 nm.
+tests, from 0.0958 to 0.1010 nm. A site that the topology defines otherwise
+than by weights, as Amber's extra point, sits at the weights' place only on
+the constrained frame, so at an input off the constraints the first
+evaluation of the units differs from the general route's (by 0.32 kJ/mol on
+alanine dipeptide in OPC); `ON` warns there, with the largest violation and
+how far the sites move.
 
 **The writer** (D422). After the last op of a step
 that writes the positions (the constraints, and a barostat's scaling), one
