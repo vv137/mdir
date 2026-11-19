@@ -27,17 +27,7 @@ With uncorrelated uniform rounding errors the corresponding RMS estimate replace
 
 ## Weighted sites in the segmented traversal
 
-**Open interpretation of the ruling on #921.** The implementation and the
-bound below use weights applied to the quantized site force. The posted
-formula also admits a reading in which the weights multiply the original
-site force. The two give different physical-member forces. In units of one
-quantum, take a site force of $11/8$ and two equal weights. Weighting the
-original force gives rounded shares $(1,1)$ and corrected shares $(0,1)$.
-Weighting the quantized force gives $(0,0)$ and then $(1,0)$. With an
-original force of $1/2$ and weights $(3,-1,-1)$, the original-force
-formula gives a correction of $-2$, exceeding $k/2=1.5$. Both examples
-use exactly representable inputs. The selection of the recipient is the
-same under both readings.
+**Settled on PR #921.** In quanta, let $Q=q(F_s)$ be the rounded site-force component. Member $i$ has rounded share $a_i=\mathrm{round}(w_i Q)$, with ties to even. The correction is $Q-\sum_i a_i$. For a site force of $11/8$ quanta and two equal weights, $Q=1$, both shares round to zero, and the first member receives the remaining quantum.
 
 The maintainer selected the member with largest absolute site weight to receive the residual, with ties broken by topology order. Quantize each site-force component once. Apply the site weights to that integer and round each weighted share to nearest with ties to even. Add the difference between the rounded site force and the sum of the rounded member forces to the selected member. This applies to negative weights and weights above one. The integer member forces then sum exactly to the quantized site force. Apply the rule before summing separate pairs so scheduling cannot change the result.
 
