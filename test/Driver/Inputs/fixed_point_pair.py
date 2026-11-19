@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import mdir
+from mdir._physical_constants import COULOMB_NATIVE
 import numpy as np
 
 mode, directory = sys.argv[1:]
@@ -12,7 +13,7 @@ work.mkdir(parents=True, exist_ok=True)
 site = mode == "residual"
 if site:
     os.environ["MDIR_RIGID_UNITS_TEST"] = "1"
-charge = -0.25 / (4096 * 138.935456) if mode != "overflow" else -1000.0
+charge = -0.25 / (4096 * COULOMB_NATIVE) if mode != "overflow" else -1000.0
 top = """[ defaults ]
 1 2 yes 0.5 0.833333
 [ atomtypes ]
