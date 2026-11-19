@@ -572,7 +572,9 @@ within each half-warp, one lane a step, for 16 steps: at step $k$ lane $u$
 holds the entry loaded by lane $(u - k) \bmod 16$ of its half, so each
 member meets each of the 32 entries once. The value that the kernel
 computes for the entry travels with it and is added to the entry's
-particle with one atomic addition when it is back at its lane; the values
+particle when it is back at its lane. The direct global path issues one
+atomic addition per component if any received component, in its destination
+precision, is nonzero or NaN (D[groups-zero-receipts]). The values
 of the group's members are added across the two halves by one shuffle and
 once per block. The mask does not turn with the entry (D97): at each round
 a ballot for each of the 16 members gives the bits of that member with
@@ -588,7 +590,8 @@ the same entry of a type table are one load of 8 bytes (D96).
 **Its cost.** A step shuffles each component of the entry's position, of
 its fields, and of the values it has received: 8 shuffles a pair on the
 nonbonded kernel. At the end of a round each entry adds what it received
-to its particle with an atomic reduction a component, 3 for a force. The
+to its particle with an atomic reduction a component, 3 for a force, unless
+all its receipts are zero. The
 throughput of those reductions bounds the loop (#912, by removal on an
 RTX 4090): with them predicated off the loop takes 0.67 to 0.72 of its
 time, with one of the three left 0.69 to 0.73, with two 0.77 to 0.80, and

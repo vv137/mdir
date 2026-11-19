@@ -1,0 +1,97 @@
+# REQUIRES: cuda
+# The first pair is within the cutoff and has exactly representable forces.
+# The second pair is within the search skin only. Its real list entry has
+# zero receipts. Other pairs are too far apart even for the search.
+# Compare both visits of the reductions-always oracle, and the production
+# guard, against all twelve independently known force components.
+# RUN: split-file %s %t
+# RUN: mdir-opt %t/model.mlir %md_passes --convert-md-to-md-exec="skin=0.25 width=64" %md_exec_transforms \
+# RUN:   --md-exec-choose-neighbors="kind=groups" --md-exec-assign-precision="mode=mixed" \
+# RUN:   --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=off" --md-exec-assign-storage="memory=device" \
+# RUN:   --convert-md-exec-to-md-alg --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu > %t/guard.mlir
+# RUN: %python %t/reference.py %t/guard.mlir > %t/always.mlir
+# RUN: mlir-opt %t/guard.mlir %lower_gpu_to_llvm > %t/guard.llvm
+# RUN: mlir-opt %t/always.mlir %lower_gpu_to_llvm > %t/always.llvm
+# RUN: mlir-runner %t/always.llvm -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t/ref1
+# RUN: mlir-runner %t/always.llvm -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t/ref2
+# RUN: mlir-runner %t/guard.llvm -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t/result
+# RUN: diff %t/ref1 %t/ref2
+# RUN: diff %t/ref1 %t/result
+# RUN: FileCheck %s < %t/result
+# CHECK: {{^4607182418800017408$}}
+# CHECK-NEXT: 0
+# CHECK-NEXT: 0
+# CHECK-NEXT: {{^-4616189618054758400$}}
+# CHECK-COUNT-8: {{^0$}}
+# CHECK-NOT: {{.}}
+
+#--- reference.py
+# Recover the old flush by passing through its real-entry predicate. Limit
+# this edit to the guard that encloses the three global additions.
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text()
+pattern = (r'(?m)^( *)(%\w+) = arith\.ori .* : i1\n'
+           r'\1(%\w+) = arith\.andi (%\w+), \2 : i1\n'
+           r'\1scf\.if \3 \{(?P<body>[^{}]*llvm\.atomicrmw fadd[^{}]*)\}')
+def always(match):
+    assert match['body'].count('llvm.atomicrmw fadd') == 3
+    return f"{match[1]}scf.if {match[4]} {{" + match['body'] + '}'
+text, count = re.subn(pattern, always, text)
+assert count == 1, count
+print(text)
+
+#--- model.mlir
+!vec = !md.field<@atoms, 3 x f64>
+!buf = memref<?x3xf64>
+!pairs = !md.relation<@atoms, 2, unordered>
+md.particle_set @atoms
+md.potential @harmonic(%x: !vec, %cell: !md.cell) -> f64 {
+  %n = md.neighborhood %x, %cell cutoff(1.125) : !vec -> !pairs
+  %u = md.sum_relation %n, %x, %cell exchange(symmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %half = arith.constant 0.5 : f64
+    %rr = arith.mulf %r, %r : f64
+    %e = arith.mulf %half, %rr : f64
+    md.yield %e : f64
+  } : !pairs, !vec -> f64
+  md.return %u : f64
+}
+func.func private @printI64(i64)
+func.func private @printNewline()
+func.func @main() {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c3 = arith.constant 3 : index
+  %c4 = arith.constant 4 : index
+  %p = memref.alloc(%c4) : !buf
+  %zero = arith.constant 0.0 : f64
+  scf.for %i = %c0 to %c4 step %c1 {
+    scf.for %j = %c0 to %c3 step %c1 {
+      memref.store %zero, %p[%i,%j] : !buf
+    }
+  }
+  %one = arith.constant 1.0 : f64
+  %four = arith.constant 4.0 : f64
+  %five = arith.constant 5.25 : f64
+  memref.store %one, %p[%c1,%c0] : !buf
+  memref.store %four, %p[%c2,%c0] : !buf
+  memref.store %five, %p[%c3,%c0] : !buf
+  %edge = arith.constant 8.0 : f64
+  %cell = md.orthorhombic_cell %edge, %edge, %edge
+  %x = mdrt.from_buffer %p : !buf to !vec
+  %f = md.evaluate @harmonic(%x, %cell) request [forces] : (!vec, !md.cell) -> !vec
+  %buf = mdrt.to_buffer %f : !vec to !buf
+  scf.for %i = %c0 to %c4 step %c1 {
+    scf.for %j = %c0 to %c3 step %c1 {
+      %value = memref.load %buf[%i,%j] : !buf
+      %bits = arith.bitcast %value : f64 to i64
+      func.call @printI64(%bits) : (i64) -> ()
+      func.call @printNewline() : () -> ()
+    }
+  }
+  return
+}
