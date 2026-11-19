@@ -109,10 +109,14 @@ struct SegmentsPolicy {
 
 /// The build of the groups of neighbors (D89, D404): its compact order
 /// (docs/neighbor-groups.md, Section 2).
+enum class ForceFields { Packed, I32, I64, Float4 };
+
 struct GroupsPolicy {
   /// The particles of a column of the compact order, in a cube of the
   /// column's width; a chunk of 64 of them is cut in four groups of 16.
   double columnParticles;
+  ForceFields mixedForces = ForceFields::Packed;
+  ForceFields doubleForces = ForceFields::I64;
 };
 
 /// The key of an entry: an architecture, as a major version and a minor

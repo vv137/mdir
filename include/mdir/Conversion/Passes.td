@@ -501,6 +501,9 @@ def ConvertMDExecToGPU
            "With fuse-pruning: the least number of groups of the last build "
            "for which the loop prunes; below it the refresh prunes "
            "(D284)">,
+    Option<"groupsForceFields", "groups-force-fields", "std::string",
+           /*default=*/"\"policy\"",
+           "Force accumulator layout: policy, packed, i32, i64, or float4">,
     Option<"groupsColumnParticles", "groups-column-particles", "int64_t",
            /*default=*/"-1",
            "The particles of a column of the compact order of the groups' "

@@ -238,6 +238,19 @@ void mdrtSegmentsStopExclusions(int64_t count) {
   stopWith(message);
 }
 
+/* The device encodes the particle and Cartesian component in one mapped
+   flag so concurrent reports cannot combine two different failures. */
+void mdrtCheckForceRange(int32_t code) {
+  if (!code)
+    return;
+  uint32_t index = (uint32_t)code - 1;
+  char message[160];
+  snprintf(message, sizeof message,
+           "fixed-point force exceeds its range at particle %u, component %c",
+           index / 3, "xyz"[index % 3]);
+  stopWith(message);
+}
+
 /* The constraints of a set, SETTLE (`set` 0) or the groups of SHAKE of `set`
    hydrogens, left a length off its target or not a number in the step
    `step`: the run has failed (D278). */

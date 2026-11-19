@@ -8,6 +8,7 @@
 #define MDIR_CONVERSION_TRAVERSEPAIRS_H
 
 #include "mdir/Dialect/MDAlg/MDAlgOps.h"
+#include "mdir/Dialect/MDExec/DevicePolicy.h"
 
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/IR/Builders.h"
@@ -76,6 +77,14 @@ public:
                                          mlir::Location loc,
                                          mlir::MemRefType type,
                                          mlir::ValueRange sizes) = 0;
+
+  /// A mapped D113 flag for a checked integer force reduction.
+  virtual md_exec::policy::ForceFields forceFields(bool mixed) = 0;
+  virtual mlir::Value createForceFlag(mlir::Location loc) = 0;
+  virtual mlir::Value startForceCheck(mlir::OpBuilder &builder,
+                                      mlir::Location loc, mlir::Value flag) = 0;
+  virtual void finishForceCheck(mlir::OpBuilder &builder, mlir::Location loc,
+                                mlir::Value token) = 0;
 
   /// The structure: the sizes on the host (the places, the longest list,
   /// the blocks), whether a refresh keeps it dual, and whether its last

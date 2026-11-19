@@ -970,8 +970,10 @@ void kernels::emitAtomicAdd(OpBuilder &b, Location loc, Value value,
           LLVM::TailCallKind::None, /*asm_dialect=*/LLVM::AsmDialectAttr(),
           /*operand_attrs=*/ArrayAttr());
     } else {
-      LLVM::AtomicRMWOp::create(b, loc, LLVM::AtomicBinOp::fadd, pointer,
-                                part, LLVM::AtomicOrdering::monotonic,
+      LLVM::AtomicRMWOp::create(b, loc,
+                                element.isInteger() ? LLVM::AtomicBinOp::add
+                                                    : LLVM::AtomicBinOp::fadd,
+                                pointer, part, LLVM::AtomicOrdering::monotonic,
                                 StringRef("device"));
     }
   }

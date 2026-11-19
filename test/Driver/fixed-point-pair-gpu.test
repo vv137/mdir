@@ -1,0 +1,6 @@
+# REQUIRES: cuda, python-api
+# RUN: %mdir_python %S/Inputs/fixed_point_pair.py pair %t/pair | FileCheck %s --check-prefix=PAIR
+# RUN: %mdir_python %S/Inputs/fixed_point_pair.py residual %t/site | FileCheck %s --check-prefix=PAIR
+# RUN: %mdir_python %S/Inputs/fixed_point_pair.py overflow %t/overflow | FileCheck %s --check-prefix=OVERFLOW
+# PAIR: exact member quanta and zero net force
+# OVERFLOW: overflow identified the particle and x component

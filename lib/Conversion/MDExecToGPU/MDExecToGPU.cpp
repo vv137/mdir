@@ -355,6 +355,7 @@ public:
   double segmentsColumnUnits = md_exec::policy::kDefaultSegments.columnUnits;
   /// The particles of a column of the groups' build: the policy's, or the
   /// option's (`groups-column-particles`).
+  md_exec::policy::GroupsPolicy groupsPolicy = md_exec::policy::kDefaultGroups;
   double groupsColumnParticles =
       md_exec::policy::kDefaultGroups.columnParticles;
   /// An opt-in compiler strategy for the integer scans of the groups build.
@@ -4022,6 +4023,33 @@ public:
   Value createDeviceBuffer(OpBuilder &builder, Location loc, MemRefType type,
                            ValueRange sizes) override {
     return ::createDeviceBuffer(builder, loc, type, sizes);
+  }
+  md_exec::policy::ForceFields forceFields(bool mixed) override {
+    return mixed ? lowering.groupsPolicy.mixedForces
+                 : lowering.groupsPolicy.doubleForces;
+  }
+  Value createForceFlag(Location loc) override {
+    return lowering.getFlag(lowering.flags.size(), loc).device;
+  }
+  Value startForceCheck(OpBuilder &b, Location loc, Value flag) override {
+    Type ptr = LLVM::LLVMPointerType::get(b.getContext());
+    Value address = arith::IndexCastOp::create(
+        b, loc, b.getI64Type(),
+        memref::ExtractAlignedPointerAsIndexOp::create(b, loc, flag));
+    Value pointer = LLVM::IntToPtrOp::create(b, loc, ptr, address);
+    auto start = lowering.getOrDeclare(
+        flagStartName, b.getFunctionType({ptr}, {b.getI64Type()}));
+    return func::CallOp::create(b, loc, start, ValueRange{pointer})
+        .getResult(0);
+  }
+  void finishForceCheck(OpBuilder &b, Location loc, Value token) override {
+    auto finish = lowering.getOrDeclare(
+        flagFinishName, b.getFunctionType({b.getI64Type()}, {b.getI32Type()}));
+    Value code =
+        func::CallOp::create(b, loc, finish, ValueRange{token}).getResult(0);
+    auto check = lowering.getOrDeclare("mdrtCheckForceRange",
+                                       b.getFunctionType({b.getI32Type()}, {}));
+    func::CallOp::create(b, loc, check, ValueRange{code});
   }
   Value getSizes() override { return structure.sizes; }
   bool isDual() override { return structure.dual; }
@@ -11348,6 +11376,32 @@ public:
           << " is not a number of particles: it takes -1 (the entry of the "
              "tuning policy for the architecture) or a positive count";
       return signalPassFailure();
+    }
+    lowering.groupsPolicy = policy.groups;
+    if (groupsForceFields != "policy") {
+      using Fields = md_exec::policy::ForceFields;
+      auto fields = llvm::StringSwitch<std::optional<Fields>>(groupsForceFields)
+                        .Case("packed", Fields::Packed)
+                        .Case("i32", Fields::I32)
+                        .Case("float4", Fields::Float4)
+                        .Case("i64", Fields::I64)
+                        .Default(std::nullopt);
+      if (!fields) {
+        getOperation().emitError(
+            "groups-force-fields takes policy, packed, i32, i64, or float4");
+        return signalPassFailure();
+      }
+      if (*fields == Fields::Float4 &&
+          md_exec::policy::parseArchitecture(arch)
+                  .value_or(md_exec::policy::DeviceKey{})
+                  .major < 9) {
+        getOperation().emitError(
+            "float4 force reductions require sm_90 or later");
+        return signalPassFailure();
+      }
+      lowering.groupsPolicy.mixedForces = *fields;
+      if (*fields != Fields::Float4)
+        lowering.groupsPolicy.doubleForces = *fields;
     }
     lowering.groupsColumnParticles = groupsColumnParticles > 0
                                          ? double(groupsColumnParticles)

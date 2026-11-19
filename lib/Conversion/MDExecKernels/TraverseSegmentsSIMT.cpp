@@ -41,14 +41,15 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
@@ -207,6 +208,77 @@ struct Schedule {
   /// The packed frames and fields, a row a place.
   Value anchors, offsets;
   SmallVector<Value> fields;
+
+  SmallVector<Value> integerForces;
+  Value forceFlag, forceLimit;
+  static constexpr double forceScale = 4096;
+
+  Type accumulatorType(const Region &region, unsigned out) {
+    return integerForces[out]
+               ? VectorType::get({3}, IntegerType::get(op.getContext(), 64))
+               : region.valueTypes[out];
+  }
+
+  // The same rounded site vector goes to both transposes with opposite
+  // signs. Give its residual to the first maximum absolute weight.
+  SmallVector<Value> shares(OpBuilder &b, unsigned kind, unsigned site,
+                            Value q) {
+    auto weights = type.getPlaceWeights(kind, site);
+    unsigned recipient = 0;
+    for (unsigned k = 1; k < weights.size(); ++k)
+      if (std::abs(weights[k]) > std::abs(weights[recipient]))
+        recipient = k;
+    SmallVector<Value> result(weights.size(), Value());
+    Value residual = q;
+    auto wide = VectorType::get({3}, b.getF64Type());
+    Value real = arith::SIToFPOp::create(b, loc, wide, q);
+    for (unsigned k = 0; k < weights.size(); ++k) {
+      if (k == recipient || weights[k] == 0)
+        continue;
+      Value w = vector::BroadcastOp::create(
+          b, loc, wide, createReal(b, loc, b.getF64Type(), weights[k]));
+      Value product = arith::MulFOp::create(b, loc, w, real);
+      Value rounded = math::RoundEvenOp::create(b, loc, product);
+      result[k] = arith::FPToSIOp::create(b, loc, q.getType(), rounded);
+      residual = arith::SubIOp::create(b, loc, residual, result[k]);
+    }
+    result[recipient] = residual;
+    return result;
+  }
+
+  Value siteQuanta(OpBuilder &b, Value force, Value particle,
+                   double weightBound) {
+    SmallVector<Value> parts;
+    for (unsigned c = 0; c < 3; ++c) {
+      Value f = convertReal(b, loc, vector::ExtractOp::create(b, loc, force, c),
+                            b.getF64Type());
+      Value rounded = math::RoundEvenOp::create(
+          b, loc,
+          arith::MulFOp::create(
+              b, loc, f, createReal(b, loc, b.getF64Type(), forceScale)));
+      Value limit = arith::DivFOp::create(
+          b, loc, forceLimit, createReal(b, loc, b.getF64Type(), weightBound));
+      Value fits =
+          arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT,
+                                math::AbsFOp::create(b, loc, rounded), limit);
+      Value safe = arith::SelectOp::create(b, loc, fits, rounded,
+                                           createZero(b, loc, b.getF64Type()));
+      parts.push_back(arith::FPToSIOp::create(b, loc, b.getI64Type(), safe));
+      Value bad = arith::XOrIOp::create(
+          b, loc, fits, arith::ConstantIntOp::create(b, loc, 1, 1));
+      scf::IfOp::create(b, loc, bad, [&](OpBuilder &in, Location) {
+        Value id = arith::IndexCastOp::create(in, loc, i32, particle);
+        Value code = arith::AddIOp::create(
+            in, loc, arith::MulIOp::create(in, loc, id, ci(in, 3)),
+            ci(in, c + 1));
+        memref::AtomicRMWOp::create(in, loc, arith::AtomicRMWKind::maxu, code,
+                                    forceFlag, ValueRange{ix(in, 0)});
+        scf::YieldOp::create(in, loc);
+      });
+    }
+    return vector::FromElementsOp::create(
+        b, loc, VectorType::get({3}, b.getI64Type()), parts);
+  }
 
   Schedule(md_alg::TraversePairsOp op, TraverseHost &host,
            const SegmentLists &lists, int64_t blockSize, int64_t rotation,
@@ -645,6 +717,13 @@ SmallVector<Value> Schedule::emitRecord(OpBuilder &b, const Region &region,
   for (unsigned a = 0; a != numOuts; ++a) {
     if (!region.valueTypes[a])
       continue;
+    if (integerForces[a]) {
+      for (unsigned k = 0; k < region.mf; ++k)
+        slotsF.push_back({a, k});
+      for (unsigned k = 0; k < region.mg; ++k)
+        slotsG.push_back({a, k});
+      continue;
+    }
     for (unsigned p : region.placesF)
       slotsF.push_back({a, p});
     for (unsigned q : region.placesG)
@@ -663,7 +742,7 @@ SmallVector<Value> Schedule::emitRecord(OpBuilder &b, const Region &region,
 
   SmallVector<Value> initial;
   for (const Slot &slot : slotsF)
-    initial.push_back(createZero(b, loc, region.valueTypes[slot.out]));
+    initial.push_back(createZero(b, loc, accumulatorType(region, slot.out)));
   for (unsigned v : sumsYielded)
     initial.push_back(createZero(b, loc, region.valueTypes[v]));
   unsigned numF = slotsF.size(), numG = slotsG.size();
@@ -715,7 +794,8 @@ SmallVector<Value> Schedule::emitRecord(OpBuilder &b, const Region &region,
         state.push_back(mask);
         unsigned accAt = state.size();
         for (const Slot &slot : slotsG)
-          state.push_back(createZero(batch, loc, region.valueTypes[slot.out]));
+          state.push_back(
+              createZero(batch, loc, accumulatorType(region, slot.out)));
         unsigned turning = state.size();
         llvm::append_range(state, carried);
         unsigned numH = region.mg - 1;
@@ -870,6 +950,17 @@ SmallVector<Value> Schedule::emitRecord(OpBuilder &b, const Region &region,
                   SmallVector<unsigned> touched;
                   for (unsigned value : sites.values) {
                     if (value < numOuts) {
+                      if (integerForces[value]) {
+                        auto wg = type.getPlaceWeights(region.g, sites.q);
+                        auto wf = type.getPlaceWeights(region.f, sites.p);
+                        for (unsigned k = 0; k < wg.size(); ++k)
+                          if (wg[k])
+                            touched.push_back(slotOf(slotsG, value, k));
+                        for (unsigned k = 0; k < wf.size(); ++k)
+                          if (wf[k])
+                            touched.push_back(numG + slotOf(slotsF, value, k));
+                        continue;
+                      }
                       touched.push_back(slotOf(slotsG, value, sites.q));
                       touched.push_back(numG + slotOf(slotsF, value, sites.p));
                     } else {
@@ -895,6 +986,35 @@ SmallVector<Value> Schedule::emitRecord(OpBuilder &b, const Region &region,
                       emit(in, m, yielded);
                       Value k = slice.mapping.lookupOrDefault(yielded);
                       if (value < numOuts) {
+                        if (integerForces[value]) {
+                          double weightBound = 1;
+                          for (auto [kind, site] :
+                               {std::pair{region.g, unsigned(sites.q)},
+                                std::pair{region.f, unsigned(sites.p)}}) {
+                            double magnitude = 1;
+                            for (double w : type.getPlaceWeights(kind, site))
+                              magnitude += std::abs(w);
+                            weightBound = std::max(weightBound, magnitude);
+                          }
+                          Value q = siteQuanta(
+                              in, k, memberParticle(in, region.f, heldI, 0),
+                              weightBound);
+                          for (Value share : shares(in, region.g, sites.q, q)) {
+                            if (!share)
+                              continue;
+                            after[t] =
+                                arith::SubIOp::create(in, loc, after[t], share);
+                            ++t;
+                          }
+                          for (Value share : shares(in, region.f, sites.p, q)) {
+                            if (!share)
+                              continue;
+                            after[t] =
+                                arith::AddIOp::create(in, loc, after[t], share);
+                            ++t;
+                          }
+                          continue;
+                        }
                         bool antisymmetric =
                             op.getExchangeOf(value) == "antisymmetric";
                         after[t] =
@@ -938,7 +1058,7 @@ SmallVector<Value> Schedule::emitRecord(OpBuilder &b, const Region &region,
                     }
                     predicated &= reads;
                   }
-                  if (predicated) {
+                  if (predicated && !forceFlag) {
                     SmallVector<Value> after = accumulate(then);
                     for (auto [t, sum, old] :
                          llvm::zip(touched, after, before))
@@ -979,6 +1099,13 @@ SmallVector<Value> Schedule::emitRecord(OpBuilder &b, const Region &region,
             for (unsigned a = 0; a != numOuts; ++a) {
               if (!region.valueTypes[a])
                 continue;
+              if (integerForces[a]) {
+                for (unsigned k = 0; k < region.mg; ++k)
+                  emitAtomicAdd(then, loc, done[accAt + slotOf(slotsG, a, k)],
+                                integerForces[a],
+                                memberParticle(then, region.g, heldJ, k));
+                continue;
+              }
               SmallVector<Value> forces(region.ng, Value());
               for (unsigned q : region.placesG)
                 forces[q] = done[accAt + slotOf(slotsG, a, q)];
@@ -996,10 +1123,13 @@ SmallVector<Value> Schedule::emitRecord(OpBuilder &b, const Region &region,
   ValueRange totals = batches.getResults();
   if (numF) {
     SmallVector<Value> combined;
-    for (unsigned i = 0; i != numF; ++i)
-      combined.push_back(arith::AddFOp::create(
-          b, loc, totals[i],
-          shuffle(b, totals[i], ci(b, 16), gpu::ShuffleMode::XOR)));
+    for (unsigned i = 0; i != numF; ++i) {
+      Value other = shuffle(b, totals[i], ci(b, 16), gpu::ShuffleMode::XOR);
+      combined.push_back(
+          integerForces[slotsF[i].out]
+              ? Value(arith::AddIOp::create(b, loc, totals[i], other))
+              : Value(arith::AddFOp::create(b, loc, totals[i], other)));
+    }
     Value writes = arith::AndIOp::create(
         b, loc,
         arith::AndIOp::create(
@@ -1013,6 +1143,13 @@ SmallVector<Value> Schedule::emitRecord(OpBuilder &b, const Region &region,
       for (unsigned a = 0; a != numOuts; ++a) {
         if (!region.valueTypes[a])
           continue;
+        if (integerForces[a]) {
+          for (unsigned k = 0; k < region.mf; ++k)
+            emitAtomicAdd(then, loc, combined[slotOf(slotsF, a, k)],
+                          integerForces[a],
+                          memberParticle(then, region.f, heldI, k));
+          continue;
+        }
         SmallVector<Value> forces(region.nf, Value());
         for (unsigned p : region.placesF)
           forces[p] = combined[slotOf(slotsF, a, p)];
@@ -1107,6 +1244,44 @@ LogicalResult Schedule::run() {
   Value block = ix(builder, blockSize);
   Value capacity =
       memref::DimOp::create(builder, loc, lists.groups, ix(builder, 0));
+  integerForces.resize(numOuts);
+  for (unsigned a = 0; a < numOuts; ++a) {
+    if (op.getExchangeOf(a) != "antisymmetric")
+      continue;
+    bool vectorForce = llvm::all_of(regions, [&](const Region &region) {
+      Type t = region.valueTypes[a];
+      auto vector = dyn_cast_or_null<VectorType>(t);
+      return !t || (vector && vector.getNumElements() == 3);
+    });
+    if (!vectorForce)
+      continue;
+    auto dest = cast<MemRefType>(op.getOuts()[a].getType());
+    auto storage =
+        MemRefType::get({ShapedType::kDynamic, 3}, builder.getI64Type(),
+                        MemRefLayoutAttrInterface{}, dest.getMemorySpace());
+    integerForces[a] =
+        host.createDeviceBuffer(builder, loc, storage, ValueRange{size});
+    host.launchOver(builder, loc, size, [&](OpBuilder &in, Value row) {
+      storeElement(in, loc,
+                   createZero(in, loc, VectorType::get({3}, in.getI64Type())),
+                   integerForces[a], row);
+    });
+    if (forceFlag)
+      continue;
+    forceFlag = host.createForceFlag(loc);
+    size_t slices = 1;
+    for (const auto &region : regions)
+      slices = std::max(slices, region.table.size());
+    // Up to 64 entries, 16 lanes and this many site pairs per record.
+    // Leave room for both transposes, rounded shares and signed weights.
+    Value records = arith::IndexCastOp::create(builder, loc,
+                                               builder.getI64Type(), capacity);
+    Value n =
+        arith::UIToFPOp::create(builder, loc, builder.getF64Type(), records);
+    forceLimit = arith::DivFOp::create(
+        builder, loc,
+        createReal(builder, loc, builder.getF64Type(), 0x1p49 / slices), n);
+  }
   Value warps = arith::MaxUIOp::create(
       builder, loc, arith::MinUIOp::create(builder, loc, capacity, size), one);
   Value threads = arith::MulIOp::create(builder, loc, warps, warp32);
@@ -1322,6 +1497,32 @@ LogicalResult Schedule::run() {
   // The packed frames are freed once the loop has read them; the writer's
   // belong to the list.
   SmallVector<Value> packed;
+  Value token;
+  if (forceFlag) {
+    token = host.startForceCheck(builder, loc, forceFlag);
+    host.launchOver(builder, loc, size, [&](OpBuilder &in, Value row) {
+      for (auto [a, scratch] : llvm::enumerate(integerForces)) {
+        if (!scratch)
+          continue;
+        Value dest = op.getOuts()[a];
+        auto wide = VectorType::get({3}, in.getF64Type());
+        Value decoded = arith::SIToFPOp::create(
+            in, loc, wide, loadElement(in, loc, scratch, row));
+        Value scale = vector::BroadcastOp::create(
+            in, loc, wide,
+            createReal(in, loc, in.getF64Type(), 1 / forceScale));
+        decoded = arith::MulFOp::create(in, loc, decoded, scale);
+        Value prior = loadElement(in, loc, dest, row);
+        decoded = convertReal(in, loc, decoded,
+                              getElementTypeOrSelf(prior.getType()));
+        storeElement(in, loc, arith::AddFOp::create(in, loc, prior, decoded),
+                     dest, row);
+      }
+    });
+    for (Value scratch : integerForces)
+      if (scratch)
+        packed.push_back(scratch);
+  }
   if (!framed) {
     packed.push_back(anchors);
     if (offsets)
@@ -1338,6 +1539,8 @@ LogicalResult Schedule::run() {
     gpu::DeallocOp::create(builder, loc, /*asyncToken=*/Type(),
                            /*asyncDependencies=*/ValueRange(), plain);
   }
+  if (token)
+    host.finishForceCheck(builder, loc, token);
   return host.finishSums(op, builder, op.getReduce(), op.getScratch(), warps);
 }
 } // namespace
