@@ -11,9 +11,14 @@ mode, directory = sys.argv[1:]
 work = Path(directory)
 work.mkdir(parents=True, exist_ok=True)
 site = mode == "residual"
+sum_overflow = mode == "sum-overflow"
+expect_overflow = mode == "overflow" or sum_overflow
 if site:
     os.environ["MDIR_RIGID_UNITS_TEST"] = "1"
 charge = -0.25 / (4096 * COULOMB_NATIVE) if mode != "overflow" else -1000.0
+if sum_overflow:
+    # Each x contribution is below 2^30 quanta. Their sum exceeds 2^31.
+    charge = -0.0004
 top = """[ defaults ]
 1 2 yes 0.5 0.833333
 [ atomtypes ]
@@ -41,10 +46,10 @@ WAT 2
 4 1 2 3
 """
 else:
-    top += """[ moleculetype ]
+    top += f"""[ moleculetype ]
 A 1
 [ atoms ]
-1 I 1 A A 1 1 23
+1 I 1 A A 1 {1e6 if sum_overflow else 1} 23
 """
 top += f"""[ moleculetype ]
 B 1
@@ -54,14 +59,15 @@ B 1
 pair
 [ molecules ]
 {'WAT' if site else 'A'} 1
-B 1
+B {4 if sum_overflow else 1}
 """
 (work / "pair.top").write_text(top)
 first = ([("O", .44, .5), ("H1", .50, .58), ("H2", .50, .42), ("EP", .50, .5)]
          if site else [("A", .50, .5)])
 rows = []
-for n, (name, x, y) in enumerate(first + [("B", 1., .5)], 1):
-    residue = 1 if n <= len(first) else 2
+ys = [.47, .49, .51, .53] if sum_overflow else [.5]
+for n, (name, x, y) in enumerate(first + [("B", 1., y) for y in ys], 1):
+    residue = 1 if n <= len(first) else n - len(first) + 1
     label = ("WAT" if site else "A") if residue == 1 else "B"
     rows.append(f"{residue:5d}{label:<5}{name:>5}{n:5d}{x:8.3f}{y:8.3f}{.5:8.3f}")
 (work / "pair.gro").write_text(f"pair\n{len(rows)}\n" + "\n".join(rows) + "\n3 3 3\n")
@@ -80,12 +86,12 @@ sim = mdir.Simulation(mdir.compile(system, state, mdir.Integrator(), ensemble,
 try:
     sim.run(0, energy=True)
 except RuntimeError as error:
-    if mode != "overflow" or "fixed-point force exceeds its range at particle" not in str(error):
+    if not expect_overflow or "fixed-point force exceeds its range at particle" not in str(error):
         raise
     assert "component x" in str(error), str(error)
     print("overflow identified the particle and x component")
 else:
-    assert mode != "overflow", "the out-of-range force was accepted"
+    assert not expect_overflow, "the out-of-range force was accepted"
     forces = np.asarray(sim.state().forces) * 4096
     expected = np.zeros_like(forces)
     expected[1 if site else 0, 0], expected[-1, 0] = 1, -1

@@ -219,30 +219,14 @@ void kernels::storeElement(OpBuilder &builder, Location loc, Value value,
   }
 }
 
-void kernels::emitForceGuardAtomic(OpBuilder &b, Location loc, ForceGuardOp op,
-                                   Value value, Value buffer, Value row,
-                                   unsigned component) {
-  // Only GPU threads race here. Kernel completion orders the consumer;
-  // D113 also waits for its event before the host reads a mapped flag.
-  auto type = cast<MemRefType>(buffer.getType());
-  Value slot = row;
-  if (type.getRank() == 2) {
-    slot = arith::MulIOp::create(b, loc, row,
-                                 createIndex(b, loc, type.getDimSize(1)));
-    slot = arith::AddIOp::create(b, loc, slot, createIndex(b, loc, component));
-  }
+void kernels::emitDeviceMax(OpBuilder &b, Location loc, Value value,
+                            Value buffer) {
   Value base = memref::ExtractAlignedPointerAsIndexOp::create(b, loc, buffer);
-  Value offset = arith::MulIOp::create(
-      b, loc, slot,
-      createIndex(b, loc, value.getType().getIntOrFloatBitWidth() / 8));
-  Value address = arith::AddIOp::create(b, loc, base, offset);
+  Value address = arith::IndexCastOp::create(b, loc, b.getI64Type(), base);
   Value pointer = LLVM::IntToPtrOp::create(
-      b, loc, LLVM::LLVMPointerType::get(b.getContext(), 1),
-      arith::IndexCastOp::create(b, loc, b.getI64Type(), address).getResult());
-  LLVM::AtomicRMWOp::create(b, loc,
-                            op == ForceGuardOp::Add ? LLVM::AtomicBinOp::add
-                                                    : LLVM::AtomicBinOp::umax,
-                            pointer, value, LLVM::AtomicOrdering::monotonic,
+      b, loc, LLVM::LLVMPointerType::get(b.getContext(), 1), address);
+  LLVM::AtomicRMWOp::create(b, loc, LLVM::AtomicBinOp::umax, pointer, value,
+                            LLVM::AtomicOrdering::monotonic,
                             StringRef("device"));
 }
 

@@ -90,7 +90,7 @@ using ForceFields = md_exec::policy::ForceFields;
 
 struct GroupForceReduction {
   ForceFields fields;
-  SmallVector<Value> zScratch, exceptional;
+  SmallVector<Value> zScratch;
   SmallVector<Value> scratch;
   Value flag, limit;
   double scale;
@@ -159,8 +159,8 @@ struct GroupForceReduction {
         b, loc, VectorType::get({3}, b.getI32Type()), ValueRange{x, y, z});
   }
 
-  Value quantize(OpBuilder &b, Location loc, Value force, Value particle,
-                 Value partner, unsigned out) const {
+  Value quantize(OpBuilder &b, Location loc, Value force, Value threshold,
+                 Value limitingPlace, Value order) const {
     SmallVector<Value> integers;
     for (auto [component, value] :
          llvm::enumerate(getComponents(b, loc, force))) {
@@ -169,42 +169,25 @@ struct GroupForceReduction {
           arith::MulFOp::create(b, loc, value, createReal(b, loc, real, scale));
       Value rounded = math::RoundEvenOp::create(b, loc, scaled);
       Value magnitude = math::AbsFOp::create(b, loc, rounded);
-      Value wide = convertReal(b, loc, magnitude, b.getF64Type());
-      Value threshold = loadElement(b, loc, limit, createIndex(b, loc, 0));
-      bool narrow = fields != ForceFields::I64;
-      Value ceiling =
-          narrow ? createReal(b, loc, b.getF64Type(), 0x1p30) : threshold;
-      Value fits = arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT,
-                                         wide, ceiling);
-      if (narrow) {
-        Value exceptionalValue = arith::CmpFOp::create(
-            b, loc, arith::CmpFPredicate::OGE, wide, threshold);
-        Value record = arith::AndIOp::create(b, loc, fits, exceptionalValue);
-        scf::IfOp::create(b, loc, record, [&](OpBuilder &in, Location) {
-          Value amount =
-              arith::FPToUIOp::create(in, loc, in.getI64Type(), wide);
-          for (Value endpoint : {particle, partner})
-            emitForceGuardAtomic(in, loc, ForceGuardOp::Add, amount,
-                                 exceptional[out],
-                                 arith::IndexCastOp::create(
-                                     in, loc, in.getIndexType(), endpoint),
-                                 component);
-          scf::YieldOp::create(in, loc);
-        });
-      }
+      Value fits =
+          arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLE, magnitude,
+                                convertReal(b, loc, threshold, real));
       Value safe = arith::SelectOp::create(b, loc, fits, rounded,
                                            createZero(b, loc, real));
       integers.push_back(arith::FPToSIOp::create(b, loc, field(b), safe));
       Value failed = arith::XOrIOp::create(
           b, loc, fits, arith::ConstantIntOp::create(b, loc, 1, 1));
       scf::IfOp::create(b, loc, failed, [&](OpBuilder &at, Location) {
+        Value particle =
+            loadElement(at, loc, order,
+                        arith::IndexCastOp::create(at, loc, at.getIndexType(),
+                                                   limitingPlace));
         Value code = arith::MulIOp::create(
             at, loc, particle, arith::ConstantIntOp::create(at, loc, 3, 32));
         code = arith::AddIOp::create(
             at, loc, code,
             arith::ConstantIntOp::create(at, loc, component + 1, 32));
-        emitForceGuardAtomic(at, loc, ForceGuardOp::Max, code, flag,
-                             createIndex(at, loc, 0));
+        emitDeviceMax(at, loc, code, flag);
         scf::YieldOp::create(at, loc);
       });
     }
@@ -431,9 +414,11 @@ emitGroupPairKernel(OpBuilder &builder, md_alg::TraversePairsOp op,
         carried.append(acc.begin(), acc.end());
         // The counter in i32: an index is 64 bits on the device, two
         // additions and two comparisons a step.
-        Value entryParticle;
-        if (fixed.flag && fixed.fields != ForceFields::I64)
-          entryParticle = loadElement(b, loc, lists.order, place);
+        Value memberLimit, entryLimit;
+        if (fixed.flag) {
+          memberLimit = loadElement(b, loc, fixed.limit, mine);
+          entryLimit = loadElement(b, loc, fixed.limit, place);
+        }
         auto steps = scf::ForOp::create(
             b, loc, constant32(b, 0), constant32(b, 16), constant32(b, 1),
             carried,
@@ -485,21 +470,29 @@ emitGroupPairKernel(OpBuilder &builder, md_alg::TraversePairsOp op,
                     arith::SelectOp::create(s, loc, within, value, nothing);
                 if (i < numOuts && fixed.scratch[i] &&
                     fixed.fields != ForceFields::Float4) {
-                  Value particle = memref::LoadOp::create(s, loc, lists.order,
-                                                          ValueRange{mine});
-                  Value partner;
-                  if (entryParticle) {
-                    Value origin = arith::AndIOp::create(
-                        s, loc, arith::SubIOp::create(s, loc, u, iteration),
-                        constant32(s, 15));
-                    origin = arith::OrIOp::create(s, loc, origin, half);
-                    partner =
-                        gpu::ShuffleOp::create(s, loc, entryParticle, origin,
-                                               width, gpu::ShuffleMode::IDX)
-                            .getShuffleResult();
-                  }
-                  Value integer =
-                      fixed.quantize(s, loc, masked, particle, partner, i);
+                  Value origin = arith::OrIOp::create(
+                      s, loc,
+                      arith::AndIOp::create(
+                          s, loc, arith::SubIOp::create(s, loc, u, iteration),
+                          constant32(s, 15)),
+                      half);
+                  Value peerLimit =
+                      gpu::ShuffleOp::create(s, loc, entryLimit, origin, width,
+                                             gpu::ShuffleMode::IDX)
+                          .getShuffleResult();
+                  Value peerPlace =
+                      gpu::ShuffleOp::create(s, loc, place32, origin, width,
+                                             gpu::ShuffleMode::IDX)
+                          .getShuffleResult();
+                  Value useMember =
+                      arith::CmpFOp::create(s, loc, arith::CmpFPredicate::OLE,
+                                            memberLimit, peerLimit);
+                  Value threshold = arith::SelectOp::create(
+                      s, loc, useMember, memberLimit, peerLimit);
+                  Value limitingPlace = arith::SelectOp::create(
+                      s, loc, useMember, mine32, peerPlace);
+                  Value integer = fixed.quantize(s, loc, masked, threshold,
+                                                 limitingPlace, lists.order);
                   nextOwn.push_back(
                       arith::AddIOp::create(s, loc, own[i], integer));
                   nextReceived.push_back(
@@ -871,7 +864,6 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
   GroupForceReduction fixed;
   fixed.fields = host.forceFields(computed.isF32());
   fixed.zScratch.resize(numOuts);
-  fixed.exceptional.resize(numOuts);
   fixed.scale = computed.isF32() ? 4096.0 : 4294967296.0;
   fixed.scratch.resize(numOuts);
   for (unsigned i = 0; i < numOuts; ++i) {
@@ -901,12 +893,8 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
       fixed.scratch[i] =
           allocate({ShapedType::kDynamic, 3}, fixed.field(builder));
     }
-    if (fixed.fields == ForceFields::Packed || fixed.fields == ForceFields::I32)
-      fixed.exceptional[i] =
-          allocate({ShapedType::kDynamic, 3}, builder.getI64Type());
     host.launchOver(builder, loc, size, [&](OpBuilder &body, Value particle) {
-      for (Value scratch :
-           {fixed.scratch[i], fixed.zScratch[i], fixed.exceptional[i]}) {
+      for (Value scratch : {fixed.scratch[i], fixed.zScratch[i]}) {
         if (!scratch)
           continue;
         auto type = cast<MemRefType>(scratch.getType());
@@ -928,21 +916,12 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
         targets.push_back(storage);
         return storage;
       };
-      // Count each incoming outer entry by its live mask. For the member
-      // side the whole length of its group's outer list is an upper bound.
+      // Count incident outer-list mask bits at both endpoints, in place
+      // order. This certificate stays valid through all inner-list prunes.
       Value degree = buffer(builder.getI64Type(), room);
-      Value maximum = buffer(builder.getI64Type(), one);
-      fixed.limit = buffer(builder.getF64Type(), one);
-      host.launchOver(builder, loc, one, [&](OpBuilder &b, Value row) {
-        storeElement(b, loc, arith::ConstantIntOp::create(b, loc, 1, 64),
-                     maximum, row);
-      });
+      fixed.limit = buffer(computed, room);
       host.launchOver(builder, loc, places, [&](OpBuilder &b, Value place) {
-        Value group =
-            arith::DivUIOp::create(b, loc, place, createIndex(b, loc, 16));
-        Value count = loadElement(b, loc, buffers.counts, group);
-        storeElement(b, loc,
-                     arith::ExtUIOp::create(b, loc, b.getI64Type(), count),
+        storeElement(b, loc, arith::ConstantIntOp::create(b, loc, 0, 64),
                      degree, place);
       });
       Value blocks = loadElement(builder, loc, host.getSizes(),
@@ -978,23 +957,48 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
           emitAtomicAdd(in, loc,
                         arith::ExtUIOp::create(in, loc, in.getI64Type(), n),
                         degree, place);
+          for (unsigned bit = 0; bit < 16; ++bit) {
+            Value present = arith::AndIOp::create(
+                in, loc, mask,
+                arith::ConstantIntOp::create(in, loc, 1 << bit, 32));
+            Value set = arith::CmpIOp::create(
+                in, loc, arith::CmpIPredicate::ne, present,
+                arith::ConstantIntOp::create(in, loc, 0, 32));
+            scf::IfOp::create(in, loc, set, [&](OpBuilder &at, Location) {
+              Value member = arith::AddIOp::create(
+                  at, loc,
+                  arith::MulIOp::create(at, loc, group,
+                                        createIndex(at, loc, 16)),
+                  createIndex(at, loc, bit));
+              emitAtomicAdd(at, loc,
+                            arith::ConstantIntOp::create(at, loc, 1, 64),
+                            degree, member);
+              scf::YieldOp::create(at, loc);
+            });
+          }
           scf::YieldOp::create(in, loc);
         });
       });
       host.launchOver(builder, loc, places, [&](OpBuilder &b, Value place) {
-        emitForceGuardAtomic(b, loc, ForceGuardOp::Max,
-                             loadElement(b, loc, degree, place), maximum,
-                             createIndex(b, loc, 0));
-      });
-      host.launchOver(builder, loc, one, [&](OpBuilder &b, Value row) {
-        Value n = loadElement(b, loc, maximum, row);
-        int64_t maxInteger =
-            fixed.fields == ForceFields::I64 ? INT64_MAX : INT32_MAX / 2;
-        Value bound = arith::DivUIOp::create(
-            b, loc, arith::ConstantIntOp::create(b, loc, maxInteger, 64), n);
-        storeElement(b, loc,
-                     arith::UIToFPOp::create(b, loc, b.getF64Type(), bound),
-                     fixed.limit, row);
+        Value d =
+            arith::MaxUIOp::create(b, loc, loadElement(b, loc, degree, place),
+                                   arith::ConstantIntOp::create(b, loc, 1, 64));
+        Value quota = arith::DivUIOp::create(
+            b, loc,
+            arith::ConstantIntOp::create(
+                b, loc,
+                fixed.fields == ForceFields::I64 ? INT64_MAX : INT32_MAX, 64),
+            d);
+        // Round the comparison threshold down in the kernel's real type.
+        bool f32 = computed.isF32();
+        Value bound =
+            LLVM::InlineAsmOp::create(
+                b, loc, TypeRange{computed}, ValueRange{quota},
+                f32 ? "cvt.rm.f32.u64 $0, $1;" : "cvt.rm.f64.u64 $0, $1;",
+                f32 ? "=f,l" : "=d,l", false, false, LLVM::TailCallKind::None,
+                LLVM::AsmDialectAttr(), ArrayAttr())
+                .getResult(0);
+        storeElement(b, loc, bound, fixed.limit, place);
       });
     }
   }
@@ -1194,27 +1198,6 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
         if (!scratch)
           continue;
         Value destination = op.getOuts()[i];
-        if (fixed.exceptional[i]) {
-          Value amounts =
-              loadElement(body, loc, fixed.exceptional[i], particle);
-          for (auto [component, amount] :
-               llvm::enumerate(getComponents(body, loc, amounts))) {
-            Value excess = arith::CmpIOp::create(
-                body, loc, arith::CmpIPredicate::ugt, amount,
-                arith::ConstantIntOp::create(body, loc, INT32_MAX / 2, 64));
-            scf::IfOp::create(body, loc, excess, [&](OpBuilder &in, Location) {
-              Value code = arith::MulIOp::create(in, loc, particle,
-                                                 createIndex(in, loc, 3));
-              code = arith::AddIOp::create(in, loc, code,
-                                           createIndex(in, loc, component + 1));
-              emitForceGuardAtomic(
-                  in, loc, ForceGuardOp::Max,
-                  arith::IndexCastOp::create(in, loc, in.getI32Type(), code),
-                  fixed.flag, createIndex(in, loc, 0));
-              scf::YieldOp::create(in, loc);
-            });
-          }
-        }
         Value integer = fixed.load(body, loc, i, particle);
         auto wide = VectorType::get({3}, body.getF64Type());
         Value decoded = integer;

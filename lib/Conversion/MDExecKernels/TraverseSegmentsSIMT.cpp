@@ -271,8 +271,7 @@ struct Schedule {
         Value code = arith::AddIOp::create(
             in, loc, arith::MulIOp::create(in, loc, id, ci(in, 3)),
             ci(in, c + 1));
-        emitForceGuardAtomic(in, loc, ForceGuardOp::Max, code, forceFlag,
-                             ix(in, 0));
+        emitDeviceMax(in, loc, code, forceFlag);
         scf::YieldOp::create(in, loc);
       });
     }
