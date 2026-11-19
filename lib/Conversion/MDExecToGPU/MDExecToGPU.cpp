@@ -573,8 +573,7 @@ private:
   /// Prunes the inner list of the dual list `structure` from its outer one
   /// at the positions `positions` in the cell `box`, with the reach
   /// `reach`, and remembers the configuration and the cell (D114).
-  void prepareDegreeIndex(OpBuilder &builder, Location loc,
-                          const Neighbors &structure, PruneContext &ctx);
+  void emitOuterDegrees(OpBuilder &builder, Location loc, const Neighbors &structure);
   void emitGroupsPrune(OpBuilder &builder, Location loc,
                        const Neighbors &structure, Value positions,
                        Value box, double reach);
@@ -3938,7 +3937,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
 //===----------------------------------------------------------------------===//
 
 bool Lowering::usesFixedGroupForce(md_alg::TraversePairsOp pair) {
-  if (traverseOracle != "simt")
+  if (pair.isSegmented() || traverseOracle != "simt")
     return false;
   auto scatter =
       dyn_cast_if_present<md_exec::ScatterAttr>(pair.getScatterAttr());
@@ -4018,10 +4017,6 @@ void Lowering::findSharedFrames(func::FuncOp function,
       });
     if (!first)
       continue;
-    // The fixed force quota uses the degrees of both endpoints, including
-    // entries written by other warps. Finish pruning before counting them.
-    if (usesFixedGroupForce(pair))
-      continue;
     pair.setPruneGroupsAttr(
         IntegerAttr::get(IntegerType::get(context, 64), fusePruningGroups));
     pair.setPruneReachAttr(FloatAttr::get(
@@ -4088,24 +4083,8 @@ public:
   GroupBuffers getGroupsBuffers(OpBuilder &builder, Location loc) override {
     return lowering.getGroupsBuffers(builder, loc, structure.handle);
   }
-  bool checksPruning() const override { return lowering.checkPruning; }
-  void checkDegrees(OpBuilder &b, Location loc, Value places, Value blocks,
-                    Value reference) override {
-    Type wide = b.getI64Type();
-    Value address =
-        memref::ExtractAlignedPointerAsIndexOp::create(b, loc, reference);
-    func::CallOp::create(
-        b, loc,
-        lowering.getOrDeclare("mdrtCheckInnerDegrees",
-                              b.getFunctionType({wide, wide, wide, wide}, {})),
-        ValueRange{structure.handle,
-                   arith::IndexCastOp::create(b, loc, wide, places),
-                   arith::ExtSIOp::create(b, loc, wide, blocks),
-                   arith::IndexCastOp::create(b, loc, wide, address)});
-  }
-  Value getInnerDegrees(OpBuilder &b, Location loc) override {
-    return lowering.getGroupsBuffer(b, loc, structure.handle,
-                                    GROUPS_INNER_DEGREES);
+  Value getOuterMaximum(OpBuilder &b, Location loc) override {
+    return lowering.getGroupsBuffer(b, loc, structure.handle, GROUPS_OUTER_MAX);
   }
   InnerLists getInnerLists(OpBuilder &builder, Location loc) override {
     return lowering.getInnerLists(builder, loc, structure.handle);
@@ -4129,7 +4108,6 @@ public:
   PruneContext getPruneContext(OpBuilder &builder, Location loc, Value box,
                                double reach) override {
     auto ctx = lowering.getPruneContext(builder, loc, structure, box, reach);
-    lowering.prepareDegreeIndex(builder, loc, structure, ctx);
     return ctx;
   }
   Value emitPruneGroup(OpBuilder &b, Location loc, const PruneContext &ctx,
@@ -9090,95 +9068,70 @@ PruneContext Lowering::getPruneContext(OpBuilder &builder, Location loc,
   return ctx;
 }
 
-// Group the live outer slots by their entry place once per outer build.
-// Row and slot order are immaterial: the gather sums nonnegative integers.
-void Lowering::prepareDegreeIndex(OpBuilder &b, Location loc,
-                                  const Neighbors &structure,
-                                  PruneContext &ctx) {
-  if (!hasFixedGroupForce)
-    return;
-  auto get = [&](MdrtGroupsSlot slot) {
-    return getGroupsBuffer(b, loc, structure.handle, slot);
+// Count the complete outer masks only after the last growth/rebuild retry.
+void Lowering::emitOuterDegrees(OpBuilder &at, Location loc,
+                                const Neighbors &structure) {
+  auto buffers = getGroupsBuffers(at, loc, structure.handle);
+  Value degree = getGroupsBuffer(at, loc, structure.handle, GROUPS_OUTER_DEGREES);
+  Value maxDegree = getGroupsBuffer(at, loc, structure.handle, GROUPS_OUTER_MAX);
+  auto size = [&](int n) {
+    return arith::IndexCastOp::create(at, loc, at.getIndexType(),
+        loadElement(at, loc, structure.sizes, createIndex(at, loc, n))).getResult();
   };
-  ctx.degrees = get(GROUPS_INNER_DEGREES);
-  ctx.reverseStart = get(GROUPS_REVERSE_START);
-  ctx.reverseEnd = get(GROUPS_REVERSE_END);
-  ctx.reverseSlots = get(GROUPS_REVERSE_SLOTS);
-  ctx.populations = get(GROUPS_SLOT_DEGREES);
-  Value needed =
-      func::CallOp::create(
-          b, loc,
-          getOrDeclare("mdrtBuildReverseIndex",
-                       b.getFunctionType({b.getI64Type()}, {b.getI32Type()})),
-          ValueRange{structure.handle})
-          .getResult(0);
-  Value build =
-      arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne, needed,
-                            arith::ConstantIntOp::create(b, loc, 0, 32));
-  auto when = scf::IfOp::create(b, loc, build, false);
-  OpBuilder at(when.thenBlock()->getTerminator());
-  Value one = createIndex(at, loc, 1);
+  Value places = size(0), blocks = size(2);
   Value zero = arith::ConstantIntOp::create(at, loc, 0, 64);
-  Value places =
-      arith::MulIOp::create(at, loc, ctx.groups, createIndex(at, loc, 16));
-  Value slots =
-      arith::MulIOp::create(at, loc, ctx.blocks, createIndex(at, loc, 64));
-  auto scalar = getDeviceType({1}, at.getI64Type());
-  Value nextRow = createDeviceBuffer(at, loc, scalar, {});
-  launchOver(at, loc, one, [&](OpBuilder &k, Value j) {
-    storeElement(k, loc, zero, nextRow, j);
+  launchOver(at, loc, createIndex(at, loc, 1), [&](OpBuilder &b, Value i) {
+    storeElement(b, loc, zero, maxDegree, i);
   });
-  launchOver(at, loc, places, [&](OpBuilder &k, Value place) {
-    storeElement(k, loc, zero, ctx.reverseEnd, place);
+  launchOver(at, loc, places, [&](OpBuilder &b, Value i) {
+    storeElement(b, loc, zero, degree, i);
   });
-  auto overSlots = [&](auto visit) {
-    launchOver(at, loc, slots, [&](OpBuilder &k, Value slot) {
-      Value width = createIndex(k, loc, 64);
-      Value block = arith::DivUIOp::create(k, loc, slot, width);
-      auto toIndex = [&](Value v) {
-        return arith::IndexCastOp::create(k, loc, k.getIndexType(), v);
-      };
-      Value group = toIndex(loadElement(k, loc, ctx.buffers.units, block));
-      Value ordinal = toIndex(loadElement(k, loc, ctx.buffers.ordinals, block));
-      Value entry = arith::AddIOp::create(
-          k, loc, arith::MulIOp::create(k, loc, ordinal, width),
-          arith::RemUIOp::create(k, loc, slot, width));
-      Value live = arith::CmpIOp::create(
-          k, loc, arith::CmpIPredicate::ult, entry,
-          toIndex(loadElement(k, loc, ctx.buffers.counts, group)));
-      scf::IfOp::create(k, loc, live, [&](OpBuilder &in, Location) {
-        Value place = arith::IndexCastOp::create(
-            in, loc, in.getIndexType(),
-            loadElement(in, loc, ctx.buffers.entries, slot));
-        visit(in, place, slot);
-        scf::YieldOp::create(in, loc);
-      });
+  Value slots = arith::MulIOp::create(at, loc, blocks, createIndex(at, loc, 64));
+  launchOver(at, loc, slots, [&](OpBuilder &b, Value slot) {
+    auto ix = [&](Value v) {
+      return arith::IndexCastOp::create(b, loc, b.getIndexType(), v).getResult();
+    };
+    Value width = createIndex(b, loc, 64);
+    Value block = arith::DivUIOp::create(b, loc, slot, width);
+    Value group = ix(loadElement(b, loc, buffers.units, block));
+    Value ordinal = ix(loadElement(b, loc, buffers.ordinals, block));
+    Value column = arith::AddIOp::create(b, loc,
+        arith::MulIOp::create(b, loc, ordinal, width),
+        arith::RemUIOp::create(b, loc, slot, width));
+    Value live = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, column,
+                                       ix(loadElement(b, loc, buffers.counts, group)));
+    scf::IfOp::create(b, loc, live, [&](OpBuilder &in, Location) {
+      Value mask = arith::AndIOp::create(in, loc, loadElement(in, loc, buffers.masks, slot),
+                                         arith::ConstantIntOp::create(in, loc, 65535, 32));
+      Value entry = arith::IndexCastOp::create(in, loc, in.getIndexType(),
+                                               loadElement(in, loc, buffers.entries, slot));
+      emitAtomicAdd(in, loc, arith::ExtUIOp::create(in, loc, in.getI64Type(),
+                    math::CtPopOp::create(in, loc, mask)), degree, entry);
+      for (unsigned bit = 0; bit < 16; ++bit) {
+        Value memberBit = arith::AndIOp::create(in, loc, mask,
+                                  arith::ConstantIntOp::create(in, loc, 1 << bit, 32));
+        Value present = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::ne,
+                           memberBit, arith::ConstantIntOp::create(in, loc, 0, 32));
+        scf::IfOp::create(in, loc, present, [&](OpBuilder &k, Location) {
+          Value member = arith::AddIOp::create(k, loc, createIndex(k, loc, bit),
+                          arith::MulIOp::create(k, loc, group, createIndex(k, loc, 16)));
+          emitAtomicAdd(k, loc, arith::ConstantIntOp::create(k, loc, 1, 64), degree, member);
+          scf::YieldOp::create(k, loc);
+        });
+      }
+      scf::YieldOp::create(in, loc);
     });
-  };
-  Value increment = arith::ConstantIntOp::create(at, loc, 1, 64);
-  overSlots([&](OpBuilder &k, Value place, Value) {
-    emitAtomicAdd(k, loc, increment, ctx.reverseEnd, place);
   });
-  launchOver(at, loc, places, [&](OpBuilder &k, Value place) {
-    Value length = loadElement(k, loc, ctx.reverseEnd, place);
-    Value start = memref::AtomicRMWOp::create(
-        k, loc, arith::AtomicRMWKind::addi, length, nextRow,
-        ValueRange{createIndex(k, loc, 0)});
-    storeElement(k, loc, start, ctx.reverseStart, place);
-    storeElement(k, loc, start, ctx.reverseEnd, place);
+  launchOver(at, loc, places, [&](OpBuilder &b, Value place) {
+    kernels::emitDeviceMax(b, loc, loadElement(b, loc, degree, place), maxDegree);
   });
-  overSlots([&](OpBuilder &k, Value place, Value slot) {
-    Value offset = memref::AtomicRMWOp::create(
-        k, loc, arith::AtomicRMWKind::addi, increment, ctx.reverseEnd,
-        ValueRange{place});
-    storeElement(k, loc,
-                 arith::IndexCastOp::create(k, loc, k.getI64Type(), slot),
-                 ctx.reverseSlots,
-                 arith::IndexCastOp::create(k, loc, k.getIndexType(), offset));
-  });
-  Value plain = memref::MemorySpaceCastOp::create(
-      at, loc, MemRefType::get({1}, at.getI64Type()), nextRow);
-  gpu::DeallocOp::create(at, loc, Type(), ValueRange(), plain);
+  if (checkPruning) {
+    Type wide = at.getI64Type();
+    func::CallOp::create(at, loc, getOrDeclare("mdrtCheckOuterDegrees",
+        at.getFunctionType({wide, wide, wide}, {})), ValueRange{structure.handle,
+        arith::IndexCastOp::create(at, loc, wide, places),
+        arith::IndexCastOp::create(at, loc, wide, blocks)});
+  }
 }
 
 void Lowering::emitGroupsPrune(OpBuilder &builder, Location loc,
@@ -9186,7 +9139,6 @@ void Lowering::emitGroupsPrune(OpBuilder &builder, Location loc,
                                Value box, double reach) {
   emitPruneFrames(builder, loc, structure, positions, box);
   PruneContext ctx = getPruneContext(builder, loc, structure, box, reach);
-  prepareDegreeIndex(builder, loc, structure, ctx);
   Value warp32 = createIndex(builder, loc, 32);
   // A warp for each group (emitPruneGroup).
   launchOver(builder, loc,
@@ -9268,11 +9220,9 @@ Value Lowering::emitPruneGroup(OpBuilder &b, Location loc,
         toIndex(c, arith::RemUIOp::create(c, loc, e,
                                           constant32(c, 64))));
   };
-  SmallVector<Value> initial{constant32(b, 0)};
-  if (ctx.degrees)
-    initial.push_back(arith::ConstantIntOp::create(b, loc, 0, 64));
   auto rounds = scf::ForOp::create(
-      b, loc, constant32(b, 0), count, constant32(b, 32), initial,
+      b, loc, constant32(b, 0), count, constant32(b, 32),
+      ValueRange{constant32(b, 0)},
       [&](OpBuilder &c, Location, Value first, ValueRange carried) {
         Value kept = carried[0];
         Value e = arith::AddIOp::create(c, loc, first, lane);
@@ -9316,7 +9266,6 @@ Value Lowering::emitPruneGroup(OpBuilder &b, Location loc,
                 box32));
         // The bits of the pairs still within the reach.
         Value kept16 = constant32(c, 0);
-        Value memberDegree = ctx.degrees ? carried[1] : Value();
         for (int64_t p = 0; p != 16; ++p) {
           Value d = arith::SubFOp::create(c, loc, members[p], position);
           Value r2 = vector::ReductionOp::create(
@@ -9329,28 +9278,10 @@ Value Lowering::emitPruneGroup(OpBuilder &b, Location loc,
               c, loc, arith::CmpIPredicate::ne,
               arith::AndIOp::create(c, loc, mask, bit),
               constant32(c, 0));
-          Value present = arith::AndIOp::create(c, loc, had, within);
-          if (ctx.degrees) {
-            Value votes = kernels::emitWarpBallot(c, loc, present);
-            Value hits = kernels::emitWarpCount(c, loc, votes);
-            Value mine = arith::CmpIOp::create(c, loc, arith::CmpIPredicate::eq,
-                                               lane, constant32(c, p));
-            Value add =
-                arith::SelectOp::create(c, loc, mine, hits, constant32(c, 0));
-            memberDegree = arith::AddIOp::create(
-                c, loc, memberDegree,
-                arith::ExtUIOp::create(c, loc, c.getI64Type(), add));
-          }
           kept16 = arith::SelectOp::create(
-              c, loc, present, arith::OrIOp::create(c, loc, kept16, bit),
-              kept16);
+              c, loc, arith::AndIOp::create(c, loc, had, within),
+              arith::OrIOp::create(c, loc, kept16, bit), kept16);
         }
-        if (ctx.degrees)
-          scf::IfOp::create(c, loc, has, [&](OpBuilder &in, Location) {
-            storeElement(in, loc, math::CtPopOp::create(in, loc, kept16),
-                         ctx.populations, at);
-            scf::YieldOp::create(in, loc);
-          });
         Value keep = arith::CmpIOp::create(
             c, loc, arith::CmpIPredicate::ne, kept16, constant32(c, 0));
         // A warp compaction (CompactionEmitter.h).
@@ -9371,20 +9302,11 @@ Value Lowering::emitPruneGroup(OpBuilder &b, Location loc,
               inner.masks, ValueRange{to});
           scf::YieldOp::create(d, loc);
         });
-        SmallVector<Value> next{arith::AddIOp::create(
-            c, loc, kept, kernels::emitWarpCount(c, loc, ballot))};
-        if (ctx.degrees)
-          next.push_back(memberDegree);
-        scf::YieldOp::create(c, loc, next);
+        scf::YieldOp::create(
+            c, loc,
+            ValueRange{arith::AddIOp::create(
+                c, loc, kept, kernels::emitWarpCount(c, loc, ballot))});
       });
-  if (ctx.degrees) {
-    Value owner = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, lane,
-                                        constant32(b, 16));
-    scf::IfOp::create(b, loc, owner, [&](OpBuilder &in, Location) {
-      storeElement(in, loc, rounds.getResult(1), ctx.degrees, member);
-      scf::YieldOp::create(in, loc);
-    });
-  }
   // The entries that each block of the group keeps: its blocks fill
   // in order.
   Value kept = rounds.getResult(0);
@@ -9526,32 +9448,6 @@ void Lowering::emitActiveUnits(OpBuilder &builder, Location loc,
           scf::YieldOp::create(c, loc);
         });
       });
-  if (ctx.degrees) {
-    Value places = arith::MulIOp::create(builder, loc, ctx.groups,
-                                         createIndex(builder, loc, 16));
-    launchOver(builder, loc, places, [&](OpBuilder &b, Value place) {
-      auto offset = [&](Value buffer) {
-        return arith::IndexCastOp::create(b, loc, b.getIndexType(),
-                                          loadElement(b, loc, buffer, place));
-      };
-      auto sum = scf::ForOp::create(
-          b, loc, offset(ctx.reverseStart), offset(ctx.reverseEnd),
-          createIndex(b, loc, 1),
-          ValueRange{loadElement(b, loc, ctx.degrees, place)},
-          [&](OpBuilder &k, Location, Value j, ValueRange acc) {
-            Value slot = arith::IndexCastOp::create(
-                k, loc, k.getIndexType(),
-                loadElement(k, loc, ctx.reverseSlots, j));
-            Value population = arith::ExtUIOp::create(
-                k, loc, k.getI64Type(),
-                loadElement(k, loc, ctx.populations, slot));
-            scf::YieldOp::create(
-                k, loc,
-                arith::AddIOp::create(k, loc, acc[0], population).getResult());
-          });
-      storeElement(b, loc, sum.getResult(0), ctx.degrees, place);
-    });
-  }
 }
 
 void Lowering::emitPruneCheck(OpBuilder &builder, Location loc,
@@ -9827,6 +9723,8 @@ LogicalResult Lowering::emitGroupsBuild(OpBuilder &builder, Location loc,
     scf::YieldOp::create(close, loc);
   }
   builder.setInsertionPointAfter(again);
+  if (hasFixedGroupForce)
+    emitOuterDegrees(builder, loc, structure);
   func::CallOp::create(
       builder, loc,
       getOrDeclare(countBuildName, builder.getFunctionType({}, {})),

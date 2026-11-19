@@ -1850,7 +1850,6 @@ struct Groups {
      build of a structure sizes its blocks (D331); a growth after
      it is noted in the log. */
   bool built;
-  bool reverseIndexCurrent;
   int64_t lateGrowths;
   /* The segments of a list of units, 1 for groups
      (mdrtGroupsSetSegments). */
@@ -1935,13 +1934,6 @@ void mdrtGroupsSetSegments(int64_t handle, int64_t segments) {
   groups->segments = segments > 0 ? segments : 1;
 }
 
-int32_t mdrtBuildReverseIndex(int64_t handle) {
-  struct Groups *groups = (struct Groups *)(intptr_t)handle;
-  bool build = !groups->reverseIndexCurrent;
-  groups->reverseIndexCurrent = true;
-  return build;
-}
-
 void _mlir_ciface_mdrtGroupsBuffer(struct Buffer1 *result, int64_t handle,
                                    int64_t which) {
   if (!mdrtGroupsDescriptor(which)) {
@@ -1965,43 +1957,42 @@ void _mlir_ciface_mdrtGroupsWideBuffer(struct Buffer1 *result, int64_t handle,
   _mlir_ciface_mdrtGroupsBuffer(result, handle, which);
 }
 
-/* MDIR_CHECK_PRUNING: compare the pruning writer, the original two-endpoint
-   atomic count, and an independent host walk of the compacted inner lists. */
+/* MDIR_CHECK_PRUNING compares the device result with a host walk of the outer masks. */
 static void *readDegreeCheckBuffer(CUdeviceptr source, size_t bytes) {
   void *copy = malloc(bytes ? bytes : 1);
   if (!copy)
     abort();
   if (bytes)
-    check(cuMemcpyDtoH(copy, source, bytes), "read inner degree check");
+    check(cuMemcpyDtoH(copy, source, bytes), "read outer degree check");
   return copy;
 }
 
-void mdrtCheckInnerDegrees(int64_t handle, int64_t places, int64_t blocks,
-                           int64_t reference) {
+void mdrtCheckOuterDegrees(int64_t handle, int64_t places, int64_t blocks) {
   struct Groups *g = (struct Groups *)(intptr_t)handle;
   enter();
-  check(cuCtxSynchronize(), "check inner degrees");
+  check(cuCtxSynchronize(), "check outer degrees");
   size_t bytes = (size_t)places * sizeof(int64_t);
   int64_t *actual =
-      readDegreeCheckBuffer((CUdeviceptr)g->data[GROUPS_INNER_DEGREES], bytes);
-  int64_t *old = readDegreeCheckBuffer((CUdeviceptr)reference, bytes);
+      readDegreeCheckBuffer((CUdeviceptr)g->data[GROUPS_OUTER_DEGREES], bytes);
+  int64_t *maximum = readDegreeCheckBuffer((CUdeviceptr)g->data[GROUPS_OUTER_MAX], sizeof(int64_t));
   int64_t *host = calloc(places ? places : 1, sizeof(*host));
   if (!host)
     abort();
   size_t n = (size_t)blocks * sizeof(int32_t);
   int32_t *group =
       readDegreeCheckBuffer((CUdeviceptr)g->data[GROUPS_UNIT_GROUPS], n);
+  int32_t *ordinal = readDegreeCheckBuffer((CUdeviceptr)g->data[GROUPS_UNIT_ORDINALS], n);
   int32_t *count =
-      readDegreeCheckBuffer((CUdeviceptr)g->data[GROUPS_INNER_COUNTS], n);
+      readDegreeCheckBuffer((CUdeviceptr)g->data[GROUPS_COUNTS], (places / 16) * sizeof(int32_t));
   int32_t *entry =
-      readDegreeCheckBuffer((CUdeviceptr)g->data[GROUPS_INNER_ENTRIES], 64 * n);
+      readDegreeCheckBuffer((CUdeviceptr)g->data[GROUPS_ENTRIES], 64 * n);
   int32_t *mask =
-      readDegreeCheckBuffer((CUdeviceptr)g->data[GROUPS_INNER_MASKS], 64 * n);
+      readDegreeCheckBuffer((CUdeviceptr)g->data[GROUPS_MASKS], 64 * n);
   for (int64_t b = 0; b < blocks; ++b) {
-    if (count[b] < 0 || count[b] > 64 || group[b] < 0 ||
+    if (ordinal[b] < 0 || group[b] < 0 ||
         group[b] >= places / 16)
       abort();
-    for (int j = 0; j < count[b]; ++j) {
+    for (int j = 0; j < 64 && 64LL * ordinal[b] + j < count[group[b]]; ++j) {
       int64_t slot = 64 * b + j;
       if (entry[slot] < 0 || entry[slot] >= places)
         abort();
@@ -2012,26 +2003,32 @@ void mdrtCheckInnerDegrees(int64_t handle, int64_t places, int64_t blocks,
         }
     }
   }
-  int64_t total = 0;
+  int64_t total = 0, hostMax = 0;
   for (int64_t i = 0; i < places; ++i) {
-    if (actual[i] != host[i] || old[i] != host[i]) {
+    if (actual[i] != host[i]) {
       fprintf(stderr,
-              "mdrt: inner degree mismatch at place %lld: pruning %lld, atomic "
-              "%lld, host %lld\n",
-              (long long)i, (long long)actual[i], (long long)old[i],
+              "mdrt: outer degree mismatch at place %lld: device %lld, host %lld\n",
+              (long long)i, (long long)actual[i],
               (long long)host[i]);
       abort();
     }
+    if (host[i] > hostMax) hostMax = host[i];
     total += host[i];
   }
-  fprintf(stderr, "mdrt: inner degrees agree at %lld places, %lld endpoints\n",
-          (long long)places, (long long)total);
+  if (*maximum != hostMax) {
+    fprintf(stderr, "mdrt: outer maximum mismatch: device %lld, host %lld\n",
+            (long long)*maximum, (long long)hostMax);
+    abort();
+  }
+  fprintf(stderr, "mdrt: outer degrees agree at %lld places, %lld endpoints, maximum %lld\n",
+          (long long)places, (long long)total, (long long)hostMax);
   free(mask);
   free(entry);
   free(count);
   free(group);
   free(host);
-  free(old);
+  free(maximum);
+  free(ordinal);
   free(actual);
 }
 
@@ -2119,7 +2116,6 @@ int64_t mdrtGroupsBuilt(int64_t handle) {
   int64_t late = groups->lateGrowths;
   groups->built = true;
   groups->lateGrowths = 0;
-  groups->reverseIndexCurrent = false;
   return late;
 }
 

@@ -38,12 +38,9 @@ enum MdrtGroupsSlot {
   GROUPS_RECORD_GROUPS = 21,
   GROUPS_RECORD_COUNTS = 22,
   GROUPS_SEGMENT_OFFSETS = 23,
-  GROUPS_INNER_DEGREES = 24,
-  GROUPS_REVERSE_START = 25,
-  GROUPS_REVERSE_END = 26,
-  GROUPS_REVERSE_SLOTS = 27,
-  GROUPS_SLOT_DEGREES = 28,
-  GROUPS_BUFFERS = 29
+  GROUPS_OUTER_DEGREES = 24,
+  GROUPS_OUTER_MAX = 25,
+  GROUPS_BUFFERS = 26
 };
 
 /* The frames of a list of units (D422): buffers of
@@ -95,11 +92,8 @@ mdrtGroupsDescriptor(long long slot) {
       {MDRT_GROUPS_I32, MDRT_GROUPS_BLOCKS, "units: record groups"},
       {MDRT_GROUPS_I32, MDRT_GROUPS_BLOCKS, "units: record counts"},
       {MDRT_GROUPS_I32, MDRT_GROUPS_SEGMENTS, "units: segment offsets"},
-      {MDRT_GROUPS_I64, MDRT_GROUPS_PLACES, "groups: inner degrees"},
-      {MDRT_GROUPS_I64, MDRT_GROUPS_PLACES, "groups: reverse row starts"},
-      {MDRT_GROUPS_I64, MDRT_GROUPS_PLACES, "groups: reverse row ends"},
-      {MDRT_GROUPS_I64, MDRT_GROUPS_ENTRIES, "groups: reverse slots"},
-      {MDRT_GROUPS_I32, MDRT_GROUPS_ENTRIES, "groups: kept mask populations"},
+      {MDRT_GROUPS_I64, MDRT_GROUPS_PLACES, "groups: outer degrees"},
+      {MDRT_GROUPS_I64, MDRT_GROUPS_SCALAR, "groups: outer maximum degree"},
   };
   return slot >= 0 && slot < GROUPS_BUFFERS ? &descriptors[slot] : 0;
 }

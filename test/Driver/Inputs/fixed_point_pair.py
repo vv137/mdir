@@ -75,6 +75,11 @@ loaded = mdir.load_gromacs(str(work / "pair.top"), str(work / "pair.gro"))
 system, state = loaded.make_system(), loaded.make_state()
 system.cutoff, system.pairlist_distance = .8, .9
 system.periodic, system.rigid_water = True, site
+if mode == "replay":
+    system.pruned_distance = 0.801
+    # Translate both particles together. The short skin triggers pruning
+    # while their relative distance and the nonzero pair force are stable.
+    state.velocities = np.array([[2., 0., 0.], [2., 0., 0.]])
 system.electrostatics = mdir.Electrostatics.Cutoff
 execution = mdir.Execution()
 execution.target, execution.precision = mdir.Target.GPU, mdir.Precision.Mixed
@@ -84,7 +89,7 @@ ensemble.kind = mdir.EnsembleKind.NVE
 sim = mdir.Simulation(mdir.compile(system, state, mdir.Integrator(), ensemble,
                                    execution, mdir.Schedule()))
 try:
-    sim.run(0, energy=True)
+    sim.run(25 if mode == "replay" else 0, energy=True)
 except RuntimeError as error:
     if not expect_overflow or "fixed-point force exceeds its range at particle" not in str(error):
         raise
@@ -93,6 +98,8 @@ except RuntimeError as error:
 else:
     assert not expect_overflow, "the out-of-range force was accepted"
     forces = np.asarray(sim.state().forces) * 4096
+    if mode == "replay":
+        np.save(work / "forces.npy", forces)
     expected = np.zeros_like(forces)
     expected[1 if site else 0, 0], expected[-1, 0] = 1, -1
     np.testing.assert_array_equal(forces, expected)

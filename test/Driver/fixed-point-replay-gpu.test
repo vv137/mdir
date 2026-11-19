@@ -1,0 +1,4 @@
+# REQUIRES: cuda, python-api
+# RUN: env MDIR_COMPILE_CACHE=off MDIR_FUSED_PRUNE=off %mdir_python %S/Inputs/fixed_point_pair.py replay %t/off
+# RUN: env MDIR_COMPILE_CACHE=off MDIR_FUSED_PRUNE=always MDIR_TEST_FORCE_REPLAY=1 %mdir_python %S/Inputs/fixed_point_pair.py replay %t/on
+# RUN: cmp %t/off/forces.npy %t/on/forces.npy

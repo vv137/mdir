@@ -1,6 +1,6 @@
-# Check both endpoints of the kept masks as the coordinates and cell change.
-# Dropping the member ballot makes the pruning count disagree with both
-# independent counts on the first list.
+# Check both endpoints of the outer masks as the coordinates and cell change.
+# Dropping the member increment makes the build count disagree with the
+# independent host count on the first list.
 # REQUIRES: cuda
 # RUN: rm -rf %t && mkdir -p %t && cp %S/Inputs/mixture.pdb %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/barostat.test | sed '1d;$d' \
@@ -9,5 +9,5 @@
 # RUN: printf '\n[execution]\ntarget = "GPU"\nprecision = "mixed"\nneighbor_structure = "GROUPS"\n' >> %t/degree.toml
 # RUN: cd %t && env MDIR_COMPILE_CACHE=off MDIR_CHECK_PRUNING=1 mdir run degree.toml > run.out 2>&1
 # RUN: FileCheck %s < %t/run.out
-# CHECK: inner degrees agree at {{[1-9][0-9]*}} places, {{[1-9][0-9]*}} endpoints
-# CHECK: inner degrees agree at {{[1-9][0-9]*}} places, {{[1-9][0-9]*}} endpoints
+# CHECK: outer degrees agree at {{[1-9][0-9]*}} places, {{[1-9][0-9]*}} endpoints
+# CHECK: outer degrees agree at {{[1-9][0-9]*}} places, {{[1-9][0-9]*}} endpoints

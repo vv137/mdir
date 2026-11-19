@@ -243,6 +243,8 @@ void mdrtSegmentsStopExclusions(int64_t count) {
 void mdrtCheckForceRange(int32_t code) {
   if (!code)
     return;
+  if (code == -1)
+    stopWith("fixed-point force exceeds its range under the outer-list certificate");
   uint32_t index = (uint32_t)code - 1;
   char message[160];
   snprintf(message, sizeof message,

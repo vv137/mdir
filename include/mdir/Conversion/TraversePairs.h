@@ -49,7 +49,6 @@ struct PruneContext {
   InnerLists inner;
   PruneBuffers prune;
   mlir::Value placed, groups, stride, reach2, box32, blocks, runs, wideRuns;
-  mlir::Value degrees, reverseStart, reverseEnd, reverseSlots, populations;
   bool triclinic = false;
 };
 
@@ -96,12 +95,7 @@ public:
   /// Its buffers, as the runtime holds them where `builder` is.
   virtual GroupBuffers getGroupsBuffers(mlir::OpBuilder &builder,
                                         mlir::Location loc) = 0;
-  virtual bool checksPruning() const = 0;
-  virtual void checkDegrees(mlir::OpBuilder &, mlir::Location,
-                            mlir::Value places, mlir::Value blocks,
-                            mlir::Value reference) = 0;
-  virtual mlir::Value getInnerDegrees(mlir::OpBuilder &builder,
-                                      mlir::Location loc) = 0;
+  virtual mlir::Value getOuterMaximum(mlir::OpBuilder &, mlir::Location) = 0;
   virtual InnerLists getInnerLists(mlir::OpBuilder &builder,
                                    mlir::Location loc) = 0;
   virtual PruneBuffers getPruneBuffers(mlir::OpBuilder &builder,

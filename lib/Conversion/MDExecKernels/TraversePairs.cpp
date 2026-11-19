@@ -23,6 +23,9 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/TypeUtilities.h"
 
+#include <cmath>
+#include <cstdlib>
+
 using namespace mlir;
 using namespace mdir;
 using namespace mdir::kernels;
@@ -92,7 +95,7 @@ struct GroupForceReduction {
   ForceFields fields;
   SmallVector<Value> zScratch;
   SmallVector<Value> scratch;
-  Value flag, limit;
+  Value flag, limit, maximum;
   double scale;
 
   IntegerType field(OpBuilder &b) const {
@@ -157,6 +160,35 @@ struct GroupForceReduction {
     Value z = loadElement(b, loc, zScratch[out], row);
     return vector::FromElementsOp::create(
         b, loc, VectorType::get({3}, b.getI32Type()), ValueRange{x, y, z});
+  }
+
+  // A value outside the symmetric field range (including NaN) maps to
+  // the unsigned sentinel B+1. Never convert an out-of-range float to int.
+  Value quantizeForCertificate(OpBuilder &b, Location loc, Value force,
+                               Value &laneMaximum) const {
+    SmallVector<Value> parts;
+    auto word = field(b);
+    auto bits = word.getWidth();
+    for (Value component : getComponents(b, loc, force)) {
+      Type real = component.getType();
+      Value rounded = math::RoundEvenOp::create(b, loc, arith::MulFOp::create(
+          b, loc, component, createReal(b, loc, real, scale)));
+      Value magnitude = math::AbsFOp::create(b, loc, rounded);
+      Value fits = arith::CmpFOp::create(
+          b, loc, arith::CmpFPredicate::OLT, magnitude,
+          createReal(b, loc, real, std::ldexp(1.0, bits - 1)));
+      Value safe = arith::SelectOp::create(b, loc, fits, rounded,
+                                           createZero(b, loc, real));
+      Value integer = arith::FPToSIOp::create(b, loc, word, safe);
+      parts.push_back(integer);
+      Value absolute = math::AbsIOp::create(b, loc, integer);
+      Value sentinel = arith::ConstantOp::create(
+          b, loc, b.getIntegerAttr(word, APInt::getSignMask(bits)));
+      Value sample = arith::SelectOp::create(b, loc, fits, absolute, sentinel);
+      laneMaximum = arith::MaxUIOp::create(b, loc, laneMaximum, sample);
+    }
+    return vector::FromElementsOp::create(
+        b, loc, VectorType::get({3}, word), parts);
   }
 
   Value quantize(OpBuilder &b, Location loc, Value force, Value threshold,
@@ -299,6 +331,9 @@ emitGroupPairKernel(OpBuilder &builder, md_alg::TraversePairsOp op,
   for (unsigned i = 0; i != numYields; ++i)
     initial.push_back(createZero(builder, loc, yieldType(i)));
 
+  if (fixed.maximum)
+    initial.push_back(createZero(builder, loc, fixed.field(builder)));
+
   // The entries, 32 at a time: at most two rounds for a unit of 64. The
   // unit is block `unit` of the entries.
   Value blockBase = arith::MulIOp::create(builder, loc, unit,
@@ -415,7 +450,7 @@ emitGroupPairKernel(OpBuilder &builder, md_alg::TraversePairsOp op,
         // The counter in i32: an index is 64 bits on the device, two
         // additions and two comparisons a step.
         Value memberLimit, entryLimit;
-        if (fixed.flag) {
+        if (fixed.limit) {
           memberLimit = loadElement(b, loc, fixed.limit, mine);
           entryLimit = loadElement(b, loc, fixed.limit, place);
         }
@@ -461,6 +496,7 @@ emitGroupPairKernel(OpBuilder &builder, md_alg::TraversePairsOp op,
                   s, loc, arith::CmpFPredicate::OLT, r2, cutoff2);
 
               SmallVector<Value> nextOwn, nextReceived;
+              Value laneMaximum = fixed.maximum ? state.back() : Value();
               for (unsigned i = 0; i != numYields; ++i) {
                 Value narrow = getNarrow(i);
                 Value value =
@@ -470,6 +506,13 @@ emitGroupPairKernel(OpBuilder &builder, md_alg::TraversePairsOp op,
                     arith::SelectOp::create(s, loc, within, value, nothing);
                 if (i < numOuts && fixed.scratch[i] &&
                     fixed.fields != ForceFields::Float4) {
+                  if (fixed.maximum) {
+                    Value integer = fixed.quantizeForCertificate(
+                        s, loc, masked, laneMaximum);
+                    nextOwn.push_back(arith::AddIOp::create(s, loc, own[i], integer));
+                    nextReceived.push_back(arith::SubIOp::create(s, loc, received[i], integer));
+                    continue;
+                  }
                   Value origin = arith::OrIOp::create(
                       s, loc,
                       arith::AndIOp::create(
@@ -520,6 +563,8 @@ emitGroupPairKernel(OpBuilder &builder, md_alg::TraversePairsOp op,
               for (Value value : nextReceived)
                 next.push_back(shuffle(s, value));
               next.append(nextOwn.begin(), nextOwn.end());
+              if (fixed.maximum)
+                next.push_back(laneMaximum);
               scf::YieldOp::create(s, loc, next);
             });
         // After 16 steps each entry is back at its lane: its values go to
@@ -551,7 +596,7 @@ emitGroupPairKernel(OpBuilder &builder, md_alg::TraversePairsOp op,
         });
         scf::YieldOp::create(
             b, loc,
-            ValueRange(results.slice(2 + numIns + numOuts, numYields)));
+            results.drop_front(2 + numIns + numOuts));
       });
 
   // The values of the particles of the group: the two half-warps add up,
@@ -629,6 +674,8 @@ emitGroupPairKernel(OpBuilder &builder, md_alg::TraversePairsOp op,
     }
     contributions.push_back(total);
   }
+  if (fixed.maximum)
+    contributions.push_back(totals.back());
   return contributions;
 }
 
@@ -861,6 +908,7 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
              << "takes the strategy 'hash', whose precondition does not "
                 "hold: "
              << *refused;
+  Value certificateDegrees;
   GroupForceReduction fixed;
   fixed.fields = host.forceFields(computed.isF32());
   fixed.zScratch.resize(numOuts);
@@ -916,107 +964,29 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
         targets.push_back(storage);
         return storage;
       };
-      Value degree;
-      if (host.isDual())
-        degree = host.getInnerDegrees(builder, loc);
-      else
-        degree = buffer(builder.getI64Type(), room);
-      fixed.limit = buffer(computed, room);
-      // Keep the former atomic degree kernel as an oracle in pruning checks.
-      if (!host.isDual() || host.checksPruning()) {
-        Value counted =
-            host.isDual() ? buffer(builder.getI64Type(), room) : degree;
-        host.launchOver(builder, loc, places, [&](OpBuilder &b, Value place) {
-          storeElement(b, loc, arith::ConstantIntOp::create(b, loc, 0, 64),
-                       counted, place);
-        });
-        Value blocks = loadElement(builder, loc, host.getSizes(),
-                                   createIndex(builder, loc, 2));
-        Value slots = arith::MulIOp::create(
-            builder, loc, createIndex(builder, loc, 64),
-            arith::IndexCastOp::create(builder, loc, builder.getIndexType(),
-                                       blocks));
-        host.launchOver(builder, loc, slots, [&](OpBuilder &b, Value slot) {
-          Value c64 = createIndex(b, loc, 64);
-          Value unit = arith::DivUIOp::create(b, loc, slot, c64);
-          Value group = arith::IndexCastOp::create(
-              b, loc, b.getIndexType(),
-              loadElement(b, loc, buffers.units, unit));
-          Value column = arith::RemUIOp::create(b, loc, slot, c64);
-          Value index =
-              arith::IndexCastOp::create(b, loc, b.getI32Type(), column);
-          Value count;
-          if (host.isDual()) {
-            count = loadElement(b, loc, lists.blockCounts, unit);
-          } else {
-            Value ordinal = loadElement(b, loc, buffers.ordinals, unit);
-            index = arith::AddIOp::create(
-                b, loc, index,
-                arith::MulIOp::create(
-                    b, loc, ordinal,
-                    arith::ConstantIntOp::create(b, loc, 64, 32)));
-            count = loadElement(b, loc, buffers.counts, group);
-          }
-          Value live = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult,
-                                             index, count);
-          scf::IfOp::create(b, loc, live, [&](OpBuilder &in, Location) {
-            Value place = arith::IndexCastOp::create(
-                in, loc, in.getIndexType(),
-                loadElement(in, loc, lists.entries, slot));
-            Value mask = arith::AndIOp::create(
-                in, loc, loadElement(in, loc, lists.masks, slot),
-                arith::ConstantIntOp::create(in, loc, 65535, 32));
-            Value n = math::CtPopOp::create(in, loc, mask);
-            emitAtomicAdd(in, loc,
-                          arith::ExtUIOp::create(in, loc, in.getI64Type(), n),
-                          counted, place);
-            for (unsigned bit = 0; bit < 16; ++bit) {
-              Value present = arith::AndIOp::create(
-                  in, loc, mask,
-                  arith::ConstantIntOp::create(in, loc, 1 << bit, 32));
-              Value set = arith::CmpIOp::create(
-                  in, loc, arith::CmpIPredicate::ne, present,
-                  arith::ConstantIntOp::create(in, loc, 0, 32));
-              scf::IfOp::create(in, loc, set, [&](OpBuilder &at, Location) {
-                Value member = arith::AddIOp::create(
-                    at, loc,
-                    arith::MulIOp::create(at, loc, group,
-                                          createIndex(at, loc, 16)),
-                    createIndex(at, loc, bit));
-                emitAtomicAdd(at, loc,
-                              arith::ConstantIntOp::create(at, loc, 1, 64),
-                              counted, member);
-                scf::YieldOp::create(at, loc);
-              });
-            }
-            scf::YieldOp::create(in, loc);
-          });
-        });
-        if (host.isDual())
-          host.checkDegrees(builder, loc, places, blocks, counted);
-      }
-      host.launchOver(builder, loc, places, [&](OpBuilder &b, Value place) {
-        Value d =
-            arith::MaxUIOp::create(b, loc, loadElement(b, loc, degree, place),
-                                   arith::ConstantIntOp::create(b, loc, 1, 64));
-        Value quota = arith::DivUIOp::create(
-            b, loc,
-            arith::ConstantIntOp::create(
-                b, loc,
-                fixed.fields == ForceFields::I64 ? INT64_MAX : INT32_MAX, 64),
-            d);
-        // Round the comparison threshold down in the kernel's real type.
-        bool f32 = computed.isF32();
-        Value bound =
-            LLVM::InlineAsmOp::create(
-                b, loc, TypeRange{computed}, ValueRange{quota},
-                f32 ? "cvt.rm.f32.u64 $0, $1;" : "cvt.rm.f64.u64 $0, $1;",
-                f32 ? "=f,l" : "=d,l", false, false, LLVM::TailCallKind::None,
-                LLVM::AsmDialectAttr(), ArrayAttr())
-                .getResult(0);
-        storeElement(b, loc, bound, fixed.limit, place);
+      certificateDegrees = host.getOuterMaximum(builder, loc);
+      fixed.maximum = buffer(fixed.field(builder), one);
+      host.launchOver(builder, loc, one, [&](OpBuilder &b, Value idx) {
+        storeElement(b, loc, createZero(b, loc, fixed.field(b)), fixed.maximum, idx);
       });
     }
+  }
+  // An uncached regression can model two successive scale choices before production
+  // builds acquire a scale policy. The default has exactly one scale.
+  double ordinaryScale = fixed.scale;
+  double speculativeScale = ordinaryScale;
+  const char *uncached = std::getenv("MDIR_COMPILE_CACHE");
+  const char *inject = std::getenv("MDIR_TEST_FORCE_REPLAY");
+  if (uncached && StringRef(uncached) == "off" && inject && StringRef(inject) == "1")
+    speculativeScale = std::ldexp(ordinaryScale, 40);
+  Value replay, replayGrid, replayPredicate, fusedNow;
+  if (fixed.maximum && op.getPruneGroups() && speculativeScale != ordinaryScale) {
+    auto type = cast<MemRefType>(fixed.flag.getType());
+    replay = host.createDeviceBuffer(builder, loc, type, {});
+    targets.push_back(replay);
+    host.launchOver(builder, loc, one, [&](OpBuilder &b, Value idx) {
+      storeElement(b, loc, createZero(b, loc, b.getI32Type()), replay, idx);
+    });
   }
   using WarpBody =
       function_ref<SmallVector<Value>(OpBuilder &, Value, Value, AddToMember)>;
@@ -1029,6 +999,8 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
                        WarpBody body, bool tabled) -> Value {
     Value warps = arith::MaxUIOp::create(
         at, loc, arith::MinUIOp::create(at, loc, count, size), one);
+    if (replayGrid)
+      warps = replayGrid;
     Value threads = arith::MulIOp::create(at, loc, warps, warp32);
     Value grid = createGroups(at, loc, threads, blockSize);
     SmallVector<Type> attributions;
@@ -1055,12 +1027,19 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
     Value lane = arith::RemUIOp::create(kernel, loc, thread, warp32);
     Value valid = arith::CmpIOp::create(kernel, loc,
                                         arith::CmpIPredicate::ult, warp, warps);
+    if (replayPredicate) {
+      Value retry = loadElement(kernel, loc, replayPredicate, createIndex(kernel, loc, 0));
+      valid = arith::AndIOp::create(kernel, loc, valid, arith::CmpIOp::create(
+          kernel, loc, arith::CmpIPredicate::ne, retry, createZero(kernel, loc, kernel.getI32Type())));
+    }
     Value end = first(kernel, count);
     Value start = arith::SelectOp::create(kernel, loc, valid, warp, end);
     SmallVector<Value> initial;
     for (unsigned i = numOuts, e = yield->getNumOperands(); i != e; ++i)
       initial.push_back(
           createZero(kernel, loc, yield->getOperand(i).getType()));
+    if (fixed.maximum)
+      initial.push_back(createZero(kernel, loc, fixed.field(kernel)));
     auto add = [&](OpBuilder &b, unsigned out, Value member, Value value) {
       table->add(b, outs[out], member, value);
     };
@@ -1070,11 +1049,39 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
           SmallVector<Value> contributions =
               body(b, unit, lane, tabled ? AddToMember(add) : AddToMember());
           SmallVector<Value> next;
+          Value maximum;
+          if (fixed.maximum) {
+            maximum = arith::MaxUIOp::create(b, loc, sums.back(), contributions.pop_back_val());
+          }
           for (auto [sum, contribution] : llvm::zip(sums, contributions))
             next.push_back(arith::AddFOp::create(b, loc, sum, contribution));
+          if (maximum)
+            next.push_back(maximum);
           scf::YieldOp::create(b, loc, next);
         });
     SmallVector<Value> totals(loop.getResults());
+    if (fixed.maximum) {
+      Value maximum = totals.pop_back_val();
+      if (maximum.getType().isInteger(32)) {
+        maximum = NVVM::ReduxOp::create(kernel, loc, kernel.getI32Type(), maximum,
+            NVVM::ReductionKind::UMAX, arith::ConstantIntOp::create(kernel, loc, -1, 32));
+      } else {
+        for (int offset : {16, 8, 4, 2, 1}) {
+          Value peer = gpu::ShuffleOp::create(kernel, loc, maximum,
+              arith::ConstantIntOp::create(kernel, loc, offset, 32),
+              arith::ConstantIntOp::create(kernel, loc, 32, 32),
+              gpu::ShuffleMode::XOR).getShuffleResult();
+          maximum = arith::MaxUIOp::create(kernel, loc, maximum, peer);
+        }
+      }
+      Value leader = arith::CmpIOp::create(kernel, loc, arith::CmpIPredicate::eq,
+                                            lane, createIndex(kernel, loc, 0));
+      scf::IfOp::create(kernel, loc, arith::AndIOp::create(kernel, loc, valid, leader),
+                        [&](OpBuilder &b, Location) {
+        emitDeviceMax(b, loc, maximum, fixed.maximum);
+        scf::YieldOp::create(b, loc);
+      });
+    }
     for (Value &total : totals)
       total = kernels::emitWarpReduce(kernel, loc, total,
                                       kernels::Combiner::Add);
@@ -1156,6 +1163,29 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
   // entries it kept, read back from the inner list after a barrier of the
   // warp, as a stream of the group; the active units of the steps that
   // follow are listed after.
+  auto certify = [&](OpBuilder &at, Value flag) {
+    // The unsegmented list has unit weights: A_i is its inner degree and
+    // C_i is zero. Divide the bound before comparing, to avoid wraparound.
+    host.launchOver(at, loc, one, [&](OpBuilder &b, Value place) {
+      Value degree = loadElement(b, loc, certificateDegrees, place);
+      Value maximum = loadElement(b, loc, fixed.maximum, createIndex(b, loc, 0));
+      if (maximum.getType().isInteger(32))
+        maximum = arith::ExtUIOp::create(b, loc, b.getI64Type(), maximum);
+      Value bound = arith::ConstantIntOp::create(
+          b, loc, fixed.fields == ForceFields::I64 ? INT64_MAX : INT32_MAX, 64);
+      Value divisor = arith::MaxUIOp::create(
+          b, loc, maximum, arith::ConstantIntOp::create(b, loc, 1, 64));
+      Value quota = arith::DivUIOp::create(b, loc, bound, divisor);
+      Value failed = arith::AndIOp::create(
+          b, loc, arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ugt, degree, quota),
+          arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne, maximum,
+                                arith::ConstantIntOp::create(b, loc, 0, 64)));
+      scf::IfOp::create(b, loc, failed, [&](OpBuilder &at, Location) {
+        emitDeviceMax(at, loc, arith::ConstantIntOp::create(at, loc, -1, 32), flag);
+        scf::YieldOp::create(at, loc);
+      });
+    });
+  };
   Value warps;
   if (std::optional<int64_t> fusedGroups = op.getPruneGroups()) {
     Value cell = op.getCell();
@@ -1165,6 +1195,7 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
         memref::LoadOp::create(builder, loc, host.getPrunedNow(),
                                ValueRange{}),
         host.takesFusedPruning(builder, loc, *fusedGroups));
+    fusedNow = now;
     auto choice = scf::IfOp::create(builder, loc,
                                     TypeRange{builder.getIndexType()}, now,
                                     /*withElseRegion=*/true);
@@ -1175,6 +1206,8 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
       // The warp stores the inner list and loads it back through the same
       // buffers, one argument of the kernel each.
       ctx.inner = {lists.entries, lists.masks, lists.blockCounts};
+      if (replay)
+        fixed.scale = speculativeScale;
       Value groupWarps = emitWarpsChosen(
           then, ctx.groups,
           [&](OpBuilder &, Value count) -> Value { return count; },
@@ -1195,6 +1228,42 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
                                        group, lane, local, &stream, add, fixed);
           });
       host.emitActiveUnits(then, loc, ctx);
+      fixed.scale = ordinaryScale;
+      if (replay) {
+        certify(then, replay);
+        host.launchOver(then, loc, size, [&](OpBuilder &b, Value particle) {
+          Value code = loadElement(b, loc, replay, createIndex(b, loc, 0));
+          auto retry = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne,
+                                              code, createZero(b, loc, b.getI32Type()));
+          scf::IfOp::create(b, loc, retry, [&](OpBuilder &in, Location) {
+            for (auto [i, scratch] : llvm::enumerate(fixed.scratch)) {
+              if (!scratch)
+                continue;
+              for (Value buf : {scratch, fixed.zScratch[i]}) {
+                if (!buf)
+                  continue;
+                auto type = cast<MemRefType>(buf.getType());
+                Type element = type.getElementType();
+                if (type.getRank() == 2)
+                  element = VectorType::get({type.getDimSize(1)}, element);
+                storeElement(in, loc, createZero(in, loc, element), buf, particle);
+              }
+            }
+            Value first = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq,
+                                                 particle, createIndex(in, loc, 0));
+            scf::IfOp::create(in, loc, first, [&](OpBuilder &zero, Location) {
+              storeElement(zero, loc, createZero(zero, loc, fixed.field(zero)),
+                           fixed.maximum, createIndex(zero, loc, 0));
+              scf::YieldOp::create(zero, loc);
+            });
+            scf::YieldOp::create(in, loc);
+          });
+        });
+        replayGrid = groupWarps;
+        replayPredicate = replay;
+        emitLoop(then);
+        replayGrid = replayPredicate = Value();
+      }
       scf::YieldOp::create(then, loc, groupWarps);
       OpBuilder otherwise = OpBuilder::atBlockEnd(choice.elseBlock());
       scf::YieldOp::create(otherwise, loc, emitLoop(otherwise));
@@ -1207,9 +1276,12 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
     warps = emitLoop(builder);
   }
 
+  if (fixed.maximum)
+    certify(builder, fixed.flag);
   Value forceCheck;
   if (llvm::any_of(fixed.scratch, [](Value v) { return bool(v); })) {
     host.launchOver(builder, loc, size, [&](OpBuilder &body, Value particle) {
+      auto publish = [&](OpBuilder &body) {
       for (auto [i, scratch] : llvm::enumerate(fixed.scratch)) {
         if (!scratch)
           continue;
@@ -1219,9 +1291,16 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
         Value decoded = integer;
         if (fixed.fields != ForceFields::Float4) {
           decoded = arith::SIToFPOp::create(body, loc, wide, integer);
-          Value scale = vector::BroadcastOp::create(
-              body, loc, wide,
-              createReal(body, loc, body.getF64Type(), 1.0 / fixed.scale));
+          Value reciprocal = createReal(body, loc, body.getF64Type(), 1.0 / ordinaryScale);
+          if (replay) {
+            Value code = loadElement(body, loc, replay, createIndex(body, loc, 0));
+            Value accepted = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq,
+                                                   code, createZero(body, loc, body.getI32Type()));
+            reciprocal = arith::SelectOp::create(body, loc,
+                arith::AndIOp::create(body, loc, accepted, fusedNow),
+                createReal(body, loc, body.getF64Type(), 1.0 / speculativeScale), reciprocal);
+          }
+          Value scale = vector::BroadcastOp::create(body, loc, wide, reciprocal);
           decoded = arith::MulFOp::create(body, loc, decoded, scale);
         }
         Value prior = loadElement(body, loc, destination, particle);
@@ -1230,6 +1309,18 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
         storeElement(body, loc,
                      arith::AddFOp::create(body, loc, prior, decoded),
                      destination, particle);
+      }
+      };
+      if (fixed.maximum) {
+        Value code = loadElement(body, loc, fixed.flag, createIndex(body, loc, 0));
+        Value accepted = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq,
+                                               code, createZero(body, loc, body.getI32Type()));
+        scf::IfOp::create(body, loc, accepted, [&](OpBuilder &in, Location) {
+          publish(in);
+          scf::YieldOp::create(in, loc);
+        });
+      } else {
+        publish(body);
       }
     });
     if (fixed.flag)
