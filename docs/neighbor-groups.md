@@ -643,17 +643,16 @@ the step of the Amber suite over groups on an RTX 4090, and 2.06 times the
 two-ended loops of EAM over a matrix ([device-primitives.md](device-primitives.md),
 Section 2.7). `pair-hash=auto` refuses it; `pair-hash=on` takes it.
 
-**Order of the sums.** The atomic additions make the sums depend on the
-order of the threads. The proposed weighted-site rule assigns the residual per site-pair contribution before the warp, record, and global sums. Integer addition then preserves both the net force and the choice of recipient under reordering, provided every partial sum fits. In the default mode they are additions in the type
-of the destination (D84). The deterministic mode does not take groups
-yet: the control file refuses `neighbor_structure = "GROUPS"` with
-`deterministic`, and the lowering refuses the loop (stage G2). The design
-for it is integer additions in fixed point (D70, [LeGrand2013]), whose sum
-does not depend on the order: the value of an entry, summed over the 16
-steps of a round in registers, would be converted and added, and the value
-of a member converted and added for each block; the entries of a group are
-in a fixed order (I2), so the sum of a round in registers would be the same
-from run to run.
+**Order of the sums.** The fixed-point path rounds each pair component once,
+before either endpoint sums it. For a weighted site, the largest absolute
+weight receives the residual before the warp, record, and global sums, with
+ties broken by topology order (Section 6.1). Every ordering of the checked
+integer additions gives the same forces for the same pair values. The decode
+then adds the result to the destination in its floating-point type. In the
+floating-point path the order of atomic additions can affect the result
+(D84). Stage G2 still refuses `neighbor_structure = "GROUPS"` with
+`deterministic`; whole-step determinism also depends on the other
+contributions to the destination.
 
 **Destinations.** A loop that adds each pair once adds into its
 destination; it cannot overwrite it (the `overwrite` of
