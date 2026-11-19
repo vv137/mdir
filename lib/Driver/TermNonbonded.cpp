@@ -1414,7 +1414,7 @@ static TermIRValues buildNonbondedPrimary(mlir::OpBuilder &builder, mlir::ValueR
 // Under `[performance] rigid_units = "ON"`, the primary pair term is built
 // over the segments of the rigid kinds that resolveRigidUnits took (D405's
 // generator), so that a run takes the list of units of D417 and D419 and
-// its traversal (D[rigid-units-route]). Otherwise no program changes.
+// its traversal (D424). Otherwise no program changes.
 
 namespace {
 /// The kinds that the route takes, their copies, and the anchors of the

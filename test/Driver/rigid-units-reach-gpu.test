@@ -1,5 +1,5 @@
 # REQUIRES: cuda
-# The reach's stop of the route of the rigid units (D[rigid-units-route];
+# The reach's stop of the route of the rigid units (D424;
 # #795's validation table): the covering reach, the pair list distance plus
 # twice the largest covering radius, is checked against half the least face
 # width of the cell when the route is resolved, with the input cell (a

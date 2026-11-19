@@ -270,7 +270,7 @@ mdir::driver::getRunFingerprint(StringRef controlFile, const Control &control,
             {"steps"});
   addTables("execution", {"execution"});
   // The execution choices of the "same accuracy" class (#790), which a
-  // continuation may change as it may [execution] (D[rigid-units-route]).
+  // continuation may change as it may [execution] (D424).
   addTables("execution", {"performance"});
 
   // The files that define the topology, by their contents: another name

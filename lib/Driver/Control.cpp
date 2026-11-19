@@ -3228,7 +3228,7 @@ Error Reader::read(const toml::table &root) {
       return error;
 
   // Execution choices of the "same accuracy" class (#790). The rigid
-  // units (D[rigid-units-route]): `ON` is refused where the route cannot
+  // units (D424): `ON` is refused where the route cannot
   // apply when the program is resolved for its system (resolveRigidUnits).
   if (Error error = getTable("performance", /*required=*/false, table))
     return error;

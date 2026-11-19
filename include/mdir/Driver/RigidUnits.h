@@ -1,4 +1,4 @@
-// The route of the rigid units (D[rigid-units-route]; D417, slice S4b).
+// The route of the rigid units (D424; D417, slice S4b).
 //
 // `[performance] rigid_units` decides whether the pair term is built over
 // the segments of the rigid kinds of D403 (D405, D417). The resolution runs

@@ -1,5 +1,5 @@
 """Same-frame forces and energies of the route of the rigid units
-(D[rigid-units-route]; #795's validation table, moved to the key).
+(D424; #795's validation table, moved to the key).
 
   rigid_units_frames.py NAME TOPOLOGY COORDINATES FRAMES STEPS [--pme] [--npt]
                         [--oracle] [--floor] [--after-input] [--cutoff=nm] [--pairlist=nm]

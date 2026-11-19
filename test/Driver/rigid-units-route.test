@@ -1,5 +1,5 @@
 # The route of the rigid units, `[performance] rigid_units`
-# (D[rigid-units-route]): `ON` builds the pair term over the segments of the
+# (D424): `ON` builds the pair term over the segments of the
 # kinds it takes, and refuses, naming the reason, every program where the
 # route cannot apply; `AUTO` and `OFF` keep the general program (the corpus
 # of D406 checks that it is `main`'s). `mdir check` reports, for each kind,

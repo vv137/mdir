@@ -1219,7 +1219,7 @@ frame atoms within $e_f$ cover it. A site with a weight outside $[0, 1]$ can
 lie beyond every frame atom, and its own $\lVert\mathbf c_p\rVert$ is
 checked; which sites need it follows from the kind at compile time.
 
-**The route and the radius at the input** (D[rigid-units-route]). The key
+**The route and the radius at the input** (D424). The key
 `[performance] rigid_units` takes the units: `ON` takes the two most
 numerous rigid kinds of two or more particles whose molecules exclude all
 their own pairs and none outside them (a unit of one particle gives the

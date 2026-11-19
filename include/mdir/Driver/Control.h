@@ -145,7 +145,7 @@ inline const char *getNeighborStructureName(NeighborStructure structure) {
          : structure == NeighborStructure::Auto ? "auto"
                                                 : "matrix";
 }
-/// `[performance] rigid_units` (D[rigid-units-route]; D417, Section 9,
+/// `[performance] rigid_units` (D424; D417, Section 9,
 /// ruling 7): whether the pairs of the rigid kinds of D403 are evaluated by
 /// units, over segmented lists. `Auto` is resolved before a program is
 /// built (`resolveRigidUnits`).

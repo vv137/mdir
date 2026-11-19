@@ -243,7 +243,7 @@ asked (`"auto"`, `"matrix"`, or `"groups"`, the
 the log of `mdir run`), `Program.plan["rigid_units"]` the route of the rigid units, `"units"` or `"general"`,
 with `["rigid_units_requested"]` (`"AUTO"`, `"ON"`, `"OFF"`),
 `["rigid_units_reason"]`, and `["rigid_units_kinds"]` the numbers of the kinds
-taken (D[rigid-units-route]), `Program.plan["pairlist_distance"]` the reach of the
+taken (D424), `Program.plan["pairlist_distance"]` the reach of the
 lists in nm, and `Program.plan["pruned_distance"]` the reach of the inner
 list in nm, `0.0` without one; `Program.plan["pairlist_distance_source"]`
 and `["pruned_distance_source"]` where each came from (`"given"`,

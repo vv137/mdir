@@ -546,7 +546,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     control->restartInput.clear();
   // `rigid_units` is resolved for the system at the positions and the cell
   // that the run begins with, the input's or the checkpoint's
-  // (D[rigid-units-route]).
+  // (D424).
   if (llvm::Error error = resolveRigidUnits(*control, *system))
     return fail(std::move(error));
   for (const auto &[code, message] : control->rigidUnitsRoute.warnings)
@@ -1163,7 +1163,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
          getNeighborStructureName(control->neighborStructureRequested)},
         {"neighbor_structure", getNeighborStructureName(control->neighborStructure)},
         {"neighbor_structure_reason", control->neighborStructureReason},
-        // The route of the rigid units and why (D[rigid-units-route]).
+        // The route of the rigid units and why (D424).
         {"rigid_units_requested", getRigidUnitsName(control->rigidUnits)},
         {"rigid_units",
          control->rigidUnitsRoute.units ? "units" : "general"},
@@ -1544,7 +1544,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                      control->neighborStructureReason.c_str());
   }
   // The route of the rigid units, where the key was given or the units
-  // are taken, with the radii widened at the input (D[rigid-units-route]).
+  // are taken, with the radii widened at the input (D424).
   if (control->rigidUnitsGiven || control->rigidUnitsRoute.units) {
     output.log.print("MDIR: rigid units: %s\n",
                      describeRigidUnitsRoute(*control).c_str());

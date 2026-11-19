@@ -744,7 +744,7 @@ Analysis," *SIAM J. Sci. Comput.* **41**, A2815–A2835 (2019).
 
 Used for: the floor of the bounds of the same-frame fixtures of the rigid
 units, from the probabilistic model of the roundings of their sums in f32
-(D[rigid-units-route], Section 8).
+(D424, Section 8).
 
 ### HillisSteele1986
 

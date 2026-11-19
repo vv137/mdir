@@ -1,5 +1,5 @@
 # REQUIRES: python-api, cuda
-# Same-frame forces and energies of `rigid_units = "ON"` (D[rigid-units-route];
+# Same-frame forces and energies of `rigid_units = "ON"` (D424;
 # #795's validation table, moved to the key; Inputs/rigid_units_frames.py):
 # at the input and at later frames of a trajectory of the units, the units
 # (mixed) against the general route in double precision within 1.5 times
@@ -29,7 +29,7 @@
 # the baseline of the other route does not bound the rounding of the
 # units' sums (with PME, 1.59 times it at the input): the PME case's bounds
 # take the floor of the error model of the sums in f32 as well (--floor;
-# Inputs/rigid_units_frames.py, D[rigid-units-route], Section 8). The other
+# Inputs/rigid_units_frames.py, D424, Section 8). The other
 # cases keep the baseline alone, which the floor would make looser.
 # RUN: sed -e '/^#ifdef/,/^#else/d' -e '/^#endif/d' %S/Inputs/triclinic/water.top > %t/water.top
 # RUN: %mdir_python %S/Inputs/rigid_units_frames.py dodecahedron-cutoff %t/water.top %S/Inputs/triclinic/dodecahedron.gro 3 25 --oracle --cutoff=0.6 --pairlist=0.7 --pruned=0.66 | tee %t/dodecahedron-cutoff.txt | FileCheck %s -DS=dodecahedron-cutoff --check-prefixes=CHECK,ORACLE

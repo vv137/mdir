@@ -31,7 +31,7 @@
 # CHECK-NEXT: types: NA
 # CHECK-NEXT: charges: 1 e
 # CHECK-NEXT: left out: 2 molecules with a pair of massive atoms without a constrained distance
-# The route of the rigid units (D[rigid-units-route]): AUTO is general, and
+# The route of the rigid units (D424): AUTO is general, and
 # ON would take the two most populous kinds of several particles.
 # CHECK-NEXT: rigid units: AUTO: general (AUTO takes the general route until its rule is measured)
 # CHECK-NEXT: kind 1: ON would take: 3 units of 3 places (3 in the frame, 0 sites), radius 0.9582 Ang

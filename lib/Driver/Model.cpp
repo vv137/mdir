@@ -722,7 +722,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   // resolves it (D261).
   driver::resolveNeighborStructure(c, *prepared);
   // `RigidUnits`, as `mdir run` resolves it, at the positions of the state
-  // (D[rigid-units-route]).
+  // (D424).
   if (llvm::Error e = driver::resolveRigidUnits(c, *prepared))
     return typed(std::move(e));
   return PreparedModel{execution, std::move(c), std::move(*prepared), std::move(*tunables)};

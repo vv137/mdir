@@ -1,6 +1,6 @@
 //===- RigidUnits.cpp - The route of the rigid units -----------------------===//
 //
-// `[performance] rigid_units` (D[rigid-units-route]; D417, slice S4b): the
+// `[performance] rigid_units` (D424; D417, slice S4b): the
 // choice of the kinds, the refusals of `ON`, the covering radii at the
 // input, and the words of the records.
 //

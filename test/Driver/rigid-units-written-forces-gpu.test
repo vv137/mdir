@@ -1,6 +1,6 @@
 # REQUIRES: python-api, cuda
 # Frames that write their forces under `rigid_units = "ON"`
-# (D[rigid-units-route]; the maintainer's ruling on #915): the forces that the
+# (D424; the maintainer's ruling on #915): the forces that the
 # units carry move the force of a site by its weights, not by the Jacobian
 # of its placement that written frames take (#916), so a run that writes
 # them is refused where a taken kind has a site, and runs otherwise.

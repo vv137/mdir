@@ -241,7 +241,7 @@ PYBIND11_MODULE(_core, m) {
     .value("Matrix", driver::NeighborStructure::Matrix)
     .value("Groups", driver::NeighborStructure::Groups)
     .value("Auto", driver::NeighborStructure::Auto);
-  // `[performance] rigid_units` (D[rigid-units-route]).
+  // `[performance] rigid_units` (D424).
   py::enum_<driver::RigidUnits>(m, "RigidUnits")
     .value("Auto", driver::RigidUnits::Auto)
     .value("On", driver::RigidUnits::On)
@@ -838,7 +838,7 @@ PYBIND11_MODULE(_core, m) {
       d["neighbor_structure_requested"] =
           driver::getNeighborStructureName(resolved.neighborStructureRequested);
       d["neighbor_structure_reason"] = resolved.neighborStructureReason;
-      // The route of the rigid units and why (D[rigid-units-route]).
+      // The route of the rigid units and why (D424).
       d["rigid_units"] = resolved.rigidUnitsRoute.units ? "units" : "general";
       d["rigid_units_requested"] = driver::getRigidUnitsName(resolved.rigidUnits);
       d["rigid_units_reason"] = resolved.rigidUnitsRoute.reason;

@@ -245,7 +245,7 @@ static void describeTopology(const Control &control, const System &system) {
   }
   describeRigidGroups(topology);
   // The route of the rigid units, and for each kind whether it is taken
-  // and why (D[rigid-units-route]).
+  // and why (D424).
   std::printf("rigid units:        %s\n",
               describeRigidUnitsRoute(control).c_str());
   for (const std::string &line : describeRigidUnitsKinds(control))
@@ -876,7 +876,7 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
   // As `mdir run` resolves it (D261).
   resolveNeighborStructure(*control, *system);
   // As `mdir run` resolves it, at the input's positions
-  // (D[rigid-units-route]); a refusal of `ON` is an error of the file.
+  // (D424); a refusal of `ON` is an error of the file.
   if (llvm::Error error = resolveRigidUnits(*control, *system))
     return fail(std::move(error), json);
   compiler::SkinChoice skins =
