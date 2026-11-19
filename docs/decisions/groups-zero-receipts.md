@@ -35,3 +35,10 @@ evaluation. The final column compares the means of the two jobs.
 | JAC | 0.16095 / 0.15657 | 0.16148 / 0.15798 | 2.45% |
 | Cellulose | 1.23017 / 1.19395 | 1.24610 / 1.20700 | 3.04% |
 | Large TIP3P | 1.00678 / 0.97230 | 1.01243 / 0.97633 | 3.50% |
+
+The lowered-program corpus covers 277 controls and 1,106 cases per
+architecture. On both sm_89 and sm_120, 1,018 outputs matched the base
+(including 488 identical diagnostics). The same 88 GPU cases differed.
+Re-emitting all 88 on each architecture and comparing the embedded kernel
+images separately showed identical host IR, kernel names, and every
+kernel image outside the pair loops.
