@@ -74,7 +74,40 @@ kinetic energy and the virial, two runs with four threads then differed in
 up to 1.3e-15 of the positions after 200 steps, and the deterministic mode
 did not prevent it.
 
-In the proposed fixed-point pair accumulation (D[groups-fixed-point]), $\mathsf W^{\mathsf T}$ distributes a quantized site force to the physical members (Section 2). The unrounded shares sum to the quantized force since the weights sum to one. Round each share and assign the integer residual to the member with the largest absolute weight, breaking ties by topology order. The molecule then receives the exact quantized site force, including for weights outside $[0,1]$. For $k$ weighted members, each component of each share rounds by at most half a quantum. By the triangle inequality the residual on its recipient is at most $k/2$ quanta per component and site, or 1.5 quanta for a three-member frame. The extra torque about the molecular center is the cross product of the recipient's displacement and the correction. For each corrected component its magnitude is bounded by the lever arm times $k/2$ force quanta. For all three components together the norm bound gains a factor $\sqrt{3}$. In choosing the scale, sum the applicable residual and share-rounding bounds for each physical member alongside pair rounding, and sum the torque bounds over the site contributions in a step.
+For fixed-point pair accumulation (D[groups-fixed-point]), divide each pair
+force component by $q_F$ and round once to the nearest even integer on a tie.
+The two particles receive that integer with opposite signs. Multiplying the
+integer sum by $q_F$ restores force units. With $d_i$ incident contributions,
+the error per component is bounded by $d_i q_F/2$. In the relative force
+norm of Section 2, the contribution of quantization alone therefore obeys
+
+```math
+\Delta \le \frac{q_F}{2}
+\sqrt{\frac{3\sum_i d_i^2}{\sum_i\lVert\mathbf F_i\rVert^2}}.
+```
+
+For uncorrelated rounding errors uniform in a quantum, the variance of one
+component is $q_F^2/12$. Summing the three component variances over the
+particles gives an RMS estimate with $\sum_i d_i$ in place of $3\sum_i d_i^2$.
+Decreasing $q_F$ decreases both errors and increases the integer magnitudes
+that the field must accommodate. The trial quanta in native force units
+are $2^{-12}$ in mixed and $2^{-32}$ in double precision.
+
+For site $p$, frame atom $i$ receives a share $w_{pi}$ of the rounded
+site force (Section 2). The unrounded shares sum to the quantized site force
+because the weights sum to one. Round the shares, then assign the integer
+residual to the member of largest absolute weight, breaking ties by
+topology order. This conserves the quantized force exactly for signed as
+well as positive weights. With $k$ weighted members, the triangle
+inequality bounds the residual by $kq_F/2$ per component and site, or
+1.5 quanta for three members. For the scale budget, each member receives
+the pair-rounding bound times its absolute weight and a share-rounding
+bound of half a quantum. Add the residual bound on the selected member
+before summing over that member's incident pairs. For recipient $i$ in
+group $g$, the additional torque about the center from one corrected
+component is bounded by $\lVert\mathbf x_i-\mathbf X_g\rVert kq_F/2$.
+For all three components together multiply that bound by $\sqrt 3$.
+Summing the bounds over contributions bounds the residual torque in a step.
 
 A row of a loop over pairs on the CPU is summed in the order of its list,
 or, with the lanes of D402, $n_\text{lane}$ candidates at a
