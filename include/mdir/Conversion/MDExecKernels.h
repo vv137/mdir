@@ -286,6 +286,13 @@ void emitTupleOnce(mlir::OpBuilder &builder, md_exec::TupleForOp op,
 void emitAtomicAdd(mlir::OpBuilder &builder, mlir::Location loc,
                    mlir::Value value, mlir::Value buffer, mlir::Value row);
 
+/// A device-only integer reduction in the private force guard buffers.
+enum class ForceGuardOp { Add, Max };
+void emitForceGuardAtomic(mlir::OpBuilder &builder, mlir::Location loc,
+                          ForceGuardOp op, mlir::Value value,
+                          mlir::Value buffer, mlir::Value row,
+                          unsigned component = 0);
+
 /// Emits what a thread of a loop over tuples with global sums does where
 /// each tuple is evaluated once (D103): the tuples `first`, `first +
 /// stride`, ... below `count`, each as emitTupleOnce does it, and returns

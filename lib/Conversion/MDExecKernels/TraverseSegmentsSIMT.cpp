@@ -271,8 +271,8 @@ struct Schedule {
         Value code = arith::AddIOp::create(
             in, loc, arith::MulIOp::create(in, loc, id, ci(in, 3)),
             ci(in, c + 1));
-        memref::AtomicRMWOp::create(in, loc, arith::AtomicRMWKind::maxu, code,
-                                    forceFlag, ValueRange{ix(in, 0)});
+        emitForceGuardAtomic(in, loc, ForceGuardOp::Max, code, forceFlag,
+                             ix(in, 0));
         scf::YieldOp::create(in, loc);
       });
     }

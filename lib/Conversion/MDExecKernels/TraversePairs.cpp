@@ -184,11 +184,11 @@ struct GroupForceReduction {
           Value amount =
               arith::FPToUIOp::create(in, loc, in.getI64Type(), wide);
           for (Value endpoint : {particle, partner})
-            memref::AtomicRMWOp::create(
-                in, loc, arith::AtomicRMWKind::addi, amount, exceptional[out],
-                ValueRange{arith::IndexCastOp::create(
-                               in, loc, in.getIndexType(), endpoint),
-                           createIndex(in, loc, component)});
+            emitForceGuardAtomic(in, loc, ForceGuardOp::Add, amount,
+                                 exceptional[out],
+                                 arith::IndexCastOp::create(
+                                     in, loc, in.getIndexType(), endpoint),
+                                 component);
           scf::YieldOp::create(in, loc);
         });
       }
@@ -203,8 +203,8 @@ struct GroupForceReduction {
         code = arith::AddIOp::create(
             at, loc, code,
             arith::ConstantIntOp::create(at, loc, component + 1, 32));
-        memref::AtomicRMWOp::create(at, loc, arith::AtomicRMWKind::maxu, code,
-                                    flag, ValueRange{createIndex(at, loc, 0)});
+        emitForceGuardAtomic(at, loc, ForceGuardOp::Max, code, flag,
+                             createIndex(at, loc, 0));
         scf::YieldOp::create(at, loc);
       });
     }
@@ -982,9 +982,9 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
         });
       });
       host.launchOver(builder, loc, places, [&](OpBuilder &b, Value place) {
-        memref::AtomicRMWOp::create(b, loc, arith::AtomicRMWKind::maxu,
-                                    loadElement(b, loc, degree, place), maximum,
-                                    ValueRange{createIndex(b, loc, 0)});
+        emitForceGuardAtomic(b, loc, ForceGuardOp::Max,
+                             loadElement(b, loc, degree, place), maximum,
+                             createIndex(b, loc, 0));
       });
       host.launchOver(builder, loc, one, [&](OpBuilder &b, Value row) {
         Value n = loadElement(b, loc, maximum, row);
@@ -1207,10 +1207,10 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
                                                  createIndex(in, loc, 3));
               code = arith::AddIOp::create(in, loc, code,
                                            createIndex(in, loc, component + 1));
-              memref::AtomicRMWOp::create(
-                  in, loc, arith::AtomicRMWKind::maxu,
+              emitForceGuardAtomic(
+                  in, loc, ForceGuardOp::Max,
                   arith::IndexCastOp::create(in, loc, in.getI32Type(), code),
-                  fixed.flag, ValueRange{createIndex(in, loc, 0)});
+                  fixed.flag, createIndex(in, loc, 0));
               scf::YieldOp::create(in, loc);
             });
           }
