@@ -1,4 +1,6 @@
-# D[groups-zero-receipts] Skip global additions for an entry with zero receipts
+# D[groups-zero-receipts]
+
+Recorded 2026-11-19.
 
 At the end of a GROUPS round, the lane holding a real entry tests its
 accumulated receipts in the destination precision. If every component of
