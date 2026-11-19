@@ -7,7 +7,7 @@ from three.py; TIP3P: the three waters of Inputs/triclinic nearest the first,
 as #795's water_template_tip3p.py takes them), Coulomb and Lennard-Jones cut
 off at 0.9 nm, 1 fs, rigid water. One step of the general path in double
 precision constrains the input; from that state the list of units on the
-test route (MDIR_RIGID_UNITS_TEST=1, mixed) and the general path in double
+route of the units (rigid_units ON, mixed) and the general path in double
 precision, deterministic, run 100 steps. Every 10 steps, #795's declared
 bounds:
 
@@ -107,11 +107,9 @@ def build(route):
 
 
 def simulation(route, start=None):
-    if route == "units":
-        os.environ["MDIR_RIGID_UNITS_TEST"] = "1"
-    else:
-        os.environ.pop("MDIR_RIGID_UNITS_TEST", None)
     system, state, i, e, x = build(route)
+    if route == "units":
+        x.rigid_units = mdir.RigidUnits.On
     if start is not None:
         state.positions = start.positions
         state.velocities = start.velocities

@@ -428,6 +428,9 @@ Fingerprint mdir::model::getFingerprint(const System &s,
             : execution.neighborStructure == driver::NeighborStructure::Auto
                 ? "AUTO"
                 : "MATRIX"));
+  if (has(given.execution, "rigid_units"))
+    add("execution", "[performance] rigid_units",
+        getFingerprintString(driver::getRigidUnitsName(execution.rigidUnits)));
   if (has(given.execution, "target"))
     add("execution", "[execution] target",
         getFingerprintString(execution.target == driver::Target::GPU ? "GPU"

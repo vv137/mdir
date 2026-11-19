@@ -1,0 +1,11 @@
+# REQUIRES: python-api, cuda
+# Frames that write their forces under `rigid_units = "ON"`
+# (D[rigid-units-route]; the maintainer's ruling on #915): the forces that the
+# units carry move the force of a site by its weights, not by the Jacobian
+# of its placement that written frames take (#916), so a run that writes
+# them is refused where a taken kind has a site, and runs otherwise.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/rigid_units_written_forces.py %t | FileCheck %s
+# CHECK: opc/opc forces=True: 'rigid_units = "ON"' cannot apply: frames that write their forces, where a taken kind has a site: kind 1 has one, and the written forces would not take the general transpose of its placement (#916)
+# CHECK-NEXT: opc/opc forces=False: ran
+# CHECK-NEXT: dipeptide/dipeptide forces=True: ran

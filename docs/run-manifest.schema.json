@@ -170,6 +170,78 @@
             "neighbor_structure_reason": {
               "type": "string"
             },
+            "rigid_units_requested": {
+              "enum": [
+                "AUTO",
+                "ON",
+                "OFF"
+              ]
+            },
+            "rigid_units": {
+              "enum": [
+                "units",
+                "general"
+              ]
+            },
+            "rigid_units_reason": {
+              "type": "string"
+            },
+            "rigid_units_route": {
+              "type": "object",
+              "required": [
+                "requested",
+                "route",
+                "reason",
+                "kinds"
+              ],
+              "properties": {
+                "requested": {
+                  "enum": [
+                    "AUTO",
+                    "ON",
+                    "OFF"
+                  ]
+                },
+                "route": {
+                  "enum": [
+                    "units",
+                    "general"
+                  ]
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "kinds": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "taken",
+                      "taken_by_on",
+                      "reason",
+                      "units",
+                      "places",
+                      "frame",
+                      "sites"
+                    ]
+                  }
+                },
+                "rest": {
+                  "type": "object"
+                },
+                "reach_angstrom": {
+                  "type": "number"
+                },
+                "half_least_face_width_angstrom": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
             "pairlist_distance_angstrom": {
               "type": "number",
               "exclusiveMinimum": 0
@@ -488,6 +560,10 @@
             "neighbor_structure_requested",
             "neighbor_structure",
             "neighbor_structure_reason",
+            "rigid_units_requested",
+            "rigid_units",
+            "rigid_units_reason",
+            "rigid_units_route",
             "pairlist_distance_angstrom",
             "pruned_distance_angstrom",
             "pairlist_distance_source",

@@ -7,7 +7,7 @@
 # after the first runs the writer, a thread a member, its flags, and the
 # packing of the frames at a build. No access beyond a buffer, no read of
 # memory that nothing has written, and no race in shared memory. The runs on
-# the test route (segments-traverse-gpu.test) take the writer of each step.
+# `rigid_units = "ON"` (segments-traverse-gpu.test) take the writer of each step.
 #
 # REQUIRES: cuda, compute-sanitizer
 #

@@ -1,6 +1,6 @@
 """Writes a system of four kinds of rigid groups for D405:
 
-    python kind_pairs_mixture.py DIRECTORY [incomplete | outside]
+    python kind_pairs_mixture.py DIRECTORY [incomplete | outside | ions]
 
 three waters of three sites (TIP3P), two of four sites whose site is a
 linear combination of the frame ([ virtual_sites3 ] of type 1, the
@@ -12,7 +12,8 @@ sites of different molecules nearer than 0.25 nm, so that most site pairs
 are inside the cutoff and some outside. Two variants break a fact of
 D403 for the molecules of three Lennard-Jones atoms: `incomplete` drops
 their exclusions, `outside` gives each an ion of its own, not bonded to it,
-that it excludes.
+that it excludes. `ions` writes the ions alone, two of them: the only rigid
+kind is of one particle.
 """
 import math
 import random
@@ -21,7 +22,7 @@ from pathlib import Path
 
 work = Path(sys.argv[1])
 variant = sys.argv[2] if len(sys.argv) > 2 else None
-assert variant in (None, 'incomplete', 'outside')
+assert variant in (None, 'incomplete', 'outside', 'ions')
 random.seed(859)
 
 # name: (atoms as (name, type, charge, mass), the frame distances
@@ -41,6 +42,8 @@ if variant == 'outside':
     atoms, frame, site = MOLECULES['LJ3']
     MOLECULES['LJ3'] = (atoms + [('NA', 'NA', 1.0, 22.99)], frame, site)
 COUNTS = [('SOL', 3), ('OPC', 2), ('LJ3', 2), ('NA', 1)]
+if variant == 'ions':
+    COUNTS = [('NA', 2)]
 # type: (sigma nm, epsilon kJ/mol)
 TYPES = {'OW': (0.315061, 0.636386), 'HW': (0.0, 0.0), 'OP': (0.316655, 0.890359),
          'HP': (0.0, 0.0), 'EP': (0.0, 0.0), 'S': (0.36, 1.0), 'C': (0.34, 0.4),

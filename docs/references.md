@@ -736,6 +736,16 @@ Used for: the bound of the rounding of a floating-point sum in any order
 (Section 4.2), by which a privatized sum agrees with atomics
 (D285, white paper Section 8.5).
 
+### HighamMary2019
+
+N. J. Higham and T. Mary, "A New Approach to Probabilistic Rounding Error
+Analysis," *SIAM J. Sci. Comput.* **41**, A2815–A2835 (2019).
+[doi:10.1137/18M1226312](https://doi.org/10.1137/18M1226312)
+
+Used for: the floor of the bounds of the same-frame fixtures of the rigid
+units, from the probabilistic model of the roundings of their sums in f32
+(D[rigid-units-route], Section 8).
+
 ### HillisSteele1986
 
 W. D. Hillis and G. L. Steele Jr., "Data parallel algorithms,"

@@ -1219,6 +1219,35 @@ frame atoms within $e_f$ cover it. A site with a weight outside $[0, 1]$ can
 lie beyond every frame atom, and its own $\lVert\mathbf c_p\rVert$ is
 checked; which sites need it follows from the kind at compile time.
 
+**The route and the radius at the input** (D[rigid-units-route]). The key
+`[performance] rigid_units` takes the units: `ON` takes the two most
+numerous rigid kinds of two or more particles whose molecules exclude all
+their own pairs and none outside them (a unit of one particle gives the
+segments nothing that the rest does not), `OFF` and `AUTO`, until its rule
+is measured, the general route. The theorem above needs every place within
+its radius at every evaluation, the first one included, which reads the
+positions of the input before any constraint has acted. The nominal radius
+of kind $f$ is $e_f = \max_p\lVert\mathbf c_p
+Vert + \delta_\mathrm m$,
+$\lVert\mathbf c_p
+Vert$ from the constrained distances of the frame and
+$\delta_\mathrm m = 10^{-4}$ nm. Where the largest distance $\hat e_f$ of a
+place from its anchor at the input exceeds $e_f$, the run takes $\hat e_f +
+\delta_\mathrm m$ instead, measured in f64 with each bond in its image
+nearest the anchor; the reach of each segment grows with it, and the reach
+is checked against half the least face width of the cell. The hypothesis
+then holds at the input, and after a constraint step, where every place is
+within $e_f$ of its anchor again, it holds a fortiori, which the writer
+checks. A coordinate file in nm to three decimals moves a hydrogen by up to
+$\sqrt3 \cdot 5\times10^{-4}$ nm, more than $\delta_\mathrm m$, so the
+radius of such an input is widened: in the rhombic dodecahedron of the
+tests, from 0.0958 to 0.1010 nm. A site that the topology defines otherwise
+than by weights, as Amber's extra point, sits at the weights' place only on
+the constrained frame, so at an input off the constraints the first
+evaluation of the units differs from the general route's (by 0.32 kJ/mol on
+alanine dipeptide in OPC); `ON` warns there, with the largest violation and
+how far the sites move.
+
 **The writer** (D422). After the last op of a step
 that writes the positions (the constraints, and a barostat's scaling), one
 kernel, a thread for each member of each unit, writes the frames that the

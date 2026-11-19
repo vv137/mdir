@@ -3,6 +3,7 @@
 #include "KindPairsIR.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Driver/RigidGroups.h"
+#include "mdir/Driver/RigidUnits.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/Builders.h"
@@ -1407,19 +1408,16 @@ static TermIRValues buildNonbondedPrimary(mlir::OpBuilder &builder, mlir::ValueR
 
 
 //===----------------------------------------------------------------------===//
-// The pair term over the segments of rigid kinds, for tests only
+// The pair term over the segments of rigid kinds
 //===----------------------------------------------------------------------===//
 
-// With MDIR_RIGID_UNITS_TEST set to the numbers of rigid kinds of D403, as
-// `mdir check` numbers them from 1, comma-separated, the primary pair term
-// is built over the segments of those kinds (D405's generator), so that a
-// run takes the list of units of D417 and D419 and its traversal. It is the
-// route of D421 for the measurements and the contract of
-// slice S3, before S4b: S4b replaces it by `[performance] rigid_units` and
-// removes it, with no alias. Without it no program changes.
+// Under `[performance] rigid_units = "ON"`, the primary pair term is built
+// over the segments of the rigid kinds that resolveRigidUnits took (D405's
+// generator), so that a run takes the list of units of D417 and D419 and
+// its traversal (D[rigid-units-route]). Otherwise no program changes.
 
 namespace {
-/// The kinds that the variable takes, their copies, and the anchors of the
+/// The kinds that the route takes, their copies, and the anchors of the
 /// rest with their covering radius.
 struct RigidUnitsTest {
   KindPairsPlan plan;
@@ -1429,130 +1427,39 @@ struct RigidUnitsTest {
 };
 } // namespace
 
-/// The numerical margin of a covering radius over the exact distance of the
-/// places from their anchor (#795, ruling 5: 10^-3 Å).
-static constexpr double kRigidUnitsMargin = 1e-4;
-
-/// The covering radius of a kind about its anchor, the first frame atom:
-/// the largest distance of a place from it, from the constrained distances
-/// of the frame. A site at sum_k w_k x_k is at |sum_k w_k h_k| with
-/// h_k = x_k - x_0, and h_j . h_k = (d_0j^2 + d_0k^2 - d_jk^2) / 2.
-static double getRigidKindExtent(const RigidKind &kind) {
-  unsigned m = kind.frame.size();
-  auto distance = [&](unsigned a, unsigned b) -> double {
-    if (a == b)
-      return 0.0;
-    if (a > b)
-      std::swap(a, b);
-    // The pairs (a, b), a < b, in lexicographic order.
-    unsigned index = a * m - a * (a + 1) / 2 + (b - a - 1);
-    return kind.distances[index];
-  };
-  auto dot = [&](unsigned j, unsigned k) {
-    double dj = distance(0, j), dk = distance(0, k), djk = distance(j, k);
-    return 0.5 * (dj * dj + dk * dk - djk * djk);
-  };
-  double largest = 0.0;
-  for (unsigned k = 1; k < m; ++k)
-    largest = std::max(largest, distance(0, k));
-  for (const RigidKind::Site &site : kind.sites) {
-    double square = 0.0;
-    for (unsigned j = 1; j < m; ++j)
-      for (unsigned k = 1; k < m; ++k)
-        square += site.weights[j] * site.weights[k] * dot(j, k);
-    largest = std::max(largest, std::sqrt(std::max(square, 0.0)));
-  }
-  return largest + kRigidUnitsMargin;
-}
-
-/// The plan of MDIR_RIGID_UNITS_TEST, none without it, or the refusal of a
-/// combination that the route does not take, naming it.
+/// The plan of the resolved route, or none for the general route.
 static llvm::Expected<std::optional<RigidUnitsTest>>
-planRigidUnitsTest(const TermInputs &context) {
-  const char *given = std::getenv("MDIR_RIGID_UNITS_TEST");
-  if (!given || !*given)
-    return std::nullopt;
-  auto refuse = [](const llvm::Twine &what) {
-    return makeError("MDIR_RIGID_UNITS_TEST (for tests only) does not take " +
-                     what);
-  };
+planRigidUnits(const TermInputs &context) {
   const Control &control = context.getControl();
-  const System &system = context.getSystem();
-  if (control.target != Target::GPU)
-    return refuse("the CPU target: lists of units run on a GPU");
-  if (control.precision != Precision::Mixed)
-    return refuse("this precision: the segmented schedule takes MIXED");
-  if (control.deterministic)
-    return refuse("the deterministic mode");
-  if (control.minimize)
-    return refuse("a minimization");
-  if (!control.periodic)
-    return refuse("a cell that is not periodic");
-  if (!system.alchemical.empty())
-    return refuse("[free_energy]");
-  if (control.ljpme)
-    return refuse("LJPME");
-  if (control.pme && control.pmeKernel != PMEKernel::Gaussian)
-    return refuse("a kernel of PME other than the Gaussian");
-  if (control.frames || control.frameProduct || control.tunableGradient ||
-      control.dependentTerms || control.tunables ||
-      !control.observedTunables.empty() ||
-      llvm::any_of(control.observables, [](const Control::Observable &o) {
-        return !o.constant.empty();
-      }))
-    return refuse("frame, tunable, or derivative programs");
-  if (!system.topology)
-    return refuse("a system without a topology");
+  const RigidUnitsRoute &route = control.rigidUnitsRoute;
+  if (control.rigidUnits == RigidUnits::On && !route.resolved)
+    return makeError("'rigid_units = \"ON\"' was not resolved for the "
+                     "system before the build; this is a defect of mdir");
+  if (!route.units)
+    return std::nullopt;
   const Topology &topology = context.getTopology();
-  RigidGroups groups = findRigidGroups(topology);
-  llvm::SmallVector<StringRef> items;
-  StringRef(given).split(items, ',');
+  RigidUnitsPlan resolved = getRigidUnitsPlan(route, topology);
   RigidUnitsTest test;
   llvm::SmallVector<const RigidKind *> taken;
-  llvm::SmallVector<double> extents;
-  std::vector<bool> inKind(topology.getNumParticles(), false);
-  for (StringRef item : items) {
-    unsigned number = 0;
-    if (item.trim().getAsInteger(10, number) || number == 0 ||
-        number > groups.kinds.size())
-      return refuse("'" + item +
-                    "': the kinds of rigid groups of the system are "
-                    "numbered from 1 to " +
-                    llvm::Twine(groups.kinds.size()));
-    const RigidKind &kind = groups.kinds[number - 1];
-    if (llvm::is_contained(taken, &kind))
-      return refuse("kind " + llvm::Twine(number) + " twice");
+  for (unsigned index : resolved.taken) {
+    const RigidKind &kind = resolved.groups.kinds[index];
     taken.push_back(&kind);
-    extents.push_back(getRigidKindExtent(kind));
-    std::vector<unsigned> members(kind.members.begin(), kind.members.end());
-    for (unsigned particle : members)
-      inKind[particle] = true;
-    test.copies.push_back(std::move(members));
+    test.copies.emplace_back(kind.members.begin(), kind.members.end());
   }
-  auto plan = planKindPairs(topology, taken, extents);
+  // The reach against the cell: resolveRigidUnits refused it at the input
+  // cell, and every build of the list checks it at its own (D419), also
+  // where the search of the reaches has changed the pair list distance
+  // since (D281).
+  // The resolution took only kinds that the segments take (D405's facts,
+  // at most two), so a refusal here is a defect.
+  auto plan = planKindPairs(topology, taken, resolved.radii);
   if (!plan)
-    return refuse(llvm::toString(plan.takeError()));
+    return makeError("the kinds that 'rigid_units' took are refused by the "
+                     "segments (" + llvm::toString(plan.takeError()) +
+                     "); this is a defect of mdir");
   test.plan = std::move(*plan);
-  // The anchors of the rest (#799): a hydrogen whose bond to a heavy atom
-  // the constraints keep, and the hydrogens of a rigid water that no kind
-  // takes, belong to the unit of their heavy atom, within the longest of
-  // those lengths plus the margin.
-  double longest = 0.0;
-  auto anchor = [&](unsigned member, unsigned center, double length) {
-    if (inKind[member] || inKind[center])
-      return;
-    test.anchored.push_back({member, center});
-    longest = std::max(longest, length);
-  };
-  for (const Topology::Shake &shake : topology.shakes)
-    for (size_t k = 0; k != shake.hydrogens.size(); ++k)
-      anchor(shake.hydrogens[k], shake.center, shake.lengths[k]);
-  for (const Topology::Settle &settle : topology.settles) {
-    anchor(settle.oxygen + 1, settle.oxygen, settle.distanceOH);
-    anchor(settle.oxygen + 2, settle.oxygen, settle.distanceOH);
-  }
-  if (!test.anchored.empty())
-    test.radius = longest + kRigidUnitsMargin;
+  test.anchored = std::move(resolved.anchored);
+  test.radius = resolved.restRadius;
   return std::optional<RigidUnitsTest>(std::move(test));
 }
 
@@ -1840,7 +1747,7 @@ public:
       return error;
     return llvm::Error::success();
   }
-  // The segments of the test route are logical domains, declared without
+  // The segments of the route of the units are logical domains, declared without
   // tuples; the kinds' copies and the anchors are tuple sets of the program.
   llvm::Error prepare(const TermInputs &context,
                       mlir::OpBuilder &builder) const override {
@@ -2298,13 +2205,13 @@ public:
   }
 
 private:
-  /// The plan of the test route, once.
+  /// The plan of the route of the units, once.
   /// The tuple sets are collected before the terms are validated, which
   /// reports a refusal.
   llvm::Error planUnits(const TermInputs &context) const {
     if (!unitsPlanned) {
       unitsPlanned = true;
-      auto plan = planRigidUnitsTest(context);
+      auto plan = planRigidUnits(context);
       if (plan)
         units = std::move(*plan);
       else
