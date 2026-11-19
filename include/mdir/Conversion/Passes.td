@@ -496,6 +496,8 @@ def ConvertMDExecToGPU
            "prunes the inner list in its own kernel, a warp a group, on the "
            "steps where the refresh prunes (MDIR_FUSED_PRUNE, "
            "D284)">,
+    Option<"initialForcePruneSkin", "initial-force-prune-skin", "double", "0.0",
+           "Inner skin for the initial checked groups force evaluation">,
     Option<"fusePruningGroups", "fuse-pruning-groups", "int64_t",
            /*default=*/"0",
            "With fuse-pruning: the least number of groups of the last build "

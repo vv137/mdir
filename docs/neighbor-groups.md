@@ -551,6 +551,8 @@ the cutoff once: a pair within $r_c$ is within $R$ at the build while the
 structure is valid (Section 7.1), so it has a bit, and a pair farther than
 $R$ has none.
 
+For checked group forces, $d_i$ counts both endpoints of the current inner list. When pruning, the warp for a group counts its member's set bits across successive rounds by ballot. It writes the population of each new mask into the original outer slot, including zero for a discarded entry. A reverse index lists those outer slots by entry particle. It is constructed on the first pruning of each outer build. Each particle gathers its slot populations and adds the member count; subsequent force evaluations reuse this degree until another pruning.
+
 **Fixed-point design (D[groups-fixed-point]).** For each component, distribute the already quantized site force among its weighted members. Round each share and assign the integer residual to the member of largest absolute weight, breaking ties by topology order. The molecule receives the exact quantized site force, including for signed weights. For $k$ weighted members each share rounds by at most half a quantum, so the residual on its recipient is at most $k/2$ quanta per component and site (1.5 for three members). Its torque for that component is at most that force correction times the recipient's distance from the molecular center. The scale budget includes these corrections over the step alongside pair rounding.
 
 **The schedule** (the SIMT lowering of `md_alg.traverse_pairs`,

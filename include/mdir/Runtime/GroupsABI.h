@@ -5,7 +5,7 @@
 #ifndef MDIR_RUNTIME_GROUPS_ABI_H
 #define MDIR_RUNTIME_GROUPS_ABI_H
 
-#define MDRT_GROUPS_ABI_VERSION 3
+#define MDRT_GROUPS_ABI_VERSION 5
 
 enum MdrtGroupsSlot {
   GROUPS_ORDER = 0,
@@ -38,7 +38,12 @@ enum MdrtGroupsSlot {
   GROUPS_RECORD_GROUPS = 21,
   GROUPS_RECORD_COUNTS = 22,
   GROUPS_SEGMENT_OFFSETS = 23,
-  GROUPS_BUFFERS = 24
+  GROUPS_INNER_DEGREES = 24,
+  GROUPS_REVERSE_START = 25,
+  GROUPS_REVERSE_END = 26,
+  GROUPS_REVERSE_SLOTS = 27,
+  GROUPS_SLOT_DEGREES = 28,
+  GROUPS_BUFFERS = 29
 };
 
 /* The frames of a list of units (D422): buffers of
@@ -49,7 +54,7 @@ enum MdrtGroupsSlot {
    follow. A growth of the places drops them with the other buffers. */
 #define MDRT_GROUPS_FRAMES 16
 
-enum MdrtGroupsElement { MDRT_GROUPS_I32, MDRT_GROUPS_F32 };
+enum MdrtGroupsElement { MDRT_GROUPS_I32, MDRT_GROUPS_F32, MDRT_GROUPS_I64 };
 /* Shapes count physical elements, including padding. PLACED is exposed
  * separately as [places, 3]; the generic accessor is its flat storage view. */
 enum MdrtGroupsShape {
@@ -66,30 +71,35 @@ struct MdrtGroupsDescriptor {
 static inline const struct MdrtGroupsDescriptor *
 mdrtGroupsDescriptor(long long slot) {
   static const struct MdrtGroupsDescriptor descriptors[GROUPS_BUFFERS] = {
-    {MDRT_GROUPS_I32, MDRT_GROUPS_PLACES, "groups: order"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_GROUPS, "groups: counts"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_ENTRIES, "groups: entries"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_ENTRIES, "groups: masks"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_BLOCKS, "groups: unit groups"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_BLOCKS, "groups: unit ordinals"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_PLACES, "groups: shifts"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_ENTRIES, "groups: inner entries"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_ENTRIES, "groups: inner masks"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_BLOCKS, "groups: inner counts"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_BLOCK_OF, "groups: block of"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_BLOCKS, "groups: active units"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_SCALAR, "groups: active count"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_RUNS, "groups: active runs"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_WIDE_RUNS, "groups: active wide runs"},
-    {MDRT_GROUPS_F32, MDRT_GROUPS_PLACED, "groups: placed"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_SEGMENT_LISTS, "units: list counts"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_SEGMENT_LISTS, "units: list last blocks"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_PLACES, "units: order"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_ENTRIES, "units: record entries"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_ENTRIES, "units: record masks"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_BLOCKS, "units: record groups"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_BLOCKS, "units: record counts"},
-    {MDRT_GROUPS_I32, MDRT_GROUPS_SEGMENTS, "units: segment offsets"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_PLACES, "groups: order"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_GROUPS, "groups: counts"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_ENTRIES, "groups: entries"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_ENTRIES, "groups: masks"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_BLOCKS, "groups: unit groups"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_BLOCKS, "groups: unit ordinals"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_PLACES, "groups: shifts"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_ENTRIES, "groups: inner entries"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_ENTRIES, "groups: inner masks"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_BLOCKS, "groups: inner counts"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_BLOCK_OF, "groups: block of"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_BLOCKS, "groups: active units"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_SCALAR, "groups: active count"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_RUNS, "groups: active runs"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_WIDE_RUNS, "groups: active wide runs"},
+      {MDRT_GROUPS_F32, MDRT_GROUPS_PLACED, "groups: placed"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_SEGMENT_LISTS, "units: list counts"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_SEGMENT_LISTS, "units: list last blocks"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_PLACES, "units: order"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_ENTRIES, "units: record entries"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_ENTRIES, "units: record masks"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_BLOCKS, "units: record groups"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_BLOCKS, "units: record counts"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_SEGMENTS, "units: segment offsets"},
+      {MDRT_GROUPS_I64, MDRT_GROUPS_PLACES, "groups: inner degrees"},
+      {MDRT_GROUPS_I64, MDRT_GROUPS_PLACES, "groups: reverse row starts"},
+      {MDRT_GROUPS_I64, MDRT_GROUPS_PLACES, "groups: reverse row ends"},
+      {MDRT_GROUPS_I64, MDRT_GROUPS_ENTRIES, "groups: reverse slots"},
+      {MDRT_GROUPS_I32, MDRT_GROUPS_ENTRIES, "groups: kept mask populations"},
   };
   return slot >= 0 && slot < GROUPS_BUFFERS ? &descriptors[slot] : 0;
 }

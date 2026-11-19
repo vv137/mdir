@@ -1,0 +1,13 @@
+# Check both endpoints of the kept masks as the coordinates and cell change.
+# Dropping the member ballot makes the pruning count disagree with both
+# independent counts on the first list.
+# REQUIRES: cuda
+# RUN: rm -rf %t && mkdir -p %t && cp %S/Inputs/mixture.pdb %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/barostat.test | sed '1d;$d' \
+# RUN:   | sed -e 's|^steps *= 2000|steps = 100|' -e 's|^energy_interval *= 1000|energy_interval = 100|' \
+# RUN:         -e 's|^pairlist_distance = 10.0|pairlist_distance = 10.6\npruned_distance = 9.3|' > %t/degree.toml
+# RUN: printf '\n[execution]\ntarget = "GPU"\nprecision = "mixed"\nneighbor_structure = "GROUPS"\n' >> %t/degree.toml
+# RUN: cd %t && env MDIR_COMPILE_CACHE=off MDIR_CHECK_PRUNING=1 mdir run degree.toml > run.out 2>&1
+# RUN: FileCheck %s < %t/run.out
+# CHECK: inner degrees agree at {{[1-9][0-9]*}} places, {{[1-9][0-9]*}} endpoints
+# CHECK: inner degrees agree at {{[1-9][0-9]*}} places, {{[1-9][0-9]*}} endpoints

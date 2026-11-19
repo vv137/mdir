@@ -1850,6 +1850,7 @@ struct Groups {
      build of a structure sizes its blocks (D331); a growth after
      it is noted in the log. */
   bool built;
+  bool reverseIndexCurrent;
   int64_t lateGrowths;
   /* The segments of a list of units, 1 for groups
      (mdrtGroupsSetSegments). */
@@ -1880,9 +1881,12 @@ static int64_t getGroupsLength(const struct Groups *groups, int which) {
 
 static void allocateGroup(struct Groups *groups, int which) {
   allocationTag = mdrtGroupsDescriptor(which)->role;
-  groups->data[which] = mgpuMemAlloc(
-      (uint64_t)getGroupsLength(groups, which) * sizeof(int32_t), NULL,
-      false);
+  groups->data[which] =
+      mgpuMemAlloc((uint64_t)getGroupsLength(groups, which) *
+                       (mdrtGroupsDescriptor(which)->element == MDRT_GROUPS_I64
+                            ? sizeof(int64_t)
+                            : sizeof(int32_t)),
+                   NULL, false);
   allocationTag = NULL;
 }
 
@@ -1931,6 +1935,13 @@ void mdrtGroupsSetSegments(int64_t handle, int64_t segments) {
   groups->segments = segments > 0 ? segments : 1;
 }
 
+int32_t mdrtBuildReverseIndex(int64_t handle) {
+  struct Groups *groups = (struct Groups *)(intptr_t)handle;
+  bool build = !groups->reverseIndexCurrent;
+  groups->reverseIndexCurrent = true;
+  return build;
+}
+
 void _mlir_ciface_mdrtGroupsBuffer(struct Buffer1 *result, int64_t handle,
                                    int64_t which) {
   if (!mdrtGroupsDescriptor(which)) {
@@ -1946,6 +1957,82 @@ void _mlir_ciface_mdrtGroupsBuffer(struct Buffer1 *result, int64_t handle,
   result->offset = 0;
   result->size = getGroupsLength(groups, (int)which);
   result->stride = 1;
+}
+
+/* A rank-one i64 memref. The other integer slots use the i32 accessor. */
+void _mlir_ciface_mdrtGroupsWideBuffer(struct Buffer1 *result, int64_t handle,
+                                       int64_t which) {
+  _mlir_ciface_mdrtGroupsBuffer(result, handle, which);
+}
+
+/* MDIR_CHECK_PRUNING: compare the pruning writer, the original two-endpoint
+   atomic count, and an independent host walk of the compacted inner lists. */
+static void *readDegreeCheckBuffer(CUdeviceptr source, size_t bytes) {
+  void *copy = malloc(bytes ? bytes : 1);
+  if (!copy)
+    abort();
+  if (bytes)
+    check(cuMemcpyDtoH(copy, source, bytes), "read inner degree check");
+  return copy;
+}
+
+void mdrtCheckInnerDegrees(int64_t handle, int64_t places, int64_t blocks,
+                           int64_t reference) {
+  struct Groups *g = (struct Groups *)(intptr_t)handle;
+  enter();
+  check(cuCtxSynchronize(), "check inner degrees");
+  size_t bytes = (size_t)places * sizeof(int64_t);
+  int64_t *actual =
+      readDegreeCheckBuffer((CUdeviceptr)g->data[GROUPS_INNER_DEGREES], bytes);
+  int64_t *old = readDegreeCheckBuffer((CUdeviceptr)reference, bytes);
+  int64_t *host = calloc(places ? places : 1, sizeof(*host));
+  if (!host)
+    abort();
+  size_t n = (size_t)blocks * sizeof(int32_t);
+  int32_t *group =
+      readDegreeCheckBuffer((CUdeviceptr)g->data[GROUPS_UNIT_GROUPS], n);
+  int32_t *count =
+      readDegreeCheckBuffer((CUdeviceptr)g->data[GROUPS_INNER_COUNTS], n);
+  int32_t *entry =
+      readDegreeCheckBuffer((CUdeviceptr)g->data[GROUPS_INNER_ENTRIES], 64 * n);
+  int32_t *mask =
+      readDegreeCheckBuffer((CUdeviceptr)g->data[GROUPS_INNER_MASKS], 64 * n);
+  for (int64_t b = 0; b < blocks; ++b) {
+    if (count[b] < 0 || count[b] > 64 || group[b] < 0 ||
+        group[b] >= places / 16)
+      abort();
+    for (int j = 0; j < count[b]; ++j) {
+      int64_t slot = 64 * b + j;
+      if (entry[slot] < 0 || entry[slot] >= places)
+        abort();
+      for (int k = 0; k < 16; ++k)
+        if (mask[slot] & (1u << k)) {
+          ++host[16 * (int64_t)group[b] + k];
+          ++host[entry[slot]];
+        }
+    }
+  }
+  int64_t total = 0;
+  for (int64_t i = 0; i < places; ++i) {
+    if (actual[i] != host[i] || old[i] != host[i]) {
+      fprintf(stderr,
+              "mdrt: inner degree mismatch at place %lld: pruning %lld, atomic "
+              "%lld, host %lld\n",
+              (long long)i, (long long)actual[i], (long long)old[i],
+              (long long)host[i]);
+      abort();
+    }
+    total += host[i];
+  }
+  fprintf(stderr, "mdrt: inner degrees agree at %lld places, %lld endpoints\n",
+          (long long)places, (long long)total);
+  free(mask);
+  free(entry);
+  free(count);
+  free(group);
+  free(host);
+  free(old);
+  free(actual);
 }
 
 /* For the tests of the lists of units (convert-md-exec-to-gpu with
@@ -2032,6 +2119,7 @@ int64_t mdrtGroupsBuilt(int64_t handle) {
   int64_t late = groups->lateGrowths;
   groups->built = true;
   groups->lateGrowths = 0;
+  groups->reverseIndexCurrent = false;
   return late;
 }
 

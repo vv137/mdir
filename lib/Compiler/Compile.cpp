@@ -402,7 +402,8 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // The loops over pairs over groups become md_alg.traverse_pairs
        // (D415).
        << "convert-md-exec-to-md-alg,"
-       << "convert-md-exec-to-gpu{" << archOption
+       << "convert-md-exec-to-gpu{"
+       << archOption
        // In the deterministic mode the arithmetic of a step does not
        // depend on what else the step computes. LLVM contracts a product
        // into a fused multiply-add only where it has one use, and the
@@ -413,8 +414,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // the kernels that join the constraints with the loops over
        // particles around them (D110) take the displacements of the tuples
        // as the kernels of the constraints alone do (#102).
-       << (control.deterministic ? "deterministic=true explicit-fma=true "
-                                 : "")
+       << (control.deterministic ? "deterministic=true explicit-fma=true " : "")
        // The renumbered tuples and their incidence structures are the
        // runtime's, in a store of the program that runs the code: the
        // entry of an embedding front end runs in activations, which begin
@@ -430,6 +430,9 @@ std::string mdir::compiler::getPipeline(const Control &control,
        << (std::getenv("MDIR_CHECK_PRUNING") ? "check-pruning=true " : "")
        // The pruning of a dual list in the loop over pairs that follows
        // its refresh (D284).
+       << (program.pruneSkin > 0.0 ? "initial-force-prune-skin=" +
+                                         std::to_string(program.pruneSkin) + " "
+                                   : "")
        << getFusedPruningOptions(gpuOptions)
        // The serial definition of md_alg.traverse_pairs on the host in
        // place of its schedule, for the contract test

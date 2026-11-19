@@ -343,6 +343,9 @@ public:
   /// `fusePruningGroups` groups (`fuse-pruning`, D284).
   bool fusePruning = false;
   int64_t fusePruningGroups = 0;
+  double initialForcePruneSkin = 0.0;
+  bool hasFixedGroupForce = false;
+  bool usesFixedGroupForce(md_alg::TraversePairsOp pair);
   /// The entry of the launch policy for the target's architecture
   /// (DevicePolicy.h, D420): the block memory of the
   /// strategies and the lanes of PME's gathering.
@@ -570,6 +573,8 @@ private:
   /// Prunes the inner list of the dual list `structure` from its outer one
   /// at the positions `positions` in the cell `box`, with the reach
   /// `reach`, and remembers the configuration and the cell (D114).
+  void prepareDegreeIndex(OpBuilder &builder, Location loc,
+                          const Neighbors &structure, PruneContext &ctx);
   void emitGroupsPrune(OpBuilder &builder, Location loc,
                        const Neighbors &structure, Value positions,
                        Value box, double reach);
@@ -3932,6 +3937,28 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
 // Loops over pairs over groups (md_alg.traverse_pairs, D415)
 //===----------------------------------------------------------------------===//
 
+bool Lowering::usesFixedGroupForce(md_alg::TraversePairsOp pair) {
+  if (traverseOracle != "simt")
+    return false;
+  auto scatter =
+      dyn_cast_if_present<md_exec::ScatterAttr>(pair.getScatterAttr());
+  if (scatter && scatter.isHash())
+    return false;
+  for (auto [i, value] : llvm::enumerate(
+           pair.getKernel().front().getTerminator()->getOperands())) {
+    auto vector = dyn_cast<VectorType>(value.getType());
+    if (i >= pair.getOuts().size() || !vector || vector.getNumElements() != 3 ||
+        pair.getExchangeOf(i) != "antisymmetric")
+      continue;
+    auto fields = pair.getKernel().front().getArgument(0).getType().isF32()
+                      ? groupsPolicy.mixedForces
+                      : groupsPolicy.doubleForces;
+    if (fields != md_exec::policy::ForceFields::Float4)
+      return true;
+  }
+  return false;
+}
+
 void Lowering::findSharedFrames(func::FuncOp function,
                                 md_exec::BufferAliases &aliases) {
   MLIRContext *context = function.getContext();
@@ -3990,6 +4017,10 @@ void Lowering::findSharedFrames(func::FuncOp function,
         first &= !llvm::is_contained(inner->getOperands(), result);
       });
     if (!first)
+      continue;
+    // The fixed force quota uses the degrees of both endpoints, including
+    // entries written by other warps. Finish pruning before counting them.
+    if (usesFixedGroupForce(pair))
       continue;
     pair.setPruneGroupsAttr(
         IntegerAttr::get(IntegerType::get(context, 64), fusePruningGroups));
@@ -4057,6 +4088,25 @@ public:
   GroupBuffers getGroupsBuffers(OpBuilder &builder, Location loc) override {
     return lowering.getGroupsBuffers(builder, loc, structure.handle);
   }
+  bool checksPruning() const override { return lowering.checkPruning; }
+  void checkDegrees(OpBuilder &b, Location loc, Value places, Value blocks,
+                    Value reference) override {
+    Type wide = b.getI64Type();
+    Value address =
+        memref::ExtractAlignedPointerAsIndexOp::create(b, loc, reference);
+    func::CallOp::create(
+        b, loc,
+        lowering.getOrDeclare("mdrtCheckInnerDegrees",
+                              b.getFunctionType({wide, wide, wide, wide}, {})),
+        ValueRange{structure.handle,
+                   arith::IndexCastOp::create(b, loc, wide, places),
+                   arith::ExtSIOp::create(b, loc, wide, blocks),
+                   arith::IndexCastOp::create(b, loc, wide, address)});
+  }
+  Value getInnerDegrees(OpBuilder &b, Location loc) override {
+    return lowering.getGroupsBuffer(b, loc, structure.handle,
+                                    GROUPS_INNER_DEGREES);
+  }
   InnerLists getInnerLists(OpBuilder &builder, Location loc) override {
     return lowering.getInnerLists(builder, loc, structure.handle);
   }
@@ -4078,7 +4128,9 @@ public:
   }
   PruneContext getPruneContext(OpBuilder &builder, Location loc, Value box,
                                double reach) override {
-    return lowering.getPruneContext(builder, loc, structure, box, reach);
+    auto ctx = lowering.getPruneContext(builder, loc, structure, box, reach);
+    lowering.prepareDegreeIndex(builder, loc, structure, ctx);
+    return ctx;
   }
   Value emitPruneGroup(OpBuilder &b, Location loc, const PruneContext &ctx,
                        Value group, Value lane) override {
@@ -8730,10 +8782,12 @@ GroupBuffers Lowering::getGroupsBuffers(OpBuilder &builder, Location loc,
 Value Lowering::getGroupsBuffer(OpBuilder &builder, Location loc,
                                 Value handle, MdrtGroupsSlot which) {
   Type wide = builder.getI64Type();
-  MemRefType type =
-      getDeviceType({ShapedType::kDynamic}, builder.getI32Type());
-  func::FuncOp getter = getOrDeclare(
-      groupsBufferName, builder.getFunctionType({wide, wide}, {type}));
+  bool wideSlot = mdrtGroupsDescriptor(which)->element == MDRT_GROUPS_I64;
+  MemRefType type = getDeviceType({ShapedType::kDynamic},
+                                  wideSlot ? wide : builder.getI32Type());
+  func::FuncOp getter =
+      getOrDeclare(wideSlot ? "mdrtGroupsWideBuffer" : groupsBufferName,
+                   builder.getFunctionType({wide, wide}, {type}));
   getter->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
   return func::CallOp::create(
              builder, loc, getter,
@@ -9036,11 +9090,103 @@ PruneContext Lowering::getPruneContext(OpBuilder &builder, Location loc,
   return ctx;
 }
 
+// Group the live outer slots by their entry place once per outer build.
+// Row and slot order are immaterial: the gather sums nonnegative integers.
+void Lowering::prepareDegreeIndex(OpBuilder &b, Location loc,
+                                  const Neighbors &structure,
+                                  PruneContext &ctx) {
+  if (!hasFixedGroupForce)
+    return;
+  auto get = [&](MdrtGroupsSlot slot) {
+    return getGroupsBuffer(b, loc, structure.handle, slot);
+  };
+  ctx.degrees = get(GROUPS_INNER_DEGREES);
+  ctx.reverseStart = get(GROUPS_REVERSE_START);
+  ctx.reverseEnd = get(GROUPS_REVERSE_END);
+  ctx.reverseSlots = get(GROUPS_REVERSE_SLOTS);
+  ctx.populations = get(GROUPS_SLOT_DEGREES);
+  Value needed =
+      func::CallOp::create(
+          b, loc,
+          getOrDeclare("mdrtBuildReverseIndex",
+                       b.getFunctionType({b.getI64Type()}, {b.getI32Type()})),
+          ValueRange{structure.handle})
+          .getResult(0);
+  Value build =
+      arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne, needed,
+                            arith::ConstantIntOp::create(b, loc, 0, 32));
+  auto when = scf::IfOp::create(b, loc, build, false);
+  OpBuilder at(when.thenBlock()->getTerminator());
+  Value one = createIndex(at, loc, 1);
+  Value zero = arith::ConstantIntOp::create(at, loc, 0, 64);
+  Value places =
+      arith::MulIOp::create(at, loc, ctx.groups, createIndex(at, loc, 16));
+  Value slots =
+      arith::MulIOp::create(at, loc, ctx.blocks, createIndex(at, loc, 64));
+  auto scalar = getDeviceType({1}, at.getI64Type());
+  Value nextRow = createDeviceBuffer(at, loc, scalar, {});
+  launchOver(at, loc, one, [&](OpBuilder &k, Value j) {
+    storeElement(k, loc, zero, nextRow, j);
+  });
+  launchOver(at, loc, places, [&](OpBuilder &k, Value place) {
+    storeElement(k, loc, zero, ctx.reverseEnd, place);
+  });
+  auto overSlots = [&](auto visit) {
+    launchOver(at, loc, slots, [&](OpBuilder &k, Value slot) {
+      Value width = createIndex(k, loc, 64);
+      Value block = arith::DivUIOp::create(k, loc, slot, width);
+      auto toIndex = [&](Value v) {
+        return arith::IndexCastOp::create(k, loc, k.getIndexType(), v);
+      };
+      Value group = toIndex(loadElement(k, loc, ctx.buffers.units, block));
+      Value ordinal = toIndex(loadElement(k, loc, ctx.buffers.ordinals, block));
+      Value entry = arith::AddIOp::create(
+          k, loc, arith::MulIOp::create(k, loc, ordinal, width),
+          arith::RemUIOp::create(k, loc, slot, width));
+      Value live = arith::CmpIOp::create(
+          k, loc, arith::CmpIPredicate::ult, entry,
+          toIndex(loadElement(k, loc, ctx.buffers.counts, group)));
+      scf::IfOp::create(k, loc, live, [&](OpBuilder &in, Location) {
+        Value place = arith::IndexCastOp::create(
+            in, loc, in.getIndexType(),
+            loadElement(in, loc, ctx.buffers.entries, slot));
+        visit(in, place, slot);
+        scf::YieldOp::create(in, loc);
+      });
+    });
+  };
+  Value increment = arith::ConstantIntOp::create(at, loc, 1, 64);
+  overSlots([&](OpBuilder &k, Value place, Value) {
+    emitAtomicAdd(k, loc, increment, ctx.reverseEnd, place);
+  });
+  launchOver(at, loc, places, [&](OpBuilder &k, Value place) {
+    Value length = loadElement(k, loc, ctx.reverseEnd, place);
+    Value start = memref::AtomicRMWOp::create(
+        k, loc, arith::AtomicRMWKind::addi, length, nextRow,
+        ValueRange{createIndex(k, loc, 0)});
+    storeElement(k, loc, start, ctx.reverseStart, place);
+    storeElement(k, loc, start, ctx.reverseEnd, place);
+  });
+  overSlots([&](OpBuilder &k, Value place, Value slot) {
+    Value offset = memref::AtomicRMWOp::create(
+        k, loc, arith::AtomicRMWKind::addi, increment, ctx.reverseEnd,
+        ValueRange{place});
+    storeElement(k, loc,
+                 arith::IndexCastOp::create(k, loc, k.getI64Type(), slot),
+                 ctx.reverseSlots,
+                 arith::IndexCastOp::create(k, loc, k.getIndexType(), offset));
+  });
+  Value plain = memref::MemorySpaceCastOp::create(
+      at, loc, MemRefType::get({1}, at.getI64Type()), nextRow);
+  gpu::DeallocOp::create(at, loc, Type(), ValueRange(), plain);
+}
+
 void Lowering::emitGroupsPrune(OpBuilder &builder, Location loc,
                                const Neighbors &structure, Value positions,
                                Value box, double reach) {
   emitPruneFrames(builder, loc, structure, positions, box);
   PruneContext ctx = getPruneContext(builder, loc, structure, box, reach);
+  prepareDegreeIndex(builder, loc, structure, ctx);
   Value warp32 = createIndex(builder, loc, 32);
   // A warp for each group (emitPruneGroup).
   launchOver(builder, loc,
@@ -9122,9 +9268,11 @@ Value Lowering::emitPruneGroup(OpBuilder &b, Location loc,
         toIndex(c, arith::RemUIOp::create(c, loc, e,
                                           constant32(c, 64))));
   };
+  SmallVector<Value> initial{constant32(b, 0)};
+  if (ctx.degrees)
+    initial.push_back(arith::ConstantIntOp::create(b, loc, 0, 64));
   auto rounds = scf::ForOp::create(
-      b, loc, constant32(b, 0), count, constant32(b, 32),
-      ValueRange{constant32(b, 0)},
+      b, loc, constant32(b, 0), count, constant32(b, 32), initial,
       [&](OpBuilder &c, Location, Value first, ValueRange carried) {
         Value kept = carried[0];
         Value e = arith::AddIOp::create(c, loc, first, lane);
@@ -9168,6 +9316,7 @@ Value Lowering::emitPruneGroup(OpBuilder &b, Location loc,
                 box32));
         // The bits of the pairs still within the reach.
         Value kept16 = constant32(c, 0);
+        Value memberDegree = ctx.degrees ? carried[1] : Value();
         for (int64_t p = 0; p != 16; ++p) {
           Value d = arith::SubFOp::create(c, loc, members[p], position);
           Value r2 = vector::ReductionOp::create(
@@ -9180,10 +9329,28 @@ Value Lowering::emitPruneGroup(OpBuilder &b, Location loc,
               c, loc, arith::CmpIPredicate::ne,
               arith::AndIOp::create(c, loc, mask, bit),
               constant32(c, 0));
+          Value present = arith::AndIOp::create(c, loc, had, within);
+          if (ctx.degrees) {
+            Value votes = kernels::emitWarpBallot(c, loc, present);
+            Value hits = kernels::emitWarpCount(c, loc, votes);
+            Value mine = arith::CmpIOp::create(c, loc, arith::CmpIPredicate::eq,
+                                               lane, constant32(c, p));
+            Value add =
+                arith::SelectOp::create(c, loc, mine, hits, constant32(c, 0));
+            memberDegree = arith::AddIOp::create(
+                c, loc, memberDegree,
+                arith::ExtUIOp::create(c, loc, c.getI64Type(), add));
+          }
           kept16 = arith::SelectOp::create(
-              c, loc, arith::AndIOp::create(c, loc, had, within),
-              arith::OrIOp::create(c, loc, kept16, bit), kept16);
+              c, loc, present, arith::OrIOp::create(c, loc, kept16, bit),
+              kept16);
         }
+        if (ctx.degrees)
+          scf::IfOp::create(c, loc, has, [&](OpBuilder &in, Location) {
+            storeElement(in, loc, math::CtPopOp::create(in, loc, kept16),
+                         ctx.populations, at);
+            scf::YieldOp::create(in, loc);
+          });
         Value keep = arith::CmpIOp::create(
             c, loc, arith::CmpIPredicate::ne, kept16, constant32(c, 0));
         // A warp compaction (CompactionEmitter.h).
@@ -9204,11 +9371,20 @@ Value Lowering::emitPruneGroup(OpBuilder &b, Location loc,
               inner.masks, ValueRange{to});
           scf::YieldOp::create(d, loc);
         });
-        scf::YieldOp::create(
-            c, loc,
-            ValueRange{arith::AddIOp::create(
-                c, loc, kept, kernels::emitWarpCount(c, loc, ballot))});
+        SmallVector<Value> next{arith::AddIOp::create(
+            c, loc, kept, kernels::emitWarpCount(c, loc, ballot))};
+        if (ctx.degrees)
+          next.push_back(memberDegree);
+        scf::YieldOp::create(c, loc, next);
       });
+  if (ctx.degrees) {
+    Value owner = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, lane,
+                                        constant32(b, 16));
+    scf::IfOp::create(b, loc, owner, [&](OpBuilder &in, Location) {
+      storeElement(in, loc, rounds.getResult(1), ctx.degrees, member);
+      scf::YieldOp::create(in, loc);
+    });
+  }
   // The entries that each block of the group keeps: its blocks fill
   // in order.
   Value kept = rounds.getResult(0);
@@ -9350,6 +9526,32 @@ void Lowering::emitActiveUnits(OpBuilder &builder, Location loc,
           scf::YieldOp::create(c, loc);
         });
       });
+  if (ctx.degrees) {
+    Value places = arith::MulIOp::create(builder, loc, ctx.groups,
+                                         createIndex(builder, loc, 16));
+    launchOver(builder, loc, places, [&](OpBuilder &b, Value place) {
+      auto offset = [&](Value buffer) {
+        return arith::IndexCastOp::create(b, loc, b.getIndexType(),
+                                          loadElement(b, loc, buffer, place));
+      };
+      auto sum = scf::ForOp::create(
+          b, loc, offset(ctx.reverseStart), offset(ctx.reverseEnd),
+          createIndex(b, loc, 1),
+          ValueRange{loadElement(b, loc, ctx.degrees, place)},
+          [&](OpBuilder &k, Location, Value j, ValueRange acc) {
+            Value slot = arith::IndexCastOp::create(
+                k, loc, k.getIndexType(),
+                loadElement(k, loc, ctx.reverseSlots, j));
+            Value population = arith::ExtUIOp::create(
+                k, loc, k.getI64Type(),
+                loadElement(k, loc, ctx.populations, slot));
+            scf::YieldOp::create(
+                k, loc,
+                arith::AddIOp::create(k, loc, acc[0], population).getResult());
+          });
+      storeElement(b, loc, sum.getResult(0), ctx.degrees, place);
+    });
+  }
 }
 
 void Lowering::emitPruneCheck(OpBuilder &builder, Location loc,
@@ -9701,9 +9903,28 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
   double skin = op.getSkin().convertToDouble();
   double cellWidth = op.getCellWidth().convertToDouble();
 
-  if (op.getPolicy() == md_exec::RebuildPolicy::Always)
-    return emitBuild(builder, loc, structure, positions, box, reach,
-                     cellWidth);
+  if (op.getPolicy() == md_exec::RebuildPolicy::Always) {
+    if (failed(emitBuild(builder, loc, structure, positions, box, reach,
+                         cellWidth)))
+      return failure();
+    if (structure.groups && initialForcePruneSkin > 0.0 &&
+        initialForcePruneSkin < skin &&
+        llvm::any_of(
+            op.getResult().getUsers(),
+            [&](Operation *user) {
+              auto pair = dyn_cast<md_alg::TraversePairsOp>(user);
+              return pair && !pair.isBufferForm() && usesFixedGroupForce(pair);
+            })) {
+      emitGroupsPrune(builder, loc, structure, positions, box,
+                      op.getCutoff().convertToDouble() + initialForcePruneSkin);
+      for (Operation *user : op.getResult().getUsers())
+        if (auto pair = dyn_cast<md_alg::TraversePairsOp>(user))
+          pair.setInner(true);
+      structure.dual = true;
+      neighbors[op.getResult()] = structure;
+    }
+    return success();
+  }
 
   Value moved = op.getMoved();
   if (!moved && op.getScratch().size() != 2)
@@ -11101,6 +11322,11 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
 
   // The execution choices of the loops over pairs over groups that need
   // the order of the program after the moves above (D268, D284).
+  hasFixedGroupForce = false;
+  function.walk([&](md_alg::TraversePairsOp pair) {
+    if (!pair.isBufferForm())
+      hasFixedGroupForce |= usesFixedGroupForce(pair);
+  });
   findSharedFrames(function, aliases);
 
   // The kernels are copied into the loops, so the ops inside them are not
@@ -11414,6 +11640,7 @@ public:
     lowering.traverseOracle = traverseOracle;
     lowering.fusePruning = fusePruning;
     lowering.fusePruningGroups = fusePruningGroups;
+    lowering.initialForcePruneSkin = initialForcePruneSkin;
     lowering.singlePassGroupScan = singlePassGroupScan;
     if (failed(lowering.run()))
       return signalPassFailure();

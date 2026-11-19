@@ -916,69 +916,85 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
         targets.push_back(storage);
         return storage;
       };
-      // Count incident outer-list mask bits at both endpoints, in place
-      // order. This certificate stays valid through all inner-list prunes.
-      Value degree = buffer(builder.getI64Type(), room);
+      Value degree;
+      if (host.isDual())
+        degree = host.getInnerDegrees(builder, loc);
+      else
+        degree = buffer(builder.getI64Type(), room);
       fixed.limit = buffer(computed, room);
-      host.launchOver(builder, loc, places, [&](OpBuilder &b, Value place) {
-        storeElement(b, loc, arith::ConstantIntOp::create(b, loc, 0, 64),
-                     degree, place);
-      });
-      Value blocks = loadElement(builder, loc, host.getSizes(),
-                                 createIndex(builder, loc, 2));
-      Value slots = arith::MulIOp::create(
-          builder, loc, createIndex(builder, loc, 64),
-          arith::IndexCastOp::create(builder, loc, builder.getIndexType(),
-                                     blocks));
-      host.launchOver(builder, loc, slots, [&](OpBuilder &b, Value slot) {
-        Value c64 = createIndex(b, loc, 64);
-        Value unit = arith::DivUIOp::create(b, loc, slot, c64);
-        Value group = arith::IndexCastOp::create(
-            b, loc, b.getIndexType(), loadElement(b, loc, buffers.units, unit));
-        Value ordinal = loadElement(b, loc, buffers.ordinals, unit);
-        Value entry = arith::AddIOp::create(
-            b, loc,
-            arith::MulIOp::create(b, loc, ordinal,
-                                  arith::ConstantIntOp::create(b, loc, 64, 32)),
-            arith::IndexCastOp::create(
-                b, loc, b.getI32Type(),
-                arith::RemUIOp::create(b, loc, slot, c64)));
-        Value live =
-            arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, entry,
-                                  loadElement(b, loc, buffers.counts, group));
-        scf::IfOp::create(b, loc, live, [&](OpBuilder &in, Location) {
-          Value place = arith::IndexCastOp::create(
-              in, loc, in.getIndexType(),
-              loadElement(in, loc, buffers.entries, slot));
-          Value mask = arith::AndIOp::create(
-              in, loc, loadElement(in, loc, buffers.masks, slot),
-              arith::ConstantIntOp::create(in, loc, 65535, 32));
-          Value n = math::CtPopOp::create(in, loc, mask);
-          emitAtomicAdd(in, loc,
-                        arith::ExtUIOp::create(in, loc, in.getI64Type(), n),
-                        degree, place);
-          for (unsigned bit = 0; bit < 16; ++bit) {
-            Value present = arith::AndIOp::create(
-                in, loc, mask,
-                arith::ConstantIntOp::create(in, loc, 1 << bit, 32));
-            Value set = arith::CmpIOp::create(
-                in, loc, arith::CmpIPredicate::ne, present,
-                arith::ConstantIntOp::create(in, loc, 0, 32));
-            scf::IfOp::create(in, loc, set, [&](OpBuilder &at, Location) {
-              Value member = arith::AddIOp::create(
-                  at, loc,
-                  arith::MulIOp::create(at, loc, group,
-                                        createIndex(at, loc, 16)),
-                  createIndex(at, loc, bit));
-              emitAtomicAdd(at, loc,
-                            arith::ConstantIntOp::create(at, loc, 1, 64),
-                            degree, member);
-              scf::YieldOp::create(at, loc);
-            });
-          }
-          scf::YieldOp::create(in, loc);
+      // Keep the former atomic degree kernel as an oracle in pruning checks.
+      if (!host.isDual() || host.checksPruning()) {
+        Value counted =
+            host.isDual() ? buffer(builder.getI64Type(), room) : degree;
+        host.launchOver(builder, loc, places, [&](OpBuilder &b, Value place) {
+          storeElement(b, loc, arith::ConstantIntOp::create(b, loc, 0, 64),
+                       counted, place);
         });
-      });
+        Value blocks = loadElement(builder, loc, host.getSizes(),
+                                   createIndex(builder, loc, 2));
+        Value slots = arith::MulIOp::create(
+            builder, loc, createIndex(builder, loc, 64),
+            arith::IndexCastOp::create(builder, loc, builder.getIndexType(),
+                                       blocks));
+        host.launchOver(builder, loc, slots, [&](OpBuilder &b, Value slot) {
+          Value c64 = createIndex(b, loc, 64);
+          Value unit = arith::DivUIOp::create(b, loc, slot, c64);
+          Value group = arith::IndexCastOp::create(
+              b, loc, b.getIndexType(),
+              loadElement(b, loc, buffers.units, unit));
+          Value column = arith::RemUIOp::create(b, loc, slot, c64);
+          Value index =
+              arith::IndexCastOp::create(b, loc, b.getI32Type(), column);
+          Value count;
+          if (host.isDual()) {
+            count = loadElement(b, loc, lists.blockCounts, unit);
+          } else {
+            Value ordinal = loadElement(b, loc, buffers.ordinals, unit);
+            index = arith::AddIOp::create(
+                b, loc, index,
+                arith::MulIOp::create(
+                    b, loc, ordinal,
+                    arith::ConstantIntOp::create(b, loc, 64, 32)));
+            count = loadElement(b, loc, buffers.counts, group);
+          }
+          Value live = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult,
+                                             index, count);
+          scf::IfOp::create(b, loc, live, [&](OpBuilder &in, Location) {
+            Value place = arith::IndexCastOp::create(
+                in, loc, in.getIndexType(),
+                loadElement(in, loc, lists.entries, slot));
+            Value mask = arith::AndIOp::create(
+                in, loc, loadElement(in, loc, lists.masks, slot),
+                arith::ConstantIntOp::create(in, loc, 65535, 32));
+            Value n = math::CtPopOp::create(in, loc, mask);
+            emitAtomicAdd(in, loc,
+                          arith::ExtUIOp::create(in, loc, in.getI64Type(), n),
+                          counted, place);
+            for (unsigned bit = 0; bit < 16; ++bit) {
+              Value present = arith::AndIOp::create(
+                  in, loc, mask,
+                  arith::ConstantIntOp::create(in, loc, 1 << bit, 32));
+              Value set = arith::CmpIOp::create(
+                  in, loc, arith::CmpIPredicate::ne, present,
+                  arith::ConstantIntOp::create(in, loc, 0, 32));
+              scf::IfOp::create(in, loc, set, [&](OpBuilder &at, Location) {
+                Value member = arith::AddIOp::create(
+                    at, loc,
+                    arith::MulIOp::create(at, loc, group,
+                                          createIndex(at, loc, 16)),
+                    createIndex(at, loc, bit));
+                emitAtomicAdd(at, loc,
+                              arith::ConstantIntOp::create(at, loc, 1, 64),
+                              counted, member);
+                scf::YieldOp::create(at, loc);
+              });
+            }
+            scf::YieldOp::create(in, loc);
+          });
+        });
+        if (host.isDual())
+          host.checkDegrees(builder, loc, places, blocks, counted);
+      }
       host.launchOver(builder, loc, places, [&](OpBuilder &b, Value place) {
         Value d =
             arith::MaxUIOp::create(b, loc, loadElement(b, loc, degree, place),
