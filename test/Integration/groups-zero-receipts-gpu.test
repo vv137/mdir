@@ -4,7 +4,7 @@
 # zero receipts. Other pairs are too far apart even for the search.
 # Compare both visits of the reductions-always oracle, and the production
 # guard, against all twelve independently known force components.
-# RUN: split-file %s %t
+# RUN: rm -rf %t && split-file %s %t
 # RUN: mdir-opt %t/model.mlir %md_passes --convert-md-to-md-exec="skin=0.25 width=64" %md_exec_transforms \
 # RUN:   --md-exec-choose-neighbors="kind=groups" --md-exec-assign-precision="mode=mixed" \
 # RUN:   --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=off" --md-exec-assign-storage="memory=device" \
