@@ -12,11 +12,12 @@ Each group computes only its own member's contribution. For symmetric
 scalar sums, an in-group evaluation represents two ordered terms and an
 outside evaluation represents one.
 
-A warp must own the complete group before writing its member totals.
-Groups can span several 64-entry blocks. The ordinary force pass must
-therefore traverse all surviving blocks of its group, including partially
-filled blocks. The fused pruning pass already has a group stream.
-Member totals must preserve contributions from earlier force terms.
+Each warp keeps the existing member totals in registers. At the end of a
+block, a shuffle combines the two half-warps and one atomic add per
+component writes each member's total. Several blocks can therefore
+contribute to the same group. Scheme B removes the entry receipts and
+their per-round global reductions, the cost identified in #912. Revisit
+the block traversal only if measurements show that member atomics matter.
 
 Compare one-step forces against the CPU oracle and two independent
 baseline GPU evaluations. Time mixed precision against #922 on JAC,
