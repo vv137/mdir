@@ -13,7 +13,7 @@ and fused prune-and-force loops. Members still reduce their contributions,
 and the block-local accumulation path retains its existing flush.
 The receipt test uses the result of the rotation, so it needs no branch
 around the interaction. Issue #917 records the exploratory timings for
-the combined change. The isolated guard requires its own comparison.
+the combined change. The table below measures the isolated guard against main.
 There is no control-file key.
 
 ## Validation
