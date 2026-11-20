@@ -155,14 +155,16 @@ static SmallVector<Value> emitGroupPairKernel(
           arith::AddIOp::create(builder, loc, u, constant32(builder, 15)),
           constant32(builder, 15)));
   Value width = constant32(builder, 32);
-  auto shuffle = [&](OpBuilder &b, Value value) -> Value {
+  auto fromLane = [&](OpBuilder &b, Value value, Value from) -> Value {
     SmallVector<Value> parts = getComponents(b, loc, value);
     for (Value &part : parts)
-      part = gpu::ShuffleOp::create(b, loc, part, source, width,
+      part = gpu::ShuffleOp::create(b, loc, part, from, width,
                                     gpu::ShuffleMode::IDX)
                  .getShuffleResult();
     return fromComponents(b, loc, value.getType(), parts);
   };
+
+  auto shuffle = [&](OpBuilder &b, Value value) { return fromLane(b, value, source); };
 
   // The values of the kernel go to the particle of the group in the type
   // the kernel computes them in; the sums likewise, widened at the end.
@@ -289,10 +291,17 @@ static SmallVector<Value> emitGroupPairKernel(
                     arith::SubIOp::create(b, loc, constant32(b, 16), turn))),
             low16);
 
-        // 16 steps, the entry's values and what it receives turning.
+        Value entryGroup = arith::ShRUIOp::create(b, loc, place32, constant32(b, 4));
+        Value internal = arith::AndIOp::create(b, loc, has,
+            arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq, group, entryGroup));
+        Value internalLanes = gpu::BallotOp::create(b, loc, i32, internal);
+        auto evaluate = [&](OpBuilder &b, bool hasInternal) -> SmallVector<Value> {
         SmallVector<Value> carried = {position, pairBits};
         carried.append(values.begin(), values.end());
-        for (unsigned i = 0; i != numOuts; ++i)
+        if (hasInternal) carried.push_back(arith::ExtUIOp::create(b, loc, i32, internal));
+        unsigned receiptStart = carried.size();
+        unsigned receiptCount = hasInternal ? numOuts : 0;
+        for (unsigned i = 0; i != receiptCount; ++i)
           carried.push_back(createZero(b, loc, yieldType(i)));
         carried.append(acc.begin(), acc.end());
         // The counter in i32: an index is 64 bits on the device, two
@@ -304,8 +313,8 @@ static SmallVector<Value> emitGroupPairKernel(
               Value otherPosition = state[0];
               Value bits = state[1];
               ValueRange otherValues = state.slice(2, numIns);
-              ValueRange received = state.slice(2 + numIns, numOuts);
-              ValueRange own = state.slice(2 + numIns + numOuts, numYields);
+              ValueRange received = state.slice(receiptStart, receiptCount);
+              ValueRange own = state.slice(receiptStart + receiptCount, numYields);
 
               Value bit = arith::AndIOp::create(s, loc, bits,
                                                 constant32(s, 0x8000));
@@ -346,8 +355,11 @@ static SmallVector<Value> emitGroupPairKernel(
                 Value nothing = createZero(s, loc, value.getType());
                 Value masked =
                     arith::SelectOp::create(s, loc, within, value, nothing);
+                if (hasInternal && i >= numOuts)
+                  masked = arith::SelectOp::create(s, loc, arith::TruncIOp::create(s, loc, s.getI1Type(), state[2 + numIns]),
+                      arith::AddFOp::create(s, loc, masked, masked), masked);
                 nextOwn.push_back(arith::AddFOp::create(s, loc, own[i], masked));
-                if (i < numOuts) {
+                if (i < receiptCount) {
                   // k(j, i) = s k(i, j), s the sign of the contract.
                   bool antisymmetric =
                       op.getExchangeOf(i) == "antisymmetric";
@@ -364,53 +376,51 @@ static SmallVector<Value> emitGroupPairKernel(
                   arith::ShLIOp::create(s, loc, bits, constant32(s, 1))};
               for (Value value : otherValues)
                 next.push_back(shuffle(s, value));
+              if (hasInternal) next.push_back(shuffle(s, state[2 + numIns]));
               for (Value value : nextReceived)
                 next.push_back(shuffle(s, value));
               next.append(nextOwn.begin(), nextOwn.end());
               scf::YieldOp::create(s, loc, next);
             });
-        // After 16 steps each entry is back at its lane: its values go to
-        // its particle.
         ValueRange results = steps.getResults();
-        Value particle32 = memref::LoadOp::create(b, loc, lists.order,
-                                                  ValueRange{place});
-        Value real = arith::AndIOp::create(
-            b, loc, has,
-            arith::CmpIOp::create(b, loc, arith::CmpIPredicate::sge,
-                                  particle32, constant32(b, 0)));
-        // One predicate covers all global adds for this entry. Unordered
-        // comparisons keep NaN receipts visible to the destination.
-        if (!add && numOuts) {
-          Value any;
-          for (unsigned i = 0; i < numOuts; ++i) {
-            Type stored = getElementTypeOrSelf(op.getOuts()[i].getType());
-            Value receipt = convertReal(b, loc, results[2 + numIns + i], stored);
-            for (Value part : getComponents(b, loc, receipt)) {
-              Value nonzero = arith::CmpFOp::create(
-                  b, loc, arith::CmpFPredicate::UNE, part,
-                  createZero(b, loc, part.getType()));
-              any = any ? arith::OrIOp::create(b, loc, any, nonzero) : nonzero;
-            }
-          }
-          real = arith::AndIOp::create(b, loc, real, any);
-        }
-        scf::IfOp::create(b, loc, real, [&](OpBuilder &then, Location) {
-          Value particle = toIndex(then, particle32);
-          for (unsigned i = 0; i != numOuts; ++i) {
-            Value destination = op.getOuts()[i];
-            Type stored = getElementTypeOrSelf(destination.getType());
-            Value value = convertReal(then, loc, results[2 + numIns + i],
-                                      stored);
-            if (add)
-              add(then, i, particle, value);
-            else
-              emitAtomicAdd(then, loc, value, destination, particle);
-          }
-          scf::YieldOp::create(then, loc);
-        });
-        scf::YieldOp::create(
-            b, loc,
-            ValueRange(results.slice(2 + numIns + numOuts, numYields)));
+        SmallVector<Value> totals(results.drop_front(receiptStart + receiptCount));
+        if (!receiptCount)
+          return totals;
+
+        // Only lanes holding an in-group entry route an exchange contribution
+        // back to its member. Enumerate the ballot in a warp-uniform loop.
+        Value n = math::CtPopOp::create(b, loc, internalLanes);
+        SmallVector<Value> pending = totals;
+        pending.push_back(internalLanes);
+        auto route = scf::ForOp::create(b, loc, constant32(b, 0), n, constant32(b, 1), pending,
+            [&](OpBuilder &r, Location, Value, ValueRange state) {
+              Value bits = state.back();
+              Value src = math::CountTrailingZerosOp::create(r, loc, bits);
+              Value target = fromLane(r, place32, src);
+              Value matches = arith::CmpIOp::create(r, loc, arith::CmpIPredicate::eq, mine32, target);
+              // The final shuffle combines the halves: route each entry once.
+              Value owner = arith::AndIOp::create(r, loc, matches,
+                  arith::CmpIOp::create(r, loc, arith::CmpIPredicate::eq, half, constant32(r, 0)));
+              SmallVector<Value> next(state.drop_back());
+              for (unsigned i = 0; i < receiptCount; ++i) {
+                Value v = fromLane(r, results[receiptStart + i], src);
+                next[i] = arith::SelectOp::create(r, loc, owner,
+                    arith::AddFOp::create(r, loc, next[i], v), next[i]);
+              }
+              next.push_back(arith::AndIOp::create(r, loc, bits,
+                  arith::SubIOp::create(r, loc, bits, constant32(r, 1))));
+              scf::YieldOp::create(r, loc, next);
+            });
+        return SmallVector<Value>(route.getResults().drop_back());
+        };
+        Value mixedRound = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne,
+                                                  internalLanes, constant32(b, 0));
+        auto choice = scf::IfOp::create(b, loc, acc.getTypes(), mixedRound, true);
+        OpBuilder both = OpBuilder::atBlockEnd(choice.thenBlock());
+        scf::YieldOp::create(both, loc, evaluate(both, true));
+        OpBuilder directed = OpBuilder::atBlockEnd(choice.elseBlock());
+        scf::YieldOp::create(directed, loc, evaluate(directed, false));
+        scf::YieldOp::create(b, loc, choice.getResults());
       });
 
   // The values of the particles of the group: the two half-warps add up,
@@ -464,7 +474,7 @@ static SmallVector<Value> emitGroupPairKernel(
     if (getNarrow(i))
       total = arith::ExtFOp::create(builder, loc,
                                     yield->getOperand(i).getType(), total);
-    double weight = 2.0;
+    double weight = 1.0;
     if (auto weights = op.getWeights())
       weight *= (*weights)[i - numOuts];
     if (weight != 1.0) {
@@ -1089,6 +1099,12 @@ struct Serial {
       }
       for (Operation &nested : kernel.without_terminator())
         then.clone(nested, inside);
+      Value sameGroup;
+      if (options.directedOutside) {
+        Value differing = arith::XOrIOp::create(then, loc, mine, other);
+        sameGroup = arith::CmpIOp::create(then, loc, arith::CmpIPredicate::ult,
+                                          differing, createIndex(then, loc, 16));
+      }
       SmallVector<Value> next;
       for (unsigned i = 0; i != numYields; ++i) {
         Value value = inside.lookupOrDefault(yield->getOperand(i));
@@ -1100,11 +1116,21 @@ struct Serial {
           addAt(then, i, mine, value);
           bool antisymmetric =
               op.getExchangeOf(i) == "antisymmetric" && !options.magnitudes;
-          addAt(then, i, other,
-                antisymmetric ? Value(arith::NegFOp::create(then, loc, value))
-                              : value);
+          Value exchanged = antisymmetric
+              ? Value(arith::NegFOp::create(then, loc, value)) : value;
+          if (sameGroup)
+            scf::IfOp::create(then, loc, sameGroup, [&](OpBuilder &both, Location) {
+              addAt(both, i, other, exchanged);
+              scf::YieldOp::create(both, loc);
+            });
+          else
+            addAt(then, i, other, exchanged);
           continue;
         }
+        if (sameGroup)
+          value = arith::SelectOp::create(
+              then, loc, sameGroup, arith::AddFOp::create(then, loc, value, value),
+              value);
         next.push_back(
             arith::AddFOp::create(then, loc, sums[i - numOuts], value));
       }
@@ -1239,7 +1265,7 @@ struct Serial {
     SmallVector<Value> results;
     for (unsigned i = numOuts; i != numYields; ++i) {
       Value total = overUnits.getResult(i - numOuts);
-      double weight = 2.0;
+      double weight = options.directedOutside ? 1.0 : 2.0;
       if (auto weights = op.getWeights())
         weight *= (*weights)[i - numOuts];
       Type type = total.getType();

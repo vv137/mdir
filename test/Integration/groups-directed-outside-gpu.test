@@ -1,0 +1,8 @@
+# REQUIRES: cuda, python-api
+# A jittered 4 x 4 x 4 periodic lattice. The cutoff includes the nearest
+# neighbors and the list reach also includes face diagonals. The CPU
+# neighbor matrix independently enumerates all neighbors.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/../Driver/Inputs/pair_tail_system.py %t 32 32 24 3.4 0.24
+# RUN: %mdir_python %S/Inputs/groups_directed_outside.py %t Mixed
+# RUN: %mdir_python %S/Inputs/groups_directed_outside.py %t Double

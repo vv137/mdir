@@ -425,9 +425,9 @@ constexpr StringLiteral kOffsetTriclinic = "mdrt_gpu_groups_offset_triclinic";
 class GroupsBuild : public Code {
 public:
   GroupsBuild(OpBuilder &b, Location loc, bool tilted, bool singlePass,
-              double columnParticles)
+              double columnParticles, bool directedOutside)
       : Code(b, loc), columnParticles(columnParticles), tilted(tilted),
-        singlePass(singlePass) {}
+        singlePass(singlePass), directedOutside(directedOutside) {}
   /// The build over units of `kinds` taken rigid kinds and the rest
   /// (D419).
   GroupsBuild(OpBuilder &b, Location loc, bool tilted, bool singlePass,
@@ -446,6 +446,7 @@ private:
   // Over units: K taken kinds, the rest rank 0 and kind f at rank K - f,
   // and S = (K + 1)(K + 2) / 2 segments.
   bool unitsMode = false;
+  bool directedOutside = false;
   unsigned K = 0, S = 1;
   // The units: the reference particle of each unit, the value of `order`
   // that S1's layout gives its place (the particle of the rest, the slot of
@@ -1889,6 +1890,8 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
           i32, near,
           [&]() -> Values {
             Value own = cmpi(P::slt, q, first16);
+            if (directedOutside)
+              own = andi(own, cmpi(P::sge, q, first32));
             Value m = forLoop(
                 c0w, c16w, c1w, {zeroI},
                 [&](Value u, ValueRange a) -> Values {
@@ -2216,9 +2219,9 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
             [&]() -> Values {
               Value si = indexCast(index, s);
               Value q = md_alg::BinItemOp::create(b, loc, gplace, si);
-              Value later = cmpi(P::sge, q, first32);
+              Value eligible = cmpi(P::sge, q, directedOutside ? zeroI : first32);
               Value qa = ifElse(
-                  i32, later,
+                  i32, eligible,
                   [&]() -> Values {
                     Value qi = indexCast(index, q);
                     Value xq = load(xp, {qi, c0w});
@@ -2264,9 +2267,9 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
           [&]() -> Values {
             Value si = indexCast(index, s);
             Value q = md_alg::BinItemOp::create(b, loc, gplace, si);
-            Value later = cmpi(P::sge, q, first32);
+            Value eligible = cmpi(P::sge, q, directedOutside ? zeroI : first32);
             ResultRange qa = ifElse(
-                candidateTypes, later,
+                candidateTypes, eligible,
                 [&]() -> Values {
                   Value qi = indexCast(index, q);
                   Value xq = load(xp, {qi, c0w});
@@ -3309,10 +3312,11 @@ std::string kernels::getGroupsBuildName(bool triclinic) {
 }
 
 void kernels::emitGroupsBuild(ModuleOp module, bool triclinic,
-                              bool singlePassScan, double columnParticles) {
+                              bool singlePassScan, double columnParticles,
+                              bool directedOutside) {
   OpBuilder b = OpBuilder::atBlockEnd(module.getBody());
-  GroupsBuild(b, module.getLoc(), triclinic, singlePassScan, columnParticles)
-      .emit();
+  GroupsBuild(b, module.getLoc(), triclinic, singlePassScan, columnParticles,
+              directedOutside).emit();
 }
 
 std::string kernels::getSegmentsBuildName(bool triclinic, unsigned kinds) {

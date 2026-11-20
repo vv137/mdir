@@ -4333,6 +4333,7 @@ Lowering::lowerTraversePairsSerial(md_alg::TraversePairsOp op,
   for (Value value : captured)
     lists.captures.push_back({value, toHost(value)});
   kernels::SerialOptions options;
+  options.directedOutside = !structure.segmented;
   options.reverse = traverseOracle == "serial-reversed";
   options.magnitudes = traverseOracle == "serial-magnitudes";
   options.omitted = traverseOracle == "omitted";
@@ -5169,7 +5170,7 @@ LogicalResult Lowering::addGroupsBuild(bool tilted) {
   // (D408).
   OwningOpRef<ModuleOp> templates = ModuleOp::create(module.getLoc());
   kernels::emitGroupsBuild(*templates, tilted, singlePassGroupScan,
-                           groupsColumnParticles);
+                           groupsColumnParticles, /*directedOutside=*/true);
   // The helpers that the build over units shares are taken once.
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     auto symbol = dyn_cast<SymbolOpInterface>(op);

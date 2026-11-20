@@ -223,6 +223,7 @@ struct SerialLists {
 /// reverse (`reverse-unordered-visits`, D409); with the magnitudes of the
 /// terms in place of the terms, for the bound of a test; or with no term.
 struct SerialOptions {
+  bool directedOutside = false;
   bool reverse = false;
   bool magnitudes = false;
   /// The test's baseline: no pair contributes (what the rest of the

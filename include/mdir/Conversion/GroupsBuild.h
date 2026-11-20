@@ -35,7 +35,8 @@ std::string getGroupsBuildName(bool triclinic);
 /// left as md_alg ops (D406), which kernels::lowerAlgToSIMT
 /// (MDAlgLowering.h) replaces with the code of their emitters.
 void emitGroupsBuild(mlir::ModuleOp module, bool triclinic,
-                     bool singlePassScan, double columnParticles);
+                     bool singlePassScan, double columnParticles,
+                     bool directedOutside = false);
 
 /// The name of the build over the units of `kinds` taken rigid kinds and
 /// the rest (D419):
