@@ -1,4 +1,6 @@
-# D[groups-directed-outside] Directed outside pairs in GROUPS
+# D[groups-directed-outside]
+
+Recorded 2026-11-21.
 
 ## Step 1 design
 
