@@ -574,7 +574,7 @@ member meets each of the 32 entries once. The value that the kernel
 computes for the entry travels with it and is added to the entry's
 particle when it is back at its lane. The direct global path issues one
 atomic addition per component if any received component, in its destination
-precision, is nonzero or NaN (D[groups-zero-receipts]). The values
+precision, is nonzero or NaN (D425). The values
 of the group's members are added across the two halves by one shuffle and
 once per block. The mask does not turn with the entry (D97): at each round
 a ballot for each of the 16 members gives the bits of that member with

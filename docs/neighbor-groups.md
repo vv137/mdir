@@ -570,7 +570,7 @@ in its two lanes. After 16 steps every entry is back at its lane, which adds
 the values it received to the entry's particle with one atomic addition for
 each component. In the direct global path it skips all of these additions
 when every receipt component equals zero in its destination precision
-(D[groups-zero-receipts]). A NaN takes the addition path. At the end of the block the two half-warps add their
+(D425). A NaN takes the addition path. At the end of the block the two half-warps add their
 members' values with a shuffle across 16 lanes, and the first half adds
 them to the members' particles, once a block.
 
