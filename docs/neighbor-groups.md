@@ -568,7 +568,9 @@ either half) holds the entry loaded by lane $(u - k) \bmod 16$ of its half.
 So each member meets the 16 entries of each half once, the 32 of the round
 in its two lanes. After 16 steps every entry is back at its lane, which adds
 the values it received to the entry's particle with one atomic addition for
-each component. At the end of the block the two half-warps add their
+each component. In the direct global path it skips all of these additions
+when every receipt component equals zero in its destination precision
+(D[groups-zero-receipts]). A NaN takes the addition path. At the end of the block the two half-warps add their
 members' values with a shuffle across 16 lanes, and the first half adds
 them to the members' particles, once a block.
 
@@ -585,7 +587,8 @@ pair_block(b):                         # a warp; lane l, u = l mod 16, h = l div
       v <- kernel(r2, d, mine, other);  v <- (r2 < r_c^2) ? v : 0
       own += v;  recv += s v
       (other, recv) <- from lane (u - 1) mod 16 of half h;  bits <- bits << 1
-    if q is a particle: atomic add recv to its destinations
+    if q is a particle and any stored component of recv is nonzero or NaN:
+      atomic add recv to its destinations
   own += shuffle_xor(own, 16);  if h = 0 and 16g+u is a particle: atomic add own
   sums: weight 2 x (the op's weight of the sum over both orders)
 ```
@@ -602,7 +605,7 @@ tests $r^2 < r_c^2$, strictly; the build tests $\le R'^2$.
 reductions (#912; measured by removal on an RTX 4090, since the
 performance counters are closed to users). An entry adds what it received
 to its particle with one f32 reduction a component at the end of each
-round, 3 for a force, and a member once a block. With those reductions
+round that has a nonzero receipt, 3 for a force, and a member once a block. With those reductions
 predicated off (their values kept live) the loop took 0.67 to 0.72 of its
 time on JAC, Cellulose, and a TIP3P box; with one of the three components
 left 0.69 to 0.73, with two 0.77 to 0.80. The rest of the work, about 0.7

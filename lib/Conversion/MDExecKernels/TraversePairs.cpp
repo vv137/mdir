@@ -378,6 +378,22 @@ static SmallVector<Value> emitGroupPairKernel(
             b, loc, has,
             arith::CmpIOp::create(b, loc, arith::CmpIPredicate::sge,
                                   particle32, constant32(b, 0)));
+        // One predicate covers all global adds for this entry. Unordered
+        // comparisons keep NaN receipts visible to the destination.
+        if (!add && numOuts) {
+          Value any;
+          for (unsigned i = 0; i < numOuts; ++i) {
+            Type stored = getElementTypeOrSelf(op.getOuts()[i].getType());
+            Value receipt = convertReal(b, loc, results[2 + numIns + i], stored);
+            for (Value part : getComponents(b, loc, receipt)) {
+              Value nonzero = arith::CmpFOp::create(
+                  b, loc, arith::CmpFPredicate::UNE, part,
+                  createZero(b, loc, part.getType()));
+              any = any ? arith::OrIOp::create(b, loc, any, nonzero) : nonzero;
+            }
+          }
+          real = arith::AndIOp::create(b, loc, real, any);
+        }
         scf::IfOp::create(b, loc, real, [&](OpBuilder &then, Location) {
           Value particle = toIndex(then, particle32);
           for (unsigned i = 0; i != numOuts; ++i) {

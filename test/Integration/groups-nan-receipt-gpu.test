@@ -1,0 +1,28 @@
+# REQUIRES: cuda
+# Only particles 0 and 1 interact. A quiet NaN spring coefficient makes
+# their pair force NaN. Check both endpoints so a NaN reaching the member
+# cannot hide a skipped entry flush. Particles 2 and 3 are in the skin only.
+# RUN: rm -rf %t && split-file %S/groups-zero-receipts-gpu.test %t
+# RUN: sed 's/arith.constant 0.5 : f64/arith.constant 0x7FF8000000000000 : f64/' %t/model.mlir > %t/nan.mlir
+# RUN: mdir-opt %t/nan.mlir %md_passes --convert-md-to-md-exec="skin=0.25 width=64" %md_exec_transforms \
+# RUN:   --md-exec-choose-neighbors="kind=groups" --md-exec-assign-precision="mode=mixed" \
+# RUN:   --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=off" --md-exec-assign-storage="memory=device" \
+# RUN:   --convert-md-exec-to-md-alg --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
+# RUN:   | mlir-opt %lower_gpu_to_llvm > %t/nan.llvm
+# RUN: mlir-runner %t/nan.llvm -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t/result
+# RUN: split-file %s %t/check
+# RUN: %python %t/check/forces.py %t/result
+
+#--- forces.py
+import math
+from pathlib import Path
+import struct
+import sys
+
+bits = map(int, Path(sys.argv[1]).read_text().split())
+forces = [struct.unpack("=d", struct.pack("=q", b))[0] for b in bits]
+assert len(forces) == 12
+for particle in (0, 1):
+    x = forces[3 * particle]
+    assert math.isnan(x), f"particle {particle} x force: expected NaN, got {x}"
+assert all(x == 0 for x in forces[6:]), forces[6:]
