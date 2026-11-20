@@ -24,6 +24,11 @@ $x$ forces $+1$ and $-1$, and the other ten components are zero. All twelve
 matched bitwise, including on the CPU oracle. Inverting the receipt guard
 changed one component by 1.
 
+A quiet-NaN spring coefficient makes the interacting pair's force NaN, and
+the GPU test checks that both endpoints have NaN $x$ forces. Replacing
+`UNE` with `ONE` fails this test at the entry endpoint, where particle 1's
+$x$ force is 0.0 instead of NaN.
+
 Mixed precision, RTX 4090, 10,000 NPT steps per run. Each job interleaved
 main and the receipt guard on each input. The second job reversed both
 orders. Each time is the 10% trimmed mean of stationary reporting intervals.
