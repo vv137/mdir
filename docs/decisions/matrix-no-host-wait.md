@@ -34,7 +34,7 @@ For GROUPS, test untruncated required sizes and invalid-coordinate status on the
 
 ### Part A implementation and part B measurement
 
-On a GPU, two device launches cover each pair loop or fused run sharing the matrix. A uniform predicate selects the ordinary or overflow launch before any barriers or shuffles. On overflow the latter owns the whole reduction, continuing each lane's prefix sum over its sorted tail before widening, reducing across lanes, or writing forces. A learned-potential edge callback continues to use complete row prefixes after synchronous growth.
+Each GPU pair kernel reads a warp-uniform spill predicate after its row prefix. On overflow each lane continues its sum over the sorted tail before widening, reducing across lanes, or writing forces. A learned-potential edge callback continues to use complete row prefixes after synchronous growth.
 
 The 45-particle cluster with 955 isolated particles requires 44 entries per dense row. Widths 8 and 64 give bitwise-identical forces and potential energy in deterministic mixed and double precision. At width 1 the 1,935 excess entries exceed the 1,000-entry capacity and the evaluation reports exhaustion. The learned-potential callback receives all 1,980 directed edges after growth from width 8.
 

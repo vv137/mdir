@@ -463,28 +463,39 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
       });
   SmallVector<Value> totals(inner.getResults());
   if (spill) {
-    Value sorted = createIndex(builder, loc, MATRIX_SPILL_SORTED);
-    auto field = [&](int column) -> Value {
-      Value word = memref::LoadOp::create(builder, loc, spill,
-          ValueRange{central, createIndex(builder, loc, column)});
-      return arith::IndexCastUIOp::create(builder, loc, builder.getIndexType(), word);
-    };
-    Value start = field(MATRIX_SPILL_OFFSET);
-    Value length = field(MATRIX_SPILL_LENGTH);
-    if (lanes)
-      length = arith::SelectOp::create(builder, loc, lanes->valid, length, zero);
-    // Resume at the same absolute slot each lane would visit in a wide row.
-    Value phase = arith::RemUIOp::create(builder, loc, end, step);
-    Value shifted = arith::AddIOp::create(builder, loc, first, step);
-    Value rank = arith::RemUIOp::create(builder, loc,
-        arith::SubIOp::create(builder, loc, shifted, phase), step);
-    auto extra = scf::ForOp::create(builder, loc, rank, length, step, totals,
-        [&](OpBuilder &pair, Location, Value r, ValueRange partial) {
-          Value record = arith::AddIOp::create(pair, loc, start, r);
-          visit(pair, memref::LoadOp::create(pair, loc, spill,
-                                             ValueRange{record, sorted}), partial);
-        });
-    totals.assign(extra.getResults().begin(), extra.getResults().end());
+    // All lanes address the same word, coalescing the predicate load.
+    // Row zero has offset one only after a successful nonempty sort.
+    Value ready = memref::LoadOp::create(builder, loc, spill,
+        ValueRange{zero, createIndex(builder, loc, MATRIX_SPILL_OFFSET)});
+    Value active = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ne,
+        ready, arith::ConstantIntOp::create(builder, loc, 0, 32));
+    auto resume = scf::IfOp::create(builder, loc, active, [&](OpBuilder &tail, Location) {
+      Value sorted = createIndex(tail, loc, MATRIX_SPILL_SORTED);
+      auto field = [&](int column) -> Value {
+        Value word = memref::LoadOp::create(tail, loc, spill,
+            ValueRange{central, createIndex(tail, loc, column)});
+        return arith::IndexCastUIOp::create(tail, loc, tail.getIndexType(), word);
+      };
+      Value start = field(MATRIX_SPILL_OFFSET);
+      Value length = field(MATRIX_SPILL_LENGTH);
+      if (lanes)
+        length = arith::SelectOp::create(tail, loc, lanes->valid, length, zero);
+      // Resume at the same absolute slot each lane would visit in a wide row.
+      Value phase = arith::RemUIOp::create(tail, loc, end, step);
+      Value shifted = arith::AddIOp::create(tail, loc, first, step);
+      Value rank = arith::RemUIOp::create(tail, loc,
+          arith::SubIOp::create(tail, loc, shifted, phase), step);
+      auto extra = scf::ForOp::create(tail, loc, rank, length, step, totals,
+          [&](OpBuilder &pair, Location, Value r, ValueRange partial) {
+            Value record = arith::AddIOp::create(pair, loc, start, r);
+            visit(pair, memref::LoadOp::create(pair, loc, spill,
+                                               ValueRange{record, sorted}), partial);
+          });
+      scf::YieldOp::create(tail, loc, extra.getResults());
+    }, [&](OpBuilder &empty, Location) {
+      scf::YieldOp::create(empty, loc, totals);
+    });
+    totals.assign(resume.getResults().begin(), resume.getResults().end());
   }
   for (unsigned i = 0; i != numYields; ++i)
     if (getNarrow(i))

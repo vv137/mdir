@@ -674,8 +674,7 @@ private:
   void launchRows(
       OpBuilder &builder, Location loc, Value count,
       function_ref<void(OpBuilder &, Value, const RowLanes &)> body,
-      Value order = Value(), const RowExtras *extras = nullptr,
-      Value spill = {}, bool overflow = false);
+      Value order = Value(), const RowExtras *extras = nullptr);
 
 
   /// Gives the kernel of `launch` the values from outside as it can take
@@ -2799,14 +2798,13 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
   // which is one for the run (findRows), and the loops over tuples take the
   // particle at the place of the thread (D86).
   DenseMap<Operation *, PairLayout> layouts;
-  Value order, spill;
+  Value order;
   for (Loop &loop : loops)
     if (auto pair = dyn_cast<md_exec::PairForOp>(loop.op)) {
       layouts[loop.op] = gatherInOrder(builder, loc, loop.structure,
                                        pair.getPositions(), pair.getIns(),
                                        last);
       order = loop.structure.order;
-      spill = loop.spill;
     }
 
   // Loops over disjoint tuples: one thread for each particle, which
@@ -2892,85 +2890,80 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
     return success();
   }
 
-  auto runRows = [&](bool overflow) {
-    launchRows(builder, loc, size, [&](OpBuilder &body, Value particle,
-                                      const RowLanes &sharing) {
-      // What the loops add to each destination, in their order, stored once
-      // at the end: loops of a run may add to one buffer, as the terms of a
-      // potential add to the forces (md-exec-accumulate-destinations). The
-      // additions are those that the loops would make one after the other.
-      struct Destination {
-        bool loads = false;
-        SmallVector<Value, 4> additions;
+  launchRows(builder, loc, size, [&](OpBuilder &body, Value particle,
+                                    const RowLanes &sharing) {
+    // What the loops add to each destination, in their order, stored once
+    // at the end: loops of a run may add to one buffer, as the terms of a
+    // potential add to the forces (md-exec-accumulate-destinations). The
+    // additions are those that the loops would make one after the other.
+    struct Destination {
+      bool loads = false;
+      SmallVector<Value, 4> additions;
+    };
+    llvm::MapVector<Value, Destination> destinations;
+    Value place = particle;
+    if (order)
+      particle = emitPlacedParticle(body, loc, order, place);
+    for (Loop &loop : loops) {
+      IRMapping local;
+      SmallVector<Value> contributions, totals;
+      ValueRange scratch, outs;
+      auto overwrites = [&](unsigned i) {
+        if (auto pair = dyn_cast<md_exec::PairForOp>(loop.op))
+          return pair.overwrites(i);
+        return cast<md_exec::TupleForOp>(loop.op).overwrites(i);
       };
-      llvm::MapVector<Value, Destination> destinations;
-      Value place = particle;
-      if (order)
-        particle = emitPlacedParticle(body, loc, order, place);
-      for (Loop &loop : loops) {
-        IRMapping local;
-        SmallVector<Value> contributions, totals;
-        ValueRange scratch, outs;
-        auto overwrites = [&](unsigned i) {
-          if (auto pair = dyn_cast<md_exec::PairForOp>(loop.op))
-            return pair.overwrites(i);
-          return cast<md_exec::TupleForOp>(loop.op).overwrites(i);
-        };
-        if (auto pair = dyn_cast<md_exec::PairForOp>(loop.op)) {
-          contributions = emitPairKernel(
-              body, pair, loop.structure.counts, loop.entries,
-              loop.box, loop.inverse, place, local, &sharing, &totals,
-              &layouts[loop.op], nullptr, overflow ? loop.spill : Value());
-          scratch = pair.getScratch();
-          outs = pair.getOuts();
-        } else {
-          auto tuple = cast<md_exec::TupleForOp>(loop.op);
-          contributions = emitTupleKernel(body, tuple, tuple.getIncidence(),
-                                          loop.box, loop.inverse, particle,
-                                          local, &sharing, &totals);
-          scratch = tuple.getScratch();
-          outs = tuple.getOuts();
-        }
-        for (auto [i, out] : llvm::enumerate(outs)) {
-          Destination &destination = destinations[out];
-          if (overwrites(i)) {
-            destination.loads = false;
-            destination.additions.clear();
-          } else if (destination.additions.empty()) {
-            destination.loads = true;
-          }
-          destination.additions.push_back(totals[i]);
-        }
-        storeContributions(body, loc, contributions, scratch, particle,
-                           sharing);
+      if (auto pair = dyn_cast<md_exec::PairForOp>(loop.op)) {
+        contributions = emitPairKernel(
+            body, pair, loop.structure.counts, loop.entries,
+            loop.box, loop.inverse, place, local, &sharing, &totals,
+            &layouts[loop.op], nullptr, loop.spill);
+        scratch = pair.getScratch();
+        outs = pair.getOuts();
+      } else {
+        auto tuple = cast<md_exec::TupleForOp>(loop.op);
+        contributions = emitTupleKernel(body, tuple, tuple.getIncidence(),
+                                        loop.box, loop.inverse, particle,
+                                        local, &sharing, &totals);
+        scratch = tuple.getScratch();
+        outs = tuple.getOuts();
       }
-      if (destinations.empty())
-        return;
-      Value leader = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq,
-                                           sharing.lane,
-                                           createIndex(body, loc, 0));
-      Value writes = arith::AndIOp::create(body, loc, leader, sharing.valid);
-      scf::IfOp::create(body, loc, writes, [&](OpBuilder &then, Location) {
-        for (auto &[buffer, destination] : destinations) {
-          Value total;
-          ArrayRef<Value> additions = destination.additions;
-          if (destination.loads) {
-            total = loadElement(then, loc, buffer, particle);
-          } else {
-            total = additions.front();
-            additions = additions.drop_front();
-          }
-          for (Value addition : additions)
-            total = arith::AddFOp::create(then, loc, total, addition);
-          storeElement(then, loc, total, buffer, particle);
+      for (auto [i, out] : llvm::enumerate(outs)) {
+        Destination &destination = destinations[out];
+        if (overwrites(i)) {
+          destination.loads = false;
+          destination.additions.clear();
+        } else if (destination.additions.empty()) {
+          destination.loads = true;
         }
-        scf::YieldOp::create(then, loc);
-      });
-    }, order, nullptr, spill, overflow);
-  };
-  runRows(false);
-  if (spill)
-    runRows(true);
+        destination.additions.push_back(totals[i]);
+      }
+      storeContributions(body, loc, contributions, scratch, particle,
+                         sharing);
+    }
+    if (destinations.empty())
+      return;
+    Value leader = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq,
+                                         sharing.lane,
+                                         createIndex(body, loc, 0));
+    Value writes = arith::AndIOp::create(body, loc, leader, sharing.valid);
+    scf::IfOp::create(body, loc, writes, [&](OpBuilder &then, Location) {
+      for (auto &[buffer, destination] : destinations) {
+        Value total;
+        ArrayRef<Value> additions = destination.additions;
+        if (destination.loads) {
+          total = loadElement(then, loc, buffer, particle);
+        } else {
+          total = additions.front();
+          additions = additions.drop_front();
+        }
+        for (Value addition : additions)
+          total = arith::AddFOp::create(then, loc, total, addition);
+        storeElement(then, loc, total, buffer, particle);
+      }
+      scf::YieldOp::create(then, loc);
+    });
+  }, order);
 
   // One reduction for the global sums of all the loops.
   SmallVector<Value> contributions, partials;
@@ -3725,7 +3718,7 @@ LogicalResult Lowering::lowerStagedPairFor(md_exec::PairForOp op) {
 void Lowering::launchRows(
     OpBuilder &builder, Location loc, Value count,
     function_ref<void(OpBuilder &, Value, const RowLanes &)> body,
-    Value order, const RowExtras *extras, Value spill, bool overflow) {
+    Value order, const RowExtras *extras) {
   Value lanes = createIndex(builder, loc, rowLanes);
   Value threads = arith::MulIOp::create(builder, loc, count, lanes);
   Value one = createIndex(builder, loc, 1);
@@ -3738,19 +3731,6 @@ void Lowering::launchRows(
       /*workgroupAttributions=*/extras ? TypeRange(extras->attributions)
                                        : TypeRange());
   OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
-  scf::IfOp guard;
-  if (spill) {
-    // Both launches decide uniformly before any block barriers or shuffles.
-    // The overflow launch owns the entire row reduction when a tail exists.
-    Value zero = createIndex(kernel, loc, 0);
-    Value offset = memref::LoadOp::create(
-        kernel, loc, spill, ValueRange{zero, createIndex(kernel, loc, MATRIX_SPILL_OFFSET)});
-    Value active = arith::CmpIOp::create(
-        kernel, loc, overflow ? arith::CmpIPredicate::ne : arith::CmpIPredicate::eq,
-        offset, arith::ConstantIntOp::create(kernel, loc, 0, 32));
-    guard = scf::IfOp::create(kernel, loc, active, false);
-    kernel = guard.getThenBodyBuilder();
-  }
   if (extras)
     extras->before(kernel, launch);
   Value base = arith::MulIOp::create(kernel, loc, launch.getBlockIds().x,
@@ -3785,8 +3765,6 @@ void Lowering::launchRows(
   body(kernel, particle, sharing);
   if (extras)
     extras->after(kernel);
-  if (guard)
-    kernel.setInsertionPointAfter(guard);
   gpu::TerminatorOp::create(kernel, loc);
   bringIn(launch);
 }
@@ -3900,55 +3878,54 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
     table->add(b, outs[out], member, value);
   };
   RowExtras extras{attributions, openTable, closeTable};
-  for (bool overflow : {false, true})
-    launchRows(builder, loc, size, [&](OpBuilder &body, Value central,
-                                     const RowLanes &sharing) {
-      IRMapping local;
-      // The places run in the order of the cells, which mixes the centers
-      // with the other rows: a place whose particle is not a center does
-      // nothing, as a place past the last does.
-      RowLanes lanes = sharing;
-      if (centers) {
-        Value particle = arith::IndexCastOp::create(
-            body, loc, body.getIndexType(),
-            memref::LoadOp::create(body, loc, structure.order,
-                                   ValueRange{central}));
-        Value isCenter = arith::CmpIOp::create(
-            body, loc, arith::CmpIPredicate::ult, particle, centers);
-        lanes.valid = arith::AndIOp::create(body, loc, sharing.valid, isCenter);
-        if (Value selected = op.getCenterSet()) {
-          auto member = scf::IfOp::create(
-              body, loc, TypeRange{body.getI1Type()}, lanes.valid,
-              /*withElseRegion=*/true);
-          {
-            OpBuilder then = OpBuilder::atBlockEnd(member.thenBlock());
-            Value bit = memref::LoadOp::create(then, loc, selected,
-                                              ValueRange{particle});
-            Value active = arith::CmpIOp::create(
-                then, loc, arith::CmpIPredicate::ne, bit,
-                arith::ConstantIntOp::create(then, loc, 0, 32));
-            scf::YieldOp::create(then, loc, active);
-          }
-          {
-            OpBuilder otherwise = OpBuilder::atBlockEnd(member.elseBlock());
-            Value no = arith::ConstantIntOp::create(otherwise, loc, 0, 1);
-            scf::YieldOp::create(otherwise, loc, ValueRange{no});
-          }
-          lanes.valid = member.getResult(0);
+  launchRows(builder, loc, size, [&](OpBuilder &body, Value central,
+                                   const RowLanes &sharing) {
+    IRMapping local;
+    // The places run in the order of the cells, which mixes the centers
+    // with the other rows: a place whose particle is not a center does
+    // nothing, as a place past the last does.
+    RowLanes lanes = sharing;
+    if (centers) {
+      Value particle = arith::IndexCastOp::create(
+          body, loc, body.getIndexType(),
+          memref::LoadOp::create(body, loc, structure.order,
+                                 ValueRange{central}));
+      Value isCenter = arith::CmpIOp::create(
+          body, loc, arith::CmpIPredicate::ult, particle, centers);
+      lanes.valid = arith::AndIOp::create(body, loc, sharing.valid, isCenter);
+      if (Value selected = op.getCenterSet()) {
+        auto member = scf::IfOp::create(
+            body, loc, TypeRange{body.getI1Type()}, lanes.valid,
+            /*withElseRegion=*/true);
+        {
+          OpBuilder then = OpBuilder::atBlockEnd(member.thenBlock());
+          Value bit = memref::LoadOp::create(then, loc, selected,
+                                            ValueRange{particle});
+          Value active = arith::CmpIOp::create(
+              then, loc, arith::CmpIPredicate::ne, bit,
+              arith::ConstantIntOp::create(then, loc, 0, 32));
+          scf::YieldOp::create(then, loc, active);
         }
+        {
+          OpBuilder otherwise = OpBuilder::atBlockEnd(member.elseBlock());
+          Value no = arith::ConstantIntOp::create(otherwise, loc, 0, 1);
+          scf::YieldOp::create(otherwise, loc, ValueRange{no});
+        }
+        lanes.valid = member.getResult(0);
       }
-      // Every lane must reach the row reduction: its shuffle names the full
-      // warp even when one of the warp's two rows is outside the center set.
-      // An invalid row has an empty pair loop and contributes zero.
-      SmallVector<Value> contributions = emitPairKernel(
-          body, op, structure.counts, entries, box, inverse, central,
-          local, &lanes, /*outTotals=*/nullptr, &layout,
-          tabled ? AddToMember(addToTable) : AddToMember(), overflow ? spill : Value());
-      // A place that is not a center contributes zeros to the sums, which
-      // its slot of the scratch must hold.
-      storeContributions(body, loc, contributions, op.getScratch(), central,
-                         sharing);
-    }, structure.order, tabled ? &extras : nullptr, spill, overflow);
+    }
+    // Every lane must reach the row reduction: its shuffle names the full
+    // warp even when one of the warp's two rows is outside the center set.
+    // An invalid row has an empty pair loop and contributes zero.
+    SmallVector<Value> contributions = emitPairKernel(
+        body, op, structure.counts, entries, box, inverse, central,
+        local, &lanes, /*outTotals=*/nullptr, &layout,
+        tabled ? AddToMember(addToTable) : AddToMember(), spill);
+    // A place that is not a center contributes zeros to the sums, which
+    // its slot of the scratch must hold.
+    storeContributions(body, loc, contributions, op.getScratch(), central,
+                       sharing);
+  }, structure.order, tabled ? &extras : nullptr);
   return finishSums(op, builder, op.getReduce(), op.getScratch(), size);
 }
 

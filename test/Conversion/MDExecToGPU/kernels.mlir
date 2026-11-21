@@ -110,22 +110,14 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
   // CHECK:          %[[IMAGES:[0-9]+]] = arith.mulf %{{[0-9]+}}, %[[INSIDE]]
   // CHECK:          %[[NEAREST:[0-9]+]] = math.roundeven %[[IMAGES]]
   // CHECK:          arith.mulf %[[NEAREST]], %[[EDGES]]
+  // CHECK:        arith.cmpi ne
+  // CHECK:        scf.if
+  // CHECK:        scf.for
   // CHECK:        gpu.shuffle xor
   // CHECK:        scf.if
   // CHECK:          memref.store %{{[0-9]+}}, %[[F]][
   // CHECK:        scf.if
   // CHECK:          memref.store %{{[0-9]+}}, %[[A]][
-  // CHECK:        gpu.terminator
-  //
-  // Only the overflow launch reads the sorted tail. It resumes the lane
-  // sums before the shuffle and writes the same reduction scratch.
-  // CHECK:      gpu.launch
-  // CHECK:        arith.cmpi ne
-  // CHECK:        scf.if
-  // CHECK:        scf.for
-  // CHECK:        scf.for
-  // CHECK:        gpu.shuffle xor
-  // CHECK:        memref.store %{{[0-9]+}}, %[[A]][
   // CHECK:        gpu.terminator
   //
   // The sums: a block for each part of the particles adds up its threads
