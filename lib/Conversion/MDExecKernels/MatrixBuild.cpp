@@ -841,6 +841,7 @@ void MatrixBuild::emitEntryWithExclusions(const ExclusionRow &partners,
       ifThen(fits, [&] {
         store(p32, spill, {record, c0});
         store(entered, spill, {record, c1});
+        store(indexCast(i32, subi(slotIndex, rowWidth)), spill, {record, cx(2)});
       });
     });
   });

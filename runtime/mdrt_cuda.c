@@ -2152,11 +2152,12 @@ static void allocateMatrix(struct Matrix *matrix) {
   matrix->data = mgpuMemAlloc(
       (uint64_t)(matrix->rows * matrix->width) * sizeof(int32_t), NULL,
       false);
-  /* One pair of words per excess entry. The first record holds the
+  /* Each excess entry stores its row, neighbor, and rank within the tail.
+     The first record holds the
      append counter. Keep a quarter of the matrix capacity in reserve. */
   matrix->spillRows = 1 + matrix->rows * ((matrix->width + 3) / 4);
   allocationTag = "matrix: spill";
-  matrix->spill = mgpuMemAlloc(matrix->spillRows * 2 * sizeof(int32_t),
+  matrix->spill = mgpuMemAlloc(matrix->spillRows * 3 * sizeof(int32_t),
                               NULL, false);
   allocationTag = NULL;
 }
@@ -2191,8 +2192,8 @@ void _mlir_ciface_mdrtMatrixSpill(struct Buffer2 *result, int64_t handle) {
   result->aligned = matrix->spill;
   result->offset = 0;
   result->sizes[0] = matrix->spillRows;
-  result->sizes[1] = 2;
-  result->strides[0] = 2;
+  result->sizes[1] = 3;
+  result->strides[0] = 3;
   result->strides[1] = 1;
 }
 
