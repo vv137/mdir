@@ -6,7 +6,7 @@
 func.func private @mdrtMatrixCreate(i64, i64) -> i64
 func.func private @mdrtMatrixSpill(i64) -> memref<?x?xi32, 1> attributes {llvm.emit_c_interface}
 func.func private @mdrtMatrixEntries(i64) -> memref<?x?xi32, 1> attributes {llvm.emit_c_interface}
-func.func private @mdrtMatrixPublish(i64)
+func.func private @mdrtMatrixPublish(i64) -> i32
 func.func private @mdrtMatrixPrepare(i64)
 func.func private @mdrtDeviceWaitAll()
 func.func private @mdrtDeviceActivationLeave()
@@ -29,7 +29,7 @@ func.func @publish(%handle: i64, %width: i32, %bad: i32) {
     memref.store %bad, %buffer[%c0, %c3] : memref<?x?xi32, 1>
     gpu.terminator
   }
-  func.call @mdrtMatrixPublish(%handle) : (i64) -> ()
+  %retry = func.call @mdrtMatrixPublish(%handle) : (i64) -> i32
   return
 }
 
@@ -43,7 +43,7 @@ func.func @show_width(%handle: i64) {
   return
 }
 
-// Both copies are submitted before the sync. Reading status cannot relocate
+// The first publish sizes the matrix. Reading status cannot relocate
 // storage that a pair kernel is still using. The next prepare uses the maximum.
 // CHECK:      {{^}}8{{$}}
 // CHECK-NEXT: {{^}}55{{$}}

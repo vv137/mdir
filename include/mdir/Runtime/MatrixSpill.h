@@ -2,7 +2,7 @@
 #ifndef MDIR_RUNTIME_MATRIXSPILL_H
 #define MDIR_RUNTIME_MATRIXSPILL_H
 
-#define MDRT_MATRIX_SPILL_ABI_VERSION 1
+#define MDRT_MATRIX_SPILL_ABI_VERSION 2
 
 // Records and sorted neighbors start at index one. Offsets and lengths
 // are indexed by matrix row starting at zero. Row zero's offset doubles

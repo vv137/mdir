@@ -8131,30 +8131,25 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                      getMatrixEntries(at, loc, structure.handle, "mdrtMatrixSpill")});
     func::CallOp::create(at, loc, build, operands);
   };
-  if (structure.edges) {
-    auto again = scf::WhileOp::create(builder, loc, TypeRange(), ValueRange());
-    Block *before = builder.createBlock(&again.getBefore());
-    OpBuilder at = OpBuilder::atBlockEnd(before);
-    search(at);
-    auto retry = func::CallOp::create(at, loc,
-        getOrDeclare("mdrtMatrixCompleteEdges", at.getFunctionType({wide}, {at.getI32Type()})),
-        ValueRange{structure.handle}).getResult(0);
-    Value zero = arith::ConstantIntOp::create(at, loc, 0, 32);
-    Value grown = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ne, retry, zero);
-    scf::ConditionOp::create(at, loc, grown, ValueRange());
-    Block *after = builder.createBlock(&again.getAfter());
-    OpBuilder close = OpBuilder::atBlockEnd(after);
-    scf::YieldOp::create(close, loc);
-    builder.setInsertionPointAfter(again);
-  } else {
-    auto runtime = [&](StringRef name) {
-      func::CallOp::create(builder, loc, getOrDeclare(name, builder.getFunctionType({wide}, {})),
-                           ValueRange{structure.handle});
-    };
-    runtime("mdrtMatrixPrepare");
-    search(builder);
-    runtime("mdrtMatrixPublish");
-  }
+  if (!structure.edges)
+    func::CallOp::create(builder, loc,
+        getOrDeclare("mdrtMatrixPrepare", builder.getFunctionType({wide}, {})),
+        ValueRange{structure.handle});
+  StringRef completion = structure.edges ? "mdrtMatrixCompleteEdges" : "mdrtMatrixPublish";
+  auto again = scf::WhileOp::create(builder, loc, TypeRange(), ValueRange());
+  Block *before = builder.createBlock(&again.getBefore());
+  OpBuilder at = OpBuilder::atBlockEnd(before);
+  search(at);
+  auto retry = func::CallOp::create(at, loc,
+      getOrDeclare(completion, at.getFunctionType({wide}, {at.getI32Type()})),
+      ValueRange{structure.handle}).getResult(0);
+  Value zero = arith::ConstantIntOp::create(at, loc, 0, 32);
+  Value grown = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ne, retry, zero);
+  scf::ConditionOp::create(at, loc, grown, ValueRange());
+  Block *after = builder.createBlock(&again.getAfter());
+  OpBuilder close = OpBuilder::atBlockEnd(after);
+  scf::YieldOp::create(close, loc);
+  builder.setInsertionPointAfter(again);
 
   // The runtime counts the builds, for the log of the run.
   func::CallOp::create(

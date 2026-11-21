@@ -2150,6 +2150,7 @@ struct Matrix {
   void *data;
   void *spill;
   int64_t spillRows;
+  int sized;
   int64_t required;
   int64_t rows;
   int64_t width;
@@ -2288,13 +2289,29 @@ void mdrtMatrixPoll(void) {
   }
 }
 
-void mdrtMatrixPublish(int64_t handle) {
-  struct MatrixRead *read = readMatrixStatus((struct Matrix *)(intptr_t)handle);
+int32_t mdrtMatrixPublish(int64_t handle) {
+  struct Matrix *matrix = (struct Matrix *)(intptr_t)handle;
+  struct MatrixRead *read = readMatrixStatus(matrix);
+  if (!matrix->sized) {
+    check(cuEventSynchronize(read->done), "cuEventSynchronize");
+    struct MatrixStatus status = *read->host;
+    recycleMatrixRead(read);
+    matrix->sized = 1;
+    matrix->required = status.required;
+    if (status.invalid)
+      mdrtStopNotNumbers(status.invalid);
+    if (status.count > (uint64_t)(matrix->spillRows - 1)) {
+      mdrtMatrixGrow(handle, status.required);
+      return 1;
+    }
+    return 0;
+  }
   if (lastRead)
     lastRead->next = read;
   else
     pendingReads = read;
   lastRead = read;
+  return 0;
 }
 
 // A caller about to hand results to another thread or a device consumer

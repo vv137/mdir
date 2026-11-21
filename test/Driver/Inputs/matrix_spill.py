@@ -52,9 +52,8 @@ for precision, tolerance in (("Mixed", 2e-5), ("Double", 1e-12)):
             repeat = evaluate(8, True, precision)
             assert narrow[0].tobytes() == repeat[0].tobytes()
 
-try:
-    evaluate(1, True, "Mixed")
-except RuntimeError as error:
-    assert "neighbor matrix spill exhausted: 1935 entries exceed capacity 1000" in str(error), error
-else:
-    raise AssertionError("exhausted spill storage returned results")
+        if deterministic:
+            # The first build needs 1,935 records at width 1, but holds 1,000.
+            recovered = evaluate(1, True, precision)
+            for actual, expected in zip(recovered, reference):
+                assert actual.tobytes() == expected.tobytes()
