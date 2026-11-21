@@ -53,7 +53,7 @@ new with every build.
 
 The host build is the IR template `lib/Runtime/Templates/NeighborsMatrix.mlir`.
 On a device, `lib/Conversion/MDExecKernels/MatrixBuild.cpp` emits the build
-into the same module before precision specialization (D[matrix-build-emitter]).
+into the same module before precision specialization (D426).
 The two builds find the same neighbors and differ in what a row
 holds: on a device the entries are places in the order of the cells
 (Section 1) and an excluded pair is entered as the particle itself

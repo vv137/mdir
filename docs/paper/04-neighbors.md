@@ -22,7 +22,7 @@ properties distinguish MDIR's structures from the usual buffered lists:
 The host matrix build uses the MLIR template `NeighborsMatrix.mlir`.
 On a device, `MatrixBuild.cpp` and `GroupsBuild.cpp` emit the matrix and
 group builds into the simulation module for lowering with the rest of the
-program (Section 3, D[matrix-build-emitter], D404).
+program (Section 3, D426, D404).
 
 **Where a structure begins.** A structure begins empty where a segment
 between checkpoints begins, so that a run continued from a checkpoint
