@@ -1,6 +1,7 @@
 // Shared MLIR builders for GPU neighbor searches.
 #pragma once
 
+#include "mdir/Dialect/MDAlg/MDAlgOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
@@ -44,10 +45,10 @@ public:
     boxesType = MemRefType::get({ShapedType::kDynamic, 8}, f32,
                                 MemRefLayoutAttrInterface(), global);
     ids = MemRefType::get({256}, i32, MemRefLayoutAttrInterface(), workgroup);
-    relative = MemRefType::get({64, 4}, f32, MemRefLayoutAttrInterface(),
-                               workgroup);
-    partnersType = MemRefType::get({1024}, i32, MemRefLayoutAttrInterface(),
-                                   workgroup);
+    relative =
+        MemRefType::get({64, 4}, f32, MemRefLayoutAttrInterface(), workgroup);
+    partnersType =
+        MemRefType::get({1024}, i32, MemRefLayoutAttrInterface(), workgroup);
     pointer = LLVM::LLVMPointerType::get(context, 1);
   }
 
@@ -55,8 +56,8 @@ public:
   Location loc;
   MLIRContext *context;
   Type i1, i32, i64, index, f32, f64;
-  MemRefType buffer, wideBuffer, sizesType, positions, wrappedType,
-      placesType, boxesType, ids, relative, partnersType;
+  MemRefType buffer, wideBuffer, sizesType, positions, wrappedType, placesType,
+      boxesType, ids, relative, partnersType;
   Type pointer;
 
   // Constants.
@@ -207,8 +208,8 @@ public:
   }
 
   // The device.
-  std::pair<Value, Value> shuffle(gpu::ShuffleMode mode, Value v,
-                                  Value offset, Value width) {
+  std::pair<Value, Value> shuffle(gpu::ShuffleMode mode, Value v, Value offset,
+                                  Value width) {
     auto op = gpu::ShuffleOp::create(b, loc, v, offset, width, mode);
     return {op.getShuffleResult(), op.getValid()};
   }
@@ -226,14 +227,12 @@ public:
   /// A relaxed atomic at the scope of the device, whose old value it gives.
   Value atomic(LLVM::AtomicBinOp op, Value ptr, Value v) {
     return LLVM::AtomicRMWOp::create(b, loc, op, ptr, v,
-                                     LLVM::AtomicOrdering::monotonic,
-                                     "device");
+                                     LLVM::AtomicOrdering::monotonic, "device");
   }
 
   // Calls.
   ResultRange call(StringRef callee, TypeRange results, ValueRange operands) {
-    return func::CallOp::create(b, loc, callee, results, operands)
-        .getResults();
+    return func::CallOp::create(b, loc, callee, results, operands).getResults();
   }
   Value call1(StringRef callee, Type result, ValueRange operands) {
     return call(callee, result, operands)[0];
@@ -274,18 +273,18 @@ public:
   }
   ResultRange forLoop(Value lower, Value upper, Value step, ValueRange inits,
                       function_ref<Values(Value, ValueRange)> body) {
-    return scf::ForOp::create(b, loc, lower, upper, step, inits,
-                              [&](OpBuilder &, Location, Value iv,
-                                  ValueRange args) {
-                                Values v = body(iv, args);
-                                scf::YieldOp::create(b, loc, v);
-                              })
+    return scf::ForOp::create(
+               b, loc, lower, upper, step, inits,
+               [&](OpBuilder &, Location, Value iv, ValueRange args) {
+                 Values v = body(iv, args);
+                 scf::YieldOp::create(b, loc, v);
+               })
         .getResults();
   }
-  ResultRange whileLoop(TypeRange types, ValueRange inits,
-                        function_ref<std::pair<Value, Values>(ValueRange)>
-                            before,
-                        function_ref<Values(ValueRange)> after) {
+  ResultRange
+  whileLoop(TypeRange types, ValueRange inits,
+            function_ref<std::pair<Value, Values>(ValueRange)> before,
+            function_ref<Values(ValueRange)> after) {
     return scf::WhileOp::create(
                b, loc, types, inits,
                [&](OpBuilder &, Location, ValueRange args) {
@@ -312,6 +311,40 @@ public:
       body(entry->getArguments());
     }
     return op;
+  }
+  // The number of blocks of `block` threads that hold `count` threads.
+  void emitGrid(StringRef name) {
+    function(name, b.getFunctionType({index, index}, {index}),
+             [&](ValueRange a) {
+               Value count = a[0], threads = a[1];
+               Value one = cx(1);
+               Value last = subi(threads, one);
+               Value padded = addi(count, last);
+               Value result = divui(padded, threads);
+               func::ReturnOp::create(b, loc, result);
+             });
+  }
+
+  // The other member of the excluded pair `k` of the row that begins at
+  // `first` in the incidence structure `excluded`, ragged rows (see the
+  // build of the matrix).
+  void emitExcludedPartner(StringRef name) {
+    function(name, b.getFunctionType({buffer, index, index}, {i32}),
+             [&](ValueRange a) {
+               Value rows = a[0], first = a[1], k = a[2];
+               Value i1c = cx(1);
+               Value i2c = cx(2);
+               Value i3c = cx(3);
+               Value i4c = cx(4);
+               Value zero = ci(0);
+               Value place = md_alg::RaggedEntryOp::create(b, loc, rows, first,
+                                                           k, i1c, i4c);
+               Value atFirst = cmpi(CmpIPredicate::eq, place, zero);
+               Value column = select(atFirst, i3c, i2c);
+               Value partner = md_alg::RaggedEntryOp::create(
+                   b, loc, rows, first, k, column, i4c);
+               func::ReturnOp::create(b, loc, partner);
+             });
   }
 };
 

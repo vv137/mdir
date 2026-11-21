@@ -1,12 +1,11 @@
-// The template that builds a neighbor matrix on a device in a triclinic
+// The emitter that builds a neighbor matrix on a device in a triclinic
 // cell (docs/triclinic.md), against the matrix of the host, which
 // neighbors-matrix-triclinic.mlir compares with every pair and every image.
 //
 // REQUIRES: cuda
 //
-// RUN: cat %S/../../lib/Runtime/Templates/NeighborsMatrix.mlir \
-// RUN:     %S/../../lib/Runtime/Templates/NeighborsMatrixGPU.mlir %s \
-// RUN: | mdir-opt --convert-md-alg-to-gpu \
+// RUN: cat %S/../../lib/Runtime/Templates/NeighborsMatrix.mlir %s \
+// RUN: | mdir-opt --add-matrix-build --convert-md-alg-to-gpu \
 // RUN: | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-format=isa" \
 // RUN:     --reconcile-unrealized-casts \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -326,3 +325,9 @@ func.func @main() {
   call @run(%flat, %beyond6, %w1) : (vector<6xf64>, f64, f64) -> ()
   return
 }
+
+func.func private @mdrt_gpu_build_neighbors_matrix_triclinic(
+    %x: memref<?x3xf64, 1>, %box: vector<6xf64>, %widths: vector<3xf64>,
+    %reach: f64, %cell_width: f64, %excluded: memref<?xi32, 1>,
+    %counts: memref<?xi32, 1>, %index: memref<?x?xi32, 1>,
+    %order: memref<?xi32, 1>) -> (index, index)

@@ -385,7 +385,7 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
           // A pair beyond the cutoff contributes nothing, and neither does
           // an entry that stands for the particle itself, which is how a
           // device marks an excluded pair (the build of the neighbor matrix,
-          // lib/Runtime/Templates/NeighborsMatrixGPU.mlir).
+          // MatrixBuild.cpp).
           Value within = arith::CmpFOp::create(
               pair, loc, arith::CmpFPredicate::OLT, r2, cutoff2);
           Value distinct = arith::CmpIOp::create(

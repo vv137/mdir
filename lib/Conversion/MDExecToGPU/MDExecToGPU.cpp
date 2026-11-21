@@ -63,8 +63,6 @@ using namespace mdir::kernels;
 #include <limits>
 
 namespace mdir {
-/// The text of the template that builds a neighbor matrix on a device.
-
 /// The text of the template of particle mesh Ewald on a device.
 extern const char *const pmeGPUTemplate;
 /// The text of its kernels for a triclinic cell.
@@ -891,8 +889,8 @@ private:
                                   createIndex(builder, loc, group));
   }
 
-  /// Adds the templates for positions of the type `real` to the module.
-  LogicalResult addTemplates(Type real);
+  /// Emit the matrix build specialized for position type `real`.
+  LogicalResult addMatrixBuild(Type real);
   /// Adds the build of the groups (GroupsBuild.h), or with `tilted` that
   /// of a triclinic cell.
   LogicalResult addGroupsBuild(bool tilted);
@@ -960,7 +958,7 @@ private:
   int64_t numReadbacks = 0;
   Cell getResults(Type element, Location loc);
   SmallVector<Flag, 2> flags;
-  llvm::DenseSet<Type> templatesAdded;
+  llvm::DenseSet<Type> matrixBuildTypes;
 
   /// The ops that have been lowered, in the order of the program.
   SmallVector<Operation *> lowered;
@@ -5135,19 +5133,19 @@ func::FuncOp Lowering::getOrDeclare(StringRef name, FunctionType type) {
   return function;
 }
 
-LogicalResult Lowering::addTemplates(Type real) {
-  if (!templatesAdded.insert(real).second)
+LogicalResult Lowering::addMatrixBuild(Type real) {
+  if (!matrixBuildTypes.insert(real).second)
     return success();
-  // A module that was lowered in part has the templates already.
+  // Partially lowered modules can already contain this specialization.
   if (SymbolTable::lookupSymbolIn(
           module, getInstanceName(buildNeighborsName, real)))
     return success();
 
-  OwningOpRef<ModuleOp> templates = ModuleOp::create(module.getLoc());
-  kernels::emitMatrixBuild(*templates);
-  if (failed(instantiateTemplates(*templates, real)))
+  OwningOpRef<ModuleOp> definitions = ModuleOp::create(module.getLoc());
+  kernels::emitMatrixBuild(*definitions);
+  if (failed(instantiateTemplates(*definitions, real)))
     return failure();
-  for (Operation &op : llvm::make_early_inc_range(*templates)) {
+  for (Operation &op : llvm::make_early_inc_range(*definitions)) {
     op.remove();
     module.push_back(&op);
   }
@@ -8081,7 +8079,7 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
     return finishBuild(builder, loc, structure, positions, box);
   }
   Type real = cast<MemRefType>(positions.getType()).getElementType();
-  if (failed(addTemplates(real)))
+  if (failed(addMatrixBuild(real)))
     return failure();
 
   Value reachValue = createReal(builder, loc, real, reach);
@@ -9878,7 +9876,7 @@ LogicalResult Lowering::lowerSpatialOrder(md_exec::SpatialOrderOp op) {
   OpBuilder builder(op);
   Value positions = op.getPositions();
   Type real = cast<MemRefType>(positions.getType()).getElementType();
-  if (failed(addTemplates(real)))
+  if (failed(addMatrixBuild(real)))
     return failure();
 
   // The cell has become the vector of its edge lengths; a triclinic one

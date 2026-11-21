@@ -183,8 +183,6 @@ private:
       columnChunks, sizesDevice, xp, gkey, gcount, gstart, gcursor, gplace,
       boxes;
 
-  void emitGrid();
-  void emitPartner();
   void emitImage();
   void emitImageTriclinic();
   void emitOffsetTriclinic();
@@ -227,41 +225,6 @@ private:
 //===----------------------------------------------------------------------===//
 // The helpers
 //===----------------------------------------------------------------------===//
-
-// The number of blocks of `block` threads that hold `count` threads.
-void GroupsBuild::emitGrid() {
-  function(kGrid, b.getFunctionType({index, index}, {index}),
-           [&](ValueRange a) {
-             Value count = a[0], threads = a[1];
-             Value one = cx(1);
-             Value last = subi(threads, one);
-             Value padded = addi(count, last);
-             Value result = divui(padded, threads);
-             func::ReturnOp::create(b, loc, result);
-           });
-}
-
-// The other member of the excluded pair `k` of the row that begins at
-// `first` in the incidence structure `excluded`, ragged rows (see the
-// build of the matrix).
-void GroupsBuild::emitPartner() {
-  function(kPartner, b.getFunctionType({buffer, index, index}, {i32}),
-           [&](ValueRange a) {
-             Value rows = a[0], first = a[1], k = a[2];
-             Value i1c = cx(1);
-             Value i2c = cx(2);
-             Value i3c = cx(3);
-             Value i4c = cx(4);
-             Value zero = ci(0);
-             Value place = md_alg::RaggedEntryOp::create(b, loc, rows, first,
-                                                         k, i1c, i4c);
-             Value atFirst = cmpi(CmpIPredicate::eq, place, zero);
-             Value column = select(atFirst, i3c, i2c);
-             Value partner = md_alg::RaggedEntryOp::create(
-                 b, loc, rows, first, k, column, i4c);
-             func::ReturnOp::create(b, loc, partner);
-           });
-}
 
 // The image of the difference `d` in a cell of edge `l` (`il` = 1 / l).
 void GroupsBuild::emitImage() {
@@ -2988,9 +2951,9 @@ void GroupsBuild::emit() {
     return !SymbolTable::lookupSymbolIn(module, name);
   };
   if (absent(kGrid))
-    emitGrid();
+    emitGrid(kGrid);
   if (absent(kPartner))
-    emitPartner();
+    emitExcludedPartner(kPartner);
   if (absent(kImage))
     emitImage();
   if (tilted) {

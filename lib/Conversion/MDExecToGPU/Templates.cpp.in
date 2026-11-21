@@ -1,10 +1,6 @@
 // Generated from the templates in lib/Runtime/Templates. Do not edit.
 
 namespace mdir {
-extern const char *const neighborsMatrixGPUTemplate;
-const char *const neighborsMatrixGPUTemplate = R"MDIRTEMPLATE(
-@NEIGHBORS_MATRIX_GPU_TEMPLATE@
-)MDIRTEMPLATE";
 extern const char *const pmeGPUTemplate;
 const char *const pmeGPUTemplate = R"MDIRTEMPLATE(
 @PME_GPU_TEMPLATE@

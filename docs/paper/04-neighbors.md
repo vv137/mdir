@@ -19,12 +19,10 @@ properties distinguish MDIR's structures from the usual buffered lists:
    outer one with a long reach whenever its own exact test asks (Section
    4.5).
 
-The structures are built by templates written in MLIR and specialized
-with the rest of the program (Section 3): `NeighborsMatrix.mlir` and
-`NeighborsMatrixGPU.mlir` for the matrix, under
-`lib/Runtime/Templates/`; the build of the groups is written by an emitter
-in C++ (`lib/Conversion/MDExecKernels/GroupsBuild.cpp`,
-D404) into the same module.
+The host matrix build uses the MLIR template `NeighborsMatrix.mlir`.
+On a device, `MatrixBuild.cpp` and `GroupsBuild.cpp` emit the matrix and
+group builds into the simulation module for lowering with the rest of the
+program (Section 3, D[matrix-build-emitter], D404).
 
 **Where a structure begins.** A structure begins empty where a segment
 between checkpoints begins, so that a run continued from a checkpoint

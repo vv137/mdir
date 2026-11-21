@@ -1,11 +1,10 @@
-// The template that orders the particles by cell on a device, compared
+// The emitter that orders the particles by cell on a device, compared
 // with the template for the host, entry by entry.
 //
 // REQUIRES: cuda
 //
-// RUN: cat %S/../../lib/Runtime/Templates/NeighborsMatrix.mlir \
-// RUN:     %S/../../lib/Runtime/Templates/NeighborsMatrixGPU.mlir %s \
-// RUN: | mdir-opt --convert-md-alg-to-gpu \
+// RUN: cat %S/../../lib/Runtime/Templates/NeighborsMatrix.mlir %s \
+// RUN: | mdir-opt --add-matrix-build --convert-md-alg-to-gpu \
 // RUN: | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-format=isa" \
 // RUN:     --reconcile-unrealized-casts \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -125,3 +124,7 @@ func.func @main() {
   call @run(%l0, %w2) : (f64, f64) -> ()
   return
 }
+
+func.func private @mdrt_gpu_spatial_order(
+    %x: memref<?x3xf64, 1>, %box: vector<3xf64>, %width: f64,
+    %ids: memref<?xi32, 1>, %order: memref<?xi32, 1>)

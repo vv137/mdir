@@ -51,11 +51,10 @@ new with every build.
 
 ### 2.1 Steps
 
-The build is a template in IR:
-`lib/Runtime/Templates/NeighborsMatrix.mlir` for the host and
-`lib/Runtime/Templates/NeighborsMatrixGPU.mlir` for a device. The compiler
-adds the template to the module, where it is lowered with the rest of the
-code. The two templates find the same neighbors and differ in what a row
+The host build is the IR template `lib/Runtime/Templates/NeighborsMatrix.mlir`.
+On a device, `lib/Conversion/MDExecKernels/MatrixBuild.cpp` emits the build
+into the same module before precision specialization (D[matrix-build-emitter]).
+The two builds find the same neighbors and differ in what a row
 holds: on a device the entries are places in the order of the cells
 (Section 1) and an excluded pair is entered as the particle itself
 (Section 2.5); on the host the entries are the indices of the particles,
