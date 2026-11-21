@@ -72,11 +72,11 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
 
   // The rows of the matrix grow when a build finds them too narrow.
   //
-  // CHECK:      scf.while
-  // CHECK:        %[[INDEX:[a-z0-9_]+]] = func.call @mdrtMatrixEntries(%[[ROWS]])
-  // CHECK:        %[[SPILL:[a-z0-9_]+]] = func.call @mdrtMatrixSpill(%[[ROWS]])
-  // CHECK:        func.call @mdrt_gpu_build_neighbors_matrix(%[[X]], %[[BOX]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %[[COUNTS]], %[[INDEX]], %[[ORDER]], %[[SPILL]])
-  // CHECK:        func.call @mdrtMatrixGrow(%[[ROWS]],
+  // CHECK:      call @mdrtMatrixPrepare(%[[ROWS]])
+  // CHECK:        %[[INDEX:[a-z0-9_]+]] = call @mdrtMatrixEntries(%[[ROWS]])
+  // CHECK:        %[[SPILL:[a-z0-9_]+]] = call @mdrtMatrixSpill(%[[ROWS]])
+  // CHECK:        call @mdrt_gpu_build_neighbors_matrix(%[[X]], %[[BOX]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %[[COUNTS]], %[[INDEX]], %[[ORDER]], %[[SPILL]])
+  // CHECK:        call @mdrtMatrixPublish(%[[ROWS]])
   // CHECK:      gpu.memcpy async [%{{[0-9]+}}] %[[REFERENCE]], %[[X]]
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(always)
@@ -115,6 +115,17 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
   // CHECK:          memref.store %{{[0-9]+}}, %[[F]][
   // CHECK:        scf.if
   // CHECK:          memref.store %{{[0-9]+}}, %[[A]][
+  // CHECK:        gpu.terminator
+  //
+  // Only the overflow launch reads the sorted tail. It resumes the lane
+  // sums before the shuffle and writes the same reduction scratch.
+  // CHECK:      gpu.launch
+  // CHECK:        arith.cmpi ne
+  // CHECK:        scf.if
+  // CHECK:        scf.for
+  // CHECK:        scf.for
+  // CHECK:        gpu.shuffle xor
+  // CHECK:        memref.store %{{[0-9]+}}, %[[A]][
   // CHECK:        gpu.terminator
   //
   // The sums: a block for each part of the particles adds up its threads

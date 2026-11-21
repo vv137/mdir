@@ -5,6 +5,7 @@
    implemented on the CUDA driver API, so the library needs the driver and
    the header of the toolkit, and nothing else of the toolkit. */
 
+#include "mdir/Runtime/MatrixSpill.h"
 #include <cuda.h>
 #include "mdir/Runtime/GroupsABI.h"
 #include "mdir/Runtime/CopyAudit.h"
@@ -444,11 +445,14 @@ CUmodule mgpuModuleLoadJIT(void *data, int optLevel, size_t size) {
   return module;
 }
 
+void mdrtMatrixPoll(void);
+
 void mgpuModuleUnload(CUmodule module) {
   /* This runs when the program ends, possibly after the driver has shut
      down. */
-  if (isPending && (sharedStream || borrowedStreamDepth))
-    cuStreamSynchronize(sharedStream);
+  if (isPending && (sharedStream || borrowedStreamDepth) &&
+      cuStreamSynchronize(sharedStream) == CUDA_SUCCESS)
+    mdrtMatrixPoll();
   isPending = 0;
   /* The program ends: the copies of its constants made outside an
      activation go with it, since another program may later put its own
@@ -708,6 +712,7 @@ int32_t mdrtFlagFinish(int64_t slot) {
   double start = begin();
   check(cuEventSynchronize(flagEvents[slot]), "cuEventSynchronize");
   end(WAIT, start);
+  mdrtMatrixPoll();
   volatile int32_t *source = flagSources[slot];
   if (!source)
     return flagSlots[slot];
@@ -744,6 +749,7 @@ static void finish(void) {
   check(cuStreamSynchronize(sharedStream), "cuStreamSynchronize");
   end(WAIT, start);
   isPending = 0;
+  mdrtMatrixPoll();
 }
 
 /* Adds the time since the last launch to the time of its kernel. */
@@ -782,6 +788,7 @@ void mgpuEventDestroy(CUevent event) {
 
 void mgpuEventSynchronize(CUevent event) {
   check(cuEventSynchronize(event), "cuEventSynchronize");
+  mdrtMatrixPoll();
 }
 
 void mgpuEventRecord(CUevent event, CUstream stream) {
@@ -2143,6 +2150,7 @@ struct Matrix {
   void *data;
   void *spill;
   int64_t spillRows;
+  int64_t required;
   int64_t rows;
   int64_t width;
 };
@@ -2152,13 +2160,14 @@ static void allocateMatrix(struct Matrix *matrix) {
   matrix->data = mgpuMemAlloc(
       (uint64_t)(matrix->rows * matrix->width) * sizeof(int32_t), NULL,
       false);
-  /* Each excess entry stores its row, neighbor, and rank within the tail.
-     The first record holds the
-     append counter. Keep a quarter of the matrix capacity in reserve. */
-  matrix->spillRows = 1 + matrix->rows * ((matrix->width + 3) / 4);
+  /* The spill table holds the raw and sorted tails and the per-row
+     offsets and lengths (MatrixSpill.h). Record zero carries status. */
+  int64_t capacity = matrix->rows * ((matrix->width + 3) / 4);
+  /* The exclusive scan uses signed i32 offsets with a one-based origin. */
+  matrix->spillRows = capacity < INT32_MAX ? capacity + 1 : INT32_MAX;
   allocationTag = "matrix: spill";
-  matrix->spill = mgpuMemAlloc(matrix->spillRows * 6 * sizeof(int32_t),
-                              NULL, false);
+  matrix->spill = mgpuMemAlloc(
+      matrix->spillRows * MATRIX_SPILL_COLUMNS * sizeof(int32_t), NULL, false);
   allocationTag = NULL;
 }
 
@@ -2192,8 +2201,8 @@ void _mlir_ciface_mdrtMatrixSpill(struct Buffer2 *result, int64_t handle) {
   result->aligned = matrix->spill;
   result->offset = 0;
   result->sizes[0] = matrix->spillRows;
-  result->sizes[1] = 6;
-  result->strides[0] = 6;
+  result->sizes[1] = MATRIX_SPILL_COLUMNS;
+  result->strides[0] = MATRIX_SPILL_COLUMNS;
   result->strides[1] = 1;
 }
 
@@ -2209,6 +2218,113 @@ void mdrtMatrixGrow(int64_t handle, int64_t width) {
   releaseReplaced(matrix->spill);
   matrix->width = width + width / 4;
   allocateMatrix(matrix);
+}
+
+extern void mdrtStopNotNumbers(int64_t count);
+extern void mdrtStopMatrixSpill(uint64_t count, int64_t capacity);
+
+struct MatrixStatus {
+  uint64_t count;
+  int32_t required, invalid;
+};
+
+struct MatrixRead {
+  struct MatrixStatus *host;
+  CUevent done;
+  struct Matrix *matrix;
+  int64_t capacity;
+  struct MatrixRead *next;
+};
+
+static struct MatrixRead *pendingReads, *lastRead, *idleReads;
+
+static struct MatrixRead *readMatrixStatus(struct Matrix *matrix) {
+  struct MatrixRead *read = idleReads;
+  if (read) {
+    idleReads = read->next;
+  } else {
+    read = calloc(1, sizeof(*read));
+    if (!read)
+      abort();
+    check(cuMemAllocHost((void **)&read->host, sizeof(*read->host)), "cuMemAllocHost");
+    check(cuEventCreate(&read->done, CU_EVENT_DISABLE_TIMING), "cuEventCreate");
+  }
+  read->matrix = matrix;
+  read->capacity = matrix->spillRows - 1;
+  read->next = NULL;
+  if (copyAudit) copyAudit->metadataDownloads += sizeof(*read->host);
+  check(cuMemcpyDtoHAsync(read->host, (CUdeviceptr)matrix->spill, sizeof(*read->host),
+                          sharedStream), "cuMemcpyDtoHAsync");
+  check(cuEventRecord(read->done, sharedStream), "cuEventRecord");
+  isPending = 1;
+  return read;
+}
+
+static void recycleMatrixRead(struct MatrixRead *read) {
+  read->next = idleReads;
+  idleReads = read;
+}
+
+void mdrtMatrixPoll(void) {
+  while (pendingReads) {
+    struct MatrixRead *read = pendingReads;
+    CUresult result = cuEventQuery(read->done);
+    if (result == CUDA_ERROR_NOT_READY)
+      break;
+    check(result, "cuEventQuery");
+    pendingReads = read->next;
+    if (!pendingReads)
+      lastRead = NULL;
+    struct MatrixStatus status = *read->host;
+    struct Matrix *matrix = read->matrix;
+    int64_t capacity = read->capacity;
+    recycleMatrixRead(read);
+    if (status.required > matrix->required)
+      matrix->required = status.required;
+    if (status.invalid)
+      mdrtStopNotNumbers(status.invalid);
+    if (status.count > (uint64_t)capacity)
+      mdrtStopMatrixSpill(status.count, capacity);
+  }
+}
+
+void mdrtMatrixPublish(int64_t handle) {
+  struct MatrixRead *read = readMatrixStatus((struct Matrix *)(intptr_t)handle);
+  if (lastRead)
+    lastRead->next = read;
+  else
+    pendingReads = read;
+  lastRead = read;
+}
+
+// A caller about to hand results to another thread or a device consumer
+// must deliver diagnostics from preceding builds before the handoff.
+static void completeMatrixReads(void) {
+  mdrtMatrixPoll();
+  if (lastRead) {
+    check(cuEventSynchronize(lastRead->done), "cuEventSynchronize");
+    mdrtMatrixPoll();
+  }
+}
+
+void mdrtMatrixPrepare(int64_t handle) {
+  struct Matrix *matrix = (struct Matrix *)(intptr_t)handle;
+  mdrtMatrixPoll();
+  mdrtMatrixGrow(handle, matrix->required);
+}
+
+int32_t mdrtMatrixCompleteEdges(int64_t handle) {
+  struct Matrix *matrix = (struct Matrix *)(intptr_t)handle;
+  struct MatrixRead *read = readMatrixStatus(matrix);
+  check(cuEventSynchronize(read->done), "cuEventSynchronize");
+  struct MatrixStatus status = *read->host;
+  recycleMatrixRead(read);
+  if (status.invalid)
+    mdrtStopNotNumbers(status.invalid);
+  if (status.required <= matrix->width)
+    return 0;
+  mdrtMatrixGrow(handle, status.required);
+  return 1;
 }
 
 /*===----------------------------------------------------------------------===
@@ -2315,7 +2431,10 @@ void mdrtDeviceActivationEnter(void *activation) {
   currentActivation = activation;
 }
 
-void mdrtDeviceActivationLeave(void) { currentActivation = NULL; }
+void mdrtDeviceActivationLeave(void) {
+  completeMatrixReads();
+  currentActivation = NULL;
+}
 
 /* Whether the driver has shut down, as it may have when a simulation ends
    after the program's own end (mgpuModuleUnload): the memory of the device
@@ -2338,8 +2457,12 @@ void mdrtDeviceActivationClose(void *activation) {
   int gone = isDriverGone();
   /* No work of the activation may still use a block that is reused or
      freed. */
-  if (!gone)
+  if (!gone) {
     finish();
+    completeMatrixReads();
+  } else {
+    pendingReads = lastRead = NULL;
+  }
   for (int i = numLive; i-- != 0;) {
     if (liveBlocks[i].owner != a)
       continue;
@@ -2585,6 +2708,7 @@ static int isFaultedEnd(int64_t end, int after) {
    the stream of copies, once the stream of the kernels has copied them; then
    writes the slot's mark. The host does not wait. */
 void mdrtStagingEnd(void *opaque) {
+  completeMatrixReads();
   struct Staging *slot = opaque;
   static int64_t ends = 0;
   ++ends;
@@ -2747,6 +2871,7 @@ int32_t mdrtDeviceOrdinal(void) {
    legacy default stream, 2 the per-thread default stream, any other value a
    CUstream of the context. */
 void mdrtDeviceHandOff(uint64_t consumer) {
+  completeMatrixReads();
   static CUevent handoffEvent = NULL;
   mgpuStreamCreate();
   if (!handoffEvent)
@@ -2766,6 +2891,7 @@ void mdrtDeviceWaitAll(void) {
   if (isDriverGone())
     return;
   check(cuCtxSynchronize(), "cuCtxSynchronize");
+  mdrtMatrixPoll();
   isPending = 0;
 }
 

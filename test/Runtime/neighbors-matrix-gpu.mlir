@@ -86,10 +86,10 @@ func.func @run(%length: f64, %reach: f64, %width: f64, %row: index) {
   // No excluded pairs: a buffer of no elements, which has no rows
   // (ragged rows, include/mdir/Conversion/RaggedRows.h).
   %none = gpu.alloc (%c0) : memref<?xi32, 1>
-  %largest, %not_numbers = call @mdrt_gpu_build_neighbors_matrix(
+  call @mdrt_gpu_build_neighbors_matrix(
       %xd, %box, %reach, %width, %none, %countsd, %indexd, %orderd, %spill)
       : (memref<?x3xf64, 1>, vector<3xf64>, f64, f64, memref<?xi32, 1>,
-         memref<?xi32, 1>, memref<?x?xi32, 1>, memref<?xi32, 1>, memref<?x?xi32, 1>) -> (index, index)
+         memref<?xi32, 1>, memref<?x?xi32, 1>, memref<?xi32, 1>, memref<?x?xi32, 1>) -> ()
   %counts2 = memref.alloc(%count) : memref<?xi32>
   %index2 = memref.alloc(%count, %row) : memref<?x?xi32>
   %t2 = gpu.wait async
@@ -134,7 +134,9 @@ func.func @run(%length: f64, %reach: f64, %width: f64, %row: index) {
     }
     scf.yield %p1, %w1 : i64, i64
   }
-  %lw = arith.index_cast %largest : index to i64
+  %status_col = arith.constant 2 : index
+  %largest = memref.load %tail[%c0, %status_col] : memref<?x?xi32>
+  %lw = arith.extui %largest : i32 to i64
   %ew = arith.index_cast %expected : index to i64
   %same = arith.cmpi ne, %lw, %ew : i64
   %s = arith.extui %same : i1 to i64
@@ -164,8 +166,7 @@ func.func @run(%length: f64, %reach: f64, %width: f64, %row: index) {
       %four = arith.constant 4 : index
       %off32 = memref.load %tail[%p, %four] : memref<?x?xi32>
       %off = arith.index_castui %off32 : i32 to index
-      %pos = arith.addi %off, %rank : index
-      %at = arith.addi %pos, %c1 : index
+      %at = arith.addi %off, %rank : index
       %sorted = memref.load %tail[%at, %three] : memref<?x?xi32>
       %ordered = arith.cmpi eq, %sorted, %q32 : i32
       %matches = arith.cmpi eq, %value, %j : i32
@@ -258,4 +259,4 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
     %x: memref<?x3xf64, 1>, %box: vector<3xf64>, %reach: f64,
     %cell_width: f64, %excluded: memref<?xi32, 1>,
     %counts: memref<?xi32, 1>, %index: memref<?x?xi32, 1>,
-    %order: memref<?xi32, 1>, %spill: memref<?x?xi32, 1>) -> (index, index)
+    %order: memref<?xi32, 1>, %spill: memref<?x?xi32, 1>) -> ()

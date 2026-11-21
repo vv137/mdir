@@ -122,10 +122,10 @@
 # own goes back to the driver; a piece of a larger arena goes back to the
 # pool and merges with its idle neighbor.
 # RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda replaced | FileCheck %s --check-prefix=REPLACED
-# REPLACED: a matrix in an arena of its own: live 1, live bytes 1024, idle 0, idle bytes 0, driver blocks 1
-# REPLACED-NEXT: grown: the old rows back to the driver: live 1, live bytes 2048, idle 0, idle bytes 0, driver blocks 1
-# REPLACED-NEXT: a matrix in a piece of an arena: live 3, live bytes 7168, idle 1, idle bytes 1043456, driver blocks 2
-# REPLACED-NEXT: grown: the old rows back to the pool: live 3, live bytes 1286144, idle 1, idle bytes 1044480, driver blocks 3
+# REPLACED: a matrix in an arena of its own: live 2, live bytes 7192, idle 0, idle bytes 0, driver blocks 2
+# REPLACED-NEXT: grown: the old rows back to the driver: live 2, live bytes 8216, idle 0, idle bytes 0, driver blocks 2
+# REPLACED-NEXT: a matrix in a piece of an arena: live 5, live bytes 19504, idle 1, idle bytes 1037056, driver blocks 3
+# REPLACED-NEXT: grown: the old rows back to the pool: live 5, live bytes 3215408, idle 1, idle bytes 1044480, driver blocks 5
 #
 # The order of the streams: a piece freed while work on stream A still
 # writes it (held back half a second by a host function), merged with its

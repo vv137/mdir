@@ -8,6 +8,7 @@
 
 #include "mdir/Compiler/CompileCache.h"
 #include "mdir/Runtime/GroupsABI.h"
+#include "mdir/Runtime/MatrixSpill.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/Config/llvm-config.h"
@@ -524,6 +525,7 @@ std::string mdir::compiler::describeMachine(const TargetMachine &machine,
   const TargetOptions &o = machine.Options;
   os << kFormat << '\n'
      << getCacheSalt()
+     << "matrix-spill-abi " << MDRT_MATRIX_SPILL_ABI_VERSION << '\n'
      << "groups-abi " << MDRT_GROUPS_ABI_VERSION << '\n'
      << "llvm " << LLVM_VERSION_STRING << '\n'
      << "triple " << machine.getTargetTriple().str() << '\n'

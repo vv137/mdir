@@ -3,6 +3,7 @@
 // Every op of md_exec becomes ops of the upstream gpu dialect, where the op
 // is. See docs/ops.md, Section 10.8.
 
+#include "mdir/Runtime/MatrixSpill.h"
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Runtime/GroupsABI.h"
 
@@ -97,7 +98,6 @@ static const char *const noteGroupsName = "mdrtNoteGroups";
 static const char *const createGroupsName = "mdrtGroupsCreate";
 static const char *const createMatrixName = "mdrtMatrixCreate";
 static const char *const matrixEntriesName = "mdrtMatrixEntries";
-static const char *const growMatrixName = "mdrtMatrixGrow";
 static const char *const groupsBufferName = "mdrtGroupsBuffer";
 static const char *const growGroupsName = "mdrtGroupsGrow";
 static const char *const builtGroupsName = "mdrtGroupsBuilt";
@@ -674,7 +674,8 @@ private:
   void launchRows(
       OpBuilder &builder, Location loc, Value count,
       function_ref<void(OpBuilder &, Value, const RowLanes &)> body,
-      Value order = Value(), const RowExtras *extras = nullptr);
+      Value order = Value(), const RowExtras *extras = nullptr,
+      Value spill = {}, bool overflow = false);
 
 
   /// Gives the kernel of `launch` the values from outside as it can take
@@ -2761,7 +2762,7 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
     Neighbors structure;
     Value box, inverse;
     /// The rows of the neighbor matrix of a loop over pairs.
-    Value entries;
+    Value entries, spill;
   };
   SmallVector<Loop> loops;
   Value positions;
@@ -2777,6 +2778,7 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
       positions = pair.getPositions();
       cell = pair.getCellMutable().get();
       loop.entries = getMatrixEntries(builder, loc, loop.structure.handle);
+      loop.spill = getMatrixEntries(builder, loc, loop.structure.handle, "mdrtMatrixSpill");
     } else {
       auto tuple = cast<md_exec::TupleForOp>(op);
       if (!hasFlags(tuple) &&
@@ -2797,13 +2799,14 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
   // which is one for the run (findRows), and the loops over tuples take the
   // particle at the place of the thread (D86).
   DenseMap<Operation *, PairLayout> layouts;
-  Value order;
+  Value order, spill;
   for (Loop &loop : loops)
     if (auto pair = dyn_cast<md_exec::PairForOp>(loop.op)) {
       layouts[loop.op] = gatherInOrder(builder, loc, loop.structure,
                                        pair.getPositions(), pair.getIns(),
                                        last);
       order = loop.structure.order;
+      spill = loop.spill;
     }
 
   // Loops over disjoint tuples: one thread for each particle, which
@@ -2889,80 +2892,85 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
     return success();
   }
 
-  launchRows(builder, loc, size, [&](OpBuilder &body, Value particle,
-                                     const RowLanes &sharing) {
-    // What the loops add to each destination, in their order, stored once
-    // at the end: loops of a run may add to one buffer, as the terms of a
-    // potential add to the forces (md-exec-accumulate-destinations). The
-    // additions are those that the loops would make one after the other.
-    struct Destination {
-      bool loads = false;
-      SmallVector<Value, 4> additions;
-    };
-    llvm::MapVector<Value, Destination> destinations;
-    Value place = particle;
-    if (order)
-      particle = emitPlacedParticle(body, loc, order, place);
-    for (Loop &loop : loops) {
-      IRMapping local;
-      SmallVector<Value> contributions, totals;
-      ValueRange scratch, outs;
-      auto overwrites = [&](unsigned i) {
-        if (auto pair = dyn_cast<md_exec::PairForOp>(loop.op))
-          return pair.overwrites(i);
-        return cast<md_exec::TupleForOp>(loop.op).overwrites(i);
+  auto runRows = [&](bool overflow) {
+    launchRows(builder, loc, size, [&](OpBuilder &body, Value particle,
+                                      const RowLanes &sharing) {
+      // What the loops add to each destination, in their order, stored once
+      // at the end: loops of a run may add to one buffer, as the terms of a
+      // potential add to the forces (md-exec-accumulate-destinations). The
+      // additions are those that the loops would make one after the other.
+      struct Destination {
+        bool loads = false;
+        SmallVector<Value, 4> additions;
       };
-      if (auto pair = dyn_cast<md_exec::PairForOp>(loop.op)) {
-        contributions = emitPairKernel(
-            body, pair, loop.structure.counts, loop.entries,
-            loop.box, loop.inverse, place, local, &sharing, &totals,
-            &layouts[loop.op]);
-        scratch = pair.getScratch();
-        outs = pair.getOuts();
-      } else {
-        auto tuple = cast<md_exec::TupleForOp>(loop.op);
-        contributions = emitTupleKernel(body, tuple, tuple.getIncidence(),
-                                        loop.box, loop.inverse, particle,
-                                        local, &sharing, &totals);
-        scratch = tuple.getScratch();
-        outs = tuple.getOuts();
-      }
-      for (auto [i, out] : llvm::enumerate(outs)) {
-        Destination &destination = destinations[out];
-        if (overwrites(i)) {
-          destination.loads = false;
-          destination.additions.clear();
-        } else if (destination.additions.empty()) {
-          destination.loads = true;
-        }
-        destination.additions.push_back(totals[i]);
-      }
-      storeContributions(body, loc, contributions, scratch, particle,
-                         sharing);
-    }
-    if (destinations.empty())
-      return;
-    Value leader = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq,
-                                         sharing.lane,
-                                         createIndex(body, loc, 0));
-    Value writes = arith::AndIOp::create(body, loc, leader, sharing.valid);
-    scf::IfOp::create(body, loc, writes, [&](OpBuilder &then, Location) {
-      for (auto &[buffer, destination] : destinations) {
-        Value total;
-        ArrayRef<Value> additions = destination.additions;
-        if (destination.loads) {
-          total = loadElement(then, loc, buffer, particle);
+      llvm::MapVector<Value, Destination> destinations;
+      Value place = particle;
+      if (order)
+        particle = emitPlacedParticle(body, loc, order, place);
+      for (Loop &loop : loops) {
+        IRMapping local;
+        SmallVector<Value> contributions, totals;
+        ValueRange scratch, outs;
+        auto overwrites = [&](unsigned i) {
+          if (auto pair = dyn_cast<md_exec::PairForOp>(loop.op))
+            return pair.overwrites(i);
+          return cast<md_exec::TupleForOp>(loop.op).overwrites(i);
+        };
+        if (auto pair = dyn_cast<md_exec::PairForOp>(loop.op)) {
+          contributions = emitPairKernel(
+              body, pair, loop.structure.counts, loop.entries,
+              loop.box, loop.inverse, place, local, &sharing, &totals,
+              &layouts[loop.op], nullptr, overflow ? loop.spill : Value());
+          scratch = pair.getScratch();
+          outs = pair.getOuts();
         } else {
-          total = additions.front();
-          additions = additions.drop_front();
+          auto tuple = cast<md_exec::TupleForOp>(loop.op);
+          contributions = emitTupleKernel(body, tuple, tuple.getIncidence(),
+                                          loop.box, loop.inverse, particle,
+                                          local, &sharing, &totals);
+          scratch = tuple.getScratch();
+          outs = tuple.getOuts();
         }
-        for (Value addition : additions)
-          total = arith::AddFOp::create(then, loc, total, addition);
-        storeElement(then, loc, total, buffer, particle);
+        for (auto [i, out] : llvm::enumerate(outs)) {
+          Destination &destination = destinations[out];
+          if (overwrites(i)) {
+            destination.loads = false;
+            destination.additions.clear();
+          } else if (destination.additions.empty()) {
+            destination.loads = true;
+          }
+          destination.additions.push_back(totals[i]);
+        }
+        storeContributions(body, loc, contributions, scratch, particle,
+                           sharing);
       }
-      scf::YieldOp::create(then, loc);
-    });
-  }, order);
+      if (destinations.empty())
+        return;
+      Value leader = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq,
+                                           sharing.lane,
+                                           createIndex(body, loc, 0));
+      Value writes = arith::AndIOp::create(body, loc, leader, sharing.valid);
+      scf::IfOp::create(body, loc, writes, [&](OpBuilder &then, Location) {
+        for (auto &[buffer, destination] : destinations) {
+          Value total;
+          ArrayRef<Value> additions = destination.additions;
+          if (destination.loads) {
+            total = loadElement(then, loc, buffer, particle);
+          } else {
+            total = additions.front();
+            additions = additions.drop_front();
+          }
+          for (Value addition : additions)
+            total = arith::AddFOp::create(then, loc, total, addition);
+          storeElement(then, loc, total, buffer, particle);
+        }
+        scf::YieldOp::create(then, loc);
+      });
+    }, order, nullptr, spill, overflow);
+  };
+  runRows(false);
+  if (spill)
+    runRows(true);
 
   // One reduction for the global sums of all the loops.
   SmallVector<Value> contributions, partials;
@@ -3717,7 +3725,7 @@ LogicalResult Lowering::lowerStagedPairFor(md_exec::PairForOp op) {
 void Lowering::launchRows(
     OpBuilder &builder, Location loc, Value count,
     function_ref<void(OpBuilder &, Value, const RowLanes &)> body,
-    Value order, const RowExtras *extras) {
+    Value order, const RowExtras *extras, Value spill, bool overflow) {
   Value lanes = createIndex(builder, loc, rowLanes);
   Value threads = arith::MulIOp::create(builder, loc, count, lanes);
   Value one = createIndex(builder, loc, 1);
@@ -3730,6 +3738,19 @@ void Lowering::launchRows(
       /*workgroupAttributions=*/extras ? TypeRange(extras->attributions)
                                        : TypeRange());
   OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
+  scf::IfOp guard;
+  if (spill) {
+    // Both launches decide uniformly before any block barriers or shuffles.
+    // The overflow launch owns the entire row reduction when a tail exists.
+    Value zero = createIndex(kernel, loc, 0);
+    Value offset = memref::LoadOp::create(
+        kernel, loc, spill, ValueRange{zero, createIndex(kernel, loc, MATRIX_SPILL_OFFSET)});
+    Value active = arith::CmpIOp::create(
+        kernel, loc, overflow ? arith::CmpIPredicate::ne : arith::CmpIPredicate::eq,
+        offset, arith::ConstantIntOp::create(kernel, loc, 0, 32));
+    guard = scf::IfOp::create(kernel, loc, active, false);
+    kernel = guard.getThenBodyBuilder();
+  }
   if (extras)
     extras->before(kernel, launch);
   Value base = arith::MulIOp::create(kernel, loc, launch.getBlockIds().x,
@@ -3764,6 +3785,8 @@ void Lowering::launchRows(
   body(kernel, particle, sharing);
   if (extras)
     extras->after(kernel);
+  if (guard)
+    kernel.setInsertionPointAfter(guard);
   gpu::TerminatorOp::create(kernel, loc);
   bringIn(launch);
 }
@@ -3837,6 +3860,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   PairLayout layout = gatherInOrder(builder, loc, structure, positions,
                                     op.getIns(), op);
   Value entries = getMatrixEntries(builder, loc, structure.handle);
+  Value spill = getMatrixEntries(builder, loc, structure.handle, "mdrtMatrixSpill");
   // The table of a block for the values at the neighbors and at the
   // centers of a loop that adds at both (`scatter(hash(S, P, L))`,
   // D291): the rows of a block are neighbors in the order of the
@@ -3876,54 +3900,55 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
     table->add(b, outs[out], member, value);
   };
   RowExtras extras{attributions, openTable, closeTable};
-  launchRows(builder, loc, size, [&](OpBuilder &body, Value central,
+  for (bool overflow : {false, true})
+    launchRows(builder, loc, size, [&](OpBuilder &body, Value central,
                                      const RowLanes &sharing) {
-    IRMapping local;
-    // The places run in the order of the cells, which mixes the centers
-    // with the other rows: a place whose particle is not a center does
-    // nothing, as a place past the last does.
-    RowLanes lanes = sharing;
-    if (centers) {
-      Value particle = arith::IndexCastOp::create(
-          body, loc, body.getIndexType(),
-          memref::LoadOp::create(body, loc, structure.order,
-                                 ValueRange{central}));
-      Value isCenter = arith::CmpIOp::create(
-          body, loc, arith::CmpIPredicate::ult, particle, centers);
-      lanes.valid = arith::AndIOp::create(body, loc, sharing.valid, isCenter);
-      if (Value selected = op.getCenterSet()) {
-        auto member = scf::IfOp::create(
-            body, loc, TypeRange{body.getI1Type()}, lanes.valid,
-            /*withElseRegion=*/true);
-        {
-          OpBuilder then = OpBuilder::atBlockEnd(member.thenBlock());
-          Value bit = memref::LoadOp::create(then, loc, selected,
-                                            ValueRange{particle});
-          Value active = arith::CmpIOp::create(
-              then, loc, arith::CmpIPredicate::ne, bit,
-              arith::ConstantIntOp::create(then, loc, 0, 32));
-          scf::YieldOp::create(then, loc, active);
+      IRMapping local;
+      // The places run in the order of the cells, which mixes the centers
+      // with the other rows: a place whose particle is not a center does
+      // nothing, as a place past the last does.
+      RowLanes lanes = sharing;
+      if (centers) {
+        Value particle = arith::IndexCastOp::create(
+            body, loc, body.getIndexType(),
+            memref::LoadOp::create(body, loc, structure.order,
+                                   ValueRange{central}));
+        Value isCenter = arith::CmpIOp::create(
+            body, loc, arith::CmpIPredicate::ult, particle, centers);
+        lanes.valid = arith::AndIOp::create(body, loc, sharing.valid, isCenter);
+        if (Value selected = op.getCenterSet()) {
+          auto member = scf::IfOp::create(
+              body, loc, TypeRange{body.getI1Type()}, lanes.valid,
+              /*withElseRegion=*/true);
+          {
+            OpBuilder then = OpBuilder::atBlockEnd(member.thenBlock());
+            Value bit = memref::LoadOp::create(then, loc, selected,
+                                              ValueRange{particle});
+            Value active = arith::CmpIOp::create(
+                then, loc, arith::CmpIPredicate::ne, bit,
+                arith::ConstantIntOp::create(then, loc, 0, 32));
+            scf::YieldOp::create(then, loc, active);
+          }
+          {
+            OpBuilder otherwise = OpBuilder::atBlockEnd(member.elseBlock());
+            Value no = arith::ConstantIntOp::create(otherwise, loc, 0, 1);
+            scf::YieldOp::create(otherwise, loc, ValueRange{no});
+          }
+          lanes.valid = member.getResult(0);
         }
-        {
-          OpBuilder otherwise = OpBuilder::atBlockEnd(member.elseBlock());
-          Value no = arith::ConstantIntOp::create(otherwise, loc, 0, 1);
-          scf::YieldOp::create(otherwise, loc, ValueRange{no});
-        }
-        lanes.valid = member.getResult(0);
       }
-    }
-    // Every lane must reach the row reduction: its shuffle names the full
-    // warp even when one of the warp's two rows is outside the center set.
-    // An invalid row has an empty pair loop and contributes zero.
-    SmallVector<Value> contributions = emitPairKernel(
-        body, op, structure.counts, entries, box, inverse, central,
-        local, &lanes, /*outTotals=*/nullptr, &layout,
-        tabled ? AddToMember(addToTable) : AddToMember());
-    // A place that is not a center contributes zeros to the sums, which
-    // its slot of the scratch must hold.
-    storeContributions(body, loc, contributions, op.getScratch(), central,
-                       sharing);
-  }, structure.order, tabled ? &extras : nullptr);
+      // Every lane must reach the row reduction: its shuffle names the full
+      // warp even when one of the warp's two rows is outside the center set.
+      // An invalid row has an empty pair loop and contributes zero.
+      SmallVector<Value> contributions = emitPairKernel(
+          body, op, structure.counts, entries, box, inverse, central,
+          local, &lanes, /*outTotals=*/nullptr, &layout,
+          tabled ? AddToMember(addToTable) : AddToMember(), overflow ? spill : Value());
+      // A place that is not a center contributes zeros to the sums, which
+      // its slot of the scratch must hold.
+      storeContributions(body, loc, contributions, op.getScratch(), central,
+                         sharing);
+    }, structure.order, tabled ? &extras : nullptr, spill, overflow);
   return finishSums(op, builder, op.getReduce(), op.getScratch(), size);
 }
 
@@ -8118,43 +8143,41 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
       getInstanceName(tilted ? std::string(buildNeighborsName) + "_triclinic"
                              : std::string(buildNeighborsName),
                       real)));
-  // Build; if a row was too narrow to hold the neighbors of a particle,
-  // the runtime makes the rows wider, and the build is made again.
   Type wide = builder.getI64Type();
-  auto again = scf::WhileOp::create(builder, loc, TypeRange(), ValueRange());
-  {
-    Block *before = builder.createBlock(&again.getBefore());
-    OpBuilder at = OpBuilder::atBlockEnd(before);
+  auto search = [&](OpBuilder &at) {
     Value entries = getMatrixEntries(at, loc, structure.handle);
-    SmallVector<Value, 9> operands = {positions, boxValue};
+    SmallVector<Value> operands = {positions, boxValue};
     if (tilted)
       operands.push_back(widthsValue);
     operands.append({reachValue, widthValue, excluded, structure.counts,
                      entries, structure.order,
                      getMatrixEntries(at, loc, structure.handle, "mdrtMatrixSpill")});
-    auto built = func::CallOp::create(at, loc, build, operands);
-    Value largest = built.getResult(0);
-    emitStopNotNumbers(
-        at, loc, arith::IndexCastOp::create(at, loc, wide, built.getResult(1)));
-    Value width =
-        memref::DimOp::create(at, loc, entries, createIndex(at, loc, 1));
-    Value tooMany = arith::CmpIOp::create(
-        at, loc, arith::CmpIPredicate::ugt, largest, width);
-    scf::IfOp::create(at, loc, tooMany, [&](OpBuilder &then, Location) {
-      func::CallOp::create(
-          then, loc,
-          getOrDeclare(growMatrixName,
-                       then.getFunctionType({wide, wide}, {})),
-          ValueRange{structure.handle,
-                     arith::IndexCastOp::create(then, loc, wide, largest)});
-      scf::YieldOp::create(then, loc);
-    });
-    scf::ConditionOp::create(at, loc, tooMany, ValueRange());
+    func::CallOp::create(at, loc, build, operands);
+  };
+  if (structure.edges) {
+    auto again = scf::WhileOp::create(builder, loc, TypeRange(), ValueRange());
+    Block *before = builder.createBlock(&again.getBefore());
+    OpBuilder at = OpBuilder::atBlockEnd(before);
+    search(at);
+    auto retry = func::CallOp::create(at, loc,
+        getOrDeclare("mdrtMatrixCompleteEdges", at.getFunctionType({wide}, {at.getI32Type()})),
+        ValueRange{structure.handle}).getResult(0);
+    Value zero = arith::ConstantIntOp::create(at, loc, 0, 32);
+    Value grown = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ne, retry, zero);
+    scf::ConditionOp::create(at, loc, grown, ValueRange());
     Block *after = builder.createBlock(&again.getAfter());
     OpBuilder close = OpBuilder::atBlockEnd(after);
     scf::YieldOp::create(close, loc);
+    builder.setInsertionPointAfter(again);
+  } else {
+    auto runtime = [&](StringRef name) {
+      func::CallOp::create(builder, loc, getOrDeclare(name, builder.getFunctionType({wide}, {})),
+                           ValueRange{structure.handle});
+    };
+    runtime("mdrtMatrixPrepare");
+    search(builder);
+    runtime("mdrtMatrixPublish");
   }
-  builder.setInsertionPointAfter(again);
 
   // The runtime counts the builds, for the log of the run.
   func::CallOp::create(
@@ -9649,6 +9672,9 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
   Neighbors structure;
   if (failed(getNeighbors(op, op.getNeighbors(), structure)))
     return failure();
+  if (!structure.groups && !structure.edges && structure.handle)
+    func::CallOp::create(builder, loc,
+        getOrDeclare("mdrtMatrixPoll", builder.getFunctionType({}, {})), ValueRange());
   // The structure is refreshed where it is.
   neighbors[op.getResult()] = structure;
 

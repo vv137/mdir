@@ -34,7 +34,7 @@ if(MDIR_CUDA_FOUND)
   # The FFT of particle mesh Ewald takes cuFFT of the toolkit.
   # The products of the bodies of neural stages take cuBLAS
   # (D302).
-  target_link_libraries(mdrt_cuda PRIVATE CUDA::cuda_driver CUDA::cufft
+  target_link_libraries(mdrt_cuda PRIVATE mdrt CUDA::cuda_driver CUDA::cufft
     CUDA::cublas)
   set_target_properties(mdrt_cuda PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib

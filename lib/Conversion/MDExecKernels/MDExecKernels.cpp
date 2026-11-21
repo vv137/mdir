@@ -1,5 +1,6 @@
 // What the lowerings of md_exec have in common.
 
+#include "mdir/Runtime/MatrixSpill.h"
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Conversion/RaggedRows.h"
 
@@ -278,7 +279,7 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
                                            const RowLanes *lanes,
                                            SmallVectorImpl<Value> *outTotals,
                                            const PairLayout *layout,
-                                           AddToMember add) {
+                                           AddToMember add, Value spill) {
   Location loc = op.getLoc();
   Value positions = layout ? layout->positions : op.getPositions();
   SmallVector<Value> insBuffers(op.getIns().begin(), op.getIns().end());
@@ -345,121 +346,146 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
     sums.push_back(createZero(builder, loc, type));
   }
 
+  auto visit = [&](OpBuilder &pair, Value narrow, ValueRange partial) {
+    Value other = arith::IndexCastOp::create(pair, loc,
+                                             pair.getIndexType(), narrow);
+
+    auto emitCandidate = [&](OpBuilder &pair) -> SmallVector<Value> {
+      SmallVector<Value> updated;
+      // The minimum-image displacement [AllenTildesley2017] and its
+      // squared length; with explicit images, the plain difference, since
+      // the rows carry their images (D290).
+      Value otherPosition = loadElement(pair, loc, positions, other);
+      Value raw = convertReal(
+          pair, loc,
+          arith::SubFOp::create(pair, loc, centralPosition, otherPosition),
+          computed);
+      Value d = explicitImages ? raw
+                               : emitMinimumImage(pair, loc, raw,
+                                                  boxComputed,
+                                                  inverseComputed);
+      Value squares = arith::MulFOp::create(pair, loc, d, d);
+      Value r2 = vector::ReductionOp::create(
+          pair, loc, vector::CombiningKind::ADD, squares);
+
+      IRMapping inside = local;
+      inside.map(kernel.getArgument(0), r2);
+      inside.map(kernel.getArgument(1), d);
+      for (unsigned i = 0; i != numIns; ++i) {
+        inside.map(kernel.getArgument(2 + 2 * i), centralValues[i]);
+        inside.map(kernel.getArgument(3 + 2 * i),
+                   loadElement(pair, loc, insBuffers[i], other));
+      }
+      for (Operation &nested : kernel.without_terminator())
+        pair.clone(nested, inside);
+
+      // A pair beyond the cutoff contributes nothing, and neither does
+      // an entry that stands for the particle itself, which is how a
+      // device marks an excluded pair (the build of the neighbor matrix,
+      // MatrixBuild.cpp).
+      Value within = arith::CmpFOp::create(
+          pair, loc, arith::CmpFPredicate::OLT, r2, cutoff2);
+      Value distinct = arith::CmpIOp::create(
+          pair, loc, arith::CmpIPredicate::ne, other, central);
+      within = arith::AndIOp::create(pair, loc, within, distinct);
+      // With the policy (directed, atomic), the value of each destination
+      // at the neighbor, sigma times that at the center, added atomically
+      // (D290).
+      if (twoEnded && numOuts != 0)
+        scf::IfOp::create(pair, loc, within, [&](OpBuilder &then,
+                                                 Location) {
+          Value neighbor = other;
+          if (layout)
+            neighbor = arith::IndexCastOp::create(
+                then, loc, then.getIndexType(),
+                memref::LoadOp::create(then, loc, layout->order,
+                                       ValueRange{other}));
+          for (unsigned i = 0; i != numOuts; ++i) {
+            Value value = inside.lookupOrDefault(yield->getOperand(i));
+            if (op.getExchange(i) == md::Exchange::Antisymmetric)
+              value = arith::NegFOp::create(then, loc, value);
+            Value destination = op.getOuts()[i];
+            auto type = cast<MemRefType>(destination.getType());
+            if (add)
+              add(then, i, neighbor, value);
+            else if (type.getMemorySpace())
+              emitAtomicAdd(then, loc, value, destination, neighbor);
+            else
+              emitHostAtomicAdd(then, loc, value, destination, neighbor);
+          }
+          scf::YieldOp::create(then, loc);
+        });
+      for (unsigned i = 0; i != numYields; ++i) {
+        Value narrow = getNarrow(i);
+        Value contribution =
+            inside.lookupOrDefault(narrow ? narrow : yield->getOperand(i));
+        Value nothing = createZero(pair, loc, contribution.getType());
+        Value masked = arith::SelectOp::create(pair, loc, within,
+                                               contribution, nothing);
+        updated.push_back(
+            arith::AddFOp::create(pair, loc, partial[i], masked));
+      }
+      return updated;
+    };
+    SmallVector<Value> updated;
+    if (op.getGhostFree()) {
+      Value candidate = other;
+      if (layout)
+        candidate = arith::IndexCastOp::create(
+            pair, loc, pair.getIndexType(),
+            memref::LoadOp::create(pair, loc, layout->order,
+                                   ValueRange{other}));
+      Value owned = arith::CmpIOp::create(
+          pair, loc, arith::CmpIPredicate::ult, candidate,
+          op.getCenters());
+      auto permitted = scf::IfOp::create(
+          pair, loc, TypeRange(partial), owned, /*withElseRegion=*/true);
+      {
+        OpBuilder then = OpBuilder::atBlockEnd(permitted.thenBlock());
+        scf::YieldOp::create(then, loc, emitCandidate(then));
+      }
+      {
+        OpBuilder otherwise = OpBuilder::atBlockEnd(permitted.elseBlock());
+        scf::YieldOp::create(otherwise, loc, partial);
+      }
+      updated.assign(permitted.getResults().begin(),
+                     permitted.getResults().end());
+    } else {
+      updated = emitCandidate(pair);
+    }
+    scf::YieldOp::create(pair, loc, updated);
+  };
   auto inner = scf::ForOp::create(
       builder, loc, first, end, step, sums,
       [&](OpBuilder &pair, Location, Value entry, ValueRange partial) {
-        Value narrow = memref::LoadOp::create(pair, loc, index,
-                                              ValueRange{central, entry});
-        Value other = arith::IndexCastOp::create(pair, loc,
-                                                 pair.getIndexType(), narrow);
-
-        auto emitCandidate = [&](OpBuilder &pair) -> SmallVector<Value> {
-          SmallVector<Value> updated;
-          // The minimum-image displacement [AllenTildesley2017] and its
-          // squared length; with explicit images, the plain difference, since
-          // the rows carry their images (D290).
-          Value otherPosition = loadElement(pair, loc, positions, other);
-          Value raw = convertReal(
-              pair, loc,
-              arith::SubFOp::create(pair, loc, centralPosition, otherPosition),
-              computed);
-          Value d = explicitImages ? raw
-                                   : emitMinimumImage(pair, loc, raw,
-                                                      boxComputed,
-                                                      inverseComputed);
-          Value squares = arith::MulFOp::create(pair, loc, d, d);
-          Value r2 = vector::ReductionOp::create(
-              pair, loc, vector::CombiningKind::ADD, squares);
-
-          IRMapping inside = local;
-          inside.map(kernel.getArgument(0), r2);
-          inside.map(kernel.getArgument(1), d);
-          for (unsigned i = 0; i != numIns; ++i) {
-            inside.map(kernel.getArgument(2 + 2 * i), centralValues[i]);
-            inside.map(kernel.getArgument(3 + 2 * i),
-                       loadElement(pair, loc, insBuffers[i], other));
-          }
-          for (Operation &nested : kernel.without_terminator())
-            pair.clone(nested, inside);
-
-          // A pair beyond the cutoff contributes nothing, and neither does
-          // an entry that stands for the particle itself, which is how a
-          // device marks an excluded pair (the build of the neighbor matrix,
-          // MatrixBuild.cpp).
-          Value within = arith::CmpFOp::create(
-              pair, loc, arith::CmpFPredicate::OLT, r2, cutoff2);
-          Value distinct = arith::CmpIOp::create(
-              pair, loc, arith::CmpIPredicate::ne, other, central);
-          within = arith::AndIOp::create(pair, loc, within, distinct);
-          // With the policy (directed, atomic), the value of each destination
-          // at the neighbor, sigma times that at the center, added atomically
-          // (D290).
-          if (twoEnded && numOuts != 0)
-            scf::IfOp::create(pair, loc, within, [&](OpBuilder &then,
-                                                     Location) {
-              Value neighbor = other;
-              if (layout)
-                neighbor = arith::IndexCastOp::create(
-                    then, loc, then.getIndexType(),
-                    memref::LoadOp::create(then, loc, layout->order,
-                                           ValueRange{other}));
-              for (unsigned i = 0; i != numOuts; ++i) {
-                Value value = inside.lookupOrDefault(yield->getOperand(i));
-                if (op.getExchange(i) == md::Exchange::Antisymmetric)
-                  value = arith::NegFOp::create(then, loc, value);
-                Value destination = op.getOuts()[i];
-                auto type = cast<MemRefType>(destination.getType());
-                if (add)
-                  add(then, i, neighbor, value);
-                else if (type.getMemorySpace())
-                  emitAtomicAdd(then, loc, value, destination, neighbor);
-                else
-                  emitHostAtomicAdd(then, loc, value, destination, neighbor);
-              }
-              scf::YieldOp::create(then, loc);
-            });
-          for (unsigned i = 0; i != numYields; ++i) {
-            Value narrow = getNarrow(i);
-            Value contribution =
-                inside.lookupOrDefault(narrow ? narrow : yield->getOperand(i));
-            Value nothing = createZero(pair, loc, contribution.getType());
-            Value masked = arith::SelectOp::create(pair, loc, within,
-                                                   contribution, nothing);
-            updated.push_back(
-                arith::AddFOp::create(pair, loc, partial[i], masked));
-          }
-          return updated;
-        };
-        SmallVector<Value> updated;
-        if (op.getGhostFree()) {
-          Value candidate = other;
-          if (layout)
-            candidate = arith::IndexCastOp::create(
-                pair, loc, pair.getIndexType(),
-                memref::LoadOp::create(pair, loc, layout->order,
-                                       ValueRange{other}));
-          Value owned = arith::CmpIOp::create(
-              pair, loc, arith::CmpIPredicate::ult, candidate,
-              op.getCenters());
-          auto permitted = scf::IfOp::create(
-              pair, loc, TypeRange(partial), owned, /*withElseRegion=*/true);
-          {
-            OpBuilder then = OpBuilder::atBlockEnd(permitted.thenBlock());
-            scf::YieldOp::create(then, loc, emitCandidate(then));
-          }
-          {
-            OpBuilder otherwise = OpBuilder::atBlockEnd(permitted.elseBlock());
-            scf::YieldOp::create(otherwise, loc, partial);
-          }
-          updated.assign(permitted.getResults().begin(),
-                         permitted.getResults().end());
-        } else {
-          updated = emitCandidate(pair);
-        }
-        scf::YieldOp::create(pair, loc, updated);
+        visit(pair, memref::LoadOp::create(pair, loc, index,
+                                           ValueRange{central, entry}), partial);
       });
-
   SmallVector<Value> totals(inner.getResults());
+  if (spill) {
+    Value sorted = createIndex(builder, loc, MATRIX_SPILL_SORTED);
+    auto field = [&](int column) -> Value {
+      Value word = memref::LoadOp::create(builder, loc, spill,
+          ValueRange{central, createIndex(builder, loc, column)});
+      return arith::IndexCastUIOp::create(builder, loc, builder.getIndexType(), word);
+    };
+    Value start = field(MATRIX_SPILL_OFFSET);
+    Value length = field(MATRIX_SPILL_LENGTH);
+    if (lanes)
+      length = arith::SelectOp::create(builder, loc, lanes->valid, length, zero);
+    // Resume at the same absolute slot each lane would visit in a wide row.
+    Value phase = arith::RemUIOp::create(builder, loc, end, step);
+    Value shifted = arith::AddIOp::create(builder, loc, first, step);
+    Value rank = arith::RemUIOp::create(builder, loc,
+        arith::SubIOp::create(builder, loc, shifted, phase), step);
+    auto extra = scf::ForOp::create(builder, loc, rank, length, step, totals,
+        [&](OpBuilder &pair, Location, Value r, ValueRange partial) {
+          Value record = arith::AddIOp::create(pair, loc, start, r);
+          visit(pair, memref::LoadOp::create(pair, loc, spill,
+                                             ValueRange{record, sorted}), partial);
+        });
+    totals.assign(extra.getResults().begin(), extra.getResults().end());
+  }
   for (unsigned i = 0; i != numYields; ++i)
     if (getNarrow(i))
       totals[i] = arith::ExtFOp::create(
