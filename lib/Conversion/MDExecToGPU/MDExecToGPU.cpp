@@ -9,6 +9,7 @@
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Conversion/CompactionEmitter.h"
 #include "mdir/Conversion/GroupsBuild.h"
+#include "mdir/Conversion/MatrixBuild.h"
 #include "mdir/Conversion/MDAlgLowering.h"
 #include "mdir/Conversion/RaggedRows.h"
 #include "mdir/Conversion/ReductionEmitter.h"
@@ -63,7 +64,7 @@ using namespace mdir::kernels;
 
 namespace mdir {
 /// The text of the template that builds a neighbor matrix on a device.
-extern const char *const neighborsMatrixGPUTemplate;
+
 /// The text of the template of particle mesh Ewald on a device.
 extern const char *const pmeGPUTemplate;
 /// The text of its kernels for a triclinic cell.
@@ -5142,15 +5143,8 @@ LogicalResult Lowering::addTemplates(Type real) {
           module, getInstanceName(buildNeighborsName, real)))
     return success();
 
-  ParserConfig config(context);
-  OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
-      neighborsMatrixGPUTemplate, config);
-  if (!templates)
-    return module.emitError()
-           << "cannot parse the neighbor build template for devices";
-  // The template is written for f64; its instance for `real` is made in IR
-  // (D368, #739). Its md_alg ops stay, typed, for the collection-level
-  // passes and convert-md-alg-to-gpu (D408).
+  OwningOpRef<ModuleOp> templates = ModuleOp::create(module.getLoc());
+  kernels::emitMatrixBuild(*templates);
   if (failed(instantiateTemplates(*templates, real)))
     return failure();
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
