@@ -36,7 +36,7 @@ public:
 private:
   bool tilted, allImages;
   // Common arguments and SSA values captured by the build's launches.
-  Value x, box, widths, reach, cellWidth, excluded, counts, entries, order;
+  Value x, box, widths, reach, cellWidth, excluded, counts, entries, order, spill;
   Value lx, ly, lz, ilx, ily, ilz, tbx, tcx, tcy;
   Value narrowLx, narrowLy, narrowLz, narrowIlx, narrowIly, narrowIlz;
   Value narrowBx, narrowCx, narrowCy, narrowFar, mostImages, limit2;
@@ -429,6 +429,8 @@ void MatrixBuild::emitClearCellCounts() {
       Value firstCell = cmpi(CmpIPredicate::eq, c, c0First);
       ifThen(firstCell, [&] {
         store(none, result, {c0First});
+        store(none, spill, {c0First, c0First});
+        store(none, spill, {c0First, c1});
         Value c1Second = cx(1);
         store(none, result, {c1Second});
       });
@@ -813,7 +815,7 @@ void MatrixBuild::emitEntryWithExclusions(const ExclusionRow &partners,
       },
       [&]() -> Values { return {falseValue}; });
   Value shuffled = shuffledValues[0];
-  ifThen(keep, [&] {
+  ifThen(neighbor, [&] {
     auto isExcludedValues =
         forLoop(partners.inRegisters, partners.count, warp.one, {shuffled},
                 [&](Value e, ValueRange state) -> Values {
@@ -828,7 +830,19 @@ void MatrixBuild::emitEntryWithExclusions(const ExclusionRow &partners,
     Value isExcluded = isExcludedValues[0];
     Value entered = select(isExcluded, p32, q32);
     Value slotIndex = indexCast(index, slot);
-    store(entered, entries, {p, slotIndex});
+    ifThen(keep, [&] {
+      store(entered, entries, {p, slotIndex});
+    });
+    ifThen(cmpi(CmpIPredicate::uge, slotIndex, rowWidth), [&] {
+      Value counter = LLVM::IntToPtrOp::create(b, loc, pointer, baseAddress(spill));
+      Value claimed = atomic(LLVM::AtomicBinOp::add, counter, indexCast(i64, c1));
+      Value record = addi(indexCast(index, claimed), c1);
+      Value fits = cmpi(CmpIPredicate::ult, record, dim(spill, c0));
+      ifThen(fits, [&] {
+        store(p32, spill, {record, c0});
+        store(entered, spill, {record, c1});
+      });
+    });
   });
 }
 
@@ -937,7 +951,7 @@ void MatrixBuild::emitSearch(StringRef symbol, bool triclinic,
   SmallVector<Type> inputs{positions, tilted ? tiltedType : boxType};
   if (tilted)
     inputs.push_back(boxType);
-  inputs.append({f64, f64, buffer, buffer, rowType, buffer});
+  inputs.append({f64, f64, buffer, buffer, rowType, buffer, rowType});
   function(symbol, b.getFunctionType(inputs, {index, index}),
            [&](ValueRange arguments) {
              unsigned arg = 0;
@@ -951,6 +965,7 @@ void MatrixBuild::emitSearch(StringRef symbol, bool triclinic,
              counts = arguments[arg++];
              entries = arguments[arg++];
              order = arguments[arg++];
+             spill = arguments[arg++];
              emitSearchGeometry();
              emitClearCellCounts();
              emitParticleBins();
@@ -1068,7 +1083,7 @@ void MatrixBuild::emitMatrixImageWithin() {
 void MatrixBuild::emitBuildNeighborsMatrixTriclinic() {
   function("mdrt_gpu_build_neighbors_matrix_triclinic",
            b.getFunctionType({positions, tiltedType, boxType, f64, f64, buffer,
-                              buffer, rowType, buffer},
+                              buffer, rowType, buffer, rowType},
                              {index, index}),
            [&](ValueRange arguments) {
              Value x = arguments[0];
@@ -1080,6 +1095,7 @@ void MatrixBuild::emitBuildNeighborsMatrixTriclinic() {
              Value counts = arguments[6];
              Value entries = arguments[7];
              Value order = arguments[8];
+             Value spill = arguments[9];
              Value lx = extract(box, 0);
              Value ly = extract(box, 1);
              Value lz = extract(box, 2);
@@ -1095,7 +1111,7 @@ void MatrixBuild::emitBuildNeighborsMatrixTriclinic() {
                        call("mdrt_gpu_build_neighbors_matrix_triclinic_pass",
                             {index, index},
                             {x, box, widths, reach, cellWidth, excluded, counts,
-                             entries, order});
+                             entries, order, spill});
                    Value one = oneValues[0];
                    Value oneNot = oneValues[1];
                    return {one, oneNot};
@@ -1105,7 +1121,7 @@ void MatrixBuild::emitBuildNeighborsMatrixTriclinic() {
                        call("mdrt_gpu_build_neighbors_matrix_triclinic_images",
                             {index, index},
                             {x, box, widths, reach, cellWidth, excluded, counts,
-                             entries, order});
+                             entries, order, spill});
                    Value all = allValues[0];
                    Value allNot = allValues[1];
                    return {all, allNot};

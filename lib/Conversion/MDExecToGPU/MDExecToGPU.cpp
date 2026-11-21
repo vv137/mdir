@@ -601,7 +601,8 @@ private:
                           const Neighbors &structure, int64_t groups);
   /// The rows of the neighbor matrix `handle`, as they are where `builder`
   /// is.
-  Value getMatrixEntries(OpBuilder &builder, Location loc, Value handle);
+  Value getMatrixEntries(OpBuilder &builder, Location loc, Value handle,
+                         StringRef name = matrixEntriesName);
   /// The candidates (`which` 0) or the slots (1) of the pairs of images of
   /// `handle`, as the last build left them (D277).
   Value getEdgesBuffer(OpBuilder &builder, Location loc, Value handle,
@@ -8129,7 +8130,8 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
     if (tilted)
       operands.push_back(widthsValue);
     operands.append({reachValue, widthValue, excluded, structure.counts,
-                     entries, structure.order});
+                     entries, structure.order,
+                     getMatrixEntries(at, loc, structure.handle, "mdrtMatrixSpill")});
     auto built = func::CallOp::create(at, loc, build, operands);
     Value largest = built.getResult(0);
     emitStopNotNumbers(
@@ -8177,11 +8179,11 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
 }
 
 Value Lowering::getMatrixEntries(OpBuilder &builder, Location loc,
-                                Value handle) {
+                                Value handle, StringRef name) {
   MemRefType type = getDeviceType(
       {ShapedType::kDynamic, ShapedType::kDynamic}, builder.getI32Type());
   func::FuncOp getter = getOrDeclare(
-      matrixEntriesName,
+      name,
       builder.getFunctionType({builder.getI64Type()}, {type}));
   getter->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
   return func::CallOp::create(builder, loc, getter, ValueRange{handle})

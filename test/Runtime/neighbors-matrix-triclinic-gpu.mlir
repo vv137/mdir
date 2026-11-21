@@ -138,6 +138,8 @@ func.func @run(%h: vector<6xf64>, %reach: f64, %width: f64) {
   %xd = gpu.alloc (%count) : memref<?x3xf64, 1>
   %countsd = gpu.alloc (%count) : memref<?xi32, 1>
   %indexd = gpu.alloc (%count, %row) : memref<?x?xi32, 1>
+  %spill_columns = arith.constant 2 : index
+  %spill = gpu.alloc (%count, %spill_columns) : memref<?x?xi32, 1>
   %orderd = gpu.alloc (%count) : memref<?xi32, 1>
   %t0 = gpu.wait async
   %t1 = gpu.memcpy async [%t0] %xd, %x : memref<?x3xf64, 1>, memref<?x3xf64>
@@ -146,10 +148,10 @@ func.func @run(%h: vector<6xf64>, %reach: f64, %width: f64) {
   // (ragged rows, include/mdir/Conversion/RaggedRows.h).
   %none = gpu.alloc (%c0) : memref<?xi32, 1>
   %largest, %not_numbers = call @mdrt_gpu_build_neighbors_matrix_triclinic(
-      %xd, %h, %widths, %reach, %width, %none, %countsd, %indexd, %orderd)
+      %xd, %h, %widths, %reach, %width, %none, %countsd, %indexd, %orderd, %spill)
       : (memref<?x3xf64, 1>, vector<6xf64>, vector<3xf64>, f64, f64,
          memref<?xi32, 1>, memref<?xi32, 1>, memref<?x?xi32, 1>,
-         memref<?xi32, 1>) -> (index, index)
+         memref<?xi32, 1>, memref<?x?xi32, 1>) -> (index, index)
   %counts2 = memref.alloc(%count) : memref<?xi32>
   %index2 = memref.alloc(%count, %row) : memref<?x?xi32>
   %t2 = gpu.wait async
@@ -330,4 +332,4 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic(
     %x: memref<?x3xf64, 1>, %box: vector<6xf64>, %widths: vector<3xf64>,
     %reach: f64, %cell_width: f64, %excluded: memref<?xi32, 1>,
     %counts: memref<?xi32, 1>, %index: memref<?x?xi32, 1>,
-    %order: memref<?xi32, 1>) -> (index, index)
+    %order: memref<?xi32, 1>, %spill: memref<?x?xi32, 1>) -> (index, index)

@@ -74,7 +74,8 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
   //
   // CHECK:      scf.while
   // CHECK:        %[[INDEX:[a-z0-9_]+]] = func.call @mdrtMatrixEntries(%[[ROWS]])
-  // CHECK:        func.call @mdrt_gpu_build_neighbors_matrix(%[[X]], %[[BOX]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %[[COUNTS]], %[[INDEX]], %[[ORDER]])
+  // CHECK:        %[[SPILL:[a-z0-9_]+]] = func.call @mdrtMatrixSpill(%[[ROWS]])
+  // CHECK:        func.call @mdrt_gpu_build_neighbors_matrix(%[[X]], %[[BOX]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %[[COUNTS]], %[[INDEX]], %[[ORDER]], %[[SPILL]])
   // CHECK:        func.call @mdrtMatrixGrow(%[[ROWS]],
   // CHECK:      gpu.memcpy async [%{{[0-9]+}}] %[[REFERENCE]], %[[X]]
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell

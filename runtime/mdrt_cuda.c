@@ -2141,6 +2141,8 @@ void _mlir_ciface_mdrtGroupsPlaced(struct Buffer2 *result, int64_t handle) {
    (`mdrtMatrixEntries`). */
 struct Matrix {
   void *data;
+  void *spill;
+  int64_t spillRows;
   int64_t rows;
   int64_t width;
 };
@@ -2150,6 +2152,12 @@ static void allocateMatrix(struct Matrix *matrix) {
   matrix->data = mgpuMemAlloc(
       (uint64_t)(matrix->rows * matrix->width) * sizeof(int32_t), NULL,
       false);
+  /* One pair of words per excess entry. The first record holds the
+     append counter. Keep a quarter of the matrix capacity in reserve. */
+  matrix->spillRows = 1 + matrix->rows * ((matrix->width + 3) / 4);
+  allocationTag = "matrix: spill";
+  matrix->spill = mgpuMemAlloc(matrix->spillRows * 2 * sizeof(int32_t),
+                              NULL, false);
   allocationTag = NULL;
 }
 
@@ -2177,6 +2185,17 @@ void _mlir_ciface_mdrtMatrixEntries(struct Buffer2 *result, int64_t handle) {
   result->strides[1] = 1;
 }
 
+void _mlir_ciface_mdrtMatrixSpill(struct Buffer2 *result, int64_t handle) {
+  struct Matrix *matrix = (struct Matrix *)(intptr_t)handle;
+  result->allocated = matrix->spill;
+  result->aligned = matrix->spill;
+  result->offset = 0;
+  result->sizes[0] = matrix->spillRows;
+  result->sizes[1] = 2;
+  result->strides[0] = 2;
+  result->strides[1] = 1;
+}
+
 /* Makes the rows hold `width` entries, a quarter more than asked, if they
    hold fewer. What they held is lost: the caller builds again. */
 void mdrtMatrixGrow(int64_t handle, int64_t width) {
@@ -2186,6 +2205,7 @@ void mdrtMatrixGrow(int64_t handle, int64_t width) {
   enter();
   check(cuCtxSynchronize(), "cuCtxSynchronize");
   releaseReplaced(matrix->data);
+  releaseReplaced(matrix->spill);
   matrix->width = width + width / 4;
   allocateMatrix(matrix);
 }

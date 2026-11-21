@@ -65,7 +65,8 @@ func.func @run(%length: f64, %reach: f64, %width: f64, %row: index) {
 
   // On the host.
   %counts = memref.alloc(%count) : memref<?xi32>
-  %index = memref.alloc(%count, %row) : memref<?x?xi32>
+  %oracle_width = arith.constant 128 : index
+  %index = memref.alloc(%count, %oracle_width) : memref<?x?xi32>
   %expected = call @mdrt.build_neighbors_matrix(%x, %box, %reach, %width,
                                                 %counts, %index)
       : (memref<?x3xf64>, vector<3xf64>, f64, f64, memref<?xi32>,
@@ -75,6 +76,9 @@ func.func @run(%length: f64, %reach: f64, %width: f64, %row: index) {
   %xd = gpu.alloc (%count) : memref<?x3xf64, 1>
   %countsd = gpu.alloc (%count) : memref<?xi32, 1>
   %indexd = gpu.alloc (%count, %row) : memref<?x?xi32, 1>
+  %spill_columns = arith.constant 2 : index
+  %spill_rows = arith.constant 65536 : index
+  %spill = gpu.alloc (%spill_rows, %spill_columns) : memref<?x?xi32, 1>
   %orderd = gpu.alloc (%count) : memref<?xi32, 1>
   %t0 = gpu.wait async
   %t1 = gpu.memcpy async [%t0] %xd, %x : memref<?x3xf64, 1>, memref<?x3xf64>
@@ -83,9 +87,9 @@ func.func @run(%length: f64, %reach: f64, %width: f64, %row: index) {
   // (ragged rows, include/mdir/Conversion/RaggedRows.h).
   %none = gpu.alloc (%c0) : memref<?xi32, 1>
   %largest, %not_numbers = call @mdrt_gpu_build_neighbors_matrix(
-      %xd, %box, %reach, %width, %none, %countsd, %indexd, %orderd)
+      %xd, %box, %reach, %width, %none, %countsd, %indexd, %orderd, %spill)
       : (memref<?x3xf64, 1>, vector<3xf64>, f64, f64, memref<?xi32, 1>,
-         memref<?xi32, 1>, memref<?x?xi32, 1>, memref<?xi32, 1>) -> (index, index)
+         memref<?xi32, 1>, memref<?x?xi32, 1>, memref<?xi32, 1>, memref<?x?xi32, 1>) -> (index, index)
   %counts2 = memref.alloc(%count) : memref<?xi32>
   %index2 = memref.alloc(%count, %row) : memref<?x?xi32>
   %t2 = gpu.wait async
@@ -96,7 +100,10 @@ func.func @run(%length: f64, %reach: f64, %width: f64, %row: index) {
   %order2 = memref.alloc(%count) : memref<?xi32>
   %t5 = gpu.memcpy async [%t4] %order2, %orderd
       : memref<?xi32>, memref<?xi32, 1>
-  gpu.wait [%t5]
+  %tail = memref.alloc(%spill_rows, %spill_columns) : memref<?x?xi32>
+  %t6 = gpu.memcpy async [%t5] %tail, %spill
+      : memref<?x?xi32>, memref<?x?xi32, 1>
+  gpu.wait [%t6]
 
   %zero = arith.constant 0 : i64
   // Row `i` of the device is the row of the particle `order[i]` of the
@@ -110,7 +117,9 @@ func.func @run(%length: f64, %reach: f64, %width: f64, %row: index) {
     %cn = arith.index_cast %di : i32 to index
     %cw = arith.extsi %di : i32 to i64
     %p1 = arith.addi %p, %cw : i64
-    %differs = arith.cmpi ne, %ci, %di : i32
+    %limit = arith.index_cast %row : index to i32
+    %prefix = arith.minui %ci, %limit : i32
+    %differs = arith.cmpi ne, %prefix, %di : i32
     %d = arith.extui %differs : i1 to i64
     %w0 = arith.addi %w, %d : i64
     %w1 = scf.for %k = %c0 to %cn step %c1 iter_args(%t = %w0) -> (i64) {
@@ -129,7 +138,48 @@ func.func @run(%length: f64, %reach: f64, %width: f64, %row: index) {
   %ew = arith.index_cast %expected : index to i64
   %same = arith.cmpi ne, %lw, %ew : i64
   %s = arith.extui %same : i1 to i64
-  %all = arith.addi %wrong, %s : i64
+  // Match each tail record once, independent of atomic reservation order.
+  %length32 = memref.load %tail[%c0, %c0] : memref<?x?xi32>
+  %length_idx = arith.index_cast %length32 : i32 to index
+  %stop = arith.addi %length_idx, %c1 : index
+  %minus_one = arith.constant -1 : i32
+  %bad = scf.for %r = %c1 to %stop step %c1 iter_args(%w = %wrong) -> i64 {
+    %p32 = memref.load %tail[%r, %c0] : memref<?x?xi32>
+    %q32 = memref.load %tail[%r, %c1] : memref<?x?xi32>
+    %p = arith.index_cast %p32 : i32 to index
+    %q = arith.index_cast %q32 : i32 to index
+    %id = memref.load %order2[%p] : memref<?xi32>
+    %i = arith.index_cast %id : i32 to index
+    %j = memref.load %order2[%q] : memref<?xi32>
+    %n32 = memref.load %counts[%i] : memref<?xi32>
+    %n = arith.index_cast %n32 : i32 to index
+    %no = arith.constant false
+    %hit = scf.for %k = %row to %n step %c1 iter_args(%seen = %no) -> i1 {
+      %value = memref.load %index[%i, %k] : memref<?x?xi32>
+      %eq = arith.cmpi eq, %value, %j : i32
+      scf.if %eq {
+        memref.store %minus_one, %index[%i, %k] : memref<?x?xi32>
+      }
+      %next = arith.ori %seen, %eq : i1
+      scf.yield %next : i1
+    }
+    %one = arith.constant 1 : i64
+    %miss = arith.select %hit, %zero, %one : i64
+    %next = arith.addi %w, %miss : i64
+    scf.yield %next : i64
+  }
+  %total = scf.for %i = %c0 to %count step %c1 iter_args(%sum = %zero) -> i64 {
+    %n = memref.load %counts[%i] : memref<?xi32>
+    %v = arith.extui %n : i32 to i64
+    %next = arith.addi %sum, %v : i64
+    scf.yield %next : i64
+  }
+  %tail_count = arith.extui %length32 : i32 to i64
+  %observed = arith.addi %entries, %tail_count : i64
+  %missing = arith.cmpi ne, %total, %observed : i64
+  %m = arith.extui %missing : i1 to i64
+  %errors = arith.addi %bad, %m : i64
+  %all = arith.addi %errors, %s : i64
   call @printI64(%entries) : (i64) -> ()
   call @printNewline() : () -> ()
   call @printI64(%all) : (i64) -> ()
@@ -195,4 +245,4 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
     %x: memref<?x3xf64, 1>, %box: vector<3xf64>, %reach: f64,
     %cell_width: f64, %excluded: memref<?xi32, 1>,
     %counts: memref<?xi32, 1>, %index: memref<?x?xi32, 1>,
-    %order: memref<?xi32, 1>) -> (index, index)
+    %order: memref<?xi32, 1>, %spill: memref<?x?xi32, 1>) -> (index, index)
