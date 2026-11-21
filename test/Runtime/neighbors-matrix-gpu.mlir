@@ -61,6 +61,16 @@ func.func @run(%length: f64, %reach: f64, %width: f64, %row: index) {
   %count = arith.constant 2000 : index
   %x = memref.alloc(%count) : memref<?x3xf64>
   call @fill(%x, %length) : (memref<?x3xf64>, f64) -> ()
+  call @compare(%x, %length, %reach, %width, %row)
+      : (memref<?x3xf64>, f64, f64, f64, index) -> ()
+  return
+}
+
+func.func @compare(%x: memref<?x3xf64>, %length: f64, %reach: f64,
+                   %width: f64, %row: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %count = memref.dim %x, %c0 : memref<?x3xf64>
   %box = vector.broadcast %length : f64 to vector<3xf64>
 
   // On the host.
@@ -139,6 +149,14 @@ func.func @run(%length: f64, %reach: f64, %width: f64, %row: index) {
   return
 }
 
+// A particle just below the first x-cell face has a neighbor across
+// the y seam in its second x ring. The particle near the upper corner
+// also reaches a particle just beyond the unpadded radius across seams.
+memref.global "private" constant @seams : memref<4x3xf64> = dense<[
+  [0.799999, 0.00001, 0.0], [2.300000, 11.99999, 0.0],
+  [11.99999, 11.99999, 11.99999], [1.500001, 0.00001, 0.0]
+]>
+
 func.func @main() {
   %wide = arith.constant 128 : index
   %narrow = arith.constant 8 : index
@@ -188,6 +206,13 @@ func.func @main() {
   %l3 = arith.constant 10.0 : f64
   call @run(%l3, %reach, %reach, %narrow)
       : (f64, f64, f64, index) -> ()
+  // CHECK-NEXT: 10
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: 3
+  %points = memref.get_global @seams : memref<4x3xf64>
+  %x = memref.cast %points : memref<4x3xf64> to memref<?x3xf64>
+  call @compare(%x, %l0, %reach, %half, %wide)
+      : (memref<?x3xf64>, f64, f64, f64, index) -> ()
   return
 }
 

@@ -79,6 +79,8 @@ private:
                                Value keep, Value p, Value p32, Value q32,
                                Value slot);
   void emitSearchRows();
+  void emitTiledRows();
+  Value cellBound2;
   void emitBuildResult();
   Value emitCandidateWithinReach(Value xi, Value yi, Value zi, Value xj,
                                  Value yj, Value zj, Value inRun);
@@ -363,6 +365,9 @@ void MatrixBuild::emitSearchGeometry() {
   Value far = addf(reach, margin);
   Value far2 = mulf(far, far);
   limit2 = truncf(far2);
+  // Allow the f32 wrapping and distance rounding at both cell faces.
+  Value paddedCellReach = addf(far, margin);
+  cellBound2 = mulf(paddedCellReach, paddedCellReach);
   if (allImages) {
     narrowFar = truncf(far);
     mostImages = cf(64.0);
@@ -772,6 +777,174 @@ void MatrixBuild::emitSearchRows() {
   }
 }
 
+// Each block walks the source cells in the same z, y, x order as the
+// scalar row builder. Barriers are reached by every thread, including
+// lanes without a target at the tail of a cell.
+void MatrixBuild::emitTiledRows() {
+  auto sharedType = MemRefType::get(
+      {8, 3}, f32, MemRefLayoutAttrInterface(),
+      gpu::AddressSpaceAttr::get(context, gpu::AddressSpace::Workgroup));
+  auto launch =
+      gpu::LaunchOp::create(b, loc, cells, c1, c1, threads, c1, c1, nullptr,
+                            nullptr, ValueRange{}, TypeRange{sharedType});
+  OpBuilder::InsertionGuard guard(b);
+  b.setInsertionPointToEnd(&launch.getBody().front());
+  Value cell = launch.getBlockIds().x, thread = launch.getThreadIds().x;
+  Value tile = launch.getWorkgroupAttributionBBArgs()[0];
+  Value two = cx(2), four = cx(4), eight = cx(8), sixteen = cx(16);
+  Value lane = remui(thread, cx(32)), warp = divui(thread, cx(32));
+  Value segment = remui(lane, four), row = divui(lane, four);
+  Value segment32 = indexCast(i32, segment);
+  Value one = ci(1), zero = ci(0);
+  Value rowMask = shli(ci(15), muli(indexCast(i32, row), ci(4)));
+  Value below = kernels::emitLanesBelow(b, loc, indexCast(i32, lane), one);
+  Value targetFirst = indexCast(index, load(start, {cell}));
+  Value targetEnd = indexCast(index, load(start, {addi(cell, c1)}));
+  Value centerX = remui(cell, nx), yz = divui(cell, nx);
+  Value centerY = remui(yz, ny), centerZ = divui(yz, ny);
+  auto cellAt = [&](Value center, Value first, Value offset, Value size) {
+    return remui(addi(addi(center, first), offset), size);
+  };
+  auto gap2 = [&](Value center, Value neighbor, Value size, Value width) {
+    Value dist = subi(maxsi(center, neighbor), minsi(center, neighbor));
+    Value steps = maxsi(c0, subi(minsi(dist, subi(size, dist)), c1));
+    Value gap = mulf(sitofp(f64, indexCast(i64, steps)), width);
+    return mulf(gap, gap);
+  };
+  Value wx, wy, wz;
+  if (!tilted) {
+    auto width = [&](Value length, Value count) {
+      return divf(length, sitofp(f64, indexCast(i64, count)));
+    };
+    wx = width(lx, nx);
+    wy = width(ly, ny);
+    wz = width(lz, nz);
+  }
+  forLoop(
+      targetFirst, targetEnd, cx(64), {},
+      [&](Value batch, ValueRange) -> Values {
+        Value target[2], active[2], pos[2][3], first[2], count[2];
+        Value axes[] = {c0, c1, two};
+        for (unsigned h = 0; h < 2; ++h) {
+          Value p = addi(batch, addi(muli(warp, sixteen), row));
+          if (h)
+            p = addi(p, eight);
+          active[h] = cmpi(CmpIPredicate::ult, p, targetEnd);
+          target[h] = minsi(p, subi(targetEnd, c1));
+          for (unsigned d = 0; d < 3; ++d)
+            pos[h][d] = load(sorted, {target[h], axes[d]});
+          Value id = indexCast(index, load(order, {target[h]}));
+          auto ex =
+              md_alg::RaggedRowOp::create(b, loc, excluded, id, four, true);
+          first[h] = ex.getFirst();
+          count[h] = ex.getCount();
+        }
+        Value stencils = muli(rowsWithin, spanX);
+        auto totals = forLoop(
+            c0, stencils, c1, {zero, zero},
+            [&](Value k, ValueRange sums) -> Values {
+              Value rem = divui(k, spanX);
+              Value sx = cellAt(centerX, firstX, remui(k, spanX), nx);
+              Value sy = cellAt(centerY, firstY, remui(rem, spanY), ny);
+              Value sz = cellAt(centerZ, firstZ, divui(rem, spanY), nz);
+              Value source = addi(sx, muli(nx, addi(sy, muli(ny, sz))));
+              Value visit = cb(true);
+              if (!tilted) {
+                Value dx = gap2(centerX, sx, nx, wx),
+                      dy = gap2(centerY, sy, ny, wy),
+                      dz = gap2(centerZ, sz, nz, wz);
+                visit = cmpf(CmpFPredicate::OLE, addf(addf(dx, dy), dz),
+                             cellBound2);
+              }
+              auto visited = ifElse(
+                  {i32, i32}, visit,
+                  [&]() -> Values {
+                    Value begin = indexCast(index, load(start, {source}));
+                    Value end =
+                        indexCast(index, load(start, {addi(source, c1)}));
+                    auto total = forLoop(
+                        begin, end, eight, sums,
+                        [&](Value base, ValueRange running) -> Values {
+                          Value sourceLane = addi(base, thread);
+                          Value loader =
+                              andi(cmpi(CmpIPredicate::ult, thread, eight),
+                                   cmpi(CmpIPredicate::ult, sourceLane, end));
+                          ifThen(loader, [&] {
+                            for (unsigned d = 0; d < 3; ++d)
+                              store(load(sorted, {sourceLane, axes[d]}), tile,
+                                    {thread, axes[d]});
+                          });
+                          gpu::BarrierOp::create(b, loc);
+                          Values next(running);
+                          for (unsigned part = 0; part < 2; ++part) {
+                            Value slot = part ? addi(segment, four) : segment;
+                            Value q = addi(base, slot);
+                            Value valid = cmpi(CmpIPredicate::ult, q, end);
+                            // Inactive tail lanes read the initialized first
+                            // slot.
+                            Value from = select(valid, slot, c0);
+                            Value xyz[3];
+                            for (unsigned d = 0; d < 3; ++d)
+                              xyz[d] = load(tile, {from, axes[d]});
+                            for (unsigned h = 0; h < 2; ++h) {
+                              Value p = target[h];
+                              Value near = emitCandidateWithinReach(
+                                  pos[h][0], pos[h][1], pos[h][2], xyz[0],
+                                  xyz[1], xyz[2], valid);
+                              Value hit = andi(
+                                  andi(active[h], valid),
+                                  andi(near, cmpi(CmpIPredicate::ne, p, q)));
+                              Value mask =
+                                  andi(kernels::emitWarpBallot(b, loc, hit),
+                                       rowMask);
+                              Value rank =
+                                  kernels::emitWarpRank(b, loc, mask, below);
+                              Value out = indexCast(index, addi(next[h], rank));
+                              ifThen(andi(hit, cmpi(CmpIPredicate::ult, out,
+                                                    rowWidth)),
+                                     [&] {
+                                       Value id = load(order, {q});
+                                       Value omit = forLoop(
+                                           c0, count[h], c1, {falseValue},
+                                           [&](Value e,
+                                               ValueRange state) -> Values {
+                                             Value other = call1(
+                                                 "mdrt_gpu_excluded_partner",
+                                                 i32, {excluded, first[h], e});
+                                             return {ori(state[0],
+                                                         cmpi(CmpIPredicate::eq,
+                                                              id, other))};
+                                           })[0];
+                                       store(indexCast(i32, select(omit, p, q)),
+                                             entries, {p, out});
+                                     });
+                              next[h] =
+                                  addi(next[h],
+                                       kernels::emitWarpCount(b, loc, mask));
+                            }
+                          }
+                          gpu::BarrierOp::create(b, loc);
+                          return next;
+                        });
+                    return Values(total);
+                  },
+                  [&]() -> Values { return Values(sums); });
+              return Values(visited);
+            });
+        for (unsigned h = 0; h < 2; ++h) {
+          ifThen(andi(active[h], cmpi(CmpIPredicate::eq, segment, c0)), [&] {
+            store(minui(totals[h], indexCast(i32, rowWidth)), counts,
+                  {target[h]});
+            Value addr = baseAddress(result);
+            Value ptr = LLVM::IntToPtrOp::create(b, loc, pointer, addr);
+            atomic(LLVM::AtomicBinOp::umax, ptr, totals[h]);
+          });
+        }
+        return {};
+      });
+  gpu::TerminatorOp::create(b, loc);
+}
+
 void MatrixBuild::emitEntryWithExclusions(const ExclusionRow &partners,
                                           const WarpConstants &warp,
                                           Value neighbor, Value keep, Value p,
@@ -955,7 +1128,7 @@ void MatrixBuild::emitSearch(StringRef symbol, bool triclinic,
              emitClearCellCounts();
              emitParticleBins();
              emitSortedPositions();
-             emitSearchRows();
+             emitTiledRows();
              emitBuildResult();
            });
 }
