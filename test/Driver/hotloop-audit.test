@@ -1,0 +1,7 @@
+# Offline lowering for a fixed architecture also runs when no GPU is visible.
+# RUN: rm -rf %t && mkdir %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %S/../../scripts/hotloop/*.toml %t
+# RUN: env MDIR_COMPILE_THREADS=4 MDIR_GPU_ARCH=sm_89 MDIR_GPU_BINARY=ptx MDIR_COMPILE_CACHE=off MDIR_PRINT_AFTER=convert-md-alg-to-gpu mdir emit %t/MATRIX.toml --stage=lowered > /dev/null 2> %t/MATRIX.ir
+# RUN: python3 %S/../../scripts/hotloop/check-ir.py MATRIX %t/MATRIX.ir
+# RUN: env MDIR_COMPILE_THREADS=4 MDIR_GPU_ARCH=sm_89 MDIR_GPU_BINARY=ptx MDIR_COMPILE_CACHE=off MDIR_PRINT_AFTER=convert-md-alg-to-gpu mdir emit %t/GROUPS.toml --stage=lowered > /dev/null 2> %t/GROUPS.ir
+# RUN: python3 %S/../../scripts/hotloop/check-ir.py GROUPS %t/GROUPS.ir
