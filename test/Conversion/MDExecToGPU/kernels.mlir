@@ -72,10 +72,11 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
 
   // The rows of the matrix grow when a build finds them too narrow.
   //
-  // CHECK:      scf.while
+  // CHECK:      call @mdrtMatrixPrepare(%[[ROWS]])
   // CHECK:        %[[INDEX:[a-z0-9_]+]] = func.call @mdrtMatrixEntries(%[[ROWS]])
-  // CHECK:        func.call @mdrt_gpu_build_neighbors_matrix(%[[X]], %[[BOX]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %[[COUNTS]], %[[INDEX]], %[[ORDER]])
-  // CHECK:        func.call @mdrtMatrixGrow(%[[ROWS]],
+  // CHECK:        %[[SPILL:[a-z0-9_]+]] = func.call @mdrtMatrixSpill(%[[ROWS]])
+  // CHECK:        call @mdrt_gpu_build_neighbors_matrix(%[[X]], %[[BOX]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %[[COUNTS]], %[[INDEX]], %[[ORDER]], %[[SPILL]])
+  // CHECK:        call @mdrtMatrixPublish(%[[ROWS]])
   // CHECK:      gpu.memcpy async [%{{[0-9]+}}] %[[REFERENCE]], %[[X]]
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(always)
@@ -109,6 +110,9 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
   // CHECK:          %[[IMAGES:[0-9]+]] = arith.mulf %{{[0-9]+}}, %[[INSIDE]]
   // CHECK:          %[[NEAREST:[0-9]+]] = math.roundeven %[[IMAGES]]
   // CHECK:          arith.mulf %[[NEAREST]], %[[EDGES]]
+  // CHECK:        arith.cmpi ne
+  // CHECK:        scf.if
+  // CHECK:        scf.for
   // CHECK:        gpu.shuffle xor
   // CHECK:        scf.if
   // CHECK:          memref.store %{{[0-9]+}}, %[[F]][

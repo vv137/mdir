@@ -1,0 +1,6 @@
+# REQUIRES: cuda
+# Lower a learned-potential edge call with room for eight neighbors. Its
+# host callback reads the edge counts from the device for all 45 particles.
+# RUN: mdir-opt %S/../Conversion/MDToMDExec/edges.mlir --convert-md-to-md-exec="skin=0.05 width=8" --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu | sed '/^  func.func private @model(/d; /^module /d; /^}$/d' > %t.mlir
+# RUN: cat %t.mlir %S/Inputs/matrix-edge-harness.mlir | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
+# CHECK: 1980

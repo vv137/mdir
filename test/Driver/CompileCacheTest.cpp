@@ -14,6 +14,7 @@
 // clean.
 #include "mdir/Compiler/CompileCache.h"
 #include "mdir/Runtime/GroupsABI.h"
+#include "mdir/Runtime/MatrixSpill.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
@@ -109,6 +110,9 @@ int main(int argc, char **argv) {
   check(StringRef(hostKey).contains("groups-abi " +
                                   std::to_string(MDRT_GROUPS_ABI_VERSION) + "\n"),
         "group buffer ABI participates in cache compatibility");
+  check(StringRef(hostKey).contains("matrix-spill-abi " +
+                                   std::to_string(MDRT_MATRIX_SPILL_ABI_VERSION) + "\n"),
+        "matrix spill ABI participates in cache compatibility");
   check(hostKey != describeMachine(*machine(false), "pre-RA-sched=fast"),
         "another CPU and features change the key");
   check(hostKey != describeMachine(*host, ""),

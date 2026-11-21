@@ -1,6 +1,7 @@
 // GPU neighbor matrix build. Cell binning follows [Quentrec1973]; rows
 // retain the particle order within each cell and the ballot rank within
 // each warp. See docs/neighbors.md for the periodic search and skin.
+#include "mdir/Runtime/MatrixSpill.h"
 #include "mdir/Conversion/MatrixBuild.h"
 #include "NeighborBuildCode.h"
 #include "mdir/Conversion/CompactionEmitter.h"
@@ -19,7 +20,6 @@ public:
                       MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
   MemRefType resultType = MemRefType::get({2}, i32, MemRefLayoutAttrInterface(),
                                           b.getI64IntegerAttr(1));
-  MemRefType hostType = MemRefType::get({2}, i32);
   Type boxType = VectorType::get({3}, f64),
        tiltedType = VectorType::get({6}, f64);
   md_alg::ScanStrategyAttr chunked =
@@ -36,14 +36,14 @@ public:
 private:
   bool tilted, allImages;
   // Common arguments and SSA values captured by the build's launches.
-  Value x, box, widths, reach, cellWidth, excluded, counts, entries, order;
+  Value x, box, widths, reach, cellWidth, excluded, counts, entries, order, spill;
   Value lx, ly, lz, ilx, ily, ilz, tbx, tcx, tcy;
   Value narrowLx, narrowLy, narrowLz, narrowIlx, narrowIly, narrowIlz;
   Value narrowBx, narrowCx, narrowCy, narrowFar, mostImages, limit2;
   Value nx, ny, nz, cells, cellChunks, rowsWithin, spanX, spanY;
   Value firstX, firstY, firstZ, rowWidth, n, c0, c1, falseValue;
   Value threads, gridCells, gridN, gridWarps;
-  Value key, wrapped, sorted, held, start, cursor, cellSums, result, host;
+  Value key, wrapped, sorted, held, start, cursor, cellSums, result;
 
   Value wrapCoordinate(Value position, Value length, Value inverseLength) {
     Value periods = mulf(position, inverseLength);
@@ -79,6 +79,7 @@ private:
                                Value keep, Value p, Value p32, Value q32,
                                Value slot);
   void emitSearchRows();
+  void emitSpillSort();
   void emitBuildResult();
   Value emitCandidateWithinReach(Value xi, Value yi, Value zi, Value xj,
                                  Value yj, Value zj, Value inRun);
@@ -407,7 +408,6 @@ void MatrixBuild::emitSearchGeometry() {
   cursor = alloc(buffer, {cells});
   cellSums = alloc(buffer, {cellChunks});
   result = alloc(resultType, {});
-  host = memref::AllocaOp::create(b, loc, hostType);
 }
 
 void MatrixBuild::emitClearCellCounts() {
@@ -429,6 +429,8 @@ void MatrixBuild::emitClearCellCounts() {
       Value firstCell = cmpi(CmpIPredicate::eq, c, c0First);
       ifThen(firstCell, [&] {
         store(none, result, {c0First});
+        store(none, spill, {c0First, c0First});
+        store(none, spill, {c0First, c1});
         Value c1Second = cx(1);
         store(none, result, {c1Second});
       });
@@ -618,6 +620,10 @@ void MatrixBuild::emitSearchRows() {
       Value i = indexCast(index, particle32);
       Value zeroPlaced = ci(0);
       Value placed = cmpi(CmpIPredicate::sge, particle32, zeroPlaced);
+      ifThen(andi(cmpi(CmpIPredicate::eq, lane32, zero32),
+                  cmpi(CmpIPredicate::slt, particle32, zero32)), [&] {
+        store(zero32, spill, {p, cx(MATRIX_SPILL_LENGTH)});
+      });
       ifThen(placed, [&] {
         Value xi = load(sorted, {p, zeroIndex});
         Value yi = load(sorted, {p, firstIndex});
@@ -759,6 +765,7 @@ void MatrixBuild::emitSearchRows() {
         ifThen(writer, [&] {
           Value limited = minui(found, rowWidth32);
           store(limited, counts, {p});
+          store(subi(found, limited), spill, {p, cx(MATRIX_SPILL_LENGTH)});
           // A relaxed atomic at the scope of the device (see PMEGPU.mlir).
           Value rmBase =
               memref::ExtractAlignedPointerAsIndexOp::create(b, loc, result);
@@ -813,7 +820,7 @@ void MatrixBuild::emitEntryWithExclusions(const ExclusionRow &partners,
       },
       [&]() -> Values { return {falseValue}; });
   Value shuffled = shuffledValues[0];
-  ifThen(keep, [&] {
+  ifThen(neighbor, [&] {
     auto isExcludedValues =
         forLoop(partners.inRegisters, partners.count, warp.one, {shuffled},
                 [&](Value e, ValueRange state) -> Values {
@@ -828,22 +835,75 @@ void MatrixBuild::emitEntryWithExclusions(const ExclusionRow &partners,
     Value isExcluded = isExcludedValues[0];
     Value entered = select(isExcluded, p32, q32);
     Value slotIndex = indexCast(index, slot);
-    store(entered, entries, {p, slotIndex});
+    ifThen(keep, [&] {
+      store(entered, entries, {p, slotIndex});
+    });
+    ifThen(cmpi(CmpIPredicate::uge, slotIndex, rowWidth), [&] {
+      Value counter = LLVM::IntToPtrOp::create(b, loc, pointer, baseAddress(spill));
+      Value claimed = atomic(LLVM::AtomicBinOp::add, counter, indexCast(i64, c1));
+      Value record = addi(indexCast(index, claimed), c1);
+      Value fits = cmpi(CmpIPredicate::ult, record, dim(spill, c0));
+      ifThen(fits, [&] {
+        store(p32, spill, {record, c0});
+        store(entered, spill, {record, c1});
+        store(indexCast(i32, subi(slotIndex, rowWidth)), spill,
+              {record, cx(MATRIX_SPILL_RANK)});
+      });
+    });
   });
 }
 
+// Counting sort by row, then scatter directly by the known within-row rank.
+// A single warp handles the rare overflow. Lengths and offsets are indexed
+// by matrix row. Records and sorted neighbors start at index one.
+void MatrixBuild::emitSpillSort() {
+  Value warp = cx(32);
+  auto launch = gpu::LaunchOp::create(b, loc, c1, c1, c1, warp, c1, c1);
+  OpBuilder::InsertionGuard scope(b);
+  b.setInsertionPointToEnd(&launch.getBody().front());
+  Value lane = launch.getThreadIds().x;
+  Value length = indexCast(index, load(spill, {c0, c0}));
+  Value valid = andi(cmpi(CmpIPredicate::ugt, length, c0),
+                     cmpi(CmpIPredicate::ult, length, dim(spill, c0)));
+  valid = andi(valid, cmpi(CmpIPredicate::eq, load(spill, {c0, c1}), ci(0)));
+  ifThen(cmpi(CmpIPredicate::eq, lane, c0), [&] {
+    store(load(result, {c0}), spill, {c0, cx(MATRIX_REQUIRED_WIDTH)});
+    store(load(result, {c1}), spill, {c0, cx(MATRIX_INVALID_POSITIONS)});
+    store(ci(0), spill, {c0, cx(MATRIX_SPILL_OFFSET)});
+  });
+  ifThen(valid, [&] {
+    Value lane32 = indexCast(i32, lane);
+    Value zero = ci(0);
+    Value width = ci(32);
+    forLoop(c0, n, warp, {ci(1)}, [&](Value base, ValueRange state) -> Values {
+      Value row = addi(base, lane);
+      Value inside = cmpi(CmpIPredicate::ult, row, n);
+      Value safeRow = minui(row, subi(n, c1));
+      Value count = select(inside, load(spill, {safeRow, cx(MATRIX_SPILL_LENGTH)}),
+                           zero);
+      Value through =
+          kernels::emitWarpScan(b, loc, count, lane32, zero, width, 32);
+      ifThen(inside, [&] {
+        store(addi(state[0], subi(through, count)), spill,
+              {row, cx(MATRIX_SPILL_OFFSET)});
+      });
+      Value total = shuffle(gpu::ShuffleMode::IDX, through, ci(31), width).first;
+      return {addi(state[0], total)};
+    });
+    gpu::BarrierOp::create(b, loc);
+    forLoop(addi(c1, lane), addi(length, c1), warp, {}, [&](Value r, ValueRange) -> Values {
+      Value row = indexCast(index, load(spill, {r, c0}));
+      Value offset = load(spill, {row, cx(MATRIX_SPILL_OFFSET)});
+      Value rank = load(spill, {r, cx(MATRIX_SPILL_RANK)});
+      Value dest = indexCast(index, addi(offset, rank));
+      store(load(spill, {r, c1}), spill, {dest, cx(MATRIX_SPILL_SORTED)});
+      return {};
+    });
+  });
+  gpu::TerminatorOp::create(b, loc);
+}
+
 void MatrixBuild::emitBuildResult() {
-  Value t0 = gpu::WaitOp::create(b, loc, gpu::AsyncTokenType::get(context),
-                                 ValueRange{})
-                 .getAsyncToken();
-  Value t1 = gpu::MemcpyOp::create(b, loc, gpu::AsyncTokenType::get(context),
-                                   ValueRange{t0}, host, result)
-                 .getAsyncToken();
-  gpu::WaitOp::create(b, loc, Type(), ValueRange{t1});
-  Value largest32 = load(host, {c0});
-  Value largest = indexCast(index, largest32);
-  Value notNumbers32 = load(host, {c1});
-  Value notNumbers = indexCast(index, notNumbers32);
   // The lowering of `gpu.dealloc` takes a buffer without a memory space.
   dealloc(key);
   dealloc(wrapped);
@@ -853,7 +913,7 @@ void MatrixBuild::emitBuildResult() {
   dealloc(cursor);
   dealloc(cellSums);
   dealloc(result);
-  func::ReturnOp::create(b, loc, ValueRange{largest, notNumbers});
+  func::ReturnOp::create(b, loc);
 }
 
 Value MatrixBuild::emitCandidateWithinReach(Value xi, Value yi, Value zi,
@@ -937,8 +997,8 @@ void MatrixBuild::emitSearch(StringRef symbol, bool triclinic,
   SmallVector<Type> inputs{positions, tilted ? tiltedType : boxType};
   if (tilted)
     inputs.push_back(boxType);
-  inputs.append({f64, f64, buffer, buffer, rowType, buffer});
-  function(symbol, b.getFunctionType(inputs, {index, index}),
+  inputs.append({f64, f64, buffer, buffer, rowType, buffer, rowType});
+  function(symbol, b.getFunctionType(inputs, {}),
            [&](ValueRange arguments) {
              unsigned arg = 0;
              x = arguments[arg++];
@@ -951,11 +1011,13 @@ void MatrixBuild::emitSearch(StringRef symbol, bool triclinic,
              counts = arguments[arg++];
              entries = arguments[arg++];
              order = arguments[arg++];
+             spill = arguments[arg++];
              emitSearchGeometry();
              emitClearCellCounts();
              emitParticleBins();
              emitSortedPositions();
              emitSearchRows();
+             emitSpillSort();
              emitBuildResult();
            });
 }
@@ -1068,18 +1130,11 @@ void MatrixBuild::emitMatrixImageWithin() {
 void MatrixBuild::emitBuildNeighborsMatrixTriclinic() {
   function("mdrt_gpu_build_neighbors_matrix_triclinic",
            b.getFunctionType({positions, tiltedType, boxType, f64, f64, buffer,
-                              buffer, rowType, buffer},
-                             {index, index}),
+                              buffer, rowType, buffer, rowType},
+                             {}),
            [&](ValueRange arguments) {
-             Value x = arguments[0];
              Value box = arguments[1];
-             Value widths = arguments[2];
              Value reach = arguments[3];
-             Value cellWidth = arguments[4];
-             Value excluded = arguments[5];
-             Value counts = arguments[6];
-             Value entries = arguments[7];
-             Value order = arguments[8];
              Value lx = extract(box, 0);
              Value ly = extract(box, 1);
              Value lz = extract(box, 2);
@@ -1088,31 +1143,14 @@ void MatrixBuild::emitBuildNeighborsMatrixTriclinic() {
              Value part = cd(0.49);
              Value bound = mulf(least, part);
              Value within = cmpf(CmpFPredicate::OLE, reach, bound);
-             auto largestValues = ifElse(
-                 {index, index}, within,
-                 [&]() -> Values {
-                   auto oneValues =
-                       call("mdrt_gpu_build_neighbors_matrix_triclinic_pass",
-                            {index, index},
-                            {x, box, widths, reach, cellWidth, excluded, counts,
-                             entries, order});
-                   Value one = oneValues[0];
-                   Value oneNot = oneValues[1];
-                   return {one, oneNot};
-                 },
-                 [&]() -> Values {
-                   auto allValues =
-                       call("mdrt_gpu_build_neighbors_matrix_triclinic_images",
-                            {index, index},
-                            {x, box, widths, reach, cellWidth, excluded, counts,
-                             entries, order});
-                   Value all = allValues[0];
-                   Value allNot = allValues[1];
-                   return {all, allNot};
-                 });
-             Value largest = largestValues[0];
-             Value notNumbers = largestValues[1];
-             func::ReturnOp::create(b, loc, ValueRange{largest, notNumbers});
+             ifThenElse(within, [&] {
+               call("mdrt_gpu_build_neighbors_matrix_triclinic_pass", {},
+                    arguments);
+             }, [&] {
+               call("mdrt_gpu_build_neighbors_matrix_triclinic_images", {},
+                    arguments);
+             });
+             func::ReturnOp::create(b, loc);
            });
 }
 

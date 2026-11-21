@@ -57,7 +57,9 @@ func.func private @model(memref<?x3xf64> {mdrt.read_only},
 // candidates; each step writes the slots.
 // GPU-LABEL: func.func @step(
 // GPU:         call @mdrtEdgesCreate()
+// GPU:         scf.while
 // GPU:         call @mdrt_gpu_build_neighbors_matrix
+// GPU:         call @mdrtMatrixCompleteEdges
 // GPU:         gpu.launch
 // GPU:         gpu.memcpy
 // GPU:         call @mdrtEdgesReserve(

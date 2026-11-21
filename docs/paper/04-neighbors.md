@@ -175,9 +175,13 @@ The build is a counting sort into cells of at least a third of the reach
 the particles of the cells within reach. The order of a row is the order
 in which the search visits the cells and, within a cell, the order of the
 indices: it does not depend on the threads, so the forces summed over a
-row are the same from run to run. Rows that are too narrow make the
-runtime widen them by a quarter more than needed and build again; the run
-never truncates a row.
+row are the same from run to run. On the GPU, an entry beyond the row width carries its row and its rank
+within the tail. A scan of tail lengths gives the row offsets, so each
+entry scatters to its exact position. The pair kernel continues each
+lane's sum there before reducing the row. Required width reaches the
+host asynchronously for growth at a later rebuild. A structure with
+learned-potential edge slots grows and rebuilds immediately because its
+edge enumeration reads the row prefix (D[matrix-no-host-wait]).
 
 **Triclinic cells** (D123, D125, D241). The particles are
 binned by their fractional coordinates $\mathbf x H^{-1}$, in as many

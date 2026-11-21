@@ -3,6 +3,7 @@
 // Every op of md_exec becomes ops of the upstream gpu dialect, where the op
 // is. See docs/ops.md, Section 10.8.
 
+#include "mdir/Runtime/MatrixSpill.h"
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Runtime/GroupsABI.h"
 
@@ -97,7 +98,6 @@ static const char *const noteGroupsName = "mdrtNoteGroups";
 static const char *const createGroupsName = "mdrtGroupsCreate";
 static const char *const createMatrixName = "mdrtMatrixCreate";
 static const char *const matrixEntriesName = "mdrtMatrixEntries";
-static const char *const growMatrixName = "mdrtMatrixGrow";
 static const char *const groupsBufferName = "mdrtGroupsBuffer";
 static const char *const growGroupsName = "mdrtGroupsGrow";
 static const char *const builtGroupsName = "mdrtGroupsBuilt";
@@ -601,7 +601,8 @@ private:
                           const Neighbors &structure, int64_t groups);
   /// The rows of the neighbor matrix `handle`, as they are where `builder`
   /// is.
-  Value getMatrixEntries(OpBuilder &builder, Location loc, Value handle);
+  Value getMatrixEntries(OpBuilder &builder, Location loc, Value handle,
+                         StringRef name = matrixEntriesName);
   /// The candidates (`which` 0) or the slots (1) of the pairs of images of
   /// `handle`, as the last build left them (D277).
   Value getEdgesBuffer(OpBuilder &builder, Location loc, Value handle,
@@ -2760,7 +2761,7 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
     Neighbors structure;
     Value box, inverse;
     /// The rows of the neighbor matrix of a loop over pairs.
-    Value entries;
+    Value entries, spill;
   };
   SmallVector<Loop> loops;
   Value positions;
@@ -2776,6 +2777,7 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
       positions = pair.getPositions();
       cell = pair.getCellMutable().get();
       loop.entries = getMatrixEntries(builder, loc, loop.structure.handle);
+      loop.spill = getMatrixEntries(builder, loc, loop.structure.handle, "mdrtMatrixSpill");
     } else {
       auto tuple = cast<md_exec::TupleForOp>(op);
       if (!hasFlags(tuple) &&
@@ -2889,7 +2891,7 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
   }
 
   launchRows(builder, loc, size, [&](OpBuilder &body, Value particle,
-                                     const RowLanes &sharing) {
+                                    const RowLanes &sharing) {
     // What the loops add to each destination, in their order, stored once
     // at the end: loops of a run may add to one buffer, as the terms of a
     // potential add to the forces (md-exec-accumulate-destinations). The
@@ -2915,7 +2917,7 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
         contributions = emitPairKernel(
             body, pair, loop.structure.counts, loop.entries,
             loop.box, loop.inverse, place, local, &sharing, &totals,
-            &layouts[loop.op]);
+            &layouts[loop.op], nullptr, loop.spill);
         scratch = pair.getScratch();
         outs = pair.getOuts();
       } else {
@@ -3836,6 +3838,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   PairLayout layout = gatherInOrder(builder, loc, structure, positions,
                                     op.getIns(), op);
   Value entries = getMatrixEntries(builder, loc, structure.handle);
+  Value spill = getMatrixEntries(builder, loc, structure.handle, "mdrtMatrixSpill");
   // The table of a block for the values at the neighbors and at the
   // centers of a loop that adds at both (`scatter(hash(S, P, L))`,
   // D291): the rows of a block are neighbors in the order of the
@@ -3876,7 +3879,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   };
   RowExtras extras{attributions, openTable, closeTable};
   launchRows(builder, loc, size, [&](OpBuilder &body, Value central,
-                                     const RowLanes &sharing) {
+                                   const RowLanes &sharing) {
     IRMapping local;
     // The places run in the order of the cells, which mixes the centers
     // with the other rows: a place whose particle is not a center does
@@ -3917,7 +3920,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
     SmallVector<Value> contributions = emitPairKernel(
         body, op, structure.counts, entries, box, inverse, central,
         local, &lanes, /*outTotals=*/nullptr, &layout,
-        tabled ? AddToMember(addToTable) : AddToMember());
+        tabled ? AddToMember(addToTable) : AddToMember(), spill);
     // A place that is not a center contributes zeros to the sums, which
     // its slot of the scratch must hold.
     storeContributions(body, loc, contributions, op.getScratch(), central,
@@ -8117,41 +8120,35 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
       getInstanceName(tilted ? std::string(buildNeighborsName) + "_triclinic"
                              : std::string(buildNeighborsName),
                       real)));
-  // Build; if a row was too narrow to hold the neighbors of a particle,
-  // the runtime makes the rows wider, and the build is made again.
   Type wide = builder.getI64Type();
-  auto again = scf::WhileOp::create(builder, loc, TypeRange(), ValueRange());
-  {
-    Block *before = builder.createBlock(&again.getBefore());
-    OpBuilder at = OpBuilder::atBlockEnd(before);
+  auto search = [&](OpBuilder &at) {
     Value entries = getMatrixEntries(at, loc, structure.handle);
-    SmallVector<Value, 9> operands = {positions, boxValue};
+    SmallVector<Value> operands = {positions, boxValue};
     if (tilted)
       operands.push_back(widthsValue);
     operands.append({reachValue, widthValue, excluded, structure.counts,
-                     entries, structure.order});
-    auto built = func::CallOp::create(at, loc, build, operands);
-    Value largest = built.getResult(0);
-    emitStopNotNumbers(
-        at, loc, arith::IndexCastOp::create(at, loc, wide, built.getResult(1)));
-    Value width =
-        memref::DimOp::create(at, loc, entries, createIndex(at, loc, 1));
-    Value tooMany = arith::CmpIOp::create(
-        at, loc, arith::CmpIPredicate::ugt, largest, width);
-    scf::IfOp::create(at, loc, tooMany, [&](OpBuilder &then, Location) {
-      func::CallOp::create(
-          then, loc,
-          getOrDeclare(growMatrixName,
-                       then.getFunctionType({wide, wide}, {})),
-          ValueRange{structure.handle,
-                     arith::IndexCastOp::create(then, loc, wide, largest)});
-      scf::YieldOp::create(then, loc);
-    });
-    scf::ConditionOp::create(at, loc, tooMany, ValueRange());
-    Block *after = builder.createBlock(&again.getAfter());
-    OpBuilder close = OpBuilder::atBlockEnd(after);
-    scf::YieldOp::create(close, loc);
-  }
+                     entries, structure.order,
+                     getMatrixEntries(at, loc, structure.handle, "mdrtMatrixSpill")});
+    func::CallOp::create(at, loc, build, operands);
+  };
+  if (!structure.edges)
+    func::CallOp::create(builder, loc,
+        getOrDeclare("mdrtMatrixPrepare", builder.getFunctionType({wide}, {})),
+        ValueRange{structure.handle});
+  StringRef completion = structure.edges ? "mdrtMatrixCompleteEdges" : "mdrtMatrixPublish";
+  auto again = scf::WhileOp::create(builder, loc, TypeRange(), ValueRange());
+  Block *before = builder.createBlock(&again.getBefore());
+  OpBuilder at = OpBuilder::atBlockEnd(before);
+  search(at);
+  auto retry = func::CallOp::create(at, loc,
+      getOrDeclare(completion, at.getFunctionType({wide}, {at.getI32Type()})),
+      ValueRange{structure.handle}).getResult(0);
+  Value zero = arith::ConstantIntOp::create(at, loc, 0, 32);
+  Value grown = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ne, retry, zero);
+  scf::ConditionOp::create(at, loc, grown, ValueRange());
+  Block *after = builder.createBlock(&again.getAfter());
+  OpBuilder close = OpBuilder::atBlockEnd(after);
+  scf::YieldOp::create(close, loc);
   builder.setInsertionPointAfter(again);
 
   // The runtime counts the builds, for the log of the run.
@@ -8177,11 +8174,11 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
 }
 
 Value Lowering::getMatrixEntries(OpBuilder &builder, Location loc,
-                                Value handle) {
+                                Value handle, StringRef name) {
   MemRefType type = getDeviceType(
       {ShapedType::kDynamic, ShapedType::kDynamic}, builder.getI32Type());
   func::FuncOp getter = getOrDeclare(
-      matrixEntriesName,
+      name,
       builder.getFunctionType({builder.getI64Type()}, {type}));
   getter->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
   return func::CallOp::create(builder, loc, getter, ValueRange{handle})
@@ -9647,6 +9644,9 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
   Neighbors structure;
   if (failed(getNeighbors(op, op.getNeighbors(), structure)))
     return failure();
+  if (!structure.groups && !structure.edges && structure.handle)
+    func::CallOp::create(builder, loc,
+        getOrDeclare("mdrtMatrixPoll", builder.getFunctionType({}, {})), ValueRange());
   // The structure is refreshed where it is.
   neighbors[op.getResult()] = structure;
 

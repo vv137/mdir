@@ -1,0 +1,4 @@
+# REQUIRES: cuda, python-api
+# RUN: rm -rf %t && mkdir %t
+# RUN: %python %S/Inputs/pair_tail_system.py %t 500 500 320 3.7 0.5
+# RUN: %mdir_python %S/Inputs/matrix_spill.py %t

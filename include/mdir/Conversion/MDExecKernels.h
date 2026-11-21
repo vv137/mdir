@@ -152,7 +152,8 @@ emitPairKernel(mlir::OpBuilder &builder, md_exec::PairForOp op,
                mlir::Value inverse, mlir::Value central,
                mlir::IRMapping &local, const RowLanes *lanes = nullptr,
                llvm::SmallVectorImpl<mlir::Value> *outTotals = nullptr,
-               const PairLayout *layout = nullptr, AddToMember add = nullptr);
+               const PairLayout *layout = nullptr, AddToMember add = nullptr,
+               mlir::Value spill = {});
 
 /// Where a loop over pairs over groups of 16 (D89,
 /// docs/neighbor-groups.md) finds its work: the lists of the groups in blocks of 64 entries (`entries` and

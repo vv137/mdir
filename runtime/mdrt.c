@@ -184,6 +184,14 @@ void mdrtStopNotNumbers(int64_t count) {
   stopWith(message);
 }
 
+void mdrtStopMatrixSpill(uint64_t count, int64_t capacity) {
+  char message[192];
+  snprintf(message, sizeof message,
+           "neighbor matrix spill exhausted: %llu entries exceed capacity %lld",
+           (unsigned long long)count, (long long)capacity);
+  stopWith(message);
+}
+
 /* A build of a list of units (D417, D419) found its
    largest covering reach, the pair list distance plus twice the largest
    covering radius of its kinds and the rest, beyond half the least face
