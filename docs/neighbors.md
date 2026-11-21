@@ -36,6 +36,10 @@ index[i][0 .. W)    their indices; entries from count[i] on are unused
 | Order of a row | The order of the cells that the search visits, and within a cell the order of the indices. The order does not depend on the threads or on the run. The host and a device choose the width of the cells with different costs (Sections 2.2 and 2.5), so the cells that a search visits, and with them the order of a row, can differ between the two. |
 | Overflow | `W` is the width a row has at first. Ordinary GPU pair loops read a bounded, sorted tail on the overflow step. A later rebuild grows the rows to the reported width plus a quarter. Host builds and GPU structures with learned-potential edge slots grow and retry immediately. |
 
+Part A sorts the spill by row and then by rank in search order. Each lane continues its prefix sum over the tail before reduction. The GPU reports the required width and invalid-position status asynchronously. Learned-potential edge slots require complete prefixes and use the synchronous retry described above.
+
+Part B would also gate rebuild and prune launches on the device. The measured sequences took 21–51 µs on reuse steps, while PME left only 0.70–0.74 µs of exposed device time. The refresh decision therefore stays on the host (D[matrix-no-host-wait]).
+
 The GPU reserves $N\lceil W/4\rceil$ excess entries, capped at $2^{31}-2$. Exhausting this reserve stops the run and reports the entry count and capacity.
 
 The order of a row decides the order in which a loop over pairs adds up
