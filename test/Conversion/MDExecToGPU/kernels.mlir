@@ -73,8 +73,8 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
   // The rows of the matrix grow when a build finds them too narrow.
   //
   // CHECK:      call @mdrtMatrixPrepare(%[[ROWS]])
-  // CHECK:        %[[INDEX:[a-z0-9_]+]] = call @mdrtMatrixEntries(%[[ROWS]])
-  // CHECK:        %[[SPILL:[a-z0-9_]+]] = call @mdrtMatrixSpill(%[[ROWS]])
+  // CHECK:        %[[INDEX:[a-z0-9_]+]] = func.call @mdrtMatrixEntries(%[[ROWS]])
+  // CHECK:        %[[SPILL:[a-z0-9_]+]] = func.call @mdrtMatrixSpill(%[[ROWS]])
   // CHECK:        call @mdrt_gpu_build_neighbors_matrix(%[[X]], %[[BOX]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %[[COUNTS]], %[[INDEX]], %[[ORDER]], %[[SPILL]])
   // CHECK:        call @mdrtMatrixPublish(%[[ROWS]])
   // CHECK:      gpu.memcpy async [%{{[0-9]+}}] %[[REFERENCE]], %[[X]]
