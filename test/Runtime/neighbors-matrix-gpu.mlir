@@ -76,7 +76,7 @@ func.func @run(%length: f64, %reach: f64, %width: f64, %row: index) {
   %xd = gpu.alloc (%count) : memref<?x3xf64, 1>
   %countsd = gpu.alloc (%count) : memref<?xi32, 1>
   %indexd = gpu.alloc (%count, %row) : memref<?x?xi32, 1>
-  %spill_columns = arith.constant 3 : index
+  %spill_columns = arith.constant 6 : index
   %spill_rows = arith.constant 65536 : index
   %spill = gpu.alloc (%spill_rows, %spill_columns) : memref<?x?xi32, 1>
   %orderd = gpu.alloc (%count) : memref<?xi32, 1>
@@ -160,7 +160,16 @@ func.func @run(%length: f64, %reach: f64, %width: f64, %row: index) {
     %valid = arith.cmpi ult, %k, %n : index
     %hit = scf.if %valid -> i1 {
       %value = memref.load %index[%i, %k] : memref<?x?xi32>
-      %eq = arith.cmpi eq, %value, %j : i32
+      %three = arith.constant 3 : index
+      %four = arith.constant 4 : index
+      %off32 = memref.load %tail[%p, %four] : memref<?x?xi32>
+      %off = arith.index_castui %off32 : i32 to index
+      %pos = arith.addi %off, %rank : index
+      %at = arith.addi %pos, %c1 : index
+      %sorted = memref.load %tail[%at, %three] : memref<?x?xi32>
+      %ordered = arith.cmpi eq, %sorted, %q32 : i32
+      %matches = arith.cmpi eq, %value, %j : i32
+      %eq = arith.andi %matches, %ordered : i1
       memref.store %minus_one, %index[%i, %k] : memref<?x?xi32>
       scf.yield %eq : i1
     } else {

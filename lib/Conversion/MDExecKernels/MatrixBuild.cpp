@@ -79,6 +79,7 @@ private:
                                Value keep, Value p, Value p32, Value q32,
                                Value slot);
   void emitSearchRows();
+  void emitSpillSort();
   void emitBuildResult();
   Value emitCandidateWithinReach(Value xi, Value yi, Value zi, Value xj,
                                  Value yj, Value zj, Value inRun);
@@ -620,6 +621,10 @@ void MatrixBuild::emitSearchRows() {
       Value i = indexCast(index, particle32);
       Value zeroPlaced = ci(0);
       Value placed = cmpi(CmpIPredicate::sge, particle32, zeroPlaced);
+      ifThen(andi(cmpi(CmpIPredicate::eq, lane32, zero32),
+                  cmpi(CmpIPredicate::slt, particle32, zero32)), [&] {
+        store(zero32, spill, {p, cx(5)});
+      });
       ifThen(placed, [&] {
         Value xi = load(sorted, {p, zeroIndex});
         Value yi = load(sorted, {p, firstIndex});
@@ -761,6 +766,7 @@ void MatrixBuild::emitSearchRows() {
         ifThen(writer, [&] {
           Value limited = minui(found, rowWidth32);
           store(limited, counts, {p});
+          store(subi(found, limited), spill, {p, cx(5)});
           // A relaxed atomic at the scope of the device (see PMEGPU.mlir).
           Value rmBase =
               memref::ExtractAlignedPointerAsIndexOp::create(b, loc, result);
@@ -845,6 +851,47 @@ void MatrixBuild::emitEntryWithExclusions(const ExclusionRow &partners,
       });
     });
   });
+}
+
+// Counting sort by row, then scatter directly by the known within-row rank.
+// A single warp handles the rare overflow. Lengths and offsets are indexed
+// by matrix row. Records and sorted neighbors start at index one.
+void MatrixBuild::emitSpillSort() {
+  Value warp = cx(32);
+  auto launch = gpu::LaunchOp::create(b, loc, c1, c1, c1, warp, c1, c1);
+  OpBuilder::InsertionGuard scope(b);
+  b.setInsertionPointToEnd(&launch.getBody().front());
+  Value lane = launch.getThreadIds().x;
+  Value length = indexCast(index, load(spill, {c0, c0}));
+  Value valid = andi(cmpi(CmpIPredicate::ugt, length, c0),
+                     cmpi(CmpIPredicate::ult, length, dim(spill, c0)));
+  valid = andi(valid, cmpi(CmpIPredicate::eq, load(spill, {c0, c1}), ci(0)));
+  ifThen(valid, [&] {
+    Value lane32 = indexCast(i32, lane);
+    Value zero = ci(0);
+    Value width = ci(32);
+    forLoop(c0, n, warp, {zero}, [&](Value base, ValueRange state) -> Values {
+      Value row = addi(base, lane);
+      Value inside = cmpi(CmpIPredicate::ult, row, n);
+      Value count = select(inside, load(spill, {minui(row, subi(n, c1)), cx(5)}), zero);
+      Value through = kernels::emitWarpScan(b, loc, count, lane32, zero, width, 32);
+      ifThen(inside, [&] {
+        store(addi(state[0], subi(through, count)), spill, {row, cx(4)});
+      });
+      Value total = shuffle(gpu::ShuffleMode::IDX, through, ci(31), width).first;
+      return {addi(state[0], total)};
+    });
+    gpu::BarrierOp::create(b, loc);
+    forLoop(addi(c1, lane), addi(length, c1), warp, {}, [&](Value r, ValueRange) -> Values {
+      Value row = indexCast(index, load(spill, {r, c0}));
+      Value offset = load(spill, {row, cx(4)});
+      Value rank = load(spill, {r, cx(2)});
+      Value dest = addi(c1, indexCast(index, addi(offset, rank)));
+      store(load(spill, {r, c1}), spill, {dest, cx(3)});
+      return {};
+    });
+  });
+  gpu::TerminatorOp::create(b, loc);
 }
 
 void MatrixBuild::emitBuildResult() {
@@ -972,6 +1019,7 @@ void MatrixBuild::emitSearch(StringRef symbol, bool triclinic,
              emitParticleBins();
              emitSortedPositions();
              emitSearchRows();
+             emitSpillSort();
              emitBuildResult();
            });
 }

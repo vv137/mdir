@@ -138,7 +138,7 @@ func.func @run(%h: vector<6xf64>, %reach: f64, %width: f64) {
   %xd = gpu.alloc (%count) : memref<?x3xf64, 1>
   %countsd = gpu.alloc (%count) : memref<?xi32, 1>
   %indexd = gpu.alloc (%count, %row) : memref<?x?xi32, 1>
-  %spill_columns = arith.constant 3 : index
+  %spill_columns = arith.constant 6 : index
   %spill = gpu.alloc (%count, %spill_columns) : memref<?x?xi32, 1>
   %orderd = gpu.alloc (%count) : memref<?xi32, 1>
   %t0 = gpu.wait async
