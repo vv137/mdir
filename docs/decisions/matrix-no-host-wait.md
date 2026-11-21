@@ -31,3 +31,22 @@ For GROUPS, test untruncated required sizes and invalid-coordinate status on the
 - Move a pair from outside build reach into cutoff in one step immediately after reuse. Cover threshold neighbors, periodic images, box contraction, triclinic invalidation, shared flags, inner-only prune and simultaneous outer/inner invalidation in separate and fused pruning. Verify reference preservation on reuse and zero missing pairs against CPU all-pairs enumeration at every force evaluation.
 - Compare short deterministic MATRIX and GROUPS trajectories with the base on the same GPU in mixed and double precision. Require bitwise coordinates, velocities, forces and energies and identical build/prune steps. Check RNG continuation across mid-batch recovery. Compare forces with the independent CPU oracle at existing precision-specific tolerances.
 - Inspect lowered IR and Nsight Systems traces for common-path status copies and neighbor event waits. Report per-build idle, per-step wait and step time on TIP3P 10k, TIP3P 20k and JAC for both structures on RTX 4090. Interleave base and feature in two jobs with reversed order, trimmed stationary means and recorded clocks. Run the sanitizer tier and full suite at the final head.
+
+### MATRIX implementation and refresh measurement
+
+On a GPU, two device launches cover each pair loop or fused run sharing the matrix. A uniform predicate selects the ordinary or overflow launch before any barriers or shuffles. On overflow the latter owns the whole reduction, continuing each lane's prefix sum over its sorted tail before widening, reducing across lanes, or writing forces. A learned-potential edge callback continues to use complete row prefixes after synchronous growth.
+
+The 45-particle cluster with 955 isolated particles requires 44 entries per dense row. Widths 8 and 64 give bitwise-identical forces and potential energy in deterministic mixed and double precision. At width 1 the 1,935 excess entries exceed the 1,000-entry capacity and the evaluation reports exhaustion. The learned-potential callback receives all 1,980 directed edges after growth from width 8.
+
+On TIP3P 10k, over 44 rebuilds in each of two 300-step RTX 4090 profiles, the median interval from the end of the row search to the start of the reference-position copy fell from 17.20 to 9.46 microseconds. The corresponding interval after the status transfer fell from 9.49 to 3.01 microseconds.
+
+For the separate refresh decision, the following measurements use explicit MATRIX or dual GROUPS, mixed precision, a 1.5 Å outer skin and, for dual lists, a 0.75 Å inner skin. Times are microseconds per reuse step on an RTX 4090. The early-exit experiment launches a predicate-only kernel at each measured grid and block size. It includes a conditional reference snapshot and, for MATRIX, the spill-sort launch. The sequence takes 11 launches for MATRIX and 30 for dual GROUPS. The host wait includes both decisions for dual lists. The device gap is the interval from PME gather to the first normal pair or particle kernel on reuse steps.
+
+| System | Structure | Early-exit sequence, median | Host flag wait, median | Exposed device gap, median |
+|---|---|---:|---:|---:|
+| TIP3P 10k | MATRIX | 21.09 | 39.02 | 0.70 |
+| TIP3P 10k | Dual GROUPS | 51.31 | 40.30 | 0.74 |
+| JAC | MATRIX | 26.33 | 71.00 | 0.70 |
+| JAC | Dual GROUPS | 50.55 | 71.35 | 0.74 |
+
+Keep the current refresh flag wait for these workload shapes. PME overlaps the host wait. A fixed sequence submitted on every reuse step adds substantially more device work than the observed gap. This measures the gated launches in isolation and the existing reuse path in simulation. An end-to-end device-conditional scheduler would need its own timing.
