@@ -613,6 +613,20 @@ def ConvertMDAlgToSCF : Pass<"convert-md-alg-to-scf", "::mlir::ModuleOp"> {
                            "::mlir::vector::VectorDialect"];
 }
 
+def AddMatrixBuild : Pass<"add-matrix-build", "::mlir::ModuleOp"> {
+  let summary = "Define the GPU matrix build for direct tests of its rows";
+  let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "::mlir::func::FuncDialect",
+                           "::mlir::gpu::GPUDialect",
+                           "::mlir::LLVM::LLVMDialect",
+                           "::mlir::NVVM::NVVMDialect",
+                           "::mlir::math::MathDialect",
+                           "::mlir::memref::MemRefDialect",
+                           "::mlir::scf::SCFDialect",
+                           "::mlir::vector::VectorDialect",
+                           "::mdir::md_alg::MDAlgDialect"];
+}
+
 def AddGroupsBuild : Pass<"add-groups-build", "::mlir::ModuleOp"> {
   let summary = "Adds the device build of the groups of neighbors to the "
                 "module";

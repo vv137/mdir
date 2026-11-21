@@ -10,7 +10,6 @@
 # names: the lowerings test no part of the name of a template function.
 #
 # RUN: not grep -n 'PME_' %S/../../lib/Runtime/Templates/NeighborsMatrix.mlir \
-# RUN:     %S/../../lib/Runtime/Templates/NeighborsMatrixGPU.mlir \
 # RUN:     %S/../../lib/Runtime/Templates/PME.mlir \
 # RUN:     %S/../../lib/Runtime/Templates/PMEGPU.mlir \
 # RUN:     %S/../../lib/Runtime/Templates/PMEGPUTriclinic.mlir \

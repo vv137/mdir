@@ -1,10 +1,4 @@
-# The template is code that the compiler adds to the modules it lowers. It is
-# kept as a file of its own and compiled into the library as a string.
-set(TEMPLATE_FILE
-  ${PROJECT_SOURCE_DIR}/lib/Runtime/Templates/NeighborsMatrixGPU.mlir)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-  ${TEMPLATE_FILE})
-file(READ ${TEMPLATE_FILE} NEIGHBORS_MATRIX_GPU_TEMPLATE)
+# Compile the PME templates into the library as strings.
 set(PME_GPU_TEMPLATE_FILE
   ${PROJECT_SOURCE_DIR}/lib/Runtime/Templates/PMEGPU.mlir)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS

@@ -1,5 +1,5 @@
-// The instance for positions in f32 of the template that builds a neighbor
-// matrix on a device (NeighborsMatrixGPU.mlir), made in IR from the template
+// The instance for positions in f32 of the emitter that builds a neighbor
+// matrix on a device (MatrixBuild.cpp), specialized from the IR
 // written for f64 (D368, #739). The functions that the template
 // defines take the names of the instance, and its md_alg ops, typed for
 // the instance, are lowered by convert-md-alg-to-gpu (D406,

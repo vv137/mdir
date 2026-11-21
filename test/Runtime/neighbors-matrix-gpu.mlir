@@ -1,11 +1,10 @@
-// The template that builds a neighbor matrix on a device, compared with
+// The emitter that builds a neighbor matrix on a device, compared with
 // the template for the host, entry by entry.
 //
 // REQUIRES: cuda
 //
-// RUN: cat %S/../../lib/Runtime/Templates/NeighborsMatrix.mlir \
-// RUN:     %S/../../lib/Runtime/Templates/NeighborsMatrixGPU.mlir %s \
-// RUN: | mdir-opt --convert-md-alg-to-gpu \
+// RUN: cat %S/../../lib/Runtime/Templates/NeighborsMatrix.mlir %s \
+// RUN: | mdir-opt --add-matrix-build --convert-md-alg-to-gpu \
 // RUN: | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-format=isa" \
 // RUN:     --reconcile-unrealized-casts \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -191,3 +190,9 @@ func.func @main() {
       : (f64, f64, f64, index) -> ()
   return
 }
+
+func.func private @mdrt_gpu_build_neighbors_matrix(
+    %x: memref<?x3xf64, 1>, %box: vector<3xf64>, %reach: f64,
+    %cell_width: f64, %excluded: memref<?xi32, 1>,
+    %counts: memref<?xi32, 1>, %index: memref<?x?xi32, 1>,
+    %order: memref<?xi32, 1>) -> (index, index)

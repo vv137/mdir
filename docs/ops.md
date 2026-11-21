@@ -2087,8 +2087,8 @@ took nine times as long.
 A thermostat needs the kinetic energy in every step, so this is what a
 step of a run at constant temperature costs on a device.
 
-The neighbor build template for devices,
-`lib/Runtime/Templates/NeighborsMatrixGPU.mlir`, builds the matrix in 10
+The device neighbor emitter,
+`lib/Conversion/MDExecKernels/MatrixBuild.cpp`, builds the matrix in 10
 kernels, or in 12 where the search is split.
 [neighbors.md](neighbors.md) describes the method. The matrix is the
 one that the template for the host builds, entry by entry.

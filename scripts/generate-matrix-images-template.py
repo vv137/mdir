@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Writes the generated part of lib/Runtime/Templates/NeighborsMatrix.mlir and
-NeighborsMatrixGPU.mlir: the build of the neighbor matrix of a triclinic cell
+"""Writes the generated part of the host template NeighborsMatrix.mlir: the build of the neighbor matrix of a triclinic cell
 that takes a pair if any of its images is within the reach
 (docs/triclinic.md, Section 2, D241), and the function that
 chooses between it and the build that tests the image of the one pass alone.
 
-The build of the one pass, `..._triclinic_pass`, is written by hand in each
+The build of the one pass, `..._triclinic_pass`, is written by hand in the host
 template. The build of all images is that function with the test of a
 candidate replaced: a candidate whose image of the pass is beyond the reach
 is tested at the others. It is a function of its own, not a branch in the
@@ -16,8 +15,8 @@ the search of the device cost 6% of a build (19,072 particles, RTX 3090).
     generate-matrix-images-template.py [DIRECTORY]
 
 rewrites the part between the lines BEGIN GENERATED and END GENERATED of the
-two templates of the repository, or writes the two files to DIRECTORY, which
-test/Runtime/generated-templates.test compares with them.
+host template, or writes the resulting file to DIRECTORY for
+test/Runtime/generated-templates.test.
 """
 import os
 import sys
@@ -209,82 +208,6 @@ func.func private @mdrt.build_neighbors_matrix_triclinic(
 """,
 }
 
-DEVICE = {
-    "file": "NeighborsMatrixGPU.mlir",
-    "pass": "@mdrt_gpu_build_neighbors_matrix_triclinic_pass",
-    "images": "@mdrt_gpu_build_neighbors_matrix_triclinic_images",
-    "within": "@mdrt_gpu_matrix_image_within",
-    "test_old": """\
-            %near = arith.cmpf olt, %r2, %limit2 : f32
-            %other = arith.cmpi ne, %p32, %q32 : i32
-""",
-    "test_new": """\
-            // A lane whose image of the pass is beyond the reach tests the
-            // other images within the reach, on its own; the ballot below
-            // is of all lanes.
-            %near_pass = arith.cmpf olt, %r2, %limit2 : f32
-            %true_w = arith.constant true
-            %far_pass = arith.xori %near_pass, %true_w : i1
-            %try = arith.andi %far_pass, %in_run : i1
-            %near = scf.if %try -> (i1) {
-              %near_image = func.call @mdrt_gpu_matrix_image_within(
-                  """ + ARGUMENTS.format(" " * 18) + """\
-              scf.yield %near_image : i1
-            } else {
-              scf.yield %near_pass : i1
-            }
-            %other = arith.cmpi ne, %p32, %q32 : i32
-""",
-    "doc": """\
-// The neighbor matrix of a triclinic cell on a device where the reach may
-// be more than half of the least of a_x, b_y, c_z: the build of
-// @mdrt_gpu_build_neighbors_matrix_triclinic_pass with the test of a
-// candidate at every image within the reach, as on the host.
-""",
-    "dispatch": """\
-// The neighbor matrix of a triclinic cell on a device (docs/triclinic.md,
-// Section 2): a row holds a particle once if any of its images is within
-// `reach`, as @mdrt.build_neighbors_matrix_triclinic of the host has it.
-// Where the reach is at most 0.49 of the least of a_x, b_y, c_z the build
-// tests the image of the one pass alone, the kernels of before; in a
-// narrower cell, the others within the reach as well.
-func.func private @mdrt_gpu_build_neighbors_matrix_triclinic(
-    %x: memref<?x3xf64, 1>, %box: vector<6xf64>, %widths: vector<3xf64>,
-    %reach: f64, %cell_width: f64, %excluded: memref<?xi32, 1>,
-    %counts: memref<?xi32, 1>, %index: memref<?x?xi32, 1>,
-    %order: memref<?xi32, 1>) -> (index, index) {
-  %lx = vector.extract %box[0] : f64 from vector<6xf64>
-  %ly = vector.extract %box[1] : f64 from vector<6xf64>
-  %lz = vector.extract %box[2] : f64 from vector<6xf64>
-  %least_xy = arith.minimumf %lx, %ly : f64
-  %least = arith.minimumf %least_xy, %lz : f64
-  %part = arith.constant 0.49 : f64
-  %bound = arith.mulf %least, %part : f64
-  %within = arith.cmpf ole, %reach, %bound : f64
-  %largest, %not_numbers = scf.if %within -> (index, index) {
-    %one, %one_not = func.call @mdrt_gpu_build_neighbors_matrix_triclinic_pass(
-        %x, %box, %widths, %reach, %cell_width, %excluded, %counts, %index,
-        %order)
-        : (memref<?x3xf64, 1>, vector<6xf64>, vector<3xf64>, f64, f64,
-           memref<?xi32, 1>, memref<?xi32, 1>, memref<?x?xi32, 1>,
-           memref<?xi32, 1>) -> (index, index)
-    scf.yield %one, %one_not : index, index
-  } else {
-    %all, %all_not = func.call @mdrt_gpu_build_neighbors_matrix_triclinic_images(
-        %x, %box, %widths, %reach, %cell_width, %excluded, %counts, %index,
-        %order)
-        : (memref<?x3xf64, 1>, vector<6xf64>, vector<3xf64>, f64, f64,
-           memref<?xi32, 1>, memref<?xi32, 1>, memref<?x?xi32, 1>,
-           memref<?xi32, 1>) -> (index, index)
-    scf.yield %all, %all_not : index, index
-  }
-  return %largest, %not_numbers : index, index
-}
-
-""",
-}
-
-
 def replace_once(text, old, new):
     assert text.count(old) == 1, old
     return text.replace(old, new)
@@ -309,11 +232,10 @@ def main():
     here = os.path.dirname(os.path.abspath(__file__))
     templates = os.path.join(here, "..", "lib", "Runtime", "Templates")
     target = sys.argv[1] if len(sys.argv) > 1 else templates
-    for spec in (HOST, DEVICE):
-        with open(os.path.join(templates, spec["file"])) as file:
-            text = file.read()
-        with open(os.path.join(target, spec["file"]), "w") as file:
-            file.write(generate(text, spec))
+    with open(os.path.join(templates, HOST["file"])) as file:
+        text = file.read()
+    with open(os.path.join(target, HOST["file"]), "w") as file:
+        file.write(generate(text, HOST))
 
 
 if __name__ == "__main__":
