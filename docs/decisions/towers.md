@@ -165,5 +165,16 @@ bits of its mask records across the block. A record-capacity retry divides
 the target stripe before any force is committed for that tile. A checked
 direct entry counts failed narrow conversions, validates the final endpoints
 and replays the whole frame into two-limb sums if necessary.
-The consumer receives a force only after every atom passes. Exclusions,
-other outputs and driver integration follow this direct-only stage.
+The consumer receives a force only after every atom passes. The rectangular
+force now cancels excluded direct pairs and their conversion votes, adds
+the physical correction and skips the excluded direct terms on wide replay.
+
+`[execution] towers_shape` accepts `"AUTO"` or an inline table. A pin can
+supply `threads`, `blocks_per_sm`, `stripe`, `panel`, `records`, `split`
+and `cell_height`. Preflight derives omitted tile dimensions for a given
+height. It reports the control and AUTO fields and checks device memory
+limits. The 4n direct defaults take a chosen geometry and panel specialization
+as input. Choosing between two feasible heights before the timed selector,
+the register diagnostic for the compiled pair region, and geometry-independent
+physical words remain open. Energy, virial and driver dispatch follow the
+rectangular force stage.

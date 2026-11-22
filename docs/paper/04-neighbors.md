@@ -1359,5 +1359,12 @@ pair goes directly to the two-limb sum. The CPU enumerates owned spans.
 The result fits signed 64-bit output exactly when its high limb equals
 the sign extension of its low limb. A final publication pass ensures that
 an invalid contribution or endpoint preserves the preceding destination
-for every atom. This stage certifies the blind direct force. Molecular
-force evaluation also requires the topology's exclusions and corrections.
+for every atom. For an excluded pair the replay adds the negatives of the original
+quantized words and subtracts its failed-conversion indicator. The strict
+predicate, endpoint orientation, coefficient expression and rounding agree
+with the blind traversal. The net count therefore counts only failed
+surviving direct conversions and failed physical corrections. Each unique
+excluded pair replaces one direct interaction with at most one physical
+correction per endpoint. The same final-sum bound applies. Wide recovery
+omits the excluded direct evaluation and includes the physical correction
+at every distance.

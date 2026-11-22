@@ -87,7 +87,7 @@ entry additionally writes eight phase durations in cycles per tower, wall
 time in nanoseconds, the final cycle timestamp and the number of tile attempts.
 
 The internal `certify-force` pass option emits a checked rectangular force
-sequence. Use it for the direct stage before topology corrections. Zero the
+sequence. Zero the
 provisional force words, both 32-bit state words and a signed 64-bit failed-pair
 counter at the start of each evaluation. Pass the counter immediately after
 the force scale. For the same geometry, packing, parameters and table, issue
@@ -108,6 +108,33 @@ reports fatal errors. Bit 0 means an unrepresentable physical component, bit 1
 invalid geometry or scale, and bit 2 an unrepresentable final sum. A fatal
 error preserves the destination. The second word records whether this evaluation
 required replay. A successful narrow evaluation leaves wide scratch untouched.
+
+The `exclusions` pass argument specializes the number of unique excluded
+pairs. With a nonzero count the named function contains two pair regions
+with matching per-atom inputs. The second supplies the physical correction,
+including outside the direct cutoff. After the failed-pair counter, pass the
+lexicographically sorted permanent-ID pairs (smaller ID first), the rebuilt
+atom-to-slot map, the three planes of binary64 input positions and the three
+box lengths. Captured parameters follow the per-atom inputs. Keep the frame,
+maps and topology fixed through publication.
+
+The force grid has one or two source splits per tower (`force-split`),
+followed by enough blocks for one thread per excluded pair. These threads
+orient the endpoints in the same image and use the original direct region
+to subtract its provisional words and conversion vote. They add the
+independently quantized correction. Wide recovery tests membership before
+evaluating a direct pair, so even a canceled term too large for signed
+64-bit conversion cannot invalidate the physical result.
+
+On the GPU, a single block of `towers_recover_once` can replace the clear,
+recover and check launches. Its arguments and shared record reservation
+match `towers_recover`. It reads the replay word on the device. On failure
+it visits the whole grid with one block, including all physical corrections.
+The multi-block sequence remains available for parallel wide recovery.
+
+The control-file shape for preflight is `[execution] towers_shape`. The
+fields and the current geometry qualification are in
+[Appendix A](paper/A-control-file.md).
 
 ### 2.1 Steps
 
