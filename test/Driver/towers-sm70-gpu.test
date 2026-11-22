@@ -1,0 +1,11 @@
+# REQUIRES: cuda
+# RUN: rm -rf %t && mkdir %t
+# RUN: cc -shared -fPIC -I"$CUDA_ROOT/include" %S/Inputs/towers_sm70.c -o %t/libcuda.so.1
+# RUN: cp %S/../../examples/argon/argon.pdb %t
+# RUN: sed -e 's/"CPU"/"GPU"/' -e 's/"DOUBLE"/"MIXED"/' %S/../../examples/argon/argon.toml > %t/auto.toml
+# RUN: cp %t/auto.toml %t/towers.toml
+# RUN: echo 'neighbor_structure = "TOWERS"' >> %t/towers.toml
+# RUN: not env LD_LIBRARY_PATH=%t:$LD_LIBRARY_PATH mdir check --json %t/towers.toml | FileCheck %s --check-prefix=REFUSE
+# RUN: env LD_LIBRARY_PATH=%t:$LD_LIBRARY_PATH mdir check --json %t/auto.toml | FileCheck %s --check-prefix=AUTO
+# REFUSE: TOWERS requires mma.sync m16n8k8 f16 (sm_75 or newer)
+# AUTO: "structure": "{{(matrix|groups|MATRIX|GROUPS)}}"

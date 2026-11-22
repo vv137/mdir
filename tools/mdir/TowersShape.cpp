@@ -51,6 +51,14 @@ llvm::Expected<std::optional<Limits>> deviceLimits() {
     const char *ordinal = std::getenv("MDRT_DEVICE");
     if (init && get && attr && init(0) == CUDA_SUCCESS &&
         get(&device, ordinal ? std::atoi(ordinal) : 0) == CUDA_SUCCESS) {
+      int major, minor;
+      if (attr(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device) !=
+              CUDA_SUCCESS ||
+          attr(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device) !=
+              CUDA_SUCCESS)
+        return refusal("could not query CUDA compute capability");
+      if (major < 7 || (major == 7 && minor < 5))
+        return refusal("TOWERS requires mma.sync m16n8k8 f16 (sm_75 or newer)");
       Limits l{};
       for (auto [field, key] :
            {std::pair{&l.blockBytes,
