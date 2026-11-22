@@ -152,7 +152,7 @@ llvm::Expected<Object> checkRegisters(int device, const TowersShape &shape,
 using Cell = std::array<int, 3>;
 struct FrameSpans {
   int64_t column = 1, plate = 1;
-  int capacity = 256;
+  int capacity = 32;
 };
 
 llvm::Expected<FrameSpans> measureSpans(const System &system, double cutoff,
@@ -199,6 +199,7 @@ llvm::Expected<FrameSpans> measureSpans(const System &system, double cutoff,
     maximum.column = std::max(maximum.column, entry.second[0]);
     maximum.plate = std::max(maximum.plate, entry.second[1]);
   }
+  maximum.capacity = llvm::alignTo(maximum.capacity, 8);
   return maximum;
 }
 

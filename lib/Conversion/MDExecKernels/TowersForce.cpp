@@ -1503,81 +1503,48 @@ void Force::traversal(Value block) {
   int columns = 1 + 2 * g.reach;
   Values starts, counts;
   Value ns, nt, lower, begin, end;
-  auto readStencil = [&](bool streaming) {
-    starts.clear();
-    counts.clear();
-    for (int field = 0; field < columns + 4; ++field) {
-      Value at = addi(muli(owner, cx(columns + 4)), cx(field));
-      Value ptr =
-          pointerTo(baseAddress(descriptors), muli(indexCast(i64, at), cl(8)));
-      auto type = VectorType::get({2}, i32);
-      // On a rare retry reread the stencil so the fast tile need not keep
-      // descriptor addresses and counts live across all of its barriers.
-      auto span = LLVM::LoadOp::create(b, loc, type, ptr, 4, streaming);
-      starts.push_back(indexCast(index, extract(span, 0)));
-      counts.push_back(indexCast(index, extract(span, 1)));
-    }
-    ns = cx(0);
-    nt = counts[0];
-    for (int i = 0; i < columns; ++i) {
-      ns = addi(ns, counts[i]);
-      if (i == g.reach)
-        lower = ns;
-    }
-    begin = divui(muli(ns, part), cx(split));
-    end = divui(muli(ns, addi(part, cx(1))), cx(split));
-    ns = subi(end, begin);
-    for (int i = columns; i < columns + 4; ++i)
-      nt = addi(nt, counts[i]);
-  };
-  readStencil(false);
-  // A tower that fits in one panel and stripe needs no live loop state.
-  // On record overflow visitTile has written no forces and synchronized the
-  // block, so the streaming path may restart the entire tower.
-  Value oneTile = andi(cmpi(CmpIPredicate::ule, ns, cx(panel)),
-                       cmpi(CmpIPredicate::ule, nt, cx(stripe)));
-  Value complete = ifElse(
-      {i1}, oneTile,
-      [&] {
-        Value nonempty = andi(cmpi(CmpIPredicate::ne, ns, cx(0)),
-                              cmpi(CmpIPredicate::ne, nt, cx(0)));
-        return Values{ifElse(
-            {i1}, nonempty,
-            [&] {
-              stage(starts, counts, begin, ns, true);
-              stage(starts, counts, cx(0), nt, false);
-              return Values{
-                  visitTile(ns, nt, begin, cx(0), counts[0], lower, cb(true))};
-            },
-            [&] { return Values{cb(true)}; })[0]};
+  for (int field = 0; field < columns + 4; ++field) {
+    Value at = addi(muli(owner, cx(columns + 4)), cx(field));
+    Value ptr =
+        pointerTo(baseAddress(descriptors), muli(indexCast(i64, at), cl(8)));
+    auto type = VectorType::get({2}, i32);
+    auto span = LLVM::LoadOp::create(b, loc, type, ptr, 4);
+    starts.push_back(indexCast(index, extract(span, 0)));
+    counts.push_back(indexCast(index, extract(span, 1)));
+  }
+  ns = cx(0);
+  nt = counts[0];
+  for (int i = 0; i < columns; ++i) {
+    ns = addi(ns, counts[i]);
+    if (i == g.reach)
+      lower = ns;
+  }
+  begin = divui(muli(ns, part), cx(split));
+  end = divui(muli(ns, addi(part, cx(1))), cx(split));
+  for (int i = columns; i < columns + 4; ++i)
+    nt = addi(nt, counts[i]);
+  // Keep a single compiled copy of the pair body for both single and
+  // multi-tile towers. Advance the source panel only after its last stripe.
+  whileLoop(
+      {index, index, index}, {begin, cx(0), cx(stripe)},
+      [&](ValueRange x) {
+        return std::make_pair(andi(cmpi(CmpIPredicate::ult, x[0], end),
+                                    cmpi(CmpIPredicate::ult, x[1], nt)), Values(x));
       },
-      [&] { return Values{cb(false)}; })[0];
-  ifThen(notNarrow(complete), [&] {
-    readStencil(true);
-    forLoop(begin, end, cx(panel), {}, [&](Value sb, ValueRange) {
-      Value sc = minui(cx(panel), subi(end, sb));
-      whileLoop(
-          {index, index}, {cx(0), cx(stripe)},
-          [&](ValueRange x) {
-            return std::make_pair(cmpi(CmpIPredicate::ult, x[0], nt),
-                                  Values(x));
-          },
-          [&](ValueRange x) {
-            Value tb = x[0], tc = minui(x[1], subi(nt, tb));
-            // The preceding stripe may have reused the source features for
-            // sums.
-            stage(starts, counts, sb, sc, true);
-            stage(starts, counts, tb, tc, false);
-            Value last = andi(cmpi(CmpIPredicate::eq, addi(sb, sc), end),
-                              cmpi(CmpIPredicate::eq, addi(tb, tc), nt));
-            Value fits = visitTile(sc, tc, sb, tb, counts[0], lower, last);
-            return Values{
-                select(fits, addi(tb, tc), tb),
-                select(fits, cx(stripe), divui(addi(tc, cx(1)), cx(2)))};
-          });
-      return Values{};
-    });
-  });
+      [&](ValueRange x) {
+        Value sb = x[0], tb = x[1];
+        Value sc = minui(cx(panel), subi(end, sb)), tc = minui(x[2], subi(nt, tb));
+        Value nextSource = addi(sb, sc), nextTarget = addi(tb, tc);
+        Value lastStripe = cmpi(CmpIPredicate::eq, nextTarget, nt);
+        Value last = andi(lastStripe, cmpi(CmpIPredicate::eq, nextSource, end));
+        stage(starts, counts, sb, sc, true);
+        stage(starts, counts, tb, tc, false);
+        Value fits = visitTile(sc, tc, sb, tb, counts[0], lower, last);
+        Value advance = andi(fits, lastStripe);
+        return Values{select(advance, nextSource, sb),
+                      select(advance, cx(0), select(fits, nextTarget, tb)),
+                      select(fits, cx(stripe), divui(addi(tc, cx(1)), cx(2)))};
+      });
 }
 
 void Force::bind(ValueRange args) {
