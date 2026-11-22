@@ -53,6 +53,10 @@ private:
   bool packedChargeType, certified, probe;
   bool recovering = false;
   Value failedConversions, highWords, localVotes;
+  bool shortVote() const {
+    // A warp's subtotal fits whenever the whole tile's Cartesian product does.
+    return g.capacity <= INT_MAX / (5 * (2 * g.reach + 1)) / g.capacity;
+  }
   void flag(Value state, int slot, int bits);
   void addWide(Value atom, Value axis, Value word, bool negative);
   void ownedPairs(Value owner);
@@ -174,8 +178,23 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
           inside.map(body.getArgument(3 + 2 * i),
                      param ? load(param, {si}) : extract(s, 3));
         }
-        for (auto &op : body.without_terminator())
-          b.clone(op, inside);
+        for (auto &op : body.without_terminator()) {
+          auto div = dyn_cast<arith::DivFOp>(op);
+          if (!g.host && div && div.getType() == f32 &&
+              arith::bitEnumContainsAny(div.getFastmath(),
+                                        arith::FastMathFlags::arcp) &&
+              matchPattern(div.getLhs(), m_OneFloat())) {
+            Value r = LLVM::InlineAsmOp::create(
+                          b, loc, TypeRange{f32},
+                          ValueRange{inside.lookup(div.getRhs())},
+                          "rcp.approx.f32 $0,$1;", "=f,f", false, false,
+                          LLVM::TailCallKind::None, LLVM::AsmDialectAttr(),
+                          ArrayAttr())
+                          .getResult(0);
+            inside.map(div.getResult(), r);
+          } else
+            b.clone(op, inside);
+        }
         Value f = inside.lookup(body.getTerminator()->getOperand(0));
         Values scaled;
         Value narrow = cb(true);
@@ -215,7 +234,8 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
             store(addi(load(failedConversions, {cx(0)}), vote),
                   failedConversions, {cx(0)});
           else
-            store(addi(load(localVotes, {}), vote), localVotes, {});
+            store(addi(load(localVotes, {}), shortVote() ? trunci(vote) : vote),
+                  localVotes, {});
           return Values(3, g.host ? cl(0) : ci(0));
         };
         if (g.host) {
@@ -401,10 +421,12 @@ void Force::exclusion(Value row) {
     return pair(t, s, packedChargeType ? ts : ti, packedChargeType ? ss : si,
                 {}, physical);
   };
+  // The common radial arithmetic of the unconditional correction dominates
+  // the cutoff branch, allowing CSE with the cloned direct pair region.
+  Values corrected = eval(true);
   Values direct;
   if (!recovering)
     direct = eval(false);
-  Values corrected = eval(true);
   for (int axis = 0; axis < 3; ++axis) {
     Value word = corrected[axis];
     if (recovering) {
@@ -1289,8 +1311,9 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
     });
   }
   if (certified && !recovering) {
-    localVotes = memref::AllocaOp::create(b, loc, MemRefType::get({}, i64));
-    store(cl(0), localVotes, {});
+    localVotes = memref::AllocaOp::create(
+        b, loc, MemRefType::get({}, shortVote() ? i32 : i64));
+    store(shortVote() ? ci(0) : cl(0), localVotes, {});
   }
   auto evaluate = [&] {
     auto tower = [&] {
@@ -1353,6 +1376,17 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
     withValidGeometry(evaluate);
   if (certified && !recovering) {
     Value count = load(localVotes, {});
+    if (shortVote()) {
+      Value sum =
+          LLVM::InlineAsmOp::create(
+              b, loc, TypeRange{i32}, ValueRange{count},
+              "redux.sync.add.s32 $0,$1,0xffffffff;", "=r,r", false, false,
+              LLVM::TailCallKind::None, LLVM::AsmDialectAttr(), ArrayAttr())
+              .getResult(0);
+      count = arith::ExtSIOp::create(
+          b, loc, i64,
+          select(cmpi(CmpIPredicate::eq, lane, ci(0)), sum, ci(0)));
+    }
     ifThen(cmpi(CmpIPredicate::ne, count, cl(0)), [&] {
       atomic(LLVM::AtomicBinOp::add,
              pointerTo(baseAddress(failedConversions), cl(0)), count);
