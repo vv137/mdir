@@ -1,0 +1,13 @@
+# scripts/paper/build-references.py regenerates the citations and the list
+# of references of the paper without a change: every citation of the paper
+# has the form [[Key]](references.md#key), and docs/paper/references.md is
+# the script's output for docs/references.md. A citation that linked to the
+# repository's list, [[Key]](../references.md#key), took a second link from
+# the script (#796).
+#
+# RUN: rm -rf %t && mkdir -p %t/docs
+# RUN: cp %S/../../docs/references.md %t/docs/
+# RUN: cp -r %S/../../docs/paper %t/docs/
+# RUN: %python %S/../../scripts/paper/build-references.py %t/docs/paper | FileCheck %s
+# CHECK: entries cited; written to
+# RUN: diff -r %S/../../docs/paper %t/docs/paper
