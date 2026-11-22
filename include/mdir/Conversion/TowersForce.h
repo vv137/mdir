@@ -14,8 +14,7 @@ struct TowersForceShape {
   unsigned yieldIndex = 0;
   bool indexedExclusions = false;
   int virialYield = -1;
-  bool packedDispatch = false;
-  bool finishForce = false;
+  bool movingDispatch = false;
   mlir::Type cartesianPositions = {};
 };
 

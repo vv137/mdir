@@ -39,7 +39,7 @@ def frames(directory, fused):
     for step in range(4):
         frame.box[:] = [6 + 3 * step / 16] * 3
         xyz = [
-            tuple(((i * (a + 3) + step * (i % 7 - 3)) % 80) / 64
+            tuple((1.5, -0.5, 0.0)[a] + ((i * (a + 3) + step * (i % 7 - 3)) % 80) / 64
                   for a in range(3))
             for i in range(n)
         ]

@@ -29,10 +29,20 @@ struct TowersLayout {
   int cells() const { return nx * ny * nz; }
 };
 
-void emitTowersSetupRow(mlir::OpBuilder &builder, mlir::Location loc, TowersLayout layout,
-                        mlir::Value cell, mlir::ValueRange args, bool setupGeometry = true);
-void emitTowersInsertRow(mlir::OpBuilder &builder, mlir::Location loc, TowersLayout layout, mlir::Value atom, mlir::ValueRange args, mlir::ValueRange lattice, mlir::ValueRange binsInfo, mlir::ValueRange xyzq);
-void emitTowersGeometry(mlir::OpBuilder &builder, mlir::Location loc, TowersLayout layout, mlir::Value box, mlir::Value status, mlir::Value info);
+/// The moving producer initializes membership and the fixed stencil once.
+void emitTowersInitRow(mlir::OpBuilder &builder, mlir::Location loc,
+                       TowersLayout layout, mlir::Value cell, mlir::Value map,
+                       mlir::Value counts);
+/// Insert one current position and charge. Each axis supplies its length,
+/// bin width and reciprocal quarter-bin width.
+void emitTowersInsertRow(mlir::OpBuilder &builder, mlir::Location loc,
+                         TowersLayout layout, mlir::Value atom,
+                         mlir::ValueRange xyzq, mlir::ValueRange binGeometry,
+                         mlir::ValueRange lattice, mlir::Value counts,
+                         mlir::Value keys, mlir::Value local);
+void emitTowersGeometry(mlir::OpBuilder &builder, mlir::Location loc,
+                        TowersLayout layout, mlir::Value box,
+                        mlir::Value status, mlir::Value info);
 
 /// Emit a serial loop or one GPU work item per element of a TOWERS phase.
 void emitTowersEntry(

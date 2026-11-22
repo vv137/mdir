@@ -238,8 +238,9 @@ traversal recomputes the force and barostat pressure state at the restored
 positions. A restart from positions alone resolves the new control normally.
 Preflight compiles the mixed pair specialization when the toolchain and
 device are available. Setup checks the compiled register count and occupancy
-before the first step. As in 4n, the production compiler budget targets up to
-two resident blocks. A higher residency pin must fit the compiled kernel.
+before the first step. The compiler budgets registers for three resident blocks in the 256-thread
+force specialization when shared storage fits within 32 KiB per block.
+Other specializations use the selected residency. A higher residency pin must fit the compiled kernel.
 
 
 The triclinic compiler entries take fractional positions and the nine row-major
@@ -256,3 +257,9 @@ forward traversal.
 TOWERS uses the D159 mixed-precision cutoff for every direct pair region,
 including Amber Lennard-Jones and electrostatics. The floating-point direct
 virial still requires its own bitwise qualification for deterministic runs.
+
+Moving rectangular grids with at most one cell per atom stage and insert in
+one launch and pack in a second. The packed slots carry particle fields.
+Ordinary steps certify and publish component-plane force words in one
+cooperative launch. On pressure steps the force traversal also accumulates
+the physical binary64 virial. Energy retains its own traversal.

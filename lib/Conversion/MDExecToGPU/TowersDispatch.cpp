@@ -67,18 +67,22 @@ struct Dispatch {
         shared ? Value(arith::ConstantIntOp::create(b, loc, shared, 32))
                : Value{};
     Value blocks = idx(llvm::divideCeil(items, int64_t(block)));
-    bool cooperative = name == "towers_recover_once";
+    bool cooperative = name == "towers_finish";
     if (cooperative) {
       StringRef query = "mdrtCooperativeGridSize";
       if (!module.lookupSymbol(query)) {
         OpBuilder top = OpBuilder::atBlockBegin(module.getBody());
-        func::FuncOp::create(top, loc, query, top.getFunctionType({b.getIndexType()}, {b.getIndexType()})).setPrivate();
+        func::FuncOp::create(
+            top, loc, query,
+            top.getFunctionType({b.getIndexType()}, {b.getIndexType()}))
+            .setPrivate();
       }
-      blocks = func::CallOp::create(b, loc, query, TypeRange{b.getIndexType()}, ValueRange{blocks}).getResult(0);
+      blocks = func::CallOp::create(b, loc, query, TypeRange{b.getIndexType()},
+                                    ValueRange{blocks})
+                   .getResult(0);
     }
     auto call = gpu::LaunchFuncOp::create(
-        b, loc, kernel,
-        gpu::KernelDim3{blocks, one, one},
+        b, loc, kernel, gpu::KernelDim3{blocks, one, one},
         gpu::KernelDim3{idx(block), one, one}, dynamic, args);
     call.setCooperative(cooperative);
   }
@@ -96,13 +100,15 @@ struct Dispatch {
   }
   void allocate() {
     int n = g.atoms, c = g.cells(), f = 5 + 2 * g.reach;
-    raw = buffer("coordinates", mem({3, n}, dbl));
+    if (!shape.cartesianPositions)
+      raw = buffer("coordinates", mem({3, n}, dbl));
     box = buffer("box", mem({g.boxSize()}, dbl));
     geometry = buffer("geometry", mem({3, g.rawColumns()}, dbl));
     counts = buffer("counts", mem({g.countWords()}, narrow));
     map = buffer("map", mem({c, f}, narrow));
     spans = buffer("spans", mem({c, f, 2}, narrow));
-    charge = buffer("charge", mem({n}, real));
+    if (g.cells() > g.atoms)
+      charge = buffer("charge", mem({n}, real));
     types = buffer("types", mem({n}, narrow));
     keys = buffer("keys", mem({g.keyWords()}, narrow));
     auto v4 = VectorType::get({4}, real);
@@ -114,7 +120,7 @@ struct Dispatch {
     status = buffer("rebuild status", mem({1}, narrow));
   }
   LogicalResult inputs(Value positions) {
-    for (auto [i, field] : llvm::enumerate(op.getIns())) {
+    for (Value field : op.getIns()) {
       auto type = cast<MemRefType>(field.getType());
       if (type.getRank() != 1)
         return op.emitError("unsupported TOWERS per-atom field");
@@ -174,28 +180,35 @@ struct Dispatch {
         edges.getDefiningOp()->setAttr("mdir.initialized", init.getUnitAttr());
       }
     }
-    if (g.cells() <= g.atoms && !counts.getDefiningOp()->hasAttr("mdir.initialized")) {
+    if (g.cells() <= g.atoms &&
+        !counts.getDefiningOp()->hasAttr("mdir.initialized")) {
       OpBuilder init(counts.getDefiningOp());
       init.setInsertionPointAfter(counts.getDefiningOp());
       if (counts.getDefiningOp()->isBeforeInBlock(map.getDefiningOp()))
         init.setInsertionPointAfter(map.getDefiningOp());
-      rows(init, loc, createIndex(init, loc, g.cells()), [&](OpBuilder &k, Value i) {
-        emitTowersSetupRow(k, loc, g, i, {map, counts}, false);
-      });
-      counts.getDefiningOp()->setAttr("mdir.initialized",init.getUnitAttr());
+      rows(init, loc, createIndex(init, loc, g.cells()),
+           [&](OpBuilder &k, Value i) {
+             emitTowersInitRow(k, loc, g, i, map, counts);
+           });
+      counts.getDefiningOp()->setAttr("mdir.initialized", init.getUnitAttr());
     }
     auto cell = op.getCellMutable().get();
     SmallVector<Value> binsInfo;
     if (g.cells() <= g.atoms) {
       for (auto [a, bins] : llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
-        Value length = g.triclinic ? createReal(b, loc, dbl, 1) : vector::ExtractOp::create(b, loc, cell, a).getResult();
-        Value width = arith::DivFOp::create(b, loc, length, createReal(b,loc,dbl,bins));
+        Value length =
+            g.triclinic
+                ? createReal(b, loc, dbl, 1)
+                : vector::ExtractOp::create(b, loc, cell, a).getResult();
+        Value width = arith::DivFOp::create(b, loc, length,
+                                            createReal(b, loc, dbl, bins));
+        binsInfo.push_back(length);
         binsInfo.push_back(width);
-        binsInfo.push_back(arith::DivFOp::create(b,loc,createReal(b,loc,dbl,4),width));
+        binsInfo.push_back(
+            arith::DivFOp::create(b, loc, createReal(b, loc, dbl, 4), width));
       }
       if (!g.triclinic) {
         raw = positions;
-        shape.cartesianPositions = positions.getType();
       }
     }
     Value initialWords, initialState, initialFailed, arrivals;
@@ -209,14 +222,22 @@ struct Dispatch {
       auto axis = [&](int a) { return createIndex(k, loc, a); };
       if (initialWords) {
         for (int axisIndex = 0; axisIndex < 3; ++axisIndex)
-          memref::StoreOp::create(k, loc, createZero(k, loc, wide), initialWords, ValueRange{i, axis(axisIndex)});
-        scf::IfOp::create(k, loc, arith::CmpIOp::create(k, loc, arith::CmpIPredicate::eq, i, axis(0)), [&](OpBuilder &at, Location l) {
-          Value zero = createIndex(at, l, 0);
-          for (auto [dest, slot] : {std::pair{initialState, 0}, std::pair{initialState, 1}, std::pair{arrivals, 0}})
-            memref::StoreOp::create(at, l, createZero(at, l, narrow), dest, ValueRange{createIndex(at, l, slot)});
-          memref::StoreOp::create(at, l, createZero(at, l, wide), initialFailed, ValueRange{zero});
-          scf::YieldOp::create(at, l);
-        });
+          memref::StoreOp::create(k, loc, createZero(k, loc, wide),
+                                  initialWords, ValueRange{i, axis(axisIndex)});
+        scf::IfOp::create(
+            k, loc,
+            arith::CmpIOp::create(k, loc, arith::CmpIPredicate::eq, i, axis(0)),
+            [&](OpBuilder &at, Location l) {
+              Value zero = createIndex(at, l, 0);
+              for (auto [dest, slot] :
+                   {std::pair{initialState, 0}, std::pair{initialState, 1},
+                    std::pair{arrivals, 0}})
+                memref::StoreOp::create(at, l, createZero(at, l, narrow), dest,
+                                        ValueRange{createIndex(at, l, slot)});
+              memref::StoreOp::create(at, l, createZero(at, l, wide),
+                                      initialFailed, ValueRange{zero});
+              scf::YieldOp::create(at, l);
+            });
       }
       SmallVector<Value> xyz, lattice;
       for (int a = 0; a < 3; ++a)
@@ -259,13 +280,17 @@ struct Dispatch {
         if (!typeValue && v.getType() == narrow)
           typeValue = v;
       }
-      if (!chargeValue) chargeValue = createZero(k, loc, real);
-      if (g.cells() > g.atoms) memref::StoreOp::create(k, loc, chargeValue, charge, ValueRange{i});
-      memref::StoreOp::create(k, loc, typeValue ? typeValue : createZero(k, loc, narrow), types, ValueRange{i});
+      if (!chargeValue)
+        chargeValue = createZero(k, loc, real);
+      if (g.cells() > g.atoms)
+        memref::StoreOp::create(k, loc, chargeValue, charge, ValueRange{i});
+      memref::StoreOp::create(
+          k, loc, typeValue ? typeValue : createZero(k, loc, narrow), types,
+          ValueRange{i});
       if (g.cells() <= g.atoms) {
-        Value forward = arith::ConstantIntOp::create(k, loc, 0, 32);
         xyz.push_back(chargeValue);
-        emitTowersInsertRow(k, loc, g, i, {raw, charge, geometry, counts, keys, local, forward}, lattice, binsInfo, xyz);
+        emitTowersInsertRow(k, loc, g, i, xyz, binsInfo, lattice, counts, keys,
+                            local);
       }
     });
     return success();
@@ -288,12 +313,14 @@ struct Dispatch {
 } // namespace
 
 LogicalResult Dispatch::run(Value positions) {
-  shape.packedDispatch = true;
-  shape.finishForce = true;
+  shape.movingDispatch = true;
+  if (!g.triclinic && g.cells() <= g.atoms)
+    shape.cartesianPositions = positions.getType();
   allocate();
-  if (!module.lookupSymbol("__nv_fmod")) {
+  if (g.cells() <= g.atoms && !module.lookupSymbol("__nv_fmod")) {
     OpBuilder top = OpBuilder::atBlockBegin(module.getBody());
-    LLVM::LLVMFuncOp::create(top, loc, "__nv_fmod", LLVM::LLVMFunctionType::get(dbl, {dbl, dbl}));
+    LLVM::LLVMFuncOp::create(top, loc, "__nv_fmod",
+                             LLVM::LLVMFunctionType::get(dbl, {dbl, dbl}));
   }
   if (failed(inputs(positions)))
     return failure();
@@ -375,11 +402,11 @@ LogicalResult Dispatch::run(Value positions) {
     if (i == 0) {
       if (g.cells() > g.atoms)
         launch("towers_setup", g.cells(), 128,
-             {map, counts, status, box, geometry});
+               {map, counts, status, box, geometry});
       Value forward = arith::ConstantIntOp::create(b, loc, 0, 32);
       if (g.cells() > g.atoms)
         launch("towers_insert", n, 128,
-             {raw, charge, geometry, counts, keys, local, forward});
+               {raw, charge, geometry, counts, keys, local, forward});
       launch("towers_pack", 32LL * g.cells(), 128,
              {counts, keys, local, types, map, packed, packedTypes, ids,
               inverse, spans, status});
@@ -414,16 +441,17 @@ LogicalResult Dispatch::run(Value positions) {
                      llvm::divideCeil(shape.exclusions, shape.workers);
     int shared = 8 * shape.records;
     if (force && shape.virialYield >= 0) {
-      bool full = components(op.getResult(shape.virialYield - 1).getType()) == 9;
+      bool full =
+          components(op.getResult(shape.virialYield - 1).getType()) == 9;
       fusedVirial = buffer("fused virial", mem({full ? 9 : 6}, dbl));
       fill(fusedVirial, dbl);
       args.push_back(fusedVirial);
     }
     if (!reusedVirial)
       launch(force    ? (fusedVirial ? "towers_force_virial" : "towers_force")
-           : energy ? "towers_energy"
-                    : "towers_virial",
-           blocks * shape.workers, shape.workers, args, shared);
+             : energy ? "towers_energy"
+                      : "towers_virial",
+             blocks * shape.workers, shape.workers, args, shared);
     Value result;
     if (force) {
       if (fusedVirial)
@@ -434,12 +462,13 @@ LogicalResult Dispatch::run(Value positions) {
       args.push_back(hi);
       args.push_back(words);
       Value arrivals = buffer("certificate arrivals", mem({1}, narrow));
-      if (i != 0) fill(arrivals, narrow);
+      if (i != 0)
+        fill(arrivals, narrow);
       args.push_back(arrivals);
       if (op.getNumResults())
         finishedForce = buffer("published force", forceType);
       args.push_back(finishedForce ? finishedForce : op.getOuts().front());
-      launch("towers_recover_once", n, shape.workers, args, shared);
+      launch("towers_finish", n, shape.workers, args, shared);
       continue;
     } else if (energy) {
       launch("towers_certify_energy", 1, 1, {words, failedConversions, state});

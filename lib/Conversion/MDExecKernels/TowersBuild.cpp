@@ -35,9 +35,10 @@ public:
   }
 
   void emit(bool audit);
-  void setup(Value cell, ValueRange a, bool setupGeometry = true);
+  void initializeCell(Value cell, Value map, Value counts);
   void geometry(Value box, Value status, Value info);
-  void insert(Value item, ValueRange a, ValueRange lattice = {}, ValueRange binsInfo = {}, ValueRange xyzq = {});
+  void insert(Value item, Value atom, ValueRange xyzq, ValueRange binGeometry,
+              ValueRange lattice, Value counts, Value keys, Value local);
 
 private:
   using Offset = std::array<int, 3>;
@@ -202,71 +203,63 @@ void TowersBuild::sortWarp(Value keys, Value base, Value lane, Value count,
 }
 
 void TowersBuild::geometry(Value box, Value status, Value info) {
-    store(ci(0), status, {cx(0)});
-    for (auto [axis, bins] :
-         llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
-      Value length = g.triclinic ? cd(1) : load(box, {cx(axis)});
-      if (g.triclinic) {
-        auto basis = [&](int row, int col) {
-          return load(box, {cx(3 * row + col)});
-        };
-        // The cross product of the other two rows is normal to the
-        // face. Its dot product with this row gives the slab height.
-        Values cross;
-        Value norm2 = cd(0);
-        int next = (axis + 1) % 3, last = (axis + 2) % 3;
-        for (int k = 0; k < 3; ++k) {
-          int u = (k + 1) % 3, v = (k + 2) % 3;
-          Value c = subf(mulf(basis(next, u), basis(last, v)),
-                         mulf(basis(next, v), basis(last, u)));
-          cross.push_back(c);
-          norm2 = addf(norm2, mulf(c, c));
-        }
-        Value norm = sqrt(norm2), height = cd(0);
-        for (int k = 0; k < 3; ++k) {
-          Value h = basis(axis, k), normal = divf(cross[k], norm);
-          height = addf(height, mulf(h, normal));
-          store(h, info, {cx(axis), cx(TowersLayout::lattice + k)});
-          store(divf(h, cd(bins)), info,
-                {cx(axis), cx(TowersLayout::step + k)});
-          store(normal, info, {cx(axis), cx(TowersLayout::normal + k)});
-        }
-        store(divf(height, cd(bins)), info,
-              {cx(axis), cx(TowersLayout::slab)});
+  store(ci(0), status, {cx(0)});
+  for (auto [axis, bins] : llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
+    Value length = g.triclinic ? cd(1) : load(box, {cx(axis)});
+    if (g.triclinic) {
+      auto basis = [&](int row, int col) {
+        return load(box, {cx(3 * row + col)});
+      };
+      // The cross product of the other two rows is normal to the
+      // face. Its dot product with this row gives the slab height.
+      Values cross;
+      Value norm2 = cd(0);
+      int next = (axis + 1) % 3, last = (axis + 2) % 3;
+      for (int k = 0; k < 3; ++k) {
+        int u = (k + 1) % 3, v = (k + 2) % 3;
+        Value c = subf(mulf(basis(next, u), basis(last, v)),
+                       mulf(basis(next, v), basis(last, u)));
+        cross.push_back(c);
+        norm2 = addf(norm2, mulf(c, c));
       }
-      Value width = divf(length, cd(bins));
-      store(length, info, {cx(axis), cx(0)});
-      store(width, info, {cx(axis), cx(1)});
-      store(divf(cd(4), width), info, {cx(axis), cx(2)});
+      Value norm = sqrt(norm2), height = cd(0);
+      for (int k = 0; k < 3; ++k) {
+        Value h = basis(axis, k), normal = divf(cross[k], norm);
+        height = addf(height, mulf(h, normal));
+        store(h, info, {cx(axis), cx(TowersLayout::lattice + k)});
+        store(divf(h, cd(bins)), info, {cx(axis), cx(TowersLayout::step + k)});
+        store(normal, info, {cx(axis), cx(TowersLayout::normal + k)});
+      }
+      store(divf(height, cd(bins)), info, {cx(axis), cx(TowersLayout::slab)});
     }
-}
-
-void TowersBuild::setup(Value cell, ValueRange a, bool setupGeometry) {
-  store(ci(0), a[1], {cell});
-  if (g.growCells)
-    store(ci(-1), a[1], {addi(cx(g.cells()), cell)});
-  if (setupGeometry)
-    ifThen(cmpi(CmpIPredicate::eq, cell, cx(0)), [&] { geometry(a[3], a[2], a[4]); });
-  for (auto [field, delta] : llvm::enumerate(offsets)) {
-    Offset back{-delta[0], -delta[1], -delta[2]};
-    store(indexCast(i32, neighbor(cell, back)), a[0],
-          {cell, cx(field)});
+    Value width = divf(length, cd(bins));
+    store(length, info, {cx(axis), cx(0)});
+    store(width, info, {cx(axis), cx(1)});
+    store(divf(cd(4), width), info, {cx(axis), cx(2)});
   }
 }
 
-void TowersBuild::insert(Value item, ValueRange a, ValueRange lattice, ValueRange binsInfo, ValueRange xyzq) {
-  int n=g.atoms, cells=g.cells();
-  auto xyzw=VectorType::get({4},f32);
-  Value atom = select(cmpi(CmpIPredicate::ne, a[6], ci(0)),
-                      subi(cx(n - 1), item), item);
+void TowersBuild::initializeCell(Value cell, Value map, Value counts) {
+  store(ci(0), counts, {cell});
+  if (g.growCells)
+    store(ci(-1), counts, {addi(cx(g.cells()), cell)});
+  for (auto [field, delta] : llvm::enumerate(offsets)) {
+    Offset back{-delta[0], -delta[1], -delta[2]};
+    store(indexCast(i32, neighbor(cell, back)), map, {cell, cx(field)});
+  }
+}
+
+void TowersBuild::insert(Value item, Value atom, ValueRange xyzq,
+                         ValueRange binGeometry, ValueRange lattice,
+                         Value counts, Value keys, Value local) {
+  auto xyzw = VectorType::get({4}, f32);
   Value cell = cx(0), sub = ci(0);
   Values coordinates;
-  for (auto [axis, bins] :
-       llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
-    Value length = lattice.empty() ? load(a[2], {cx(axis), cx(0)}) : g.triclinic ? cd(1) : lattice[axis];
-    Value x = xyzq.empty() ? load(a[0], {cx(axis), atom}) : xyzq[axis];
-    Value width = lattice.empty() ? load(a[2], {cx(axis), cx(1)}) : binsInfo[2*axis];
-    Value reciprocal = lattice.empty() ? load(a[2], {cx(axis), cx(2)}) : binsInfo[2*axis+1];
+  for (auto [axis, bins] : llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
+    Value length = binGeometry[3 * axis];
+    Value x = xyzq[axis];
+    Value width = binGeometry[3 * axis + 1];
+    Value reciprocal = binGeometry[3 * axis + 2];
     Values located = locate(x, length, width, reciprocal, bins);
     Value v = located[0], quarter = located[1];
     Value bin = shrui(quarter, ci(2));
@@ -280,36 +273,33 @@ void TowersBuild::insert(Value item, ValueRange a, ValueRange lattice, ValueRang
     Values cartesian;
     for (int k = 0; k < 3; ++k) {
       auto component = [&](int axis) {
-        return mulf(
-            coordinates[axis],
-            lattice.empty() ? load(a[2], {cx(axis), cx(TowersLayout::lattice + k)}) : lattice[3*axis+k]);
+        return mulf(coordinates[axis], lattice[3 * axis + k]);
       };
       cartesian.push_back(
           truncf(addf(addf(component(0), component(1)), component(2))));
     }
     coordinates = std::move(cartesian);
   }
-  coordinates.push_back(xyzq.empty() ? load(a[1], {atom}) : xyzq[3]);
-  store(vector::FromElementsOp::create(b, loc, xyzw, coordinates), a[5],
+  coordinates.push_back(xyzq[3]);
+  store(vector::FromElementsOp::create(b, loc, xyzw, coordinates), local,
         {atom});
   Value rank;
   if (g.host) {
-    rank = load(a[3], {cell});
-    store(addi(rank, ci(1)), a[3], {cell});
+    rank = load(counts, {cell});
+    store(addi(rank, ci(1)), counts, {cell});
   } else {
     // The mask excludes inactive lanes in the last particle warp.
     Value lane = indexCast(i32, remui(item, cx(32)));
-    Value left = subi(ci(n), subi(indexCast(i32, item), lane));
+    Value left = subi(ci(g.atoms), subi(indexCast(i32, item), lane));
     Value active = shrui(ci(-1), subi(ci(32), minui(left, ci(32))));
-    Value group = NVVM::MatchSyncOp::create(b, loc, i32, active,
-                                            indexCast(i32, cell),
-                                            NVVM::MatchSyncKind::any);
+    Value group = NVVM::MatchSyncOp::create(
+        b, loc, i32, active, indexCast(i32, cell), NVVM::MatchSyncKind::any);
     Value first = math::CountTrailingZerosOp::create(b, loc, group);
     Value base = ifElse(
         {i32}, cmpi(CmpIPredicate::eq, lane, first),
         [&] {
-          Value ptr = pointerTo(baseAddress(a[3]),
-                                muli(indexCast(i64, cell), cl(4)));
+          Value ptr =
+              pointerTo(baseAddress(counts), muli(indexCast(i64, cell), cl(4)));
           Value members = math::CtPopOp::create(b, loc, group);
           return Values{atomic(LLVM::AtomicBinOp::add, ptr, members)};
         },
@@ -322,20 +312,19 @@ void TowersBuild::insert(Value item, ValueRange a, ValueRange lattice, ValueRang
   Value key = ori(shli(sub, ci(26)), indexCast(i32, atom));
   if (g.growCells) {
     ifThen(cmpi(CmpIPredicate::eq, item, cx(0)), [&] {
-      store(ci(int64_t(cells) * g.capacity), a[3], {cx(2LL * cells)});
+      store(ci(int64_t(g.cells()) * g.capacity), counts, {cx(2LL * g.cells())});
     });
     // Each unplaced key belongs to one list. Both the key and its
     // local coordinates come from this insertion, before any motion.
     ifThen(cmpi(CmpIPredicate::uge, rank, ci(g.capacity)), [&] {
-      Value head = addi(cx(cells), cell);
+      Value head = addi(cx(g.cells()), cell);
       Value previous = memref::AtomicRMWOp::create(
-          b, loc, arith::AtomicRMWKind::assign, key, a[3],
-          ValueRange{head});
-      store(previous, a[4], {addi(cx(g.slots()), atom)});
+          b, loc, arith::AtomicRMWKind::assign, key, counts, ValueRange{head});
+      store(previous, keys, {addi(cx(g.slots()), atom)});
     });
   }
   ifThen(cmpi(CmpIPredicate::ult, rank, ci(g.capacity)), [&] {
-    store(key, a[4],
+    store(key, keys,
           {addi(muli(cell, cx(g.capacity)), indexCast(index, rank))});
   });
 }
@@ -358,7 +347,9 @@ void TowersBuild::emit(bool audit) {
 
   phase("towers_setup", {inverse, counts, status, box, geometry}, cells,
         [&](Value cell, ValueRange a) {
-          setup(cell, a);
+          initializeCell(cell, a[0], a[1]);
+          ifThen(cmpi(CmpIPredicate::eq, cell, cx(0)),
+                 [&] { TowersBuild::geometry(a[3], a[2], a[4]); });
         });
   if (!g.compact)
     phase("towers_clear", {counts}, cells,
@@ -367,7 +358,20 @@ void TowersBuild::emit(bool audit) {
   // Keys are unique even when all atoms lie on the same quarter-cell tie.
   phase("towers_insert", {raw, charges, geometry, counts, keys, local, i32}, n,
         [&](Value item, ValueRange a) {
-          insert(item, a);
+          Value atom = select(cmpi(CmpIPredicate::ne, a[6], ci(0)),
+                              subi(cx(n - 1), item), item);
+          Values xyzq, binGeometry, lattice;
+          for (int axis = 0; axis < 3; ++axis) {
+            xyzq.push_back(load(a[0], {cx(axis), atom}));
+            for (int k = 0; k < 3; ++k) {
+              binGeometry.push_back(load(a[2], {cx(axis), cx(k)}));
+              if (g.triclinic)
+                lattice.push_back(
+                    load(a[2], {cx(axis), cx(TowersLayout::lattice + k)}));
+            }
+          }
+          xyzq.push_back(load(a[1], {atom}));
+          insert(item, atom, xyzq, binGeometry, lattice, a[3], a[4], a[5]);
         });
 
   // One warp consumes each cell on the device. Each key has a unique
@@ -479,7 +483,8 @@ void TowersBuild::emit(bool audit) {
           if (g.compact)
             store(ci(0), a[0], {cell});
           if (g.growCells) {
-            if (g.compact) store(ci(-1), a[0], {addi(cx(cells), cell)});
+            if (g.compact)
+              store(ci(-1), a[0], {addi(cx(cells), cell)});
             return;
           }
           ifThen(cmpi(CmpIPredicate::ugt, size, ci(g.capacity)), [&] {
@@ -520,13 +525,25 @@ void TowersBuild::emitOwnership(MemRefType spans, MemRefType ids) {
 }
 } // namespace
 
-void mdir::kernels::emitTowersGeometry(OpBuilder &b, Location loc, TowersLayout g, Value box, Value status, Value info) { TowersBuild(b, loc, g).geometry(box, status, info); }
-
-void mdir::kernels::emitTowersSetupRow(OpBuilder &b, Location loc, TowersLayout g, Value cell, ValueRange args, bool reset) {
-  TowersBuild(b, loc, g).setup(cell, args, reset);
+void mdir::kernels::emitTowersGeometry(OpBuilder &b, Location loc,
+                                       TowersLayout g, Value box, Value status,
+                                       Value info) {
+  TowersBuild(b, loc, g).geometry(box, status, info);
 }
-void mdir::kernels::emitTowersInsertRow(OpBuilder &b, Location loc, TowersLayout g, Value item, ValueRange args, ValueRange lattice, ValueRange binsInfo, ValueRange xyzq) {
-  TowersBuild(b, loc, g).insert(item, args, lattice, binsInfo, xyzq);
+
+void mdir::kernels::emitTowersInitRow(OpBuilder &b, Location loc,
+                                      TowersLayout g, Value cell, Value map,
+                                      Value counts) {
+  TowersBuild(b, loc, g).initializeCell(cell, map, counts);
+}
+
+void mdir::kernels::emitTowersInsertRow(OpBuilder &b, Location loc,
+                                        TowersLayout g, Value atom,
+                                        ValueRange xyzq, ValueRange binGeometry,
+                                        ValueRange lattice, Value counts,
+                                        Value keys, Value local) {
+  TowersBuild(b, loc, g).insert(atom, atom, xyzq, binGeometry, lattice, counts,
+                                keys, local);
 }
 
 void mdir::kernels::emitTowersEntry(
@@ -648,7 +665,8 @@ public:
                              exclusions ? regions.back()
                                         : mdir::md_exec::PairForOp{});
     };
-    if (!layout.host && directVirial && !exclusions && terms.front().getNumResults() == 1) {
+    if (!layout.host && directVirial && !exclusions &&
+        terms.front().getNumResults() == 1) {
       auto tensor = dyn_cast<VectorType>(terms.front().getResult(0).getType());
       if (tensor && tensor.getElementType().isF64() &&
           (tensor.getNumElements() == 3 || tensor.getNumElements() == 9))

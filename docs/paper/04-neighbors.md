@@ -1375,8 +1375,9 @@ ownership rule among separately requested force, energy and direct virial
 kernels. The energy kernel rounds each pair energy to Q32 and sums the
 words with signed two-limb arithmetic. The tensor kernel visits physical
 pairs and accumulates the six independent components of the minimum-image
-displacement times the target force in binary64. A force-only evaluation
-requires neither additional traversal. The moving virial traversal indexes each
+displacement times the target force in binary64. Moving pressure steps accumulate the binary64 virial in the force traversal.
+The two outputs share the displacement and pair evaluation. Each endpoint
+receives the same quantized force word as in a force-only step. The moving traversal indexes each
 excluded pair by the smaller permanent atom ID. A 32-bit mask resolves
 the next 32 IDs exactly. A more distant partner above the greatest
 excluded ID in that row is outside the exclusion set. The remaining

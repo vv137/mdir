@@ -31,12 +31,14 @@ public:
         TowersForceShape shape, bool probe, md_exec::PairForOp correction)
       : NeighborBuildCode(b, term.getLoc()), g(g), term(term),
         correction(correction), output(shape.output),
-        yieldIndex(shape.yieldIndex), virialYield(shape.virialYield), exclusions(shape.exclusions),
-        split(shape.split), panel(shape.panel), stripe(shape.stripe),
-        workers(shape.workers), recordCap(shape.records),
+        yieldIndex(shape.yieldIndex), virialYield(shape.virialYield),
+        exclusions(shape.exclusions), split(shape.split), panel(shape.panel),
+        stripe(shape.stripe), workers(shape.workers), recordCap(shape.records),
         residency(shape.residency), groups(panel / 32),
         packedChargeType(shape.packedChargeType), certified(shape.certified),
-        packedDispatch(shape.packedDispatch), finishForce(shape.finishForce), probe(probe), indexedExclusions(shape.indexedExclusions), cartesianPositions(shape.cartesianPositions),
+        movingDispatch(shape.movingDispatch), probe(probe),
+        indexedExclusions(shape.indexedExclusions),
+        cartesianPositions(shape.cartesianPositions),
         v3(VectorType::get({3}, f32)), v4(VectorType::get({4}, f32)) {}
   LogicalResult emit();
 
@@ -51,8 +53,17 @@ private:
   bool virial() const {
     return output != TowersOutput::Force && output != TowersOutput::Energy;
   }
-  int virialComponents() { return (output == TowersOutput::TensorVirial ||
-    (fused() && cast<VectorType>(term.getKernel().front().getTerminator()->getOperand(virialYield).getType()).getNumElements() == 9)) ? 9 : 6; }
+  int virialComponents() {
+    return (output == TowersOutput::TensorVirial ||
+            (fused() && cast<VectorType>(term.getKernel()
+                                             .front()
+                                             .getTerminator()
+                                             ->getOperand(virialYield)
+                                             .getType())
+                                .getNumElements() == 9))
+               ? 9
+               : 6;
+  }
   bool observer() const { return output != TowersOutput::Force; }
   bool energy() const { return output == TowersOutput::Energy; }
   StringRef observerName() const {
@@ -75,7 +86,7 @@ private:
   void exclusion(Value row);
 
   int panel, stripe, workers, recordCap, residency, groups;
-  bool packedChargeType, certified, packedDispatch, finishForce, probe, indexedExclusions;
+  bool packedChargeType, certified, movingDispatch, probe, indexedExclusions;
   Type cartesianPositions;
   bool recovering = false;
   Value failedConversions, highWords, localVotes;
@@ -88,6 +99,11 @@ private:
   void addWide(Value atom, Value axis, Value word, bool negative);
   void ownedPairs(Value owner);
   void recoveryEntries();
+  Value planeWord(Value provisional, Value atom, int axis);
+  Value certifyGrid(Value provisional, Value arrivals, Value grid,
+                    Value stride);
+  void publishGrid(Value provisional, Value destination, Value retry,
+                   Value stride);
   void checkWide(Value state, Value lowWords, Value highWords, Value atom);
 
   Value trace, owner;
@@ -241,7 +257,8 @@ Value Force::clonePair(Value t, Value s, Value ti, Value si, Value r2, Value d,
   }
   if (fused() && !excluding) {
     auto accumulate = [&] {
-      Value v = inside.lookupOrDefault(body.getTerminator()->getOperand(virialYield));
+      Value v =
+          inside.lookupOrDefault(body.getTerminator()->getOperand(virialYield));
       int size = cast<VectorType>(v.getType()).getNumElements();
       for (int a = 0; a < size; ++a) {
         int j = size == 3 ? std::array{0, 3, 5}[a] : a;
@@ -388,7 +405,8 @@ void Force::addWord(Value dst, Value i, Value axis, Value w) {
   if (g.host) {
     store(addi(load(dst, {i, axis}), w), dst, {i, axis});
   } else if (dst == words) {
-    Value linear = packedDispatch ? addi(muli(axis, cx(g.atoms)), i) : addi(muli(i, cx(3)), axis);
+    Value linear = movingDispatch ? addi(muli(axis, cx(g.atoms)), i)
+                                  : addi(muli(i, cx(3)), axis);
     Value offset = muli(indexCast(i64, linear), cl(8));
     atomic(LLVM::AtomicBinOp::add, pointerTo(baseAddress(dst), offset), w);
   } else {
@@ -569,7 +587,8 @@ void Force::exclusion(Value row) {
                 Value length = load(box, {cx(axis)}),
                       half = mulf(length, cd(0.5));
                 auto key = [&](Value atom) {
-                  Value v = cartesianPositions ? load(raw, {atom, cx(axis)}) : load(raw, {cx(axis), atom});
+                  Value v = cartesianPositions ? load(raw, {atom, cx(axis)})
+                                               : load(raw, {cx(axis), atom});
                   Value outside = ori(cmpf(CmpFPredicate::OLT, v, cd(0)),
                                       cmpf(CmpFPredicate::OGE, v, length));
                   v = ifElse(
@@ -717,7 +736,8 @@ void Force::ownedPairs(Value owner) {
 // Each lane accumulates one exact signed Q32 energy in two limbs. With fewer
 // than 2^26 atoms even the sum of all signed i64 pair words fits in 128 bits.
 void Force::startObservation() {
-  localSum = memref::AllocaOp::create(b, loc, cast<MemRefType>(fused() ? fusedSum.getType() : types[4]));
+  localSum = memref::AllocaOp::create(
+      b, loc, cast<MemRefType>(fused() ? fusedSum.getType() : types[4]));
   for (int j = 0; j < (energy() ? 2 : virialComponents()); ++j)
     store(energy() ? cl(0) : cd(0), localSum, {cx(j)});
 }
@@ -809,7 +829,8 @@ void Force::flushObservation() {
         }
         ifThen(cmpi(CmpIPredicate::eq, lane, ci(0)), [&] {
           atomic(LLVM::AtomicBinOp::fadd,
-                 pointerTo(baseAddress(fused() ? fusedSum : words), cl(8 * j)), part);
+                 pointerTo(baseAddress(fused() ? fusedSum : words), cl(8 * j)),
+                 part);
         });
       }
     }
@@ -1054,15 +1075,7 @@ void Force::recoveryEntries() {
           Value source = select(retry(a[0]), a[2], a[1]);
           for (int axis = 0; axis < 3; ++axis) {
             Values at{i, cx(axis)};
-            Value value;
-            if (packedDispatch) {
-              Value linear = addi(muli(cx(axis), cx(g.atoms)), i);
-              value = ifElse({i64}, retry(a[0]),
-                             [&] { return Values{load(a[2], at)}; },
-                             [&] { return Values{load(a[1], {divui(linear, cx(3)), remui(linear, cx(3))})}; })[0];
-            } else
-              value = load(source, at);
-            store(value, a[3], at);
+            store(load(source, at), a[3], at);
           }
         });
       });
@@ -1101,10 +1114,12 @@ void Force::stage(ArrayRef<Value> starts, ArrayRef<Value> counts, Value begin,
     Value atom = load(atomIds, {addr});
     store(atom, id, {slot});
     for (auto [j, src, dst] : llvm::enumerate(parameters, tileParameters)) {
-      if (!src || (packedDispatch && int(j) == positionParameter))
+      if (!src || (movingDispatch && int(j) == positionParameter))
         continue;
       Value value =
-          packedDispatch && int(j) == typeParameter ? load(slotTypes, {addr}) : load(src, {packedChargeType ? addr : indexCast(index, atom)});
+          movingDispatch && int(j) == typeParameter
+              ? load(slotTypes, {addr})
+              : load(src, {packedChargeType ? addr : indexCast(index, atom)});
       if (dst)
         store(value, dst, {slot});
       else
@@ -1441,9 +1456,8 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
       Values initial{found, header, m, ci(0), ci(0), ci(0)};
       Values cached = targetValues(targetSlot(header));
       initial.append(cached);
-      auto endState = forLoop(
-          begin, end, ci(1), initial,
-          [&](Value, ValueRange x) {
+      auto endState =
+          forLoop(begin, end, ci(1), initial, [&](Value, ValueRange x) {
             auto v = ifElse(
                 {i32, i32, i32}, cmpi(CmpIPredicate::eq, x[2], ci(0)),
                 [&] {
@@ -1508,11 +1522,9 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
         for (int a = 0; a < 3; ++a) {
           int shift = std::max(panel, stripe) <= 512 ? 22 : 21;
           Value q = load(coarse, {cx(a), i});
-          Value residual =
-              subi(load(accum, {cx(a), i}), shli(q, ci(shift)));
+          Value residual = subi(load(accum, {cx(a), i}), shli(q, ci(shift)));
           Value w =
-              addi(shli(arith::ExtSIOp::create(b, loc, i64, q),
-                        cl(shift)),
+              addi(shli(arith::ExtSIOp::create(b, loc, i64, q), cl(shift)),
                    arith::ExtSIOp::create(b, loc, i64, residual));
           ifThen(cmpi(CmpIPredicate::ne, w, cl(0)), [&] {
             if (recovering)
@@ -1560,11 +1572,13 @@ void Force::traversal(Value block) {
       {index, index, index}, {begin, cx(0), cx(stripe)},
       [&](ValueRange x) {
         return std::make_pair(andi(cmpi(CmpIPredicate::ult, x[0], end),
-                                    cmpi(CmpIPredicate::ult, x[1], nt)), Values(x));
+                                   cmpi(CmpIPredicate::ult, x[1], nt)),
+                              Values(x));
       },
       [&](ValueRange x) {
         Value sb = x[0], tb = x[1];
-        Value sc = minui(cx(panel), subi(end, sb)), tc = minui(x[2], subi(nt, tb));
+        Value sc = minui(cx(panel), subi(end, sb)),
+              tc = minui(x[2], subi(nt, tb));
         Value nextSource = addi(sb, sc), nextTarget = addi(tb, tc);
         Value lastStripe = cmpi(CmpIPredicate::eq, nextTarget, nt);
         Value last = andi(lastStripe, cmpi(CmpIPredicate::eq, nextSource, end));
@@ -1603,7 +1617,7 @@ void Force::bind(ValueRange args) {
   }
   for (unsigned j = 0; j < term.getIns().size(); ++j)
     parameters.push_back(packedChargeType && j == 0 ? Value() : args[n++]);
-  if (packedDispatch)
+  if (movingDispatch)
     slotTypes = args[n++];
   for (Value v : captures) {
     if (matchPattern(v, m_Constant())) {
@@ -1766,6 +1780,90 @@ void Force::withValidGeometry(function_ref<void()> body) {
   });
 }
 
+Value Force::planeWord(Value provisional, Value atom, int axis) {
+  Value linear = addi(muli(cx(axis), cx(g.atoms)), atom);
+  return load(provisional, {divui(linear, cx(3)), remui(linear, cx(3))});
+}
+
+Value Force::certifyGrid(Value provisional, Value arrivals, Value grid,
+                         Value stride) {
+  Value first = addi(muli(owner, cx(workers)), tid);
+  forLoop(first, cx(g.atoms), stride, {}, [&](Value atom, ValueRange) {
+    Value bad = cb(false);
+    for (int a = 0; a < 3; ++a) {
+      Value w = planeWord(provisional, atom, a);
+      bad = ori(bad, cmpi(CmpIPredicate::ne, w,
+                          arith::ExtSIOp::create(b, loc, i64, trunci(w))));
+    }
+    ifThen(bad, [&] { flag(invalid, Replay, 1); });
+    return Values{};
+  });
+  gpu::BarrierOp::create(b, loc);
+  ifThen(cmpi(CmpIPredicate::eq, tid, cx(0)), [&] {
+    // All blocks are resident. Release this block's votes, then acquire
+    // the final arrival before reading the frame-wide replay decision.
+    Value ptr = pointerTo(baseAddress(arrivals), cl(0));
+    LLVM::AtomicRMWOp::create(b, loc, LLVM::AtomicBinOp::add, ptr, ci(1),
+                              LLVM::AtomicOrdering::acq_rel, "device");
+    whileLoop(
+        {}, {},
+        [&](ValueRange) {
+          auto arrived = LLVM::LoadOp::create(b, loc, i32, ptr, 4, true);
+          arrived.setOrdering(LLVM::AtomicOrdering::acquire);
+          arrived.setSyncscopeAttr(b.getStringAttr("device"));
+          return std::make_pair(
+              cmpi(CmpIPredicate::ult, arrived, indexCast(i32, grid)),
+              Values{});
+        },
+        [&](ValueRange) { return Values{}; });
+    Value failed =
+        cmpi(CmpIPredicate::ne, load(failedConversions, {cx(0)}), cl(0));
+    Value retry = cmpi(CmpIPredicate::ne, load(invalid, {cx(Replay)}), ci(0));
+    store(select(ori(failed, retry), ci(1), ci(0)), totals, {cx(0)});
+  });
+  gpu::BarrierOp::create(b, loc);
+  return cmpi(CmpIPredicate::ne, load(totals, {cx(0)}), ci(0));
+}
+
+void Force::publishGrid(Value provisional, Value destination, Value retry,
+                        Value stride) {
+  gpu::BarrierOp::create(b, loc);
+  Value lead = cmpi(CmpIPredicate::eq, owner, cx(0));
+  ifThen(ori(notNarrow(retry), lead), [&] {
+    Value bad = cmpi(CmpIPredicate::ne, load(invalid, {cx(Fatal)}), ci(0));
+    ifThenElse(
+        bad,
+        [&] {
+          LLVM::InlineAsmOp::create(b, loc, TypeRange{}, ValueRange{}, "trap;",
+                                    "", true, false, LLVM::TailCallKind::None,
+                                    LLVM::AsmDialectAttr(), ArrayAttr());
+        },
+        [&] {
+          // On replay the first block owns every atom and has checked both
+          // limbs.
+          Value first = select(retry, tid, addi(muli(owner, cx(workers)), tid));
+          Value step = select(retry, cx(workers), stride);
+          forLoop(first, cx(g.atoms), step, {}, [&](Value atom, ValueRange) {
+            for (int a = 0; a < 3; ++a) {
+              Value v = ifElse(
+                  {i64}, retry,
+                  [&] { return Values{load(words, {atom, cx(a)})}; },
+                  [&] { return Values{planeWord(provisional, atom, a)}; })[0];
+              if (term.getNumResults() == 0) {
+                Type t =
+                    cast<MemRefType>(destination.getType()).getElementType();
+                v = mulf(sitofp(t, v), createReal(b, loc, t, 0x1p-18));
+                if (!term.overwrites(0))
+                  v = addf(v, load(destination, {atom, cx(a)}));
+              }
+              store(v, destination, {atom, cx(a)});
+            }
+            return Values{};
+          });
+        });
+  });
+}
+
 void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
                    bool singleBlock) {
   OpBuilder::InsertionGuard guard(b);
@@ -1774,16 +1872,21 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
       observer()    ? (recovering ? (singleBlock ? "towers_energy_recover_once"
                                                  : "towers_energy_recover")
                                   : observerName())
-      : singleBlock ? "towers_recover_once"
+      : singleBlock ? (movingDispatch ? "towers_finish" : "towers_recover_once")
       : recovering  ? "towers_recover"
-                    : fused() ? "towers_force_virial" : "towers_force";
+      : fused()     ? "towers_force_virial"
+                    : "towers_force";
   auto fn = gpu::GPUFuncOp::create(b, loc, entryName,
                                    b.getFunctionType(entryTypes, {}));
   fn.setKernel(true);
   fn.setKnownBlockSizeAttr(b.getDenseI32ArrayAttr({workers, 1, 1}));
   if (residency > 1)
     fn->setAttr(NVVM::NVVMDialect::getMinctasmAttrName(),
-                b.getI32IntegerAttr(residency));
+                b.getI32IntegerAttr(
+                    !observer() && !recovering && !fused() && workers == 256 &&
+                            fixedBytes + recordCap * 8 <= 32 * 1024
+                        ? std::max(3, residency)
+                        : residency));
   pos = shared(fn, {panel + stripe}, v4);
   id = shared(fn, {panel + stripe}, i32);
   totals = shared(fn, {2}, i32);
@@ -1859,53 +1962,20 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
     });
   };
   if (recovering) {
-    bool finish = finishForce && singleBlock && !observer();
+    bool finish = movingDispatch && singleBlock && !observer();
     if (!observer())
       highWords = entry.getArgument(entryTypes.size() - (finish ? 4 : 1));
-    Value replay = cmpi(CmpIPredicate::ne, load(invalid, {cx(Replay)}), ci(0));
-    Value provisional, destination, needsCheck;
-    auto planeWord = [&](Value atom, int axis) {
-      Value linear = addi(muli(cx(axis), cx(g.atoms)), atom);
-      return load(provisional, {divui(linear, cx(3)), remui(linear, cx(3))});
-    };
-    Value gridStride;
+    Value replay, retry, provisional, destination, stride;
     if (finish) {
       provisional = entry.getArgument(entryTypes.size() - 3);
       Value arrivals = entry.getArgument(entryTypes.size() - 2);
       destination = entry.getArgument(entryTypes.size() - 1);
       Value grid = gpu::GridDimOp::create(b, loc, gpu::Dimension::x);
-      gridStride = muli(grid, cx(workers));
-      Value first = addi(muli(owner, cx(workers)), tid);
-      forLoop(first, cx(g.atoms), gridStride, {}, [&](Value atom, ValueRange) {
-        Value bad = cb(false);
-        for (int a = 0; a < 3; ++a) {
-          Value w = planeWord(atom, a);
-          bad = ori(bad, cmpi(CmpIPredicate::ne, w, arith::ExtSIOp::create(b, loc, i64, trunci(w))));
-        }
-        ifThen(bad, [&] { flag(invalid, Replay, 1); });
-        return Values{};
-      });
-      gpu::BarrierOp::create(b, loc);
-      ifThen(cmpi(CmpIPredicate::eq, tid, cx(0)), [&] {
-        // All blocks are resident. Release this block's votes, then acquire
-        // the final arrival before reading the frame-wide replay decision.
-        Value ptr = pointerTo(baseAddress(arrivals), cl(0));
-        LLVM::AtomicRMWOp::create(b, loc, LLVM::AtomicBinOp::add, ptr, ci(1),
-                                 LLVM::AtomicOrdering::acq_rel, "device");
-        whileLoop({}, {}, [&](ValueRange) {
-          auto arrived = LLVM::LoadOp::create(b, loc, i32, ptr, 4, true);
-          arrived.setOrdering(LLVM::AtomicOrdering::acquire);
-          arrived.setSyncscopeAttr(b.getStringAttr("device"));
-          return std::make_pair(cmpi(CmpIPredicate::ult, arrived, indexCast(i32, grid)), Values{});
-        }, [&](ValueRange) { return Values{}; });
-        Value failed = cmpi(CmpIPredicate::ne, load(failedConversions, {cx(0)}), cl(0));
-        Value retry = cmpi(CmpIPredicate::ne, load(invalid, {cx(Replay)}), ci(0));
-        store(select(ori(failed, retry), ci(1), ci(0)), totals, {cx(0)});
-      });
-      gpu::BarrierOp::create(b, loc);
-      needsCheck = cmpi(CmpIPredicate::ne, load(totals, {cx(0)}), ci(0));
-      replay = andi(needsCheck, cmpi(CmpIPredicate::eq, owner, cx(0)));
-    }
+      stride = muli(grid, cx(workers));
+      retry = certifyGrid(provisional, arrivals, grid, stride);
+      replay = andi(retry, cmpi(CmpIPredicate::eq, owner, cx(0)));
+    } else
+      replay = cmpi(CmpIPredicate::ne, load(invalid, {cx(Replay)}), ci(0));
     ifThen(replay, [&] {
       if (!singleBlock) {
         evaluate();
@@ -1958,40 +2028,8 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
       } else
         atoms([&](Value i) { checkWide(invalid, words, highWords, i); });
     });
-    if (finish) {
-      gpu::BarrierOp::create(b, loc);
-      auto publish = [&](Value atom) {
-        bool realOutput = term.getNumResults() == 0;
-        for (int a = 0; a < 3; ++a) {
-          Value w = ifElse({i64}, replay, [&] { return Values{load(words, {atom, cx(a)})}; },
-                           [&] { return Values{planeWord(atom, a)}; })[0];
-          Value v = w;
-          if (realOutput) {
-            Type t = cast<MemRefType>(destination.getType()).getElementType();
-            v = mulf(sitofp(t, w), createReal(b, loc, t, 0x1p-18));
-            if (!term.overwrites(0))
-              v = addf(v, load(destination, {atom, cx(a)}));
-          }
-          store(v, destination, {atom, cx(a)});
-        }
-      };
-      ifThen(ori(notNarrow(needsCheck), cmpi(CmpIPredicate::eq, owner, cx(0))), [&] {
-        Value bad = cmpi(CmpIPredicate::ne, load(invalid, {cx(Fatal)}), ci(0));
-        ifThenElse(bad, [&] {
-          LLVM::InlineAsmOp::create(b, loc, TypeRange{}, ValueRange{}, "trap;", "", true, false, LLVM::TailCallKind::None, LLVM::AsmDialectAttr(), ArrayAttr());
-        }, [&] {
-          ifThenElse(needsCheck, [&] {
-            forLoop(tid, cx(g.atoms), cx(workers), {}, [&](Value atom, ValueRange) {
-              publish(atom);
-              return Values{};
-            });
-          }, [&] {
-            Value atom = addi(muli(owner, cx(workers)), tid);
-            forLoop(atom, cx(g.atoms), gridStride, {}, [&](Value i, ValueRange) { publish(i); return Values{}; });
-          });
-        });
-      });
-    }
+    if (finish)
+      publishGrid(provisional, destination, retry, stride);
   } else
     withValidGeometry(evaluate);
   if (certified && !recovering) {
@@ -2099,8 +2137,10 @@ LogicalResult Force::emit() {
   if (certified)
     types.push_back(mem({1}, i64));
   if (exclusions) {
-    types.append({mem({exclusions, 2}, i32), mem({g.inverseWords()}, i32),
-                  cartesianPositions ? cartesianPositions : mem({3, g.atoms}, f64), mem({g.boxSize()}, f64)});
+    types.append(
+        {mem({exclusions, 2}, i32), mem({g.inverseWords()}, i32),
+         cartesianPositions ? cartesianPositions : mem({3, g.atoms}, f64),
+         mem({g.boxSize()}, f64)});
     if (indexedExclusions)
       types.push_back(mem({g.atoms, 2}, i32));
     if (correction && (!supported(correction) ||
@@ -2130,9 +2170,11 @@ LogicalResult Force::emit() {
       fixedBytes += (panel + stripe) * (vec ? vec.getNumElements() : 1) *
                     ((scalar.getIntOrFloatBitWidth() + 7) / 8);
     if (!packedChargeType || j != 0)
-      types.push_back(packedDispatch ? term.getIns()[j].getType() : mem({packedChargeType ? slots : g.atoms}, t));
+      types.push_back(movingDispatch
+                          ? term.getIns()[j].getType()
+                          : mem({packedChargeType ? slots : g.atoms}, t));
   }
-  if (packedDispatch)
+  if (movingDispatch)
     types.push_back(mem({slots}, i32));
   if (!g.host && fixedBytes > 48 * 1024)
     return term.emitError("TOWERS force tile exceeds static workgroup storage");
@@ -2150,7 +2192,7 @@ LogicalResult Force::emit() {
   }
   if (observer())
     observationEntries();
-  else if (certified)
+  else if (certified && !movingDispatch)
     recoveryEntries();
   if (g.host) {
     auto fn = func::FuncOp::create(b, loc,
@@ -2181,6 +2223,12 @@ LogicalResult Force::emit() {
           b, loc, LLVM::LLVMArrayType::get(i32, 0), false,
           LLVM::Linkage::External, "towers_records", Attribute(), 8, 3);
     if (fused()) {
+      if (!movingDispatch) {
+        int saved = virialYield;
+        virialYield = -1;
+        device(recordsGlobal, types);
+        virialYield = saved;
+      }
       auto fusedTypes = types;
       fusedTypes.push_back(mem({virialComponents()}, f64));
       device(recordsGlobal, fusedTypes);
@@ -2199,11 +2247,14 @@ LogicalResult Force::emit() {
         replay.pop_back();
       replay.push_back(types[4]);
       recovering = true;
-      device(recordsGlobal, replay);
-      if (finishForce) {
+      if (!movingDispatch)
+        device(recordsGlobal, replay);
+      if (movingDispatch) {
         replay.push_back(types[4]);
         replay.push_back(mem({1}, i32));
-        replay.push_back(term.getNumResults() == 0 ? term.getOuts().front().getType() : types[4]);
+        replay.push_back(term.getNumResults() == 0
+                             ? term.getOuts().front().getType()
+                             : types[4]);
       }
       device(recordsGlobal, replay, true);
       recovering = false;

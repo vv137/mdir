@@ -398,7 +398,7 @@ TOML line. The device limits and packed frame determine the available
 tile sizes. AUTO chooses the cell height from the system geometry and atom
 count before resolving the launch parameters. For a triclinic box the
 selector uses perpendicular face heights. Setup times a rebuilt force on a
-private copy of the starting frame. An explicit TOWERS run then rebuilds from the current positions at each direct evaluation and certifies the forces before integration.
+private copy of the starting frame. An explicit TOWERS run then rebuilds from the current positions at each direct evaluation and certifies the forces before integration. Pressure steps accumulate direct force and virial together.
 For a topology with exclusions, setup allocates eight bytes per atom for the
 physical-pair exclusion index used in pressure evaluation and wide replay.
 The effective manifest and checkpoint reserve `towers_cell_height` for the

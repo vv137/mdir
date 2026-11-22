@@ -348,12 +348,15 @@ intptr_t mdrtCooperativeGridSize(intptr_t requested) {
     CUdevice device;
     int supported;
     check(cuCtxGetDevice(&device), "cuCtxGetDevice");
-    check(cuDeviceGetAttribute(&supported, CU_DEVICE_ATTRIBUTE_COOPERATIVE_LAUNCH,
-                               device), "cuDeviceGetAttribute");
+    check(cuDeviceGetAttribute(&supported,
+                               CU_DEVICE_ATTRIBUTE_COOPERATIVE_LAUNCH, device),
+          "cuDeviceGetAttribute");
     cooperativeSMs = 1;
     if (supported)
-      check(cuDeviceGetAttribute(&cooperativeSMs, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT,
-                                 device), "cuDeviceGetAttribute");
+      check(cuDeviceGetAttribute(&cooperativeSMs,
+                                 CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT,
+                                 device),
+            "cuDeviceGetAttribute");
   }
   return requested < cooperativeSMs ? requested : cooperativeSMs;
 }
@@ -509,9 +512,11 @@ static void finish(void);
 static void endKernel(void);
 
 static void launchKernel(CUfunction function, intptr_t gridX, intptr_t gridY,
-                      intptr_t gridZ, intptr_t blockX, intptr_t blockY,
-                      intptr_t blockZ, int32_t sharedMemory, CUstream stream,
-                      void **parameters, void **extra, CUlaunchConfig *config) {
+                         intptr_t gridZ, intptr_t blockX, intptr_t blockY,
+                         intptr_t blockZ, int32_t sharedMemory, CUstream stream,
+                         void **parameters, void **extra, int cooperative,
+                         intptr_t clusterX, intptr_t clusterY,
+                         intptr_t clusterZ) {
   enter();
   /* A launch over no particles is no launch. The driver rejects it. */
   if (gridX <= 0 || gridY <= 0 || gridZ <= 0)
@@ -528,14 +533,40 @@ static void launchKernel(CUfunction function, intptr_t gridX, intptr_t gridY,
     if (launching >= 0 && !kernels[launching].launched)
       before = getDeviceUsed();
   }
-  if (config)
-    check(cuLaunchKernelEx(config, function, parameters, extra), "cuLaunchKernelEx");
-  else
-  check(cuLaunchKernel(function, (unsigned)gridX, (unsigned)gridY,
-                       (unsigned)gridZ, (unsigned)blockX, (unsigned)blockY,
-                       (unsigned)blockZ, (unsigned)sharedMemory, stream,
-                       parameters, extra),
-        "cuLaunchKernel");
+  if (clusterX > 0 && clusterY > 0 && clusterZ > 0) {
+#if CUDA_VERSION >= 12000
+    CUlaunchAttribute attrs[2] = {0};
+    attrs[0].id = CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION;
+    attrs[0].value.clusterDim.x = clusterX;
+    attrs[0].value.clusterDim.y = clusterY;
+    attrs[0].value.clusterDim.z = clusterZ;
+    attrs[1].id = CU_LAUNCH_ATTRIBUTE_COOPERATIVE;
+    attrs[1].value.cooperative = cooperative;
+    CUlaunchConfig config = {.gridDimX = gridX,
+                             .gridDimY = gridY,
+                             .gridDimZ = gridZ,
+                             .blockDimX = blockX,
+                             .blockDimY = blockY,
+                             .blockDimZ = blockZ,
+                             .sharedMemBytes = sharedMemory,
+                             .hStream = stream,
+                             .attrs = attrs,
+                             .numAttrs = 2};
+    check(cuLaunchKernelEx(&config, function, parameters, extra),
+          "cuLaunchKernelEx");
+#else
+    check(CUDA_ERROR_NOT_SUPPORTED, "thread block clusters require CUDA 12");
+#endif
+  } else if (cooperative && (gridX > 1 || gridY > 1 || gridZ > 1)) {
+    check(cuLaunchCooperativeKernel(function, gridX, gridY, gridZ, blockX,
+                                    blockY, blockZ, sharedMemory, stream,
+                                    parameters),
+          "cuLaunchCooperativeKernel");
+  } else {
+    check(cuLaunchKernel(function, gridX, gridY, gridZ, blockX, blockY, blockZ,
+                         sharedMemory, stream, parameters, extra),
+          "cuLaunchKernel");
+  }
   if (before >= 0) {
     kernels[launching].launched = 1;
     endAccount(ACCOUNT_LAUNCHES, before, 0);
@@ -565,31 +596,20 @@ void mgpuLaunchKernel(CUfunction function, intptr_t gridX, intptr_t gridY,
                       intptr_t blockZ, int32_t sharedMemory, CUstream stream,
                       void **parameters, void **extra, size_t count) {
   (void)count;
-  launchKernel(function, gridX, gridY, gridZ, blockX, blockY, blockZ, sharedMemory,
-               stream, parameters, extra, NULL);
+  launchKernel(function, gridX, gridY, gridZ, blockX, blockY, blockZ,
+               sharedMemory, stream, parameters, extra, 0, 0, 0, 0);
 }
 
-void mgpuLaunchKernelCooperative(CUfunction function, intptr_t gridX, intptr_t gridY,
-                      intptr_t gridZ, intptr_t clusterX, intptr_t clusterY, intptr_t clusterZ,
-                      intptr_t blockX, intptr_t blockY, intptr_t blockZ, int32_t sharedMemory,
-                      CUstream stream, void **parameters, void **extra) {
-  CUlaunchConfig config = {.gridDimX=gridX, .gridDimY=gridY, .gridDimZ=gridZ,
-    .blockDimX=blockX, .blockDimY=blockY, .blockDimZ=blockZ,
-    .sharedMemBytes=sharedMemory, .hStream=stream};
-  CUlaunchAttribute attrs[2] = {0};
-  if (gridX != 1 || gridY != 1 || gridZ != 1) {
-    attrs[config.numAttrs].id = CU_LAUNCH_ATTRIBUTE_COOPERATIVE;
-    attrs[config.numAttrs++].value.cooperative = 1;
-  }
-  if (clusterX > 0 && clusterY > 0 && clusterZ > 0) {
-    attrs[config.numAttrs].id = CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION;
-    attrs[config.numAttrs].value.clusterDim.x = clusterX;
-    attrs[config.numAttrs].value.clusterDim.y = clusterY;
-    attrs[config.numAttrs++].value.clusterDim.z = clusterZ;
-  }
-  config.attrs = attrs;
-  launchKernel(function, gridX, gridY, gridZ, blockX, blockY, blockZ, sharedMemory,
-               stream, parameters, extra, &config);
+void mgpuLaunchKernelCooperative(CUfunction function, intptr_t gridX,
+                                 intptr_t gridY, intptr_t gridZ,
+                                 intptr_t clusterX, intptr_t clusterY,
+                                 intptr_t clusterZ, intptr_t blockX,
+                                 intptr_t blockY, intptr_t blockZ,
+                                 int32_t sharedMemory, CUstream stream,
+                                 void **parameters, void **extra) {
+  launchKernel(function, gridX, gridY, gridZ, blockX, blockY, blockZ,
+               sharedMemory, stream, parameters, extra, 1, clusterX, clusterY,
+               clusterZ);
 }
 
 /*===----------------------------------------------------------------------===

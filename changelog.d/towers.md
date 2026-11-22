@@ -12,3 +12,5 @@
   physical exclusions. Continuation preserves the saved height and recomputes
   the initial forces when the traversal or height changes.
   Moving pressure evaluations index exclusions by permanent atom ID.
+  Moving steps pack particle fields with the coordinates, certify and publish
+  ordinary forces in one launch, and accumulate pressure virials alongside force.
