@@ -1,4 +1,4 @@
-// Rectangular TOWERS rebuild entries, specialized for one setup geometry.
+// Periodic TOWERS rebuild entries, specialized for one setup geometry.
 #pragma once
 
 #include "mlir/IR/BuiltinOps.h"
@@ -7,6 +7,16 @@ namespace mdir::kernels {
 struct TowersLayout {
   int atoms, nx, ny, nz, reach, capacity;
   bool host, compact;
+  bool triclinic = false;
+  // Triclinic entries take fractional coordinates and the row-major lattice.
+  // Setup stores fractional bin geometry, the lattice, Cartesian bin vectors,
+  // the unit face normals and perpendicular bin widths in each axis row.
+  static constexpr int lattice = 3, step = 6, normal = 9, slab = 12;
+  int rawColumns() const { return triclinic ? 13 : 3; }
+  int boxSize() const { return triclinic ? 9 : 3; }
+  int packedGeometrySize() const {
+    return triclinic ? 22 + 3 * (5 + 2 * reach) : 7;
+  }
   int cells() const { return nx * ny * nz; }
 };
 

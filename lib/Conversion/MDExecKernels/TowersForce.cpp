@@ -35,8 +35,8 @@ public:
         stripe(shape.stripe), workers(shape.workers), recordCap(shape.records),
         residency(shape.residency), groups(panel / 32),
         packedChargeType(shape.packedChargeType), certified(shape.certified),
-        probe(probe), v3(VectorType::get({3}, f32)),
-        v4(VectorType::get({4}, f32)) {}
+        probe(probe), finiteAtCutoff(shape.finiteAtCutoff),
+        v3(VectorType::get({3}, f32)), v4(VectorType::get({4}, f32)) {}
   LogicalResult emit();
 
 private:
@@ -64,7 +64,7 @@ private:
   void exclusion(Value row);
 
   int panel, stripe, workers, recordCap, residency, groups;
-  bool packedChargeType, certified, probe;
+  bool packedChargeType, certified, probe, finiteAtCutoff;
   bool recovering = false;
   Value failedConversions, highWords, localVotes;
   bool shortVote() const {
@@ -107,6 +107,10 @@ private:
   void host();
   void device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
               bool singleBlock = false);
+  Values fieldOffset(Value field);
+  Value offsetComponent(ValueRange offset, int component, Value info,
+                        bool packedInfo);
+  Values closestImage(Value a, Value c);
   Value point(Value slot, Value field);
   Value displacement(Value target, Value source);
   Value squared(Value d);
@@ -128,8 +132,7 @@ private:
   void traversal(Value owner);
 };
 
-Value Force::point(Value slot, Value field) {
-  Value p = load(packed, {slot});
+Values Force::fieldOffset(Value field) {
   int lateral = 2 * g.reach + 1;
   auto is = [&](int f) { return cmpi(CmpIPredicate::eq, field, cx(f)); };
   auto sign = [&](Value neg, Value positive) {
@@ -143,9 +146,37 @@ Value Force::point(Value slot, Value field) {
              select(cmpi(CmpIPredicate::ult, field, cx(lateral)),
                     subi(field, cx(g.reach)), cx(0)));
   shift.push_back(sitofp(f32, indexCast(i32, dz)));
-  Values coords;
-  for (int a = 0; a < 3; ++a)
-    coords.push_back(addf(extract(p, a), mulf(shift[a], width(a))));
+  return shift;
+}
+
+Value Force::offsetComponent(ValueRange offset, int component, Value info,
+                             bool packedInfo) {
+  auto term = [&](int axis) {
+    Value step = packedInfo
+                     ? load(info, {cx(7 + 3 * axis + component)})
+                     : truncf(load(info, {cx(axis),
+                                          cx(TowersLayout::step + component)}));
+    return mulf(offset[axis], step);
+  };
+  return addf(addf(term(0), term(1)), term(2));
+}
+
+Value Force::point(Value slot, Value field) {
+  Value p = load(packed, {slot});
+  bool precomputed = g.triclinic && !g.host && packedChargeType;
+  Values shift, coords;
+  if (!precomputed)
+    shift = fieldOffset(field);
+  for (int a = 0; a < 3; ++a) {
+    Value offset;
+    if (precomputed)
+      offset = load(geometry, {addi(cx(22 + a), muli(cx(3), field))});
+    else if (g.triclinic)
+      offset = offsetComponent(shift, a, geometry, false);
+    else
+      offset = mulf(shift[a], width(a));
+    coords.push_back(addf(extract(p, a), offset));
+  }
   coords.push_back(extract(p, 3));
   return vector::FromElementsOp::create(b, loc, v4, coords);
 }
@@ -362,13 +393,94 @@ Value Force::isExcluded(Value a, Value c) {
               cmpi(CmpIPredicate::eq, load(bonds, {row, cx(1)}), second));
 }
 
+// The perpendicular face height bounds each fractional component of every
+// candidate closer than the component-rounded image. Keep the rounded image
+// on ties, then enumerate in lexicographic order as in the reference.
+Values Force::closestImage(Value a, Value c) {
+  Values delta, image, v, heights;
+  const int dims[] = {g.nx, g.ny, g.nz};
+  Value minimum;
+  for (int k = 0; k < 3; ++k) {
+    auto fraction = [&](Value atom) {
+      Value x = load(raw, {cx(k), atom});
+      return subf(x, floor(x));
+    };
+    Value d = subf(fraction(a), fraction(c)), n = roundeven(d);
+    delta.push_back(d);
+    image.push_back(fptosi(i32, n));
+    v.push_back(subf(d, n));
+    // Packed slab widths were rounded to float. Round the search bound
+    // outward, including the multiplication back to a whole face height.
+    Value h = mulf(arith::ExtFOp::create(b, loc, f64, width(k)),
+                   cd(dims[k] * (1.0 - 0x1p-20)));
+    heights.push_back(h);
+    minimum = k ? select(cmpf(CmpFPredicate::OLT, h, minimum), h, minimum) : h;
+  }
+  auto norm2 = [&](ValueRange u) {
+    Value total = cd(0);
+    for (int k = 0; k < 3; ++k) {
+      auto part = [&](int row) {
+        return mulf(u[row], load(box, {cx(3 * row + k)}));
+      };
+      Value x = addf(addf(part(0), part(1)), part(2));
+      total = addf(total, mulf(x, x));
+    }
+    return total;
+  };
+  Value distance = norm2(v);
+  auto best = ifElse(
+      {i32, i32, i32},
+      cmpf(CmpFPredicate::OLT, distance,
+           mulf(cd(0.25), mulf(minimum, minimum))),
+      [&] { return image; },
+      [&] {
+        Values lower, upper;
+        Value radius = sqrt(distance);
+        for (int k = 0; k < 3; ++k) {
+          Value span = addf(divf(radius, heights[k]), cd(0x1p-45));
+          lower.push_back(
+              fptosi(i32, math::CeilOp::create(b, loc, subf(delta[k], span))));
+          upper.push_back(
+              addi(ci(1), fptosi(i32, floor(addf(delta[k], span)))));
+        }
+        Values init{distance, image[0], image[1], image[2]};
+        auto result = forLoop(
+            lower[0], upper[0], ci(1), init, [&](Value i, ValueRange first) {
+              auto y =
+                  forLoop(lower[1], upper[1], ci(1), first,
+                          [&](Value j, ValueRange second) {
+                            auto z = forLoop(
+                                lower[2], upper[2], ci(1), second,
+                                [&](Value k, ValueRange prior) {
+                                  Values u{subf(delta[0], sitofp(f64, i)),
+                                           subf(delta[1], sitofp(f64, j)),
+                                           subf(delta[2], sitofp(f64, k))};
+                                  Value d = norm2(u),
+                                        improved = cmpf(CmpFPredicate::OLT, d,
+                                                        prior[0]);
+                                  return Values{select(improved, d, prior[0]),
+                                                select(improved, i, prior[1]),
+                                                select(improved, j, prior[2]),
+                                                select(improved, k, prior[3])};
+                                });
+                            return Values(z.begin(), z.end());
+                          });
+              return Values(y.begin(), y.end());
+            });
+        return Values{result[1], result[2], result[3]};
+      });
+  return Values(best.begin(), best.end());
+}
+
 void Force::exclusion(Value row) {
   excluding = true;
   Value a = indexCast(index, load(bonds, {row, cx(0)}));
   Value c = indexCast(index, load(bonds, {row, cx(1)}));
   Value sa = load(inverse, {a}), sc = load(inverse, {c});
   Value ca = divui(sa, ci(g.capacity)), cc = divui(sc, ci(g.capacity));
-  Values delta;
+  Values delta, image;
+  if (g.triclinic)
+    image = closestImage(a, c);
   int stride = g.cells();
   for (auto [axis, bins] : llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
     stride /= bins;
@@ -376,6 +488,10 @@ void Force::exclusion(Value row) {
       return remui(divui(cell, ci(stride)), ci(bins));
     };
     Value gap = subi(coordinate(ca), coordinate(cc));
+    if (g.triclinic) {
+      delta.push_back(subi(gap, muli(image[axis], ci(bins))));
+      continue;
+    }
     Value mag = maxsi(gap, subi(ci(0), gap));
     Value wrap =
         select(cmpi(CmpIPredicate::slt, gap, ci(0)), ci(-bins), ci(bins));
@@ -436,12 +552,29 @@ void Force::exclusion(Value row) {
         ss = indexCast(index, select(forward, sc, sa));
   Value ti = select(forward, a, c), si = select(forward, c, a);
   Value t = load(packed, {ts}), s = load(packed, {ss});
+  Values shifts;
   for (int axis = 0; axis < 3; ++axis) {
     Value d = select(forward, delta[axis], subi(ci(0), delta[axis]));
-    Value &p = axis == 2 ? s : t;
-    Value shift = sitofp(f32, axis == 2 ? subi(ci(0), d) : d);
-    p = vector::InsertOp::create(
-        b, loc, addf(extract(p, axis), mulf(shift, width(axis))), p, axis);
+    shifts.push_back(sitofp(f32, axis == 2 ? subi(ci(0), d) : d));
+  }
+  if (g.triclinic) {
+    Values target{shifts[0], shifts[1], cf(0)}, source{cf(0), cf(0), shifts[2]};
+    for (int k = 0; k < 3; ++k) {
+      for (auto [p, offset] :
+           {std::pair{&t, &target}, std::pair{&s, &source}}) {
+        Value move =
+            offsetComponent(*offset, k, geometry, !g.host && packedChargeType);
+        *p =
+            vector::InsertOp::create(b, loc, addf(extract(*p, k), move), *p, k);
+      }
+    }
+  } else {
+    for (int axis = 0; axis < 3; ++axis) {
+      Value &p = axis == 2 ? s : t;
+      p = vector::InsertOp::create(
+          b, loc, addf(extract(p, axis), mulf(shifts[axis], width(axis))), p,
+          axis);
+    }
   }
   auto eval = [&](bool physical) {
     return pair(t, s, packedChargeType ? ts : ti, packedChargeType ? ss : si,
@@ -1040,8 +1173,22 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
   Value gap2 = cf(0);
   for (int a = 0; a < 2; ++a) {
     Value half = mulf(cf(0.5), width(a));
-    Value gap = maxnumf(cf(0), subf(absf(extract(p, a)), half));
-    gap2 = addf(gap2, mulf(gap, gap));
+    Value projected = extract(p, a);
+    if (g.triclinic) {
+      auto normal = [&](int k) {
+        return packedChargeType
+                   ? load(geometry, {cx(16 + 3 * a + k)})
+                   : truncf(
+                         load(geometry, {cx(a), cx(TowersLayout::normal + k)}));
+      };
+      projected = math::FmaOp::create(
+          b, loc, normal(0), extract(p, 0),
+          math::FmaOp::create(b, loc, normal(1), extract(p, 1),
+                              mulf(normal(2), extract(p, 2))));
+    }
+    Value gap = maxnumf(cf(0), subf(absf(projected), half));
+    Value squared = mulf(gap, gap);
+    gap2 = g.triclinic ? maxnumf(gap2, squared) : addf(gap2, squared);
   }
   Value keep = andi(cmpi(CmpIPredicate::ult, tid, tc),
                     cmpf(CmpFPredicate::OLE, gap2, filterLimit));
@@ -1390,7 +1537,9 @@ void Force::bind(ValueRange args) {
   words = args[4];
   invalid = args[5];
   wordScale = args[6];
-  cutoff2 = createCutoff2(b, loc, f32, term.getCutoff().convertToDouble());
+  double cutoff = term.getCutoff().convertToDouble();
+  cutoff2 = finiteAtCutoff ? cf(cutoff * cutoff)
+                           : createCutoff2(b, loc, f32, cutoff);
   unsigned n = 7;
   if (certified)
     failedConversions = args[n++];
@@ -1457,14 +1606,15 @@ void Force::stageParameters(gpu::GPUFuncOp fn) {
 Value Force::width(int axis) {
   if (!g.host && packedChargeType)
     return load(geometry, {cx(axis)});
-  return truncf(load(geometry, {cx(axis), cx(1)}));
+  return truncf(
+      load(geometry, {cx(axis), cx(g.triclinic ? TowersLayout::slab : 1)}));
 }
 
 Value Force::validWidths(Value raw) {
   double rc = term.getCutoff().convertToDouble();
   Value valid = cb(true);
   for (int a = 0; a < 3; ++a) {
-    Value width = load(raw, {cx(a), cx(1)});
+    Value width = load(raw, {cx(a), cx(g.triclinic ? TowersLayout::slab : 1)});
     valid = andi(valid, cmpf(CmpFPredicate::OGE, width,
                              cd(rc / (a == 2 ? g.reach : 1))));
     valid = andi(valid,
@@ -1477,6 +1627,16 @@ Value Force::validWidths(Value raw) {
 void Force::screenConstants(Value raw) {
   Value bound = cf(0);
   for (int a = 0; a < 3; ++a) {
+    if (g.triclinic) {
+      Value extent = cf(0);
+      for (int k = 0; k < 3; ++k) {
+        Value step =
+            absf(truncf(load(raw, {cx(k), cx(TowersLayout::step + a)})));
+        extent = addf(extent, mulf(step, cf(k == 2 ? g.reach + 0.5 : 1.5)));
+      }
+      bound = maxnumf(bound, extent);
+      continue;
+    }
     Value width = truncf(load(raw, {cx(a), cx(1)}));
     bound = maxnumf(bound, mulf(width, cf(a == 2 ? g.reach + 0.5 : 1.5)));
   }
@@ -1484,19 +1644,20 @@ void Force::screenConstants(Value raw) {
   Value bits = bitcast(i32, bound);
   Value ceilPow = bitcast(f32, andi(addi(bits, ci(0x7fffff)), ci(0x7f800000)));
   scale = divf(cf(1024), ceilPow);
-  Value padded =
-      addf(cf(term.getCutoff().convertToDouble()), mulf(cf(0x1p-18), bound));
+  Value padded = addf(cf(term.getCutoff().convertToDouble()),
+                      mulf(cf(g.triclinic ? 0x1p-15 : 0x1p-18), bound));
   filterLimit = mulf(mulf(padded, padded), cf(1 + 0x1p-19));
   // One lattice unit per axis for the two endpoint roundings, plus the
   // staging error in the common Cartesian image. Round the shell outward.
-  Value margin = addf(cf(1.733), mulf(mulf(cf(0x1p-18), bound), scale));
+  Value margin = addf(
+      cf(1.733), mulf(mulf(cf(g.triclinic ? 0x1p-15 : 0x1p-18), bound), scale));
   Value r = addf(mulf(cf(term.getCutoff().convertToDouble()), scale), margin);
   limit = addf(math::CeilOp::create(b, loc, mulf(r, r)), cf(1));
 }
 
 void Force::prepareGeometry() {
   OpBuilder::InsertionGuard guard(b);
-  auto raw = MemRefType::get({3, 3}, f64);
+  auto raw = MemRefType::get({3, g.rawColumns()}, f64);
   auto fn = gpu::GPUFuncOp::create(b, loc, "towers_prepare_force",
                                    b.getFunctionType({raw, types[3]}, {}));
   fn.setKernel(true);
@@ -1507,7 +1668,25 @@ void Force::prepareGeometry() {
     Value input = entry.getArgument(0), output = entry.getArgument(1);
     screenConstants(input);
     for (int a = 0; a < 3; ++a)
-      store(truncf(load(input, {cx(a), cx(1)})), output, {cx(a)});
+      store(truncf(
+                load(input, {cx(a), cx(g.triclinic ? TowersLayout::slab : 1)})),
+            output, {cx(a)});
+    if (g.triclinic) {
+      for (int a = 0; a < 3; ++a)
+        for (int k = 0; k < 3; ++k) {
+          store(truncf(load(input, {cx(a), cx(TowersLayout::step + k)})),
+                output, {cx(7 + 3 * a + k)});
+          if (a < 2)
+            store(truncf(load(input, {cx(a), cx(TowersLayout::normal + k)})),
+                  output, {cx(16 + 3 * a + k)});
+        }
+      for (int f = 0; f < 5 + 2 * g.reach; ++f) {
+        Values shift = fieldOffset(cx(f));
+        for (int k = 0; k < 3; ++k)
+          store(offsetComponent(shift, k, input, false), output,
+                {cx(22 + 3 * f + k)});
+      }
+    }
     store(scale, output, {cx(3)});
     store(filterLimit, output, {cx(4)});
     store(limit, output, {cx(5)});
@@ -1776,7 +1955,8 @@ LogicalResult Force::emit() {
   types = {mem({g.cells(), 5 + 2 * g.reach, 2}, i32),
            mem({slots}, v4),
            mem({slots}, i32),
-           packedChargeType && !g.host ? mem({7}, f32) : mem({3, 3}, f64),
+           packedChargeType && !g.host ? mem({g.packedGeometrySize()}, f32)
+                                       : mem({3, g.rawColumns()}, f64),
            observer() ? mem({energy() ? 2 : 6}, energy() ? i64 : f64)
                       : mem({g.atoms, 3}, i64),
            mem({certified ? 2 : 1}, i32),
@@ -1785,7 +1965,7 @@ LogicalResult Force::emit() {
     types.push_back(mem({1}, i64));
   if (exclusions) {
     types.append({mem({exclusions, 2}, i32), mem({g.atoms}, i32),
-                  mem({3, g.atoms}, f64), mem({3}, f64)});
+                  mem({3, g.atoms}, f64), mem({g.boxSize()}, f64)});
     if (!supported(correction) ||
         !llvm::equal(correction.getIns(), term.getIns()) ||
         correction.getKernel().front().getArgumentTypes() !=

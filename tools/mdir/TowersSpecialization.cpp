@@ -1,4 +1,5 @@
 #include "TowersSpecialization.h"
+#include "TowersCell.h"
 #include "mdir/Compiler/Compile.h"
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Conversion/TowersForce.h"
@@ -84,14 +85,17 @@ mdir::tool::prepareTowersSpecialization(const Control &control,
   if (!term)
     return fail("no force-only direct pair region");
   double rc = control.cutoffDistance * units::length;
-  kernels::TowersLayout layout{int(system.getNumParticles()),
-                               int(std::floor(system.box[0] / rc)),
-                               int(std::floor(system.box[1] / rc)),
-                               int(std::floor(system.box[2] * reach / rc)),
-                               reach,
-                               capacity,
-                               false,
-                               true};
+  TowersCell geometry(system);
+  kernels::TowersLayout layout{
+      int(system.getNumParticles()),
+      int(std::floor(geometry.heights[0] / rc)),
+      int(std::floor(geometry.heights[1] / rc)),
+      int(std::floor(geometry.heights[2] * reach / rc)),
+      reach,
+      capacity,
+      false,
+      true,
+      geometry.triclinic};
   // Give the compiled kernel its real table dimensions and bare-pointer
   // arguments. The regular GPU lowering also expands md.lookup to a load.
   SmallVector<md::LookupOp> lookups;
@@ -170,10 +174,16 @@ mdir::tool::prepareTowersSpecialization(const Control &control,
   }
   state->module = std::move(module);
   state->program = std::move(*program);
+  // The built-in Amber Lennard-Jones and Coulomb terms are finite at a
+  // positive cutoff. An additional user-defined expression may have a pole.
+  bool finiteAtCutoff =
+      system.topology && !control.prmtopFile.empty() && control.pme &&
+      control.pmeKernel == PMEKernel::Gaussian && !control.ljpme &&
+      !control.hasFreeEnergy && control.pairs.empty();
   return TowersEmitter([state, term, correction, layout, exclusions,
-                        options =
-                            std::move(*options)](const TowersShape &shape,
-                                                 TowersBuffers *trial) mutable
+                        finiteAtCutoff, options = std::move(*options)](
+                           const TowersShape &shape,
+                           TowersBuffers *trial) mutable
                            -> llvm::Expected<std::string> {
     std::string diagnostic;
     ScopedDiagnosticHandler handler(
@@ -204,6 +214,7 @@ mdir::tool::prepareTowersSpecialization(const Control &control,
         true,
         exclusions,
         int(shape.split)};
+    launch.finiteAtCutoff = finiteAtCutoff;
     if (failed(kernels::emitTowersBuild(*image, layout)) ||
         failed(kernels::emitTowersForce(*image, layout, term, launch, false,
                                         correction)) ||

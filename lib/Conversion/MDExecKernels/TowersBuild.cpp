@@ -210,8 +210,8 @@ void TowersBuild::emit(bool audit) {
   auto xyzw = VectorType::get({4}, f32);
   auto raw = mem({3, n}, f64), local = mem({n}, xyzw);
   auto packed = mem({slots}, xyzw), types = mem({n}, i32);
-  auto charges = mem({n}, f32), box = mem({3}, f64),
-       geometry = mem({3, 3}, f64);
+  auto charges = mem({n}, f32), box = mem({g.boxSize()}, f64),
+       geometry = mem({3, g.rawColumns()}, f64);
 
   phase("towers_setup", {inverse, counts, status, box, geometry}, cells,
         [&](Value cell, ValueRange a) {
@@ -220,7 +220,35 @@ void TowersBuild::emit(bool audit) {
             store(ci(0), a[2], {cx(0)});
             for (auto [axis, bins] :
                  llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
-              Value length = load(a[3], {cx(axis)});
+              Value length = g.triclinic ? cd(1) : load(a[3], {cx(axis)});
+              if (g.triclinic) {
+                auto basis = [&](int row, int col) {
+                  return load(a[3], {cx(3 * row + col)});
+                };
+                // The cross product of the other two rows is normal to the
+                // face. Its dot product with this row gives the slab height.
+                Values cross;
+                Value norm2 = cd(0);
+                int next = (axis + 1) % 3, last = (axis + 2) % 3;
+                for (int k = 0; k < 3; ++k) {
+                  int u = (k + 1) % 3, v = (k + 2) % 3;
+                  Value c = subf(mulf(basis(next, u), basis(last, v)),
+                                 mulf(basis(next, v), basis(last, u)));
+                  cross.push_back(c);
+                  norm2 = addf(norm2, mulf(c, c));
+                }
+                Value norm = sqrt(norm2), height = cd(0);
+                for (int k = 0; k < 3; ++k) {
+                  Value h = basis(axis, k), normal = divf(cross[k], norm);
+                  height = addf(height, mulf(h, normal));
+                  store(h, a[4], {cx(axis), cx(TowersLayout::lattice + k)});
+                  store(divf(h, cd(bins)), a[4],
+                        {cx(axis), cx(TowersLayout::step + k)});
+                  store(normal, a[4], {cx(axis), cx(TowersLayout::normal + k)});
+                }
+                store(divf(height, cd(bins)), a[4],
+                      {cx(axis), cx(TowersLayout::slab)});
+              }
               Value width = divf(length, cd(bins));
               store(length, a[4], {cx(axis), cx(0)});
               store(width, a[4], {cx(axis), cx(1)});
@@ -256,7 +284,21 @@ void TowersBuild::emit(bool audit) {
             cell = addi(muli(cell, cx(bins)), indexCast(index, bin));
             sub = addi(shli(sub, ci(2)), andi(quarter, ci(3)));
             Value center = mulf(addf(sitofp(f64, bin), cd(0.5)), width);
-            coordinates.push_back(truncf(subf(v, center)));
+            Value local = subf(v, center);
+            coordinates.push_back(g.triclinic ? local : truncf(local));
+          }
+          if (g.triclinic) {
+            Values cartesian;
+            for (int k = 0; k < 3; ++k) {
+              auto component = [&](int axis) {
+                return mulf(
+                    coordinates[axis],
+                    load(a[2], {cx(axis), cx(TowersLayout::lattice + k)}));
+              };
+              cartesian.push_back(
+                  truncf(addf(addf(component(0), component(1)), component(2))));
+            }
+            coordinates = std::move(cartesian);
           }
           coordinates.push_back(load(a[1], {atom}));
           store(vector::FromElementsOp::create(b, loc, xyzw, coordinates), a[5],
@@ -456,7 +498,7 @@ void mdir::kernels::emitOwnedTowersSpans(
 
 LogicalResult mdir::kernels::emitTowersBuild(ModuleOp module, TowersLayout g,
                                              bool audit) {
-  auto [atoms, nx, ny, nz, reach, capacity, host, compact] = g;
+  auto [atoms, nx, ny, nz, reach, capacity, host, compact, triclinic] = g;
   if (atoms < 1 || atoms >= (1 << 26) || (reach != 1 && reach != 2) || nx < 3 ||
       ny < 3 || nz < 2 * reach + 1 || capacity < 1 || nx > INT_MAX / 4 ||
       ny > INT_MAX / 4 || nz > INT_MAX / 4 ||
@@ -478,7 +520,8 @@ public:
   using Base::Base;
   void runOnOperation() final {
     auto module = getOperation();
-    TowersLayout layout{atoms, nx, ny, nz, reach, capacity, host, compact};
+    TowersLayout layout{atoms,    nx,   ny,      nz,       reach,
+                        capacity, host, compact, triclinic};
     if (failed(mdir::kernels::emitTowersBuild(module, layout, audit))) {
       signalPassFailure();
       return;
@@ -506,6 +549,7 @@ public:
     TowersForceShape shape{forcePanel,   forceStripe,    forceWorkers,
                            forceRecords, forceResidency, packedChargeType,
                            certifyForce, exclusions,     forceSplit};
+    shape.finiteAtCutoff = finiteAtCutoff;
     auto emit = [&](ArrayRef<mdir::md_exec::PairForOp> regions,
                     TowersOutput output) {
       shape.output = output;

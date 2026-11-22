@@ -1,5 +1,6 @@
 // Device timing of a private, rebuilt and certified frame at a fixed grid.
 #include "TowersTrial.h"
+#include "TowersCell.h"
 #if MDIR_HAS_CUDA
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/DynamicLibrary.h"
@@ -102,9 +103,12 @@ struct TowersTrial {
   }
   bool setup(const driver::System &system, const TowersBuffers &buffers) {
     std::vector<double> positions(3ULL * atoms);
-    for (int i = 0; i < atoms; ++i)
+    TowersCell cell(system);
+    for (int i = 0; i < atoms; ++i) {
+      auto point = cell.coordinates(&system.positions[size_t(i) * 3]);
       for (int a = 0; a < 3; ++a)
-        positions[size_t(a) * atoms + i] = system.positions[size_t(i) * 3 + a];
+        positions[size_t(a) * atoms + i] = point[a];
+    }
     std::vector<std::pair<unsigned, unsigned>> pairs;
     if (system.topology)
       pairs = system.topology->exclusions;
@@ -125,16 +129,19 @@ struct TowersTrial {
         !check(api().cuEventCreate(&start, 0), "cuEventCreate") ||
         !check(api().cuEventCreate(&stop, 0), "cuEventCreate") ||
         !allocate(raw, 24 * n, positions.data()) ||
-        !allocate(box, 24, system.box) || !allocate(map, 4 * entries) ||
-        !allocate(counts, 4 * c) || !allocate(rebuildStatus, 4) ||
-        !allocate(geometry, 72) || !allocate(charge, 4 * n) ||
-        !allocate(types, 4 * n) || !allocate(keys, 4 * slots) ||
-        !allocate(local, 16 * n) || !allocate(packed, 16 * slots) ||
-        !allocate(packedTypes, 4 * slots) || !allocate(ids, 4 * slots) ||
-        !allocate(inverse, 4 * n) || !allocate(spans, 8 * entries) ||
-        !allocate(state, 8) || !allocate(failed, 8) ||
-        !allocate(words, 24 * n) || !allocate(low, 24 * n) ||
-        !allocate(high, 24 * n) || !allocate(output, 24 * n))
+        !allocate(box, cell.triclinic ? 72 : 24,
+                  cell.triclinic ? cell.lattice.data() : system.box) ||
+        !allocate(map, 4 * entries) || !allocate(counts, 4 * c) ||
+        !allocate(rebuildStatus, 4) ||
+        !allocate(geometry, 24 * (cell.triclinic ? 13 : 3)) ||
+        !allocate(charge, 4 * n) || !allocate(types, 4 * n) ||
+        !allocate(keys, 4 * slots) || !allocate(local, 16 * n) ||
+        !allocate(packed, 16 * slots) || !allocate(packedTypes, 4 * slots) ||
+        !allocate(ids, 4 * slots) || !allocate(inverse, 4 * n) ||
+        !allocate(spans, 8 * entries) || !allocate(state, 8) ||
+        !allocate(failed, 8) || !allocate(words, 24 * n) ||
+        !allocate(low, 24 * n) || !allocate(high, 24 * n) ||
+        !allocate(output, 24 * n))
       return false;
     if (exclusions && !allocate(bonds, 8ULL * exclusions, edges.data()))
       return false;

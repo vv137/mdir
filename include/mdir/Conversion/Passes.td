@@ -614,13 +614,14 @@ def ConvertMDAlgToSCF : Pass<"convert-md-alg-to-scf", "::mlir::ModuleOp"> {
 }
 
 def AddTowersBuild : Pass<"add-towers-build", "::mlir::ModuleOp"> {
-  let summary = "Emit a rectangular TOWERS rebuild for a setup geometry";
+  let summary = "Emit a periodic TOWERS rebuild for a setup geometry";
   let options = [
     Option<"atoms", "atoms", "int", "1", "Particle count">,
     Option<"nx", "nx", "int", "3", "X bins">,
     Option<"ny", "ny", "int", "3", "Y bins">,
     Option<"nz", "nz", "int", "3", "Z bins">,
     Option<"reach", "reach", "int", "1", "Axial stencil reach (1 or 2)">,
+    Option<"triclinic", "triclinic", "bool", "false", "Use fractional cells of a lower-triangular lattice">,
     Option<"capacity", "capacity", "int", "32", "Allocated slots per cell">,
     Option<"host", "host", "bool", "false", "Emit serial reference functions">,
     Option<"compact", "compact", "bool", "true", "Reset counts in sort/pack">,
@@ -628,6 +629,8 @@ def AddTowersBuild : Pass<"add-towers-build", "::mlir::ModuleOp"> {
     Option<"certifyForce", "certify-force", "bool", "false", "Emit the checked force, wide replay and publication entries">,
     Option<"packedChargeType", "packed-charge-type", "bool", "false", "Bind the two force inputs to the rebuilt charge and type">,
     Option<"forceSplit", "force-split", "int", "1", "Disjoint source ranges per tower">,
+    Option<"finiteAtCutoff", "finite-at-cutoff", "bool", "false",
+           "Use the physical cutoff squared for a region known finite at its endpoint">,
     Option<"forcePanel", "force-panel", "int", "128", "Source slots per panel">,
     Option<"forceStripe", "force-stripe", "int", "128", "Target slots per stripe">,
     Option<"forceWorkers", "force-workers", "int", "128", "Threads per tower">,

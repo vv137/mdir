@@ -11,6 +11,9 @@ struct TowersForceShape {
   bool packedChargeType, certified;
   int exclusions, split;
   TowersOutput output = TowersOutput::Force;
+  // The caller has established that its direct potential is finite at the
+  // cutoff. Unknown pair expressions retain the D159 endpoint guard.
+  bool finiteAtCutoff = false;
 };
 
 mlir::LogicalResult emitTowersForce(mlir::ModuleOp module, TowersLayout layout,

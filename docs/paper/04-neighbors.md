@@ -1387,3 +1387,16 @@ contained 1,530. Their geometric midpoint gives a crossover of about
 work among blocks and the storage for compact records. Each timing covers
 nine rebuilt certified force evaluations. Five shuffled rounds among the
 five fastest candidates determine the lowest median.
+
+For a triclinic lattice with rows $a,b,c$, a position is binned by its
+wrapped fractional coordinates. The bin counts use the three perpendicular
+face heights. Insertion converts the displacement about the fractional bin
+center to Cartesian coordinates in binary64 and stores it in binary32.
+The staged endpoint adds a precomputed Cartesian bin translation. A strict
+pair must pass the slab bound on each of the two reciprocal normals. Their
+squared gaps cannot be added for an oblique basis. A physical exclusion
+outside the direct stencil still uses its closest periodic image. An
+initial image of length $R$ bounds the translations worth testing along
+axis $i$ by $|u_i-n_i| \le R/h_i$, where $h_i$ is the perpendicular face
+height. The same endpoint orientation is used to cancel a blind direct
+term and its conversion vote.

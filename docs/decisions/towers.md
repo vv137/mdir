@@ -135,7 +135,7 @@ mode still requires its separate output and restart qualification.
 
 ## Setup and diagnostics
 
-Select FULL or HALF from the rectangular cell and cutoff in every mode.
+Select FULL or HALF from the three perpendicular cell heights and the cutoff in every mode. For a rectangular box the heights are the box lengths.
 Measure maximum source column and raw plate size at the selected height.
 Try 4, 8 and 16 warps, one or two resident blocks and one or two disjoint
 source ranges. Round panel and stripe sizes to warp multiples, cap the
@@ -196,7 +196,7 @@ supply `threads`, `blocks_per_sm`, `stripe`, `panel`, `records`, `split`
 and `cell_height`. Preflight derives omitted tile dimensions for a given
 height. It reports the control and AUTO fields and checks device memory
 limits. AUTO counts the towers at FULL by multiplying the three bin counts,
-each the floor of the corresponding box length divided by the cutoff.
+each the floor of the corresponding perpendicular face height divided by the cutoff.
 When both grids are supported it selects HALF through 724 FULL towers
 and FULL above that count. This threshold is the geometric midpoint
 between the largest HALF winner and smallest FULL winner in the initial
@@ -221,3 +221,22 @@ Preflight compiles the mixed pair specialization when the toolchain and
 device are available. Setup checks the compiled register count and occupancy
 before the first step. As in 4n, the production compiler budget targets up to
 two resident blocks. A higher residency pin must fit the compiled kernel.
+
+
+The triclinic compiler entries take fractional positions and the nine row-major
+Cartesian lattice components. Setup computes the face normals from cross
+products and stores the Cartesian step for each bin axis. Packed points are
+relative to the center of their bin in Cartesian coordinates. The lateral
+tests project on the two independent normals. The physical exclusion uses
+the closest lattice image even when component rounding chooses a longer
+image. The fast path accepts an image shorter than half the minimum face
+height. Otherwise each perpendicular height bounds the integer translations
+to enumerate. Direct cancellation uses the same two staged endpoints as the
+forward traversal.
+
+The internal `finite-at-cutoff` specialization uses the rounded square of
+the physical cutoff for pair regions known finite at the endpoint. The
+generic mixed specialization retains the D159 guard. The setup trial can
+establish this precondition for conventional Amber Gaussian PME and
+Lennard-Jones with no additional pair expression. The floating-point direct
+virial still requires its own bitwise qualification for deterministic runs.

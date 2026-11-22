@@ -1,5 +1,6 @@
 #include "TowersShape.h"
 #include "Commands.h"
+#include "TowersCell.h"
 #include "TowersHeight.h"
 #include "TowersSpecialization.h"
 #include "TowersTrial.h"
@@ -145,10 +146,11 @@ struct FrameSpans {
 
 llvm::Expected<FrameSpans> measureSpans(const System &system, double cutoff,
                                         int reach) {
+  mdir::tool::TowersCell geometry(system);
   FrameSpans maximum;
   Cell dims;
   for (int i = 0; i < 3; ++i) {
-    double n = std::floor(system.box[i] * (i == 2 ? reach : 1) / cutoff);
+    double n = std::floor(geometry.heights[i] * (i == 2 ? reach : 1) / cutoff);
     if (!(n >= (i == 2 ? 2 * reach + 1 : 3) && n < INT32_MAX / 4))
       return refusal("cell height is unsupported for this box and cutoff");
     dims[i] = int(n);
@@ -159,11 +161,13 @@ llvm::Expected<FrameSpans> measureSpans(const System &system, double cutoff,
   std::map<Cell, int> counts;
   for (size_t i = 0; i < system.getNumParticles(); ++i) {
     Cell cell;
+    auto point = geometry.coordinates(&system.positions[3 * i]);
     for (int a = 0; a < 3; ++a) {
-      double x = std::fmod(system.positions[3 * i + a], system.box[a]);
+      double length = geometry.triclinic ? 1 : system.box[a];
+      double x = std::fmod(point[a], length);
       if (x < 0)
-        x += system.box[a];
-      cell[a] = std::min(dims[a] - 1, int(x / (system.box[a] / dims[a])));
+        x += length;
+      cell[a] = std::min(dims[a] - 1, int(x / (length / dims[a])));
     }
     maximum.capacity = std::max(maximum.capacity, ++counts[cell]);
   }
@@ -332,9 +336,11 @@ timeCandidates(const Control &control, const System &system,
     return firstImage.takeError();
   double cutoff = control.cutoffDistance * units::length;
   int reach = first.cellHeight == "HALF" ? 2 : 1;
+  TowersCell geometry(system);
   int64_t cells = 1;
   for (int a = 0; a < 3; ++a)
-    cells *= int64_t(std::floor(system.box[a] * (a == 2 ? reach : 1) / cutoff));
+    cells *= int64_t(
+        std::floor(geometry.heights[a] * (a == 2 ? reach : 1) / cutoff));
   // Include the compiled pair body, the device identity, the box and the
   // feasible proposals. Frames on the same grid can reuse the winning launch.
   std::string key = compiler::getCacheSalt();
@@ -344,6 +350,8 @@ timeCandidates(const Control &control, const System &system,
      << llvm::format_hex(llvm::bit_cast<uint64_t>(cutoff), 18);
   for (double length : system.box)
     os << " " << llvm::format_hex(llvm::bit_cast<uint64_t>(length), 18);
+  for (double tilt : system.tilt)
+    os << " " << llvm::format_hex(llvm::bit_cast<uint64_t>(tilt), 18);
   for (const auto &s : candidates)
     os << "\n" << Value(fields(s, false));
   auto cache = compiler::CompileCacheConfig::fromEnvironment();
@@ -445,10 +453,9 @@ timeCandidates(const Control &control, const System &system,
 llvm::Expected<Object> mdir::tool::checkTowersShape(const Control &control,
                                                     const System &system,
                                                     bool setup) {
-  if (!control.periodic ||
-      std::any_of(std::begin(system.tilt), std::end(system.tilt),
-                  [](double x) { return x != 0; }))
-    return refusal("cell height requires a periodic rectangular box");
+  if (!control.periodic)
+    return refusal("cell height requires a periodic box");
+  TowersCell geometry(system);
   auto limits = deviceLimits();
   if (!limits)
     return limits.takeError();
@@ -460,7 +467,7 @@ llvm::Expected<Object> mdir::tool::checkTowersShape(const Control &control,
   double cutoff = control.cutoffDistance * units::length;
   int reach = given.cellHeight == "HALF" ? 2 : 1;
   if (given.cellHeight.empty()) {
-    reach = selectTowersReach(system.box, cutoff);
+    reach = selectTowersReach(geometry.heights.data(), cutoff);
   }
   if (!*limits) {
     if (setup)
@@ -468,7 +475,7 @@ llvm::Expected<Object> mdir::tool::checkTowersShape(const Control &control,
           "a visible CUDA device is required to resolve launch resources");
     for (int a = 0; a < 3; ++a) {
       int k = a == 2 ? reach : 1;
-      if (std::floor(system.box[a] * k / cutoff) < 2 * k + 1)
+      if (std::floor(geometry.heights[a] * k / cutoff) < 2 * k + 1)
         return refusal("cell height is unsupported for this box and cutoff");
     }
     TowersShape partial = given;

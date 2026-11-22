@@ -6,5 +6,7 @@
   the antisymmetric pair region from compact candidate records. A checked sequence
   validates narrow words and recovers exact two-limb sums before publication.
   The rectangular entry replays excluded pairs and their physical corrections.
-  Setup chooses a rectangular height from the cell and cutoff, measures the
+  Setup chooses the height from the cell and cutoff, measures the
   unpinned launch fields at that height, and caches the winning launch.
+  The compiler also supports fractional triclinic cells and closest-lattice
+  physical exclusions.
