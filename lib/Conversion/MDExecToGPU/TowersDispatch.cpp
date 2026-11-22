@@ -118,8 +118,7 @@ struct Dispatch {
       auto type = cast<MemRefType>(field.getType());
       if (type.getRank() != 1)
         return op.emitError("unsupported TOWERS per-atom field");
-      fields.push_back(buffer(("field " + Twine(i)).str(),
-                              mem({g.atoms}, type.getElementType())));
+      fields.push_back(field);
     }
     if (shape.exclusions) {
       Value members;
@@ -178,14 +177,27 @@ struct Dispatch {
     if (g.cells() <= g.atoms && !counts.getDefiningOp()->hasAttr("mdir.initialized")) {
       OpBuilder init(counts.getDefiningOp());
       init.setInsertionPointAfter(counts.getDefiningOp());
+      if (counts.getDefiningOp()->isBeforeInBlock(map.getDefiningOp()))
+        init.setInsertionPointAfter(map.getDefiningOp());
       rows(init, loc, createIndex(init, loc, g.cells()), [&](OpBuilder &k, Value i) {
-        memref::StoreOp::create(k, loc, createZero(k, loc, narrow), counts, ValueRange{i});
-        Value head = arith::AddIOp::create(k, loc, i, createIndex(k, loc, g.cells()));
-        memref::StoreOp::create(k, loc, arith::ConstantIntOp::create(k, loc,-1,32), counts, ValueRange{head});
+        emitTowersSetupRow(k, loc, g, i, {map, counts}, false);
       });
       counts.getDefiningOp()->setAttr("mdir.initialized",init.getUnitAttr());
     }
     auto cell = op.getCellMutable().get();
+    SmallVector<Value> binsInfo;
+    if (g.cells() <= g.atoms) {
+      for (auto [a, bins] : llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
+        Value length = g.triclinic ? createReal(b, loc, dbl, 1) : vector::ExtractOp::create(b, loc, cell, a).getResult();
+        Value width = arith::DivFOp::create(b, loc, length, createReal(b,loc,dbl,bins));
+        binsInfo.push_back(width);
+        binsInfo.push_back(arith::DivFOp::create(b,loc,createReal(b,loc,dbl,4),width));
+      }
+      if (!g.triclinic) {
+        raw = positions;
+        shape.cartesianPositions = positions.getType();
+      }
+    }
     Value initialWords, initialState, initialFailed, arrivals;
     if (!op.getOuts().empty()) {
       arrivals = buffer("certificate arrivals", mem({1}, narrow));
@@ -232,31 +244,28 @@ struct Dispatch {
         for (auto [j, v] : llvm::enumerate(lattice))
           memref::StoreOp::create(at, l, v, box,
                                   ValueRange{createIndex(at, l, j)});
+        if (g.cells() <= g.atoms)
+          emitTowersGeometry(at, l, g, box, status, geometry);
         scf::YieldOp::create(at, l);
       });
-      if (g.cells() <= g.atoms) {
-        Value cellRow = arith::CmpIOp::create(k, loc, arith::CmpIPredicate::ult, i, axis(g.cells()));
-        scf::IfOp::create(k, loc, cellRow, [&](OpBuilder &at, Location l) {
-          emitTowersSetupRow(at, l, g, i, {map, counts, status, box, geometry}, false);
-          scf::YieldOp::create(at, l);
-        });
-      }
-      for (int a = 0; a < 3; ++a)
-        memref::StoreOp::create(k, loc, xyz[a], raw, ValueRange{axis(a), i});
+      if (!shape.cartesianPositions)
+        for (int a = 0; a < 3; ++a)
+          memref::StoreOp::create(k, loc, xyz[a], raw, ValueRange{axis(a), i});
       Value chargeValue, typeValue;
-      for (auto [from, to] : llvm::zip(op.getIns(), fields)) {
+      for (Value from : fields) {
         Value v = memref::LoadOp::create(k, loc, from, ValueRange{i});
-        memref::StoreOp::create(k, loc, v, to, ValueRange{i});
         if (!chargeValue && v.getType() == real)
           chargeValue = v;
         if (!typeValue && v.getType() == narrow)
           typeValue = v;
       }
-      memref::StoreOp::create(k, loc, chargeValue ? chargeValue : createZero(k, loc, real), charge, ValueRange{i});
+      if (!chargeValue) chargeValue = createZero(k, loc, real);
+      if (g.cells() > g.atoms) memref::StoreOp::create(k, loc, chargeValue, charge, ValueRange{i});
       memref::StoreOp::create(k, loc, typeValue ? typeValue : createZero(k, loc, narrow), types, ValueRange{i});
       if (g.cells() <= g.atoms) {
         Value forward = arith::ConstantIntOp::create(k, loc, 0, 32);
-        emitTowersInsertRow(k, loc, g, i, {raw, charge, geometry, counts, keys, local, forward}, lattice);
+        xyz.push_back(chargeValue);
+        emitTowersInsertRow(k, loc, g, i, {raw, charge, geometry, counts, keys, local, forward}, lattice, binsInfo, xyz);
       }
     });
     return success();

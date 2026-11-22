@@ -36,7 +36,7 @@ public:
         workers(shape.workers), recordCap(shape.records),
         residency(shape.residency), groups(panel / 32),
         packedChargeType(shape.packedChargeType), certified(shape.certified),
-        packedDispatch(shape.packedDispatch), finishForce(shape.finishForce), probe(probe), indexedExclusions(shape.indexedExclusions),
+        packedDispatch(shape.packedDispatch), finishForce(shape.finishForce), probe(probe), indexedExclusions(shape.indexedExclusions), cartesianPositions(shape.cartesianPositions),
         v3(VectorType::get({3}, f32)), v4(VectorType::get({4}, f32)) {}
   LogicalResult emit();
 
@@ -76,6 +76,7 @@ private:
 
   int panel, stripe, workers, recordCap, residency, groups;
   bool packedChargeType, certified, packedDispatch, finishForce, probe, indexedExclusions;
+  Type cartesianPositions;
   bool recovering = false;
   Value failedConversions, highWords, localVotes;
   bool shortVote() const {
@@ -568,7 +569,7 @@ void Force::exclusion(Value row) {
                 Value length = load(box, {cx(axis)}),
                       half = mulf(length, cd(0.5));
                 auto key = [&](Value atom) {
-                  Value v = load(raw, {cx(axis), atom});
+                  Value v = cartesianPositions ? load(raw, {atom, cx(axis)}) : load(raw, {cx(axis), atom});
                   Value outside = ori(cmpf(CmpFPredicate::OLT, v, cd(0)),
                                       cmpf(CmpFPredicate::OGE, v, length));
                   v = ifElse(
@@ -2099,7 +2100,7 @@ LogicalResult Force::emit() {
     types.push_back(mem({1}, i64));
   if (exclusions) {
     types.append({mem({exclusions, 2}, i32), mem({g.inverseWords()}, i32),
-                  mem({3, g.atoms}, f64), mem({g.boxSize()}, f64)});
+                  cartesianPositions ? cartesianPositions : mem({3, g.atoms}, f64), mem({g.boxSize()}, f64)});
     if (indexedExclusions)
       types.push_back(mem({g.atoms, 2}, i32));
     if (correction && (!supported(correction) ||
@@ -2129,7 +2130,7 @@ LogicalResult Force::emit() {
       fixedBytes += (panel + stripe) * (vec ? vec.getNumElements() : 1) *
                     ((scalar.getIntOrFloatBitWidth() + 7) / 8);
     if (!packedChargeType || j != 0)
-      types.push_back(mem({packedChargeType ? slots : g.atoms}, t));
+      types.push_back(packedDispatch ? term.getIns()[j].getType() : mem({packedChargeType ? slots : g.atoms}, t));
   }
   if (packedDispatch)
     types.push_back(mem({slots}, i32));

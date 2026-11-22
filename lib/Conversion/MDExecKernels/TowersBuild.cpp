@@ -35,8 +35,9 @@ public:
   }
 
   void emit(bool audit);
-  void setup(Value cell, ValueRange a, bool reset = true);
-  void insert(Value item, ValueRange a, ValueRange lattice = {});
+  void setup(Value cell, ValueRange a, bool setupGeometry = true);
+  void geometry(Value box, Value status, Value info);
+  void insert(Value item, ValueRange a, ValueRange lattice = {}, ValueRange binsInfo = {}, ValueRange xyzq = {});
 
 private:
   using Offset = std::array<int, 3>;
@@ -200,20 +201,14 @@ void TowersBuild::sortWarp(Value keys, Value base, Value lane, Value count,
   }
 }
 
-void TowersBuild::setup(Value cell, ValueRange a, bool reset) {
-  if (reset) {
-  store(ci(0), a[1], {cell});
-  if (g.growCells)
-    store(ci(-1), a[1], {addi(cx(g.cells()), cell)});
-  }
-  ifThen(cmpi(CmpIPredicate::eq, cell, cx(0)), [&] {
-    store(ci(0), a[2], {cx(0)});
+void TowersBuild::geometry(Value box, Value status, Value info) {
+    store(ci(0), status, {cx(0)});
     for (auto [axis, bins] :
          llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
-      Value length = g.triclinic ? cd(1) : load(a[3], {cx(axis)});
+      Value length = g.triclinic ? cd(1) : load(box, {cx(axis)});
       if (g.triclinic) {
         auto basis = [&](int row, int col) {
-          return load(a[3], {cx(3 * row + col)});
+          return load(box, {cx(3 * row + col)});
         };
         // The cross product of the other two rows is normal to the
         // face. Its dot product with this row gives the slab height.
@@ -231,20 +226,27 @@ void TowersBuild::setup(Value cell, ValueRange a, bool reset) {
         for (int k = 0; k < 3; ++k) {
           Value h = basis(axis, k), normal = divf(cross[k], norm);
           height = addf(height, mulf(h, normal));
-          store(h, a[4], {cx(axis), cx(TowersLayout::lattice + k)});
-          store(divf(h, cd(bins)), a[4],
+          store(h, info, {cx(axis), cx(TowersLayout::lattice + k)});
+          store(divf(h, cd(bins)), info,
                 {cx(axis), cx(TowersLayout::step + k)});
-          store(normal, a[4], {cx(axis), cx(TowersLayout::normal + k)});
+          store(normal, info, {cx(axis), cx(TowersLayout::normal + k)});
         }
-        store(divf(height, cd(bins)), a[4],
+        store(divf(height, cd(bins)), info,
               {cx(axis), cx(TowersLayout::slab)});
       }
       Value width = divf(length, cd(bins));
-      store(length, a[4], {cx(axis), cx(0)});
-      store(width, a[4], {cx(axis), cx(1)});
-      store(divf(cd(4), width), a[4], {cx(axis), cx(2)});
+      store(length, info, {cx(axis), cx(0)});
+      store(width, info, {cx(axis), cx(1)});
+      store(divf(cd(4), width), info, {cx(axis), cx(2)});
     }
-  });
+}
+
+void TowersBuild::setup(Value cell, ValueRange a, bool setupGeometry) {
+  store(ci(0), a[1], {cell});
+  if (g.growCells)
+    store(ci(-1), a[1], {addi(cx(g.cells()), cell)});
+  if (setupGeometry)
+    ifThen(cmpi(CmpIPredicate::eq, cell, cx(0)), [&] { geometry(a[3], a[2], a[4]); });
   for (auto [field, delta] : llvm::enumerate(offsets)) {
     Offset back{-delta[0], -delta[1], -delta[2]};
     store(indexCast(i32, neighbor(cell, back)), a[0],
@@ -252,7 +254,7 @@ void TowersBuild::setup(Value cell, ValueRange a, bool reset) {
   }
 }
 
-void TowersBuild::insert(Value item, ValueRange a, ValueRange lattice) {
+void TowersBuild::insert(Value item, ValueRange a, ValueRange lattice, ValueRange binsInfo, ValueRange xyzq) {
   int n=g.atoms, cells=g.cells();
   auto xyzw=VectorType::get({4},f32);
   Value atom = select(cmpi(CmpIPredicate::ne, a[6], ci(0)),
@@ -262,9 +264,9 @@ void TowersBuild::insert(Value item, ValueRange a, ValueRange lattice) {
   for (auto [axis, bins] :
        llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
     Value length = lattice.empty() ? load(a[2], {cx(axis), cx(0)}) : g.triclinic ? cd(1) : lattice[axis];
-    Value x = load(a[0], {cx(axis), atom});
-    Value width = lattice.empty() ? load(a[2], {cx(axis), cx(1)}) : divf(length, cd(bins));
-    Value reciprocal = lattice.empty() ? load(a[2], {cx(axis), cx(2)}) : divf(cd(4), width);
+    Value x = xyzq.empty() ? load(a[0], {cx(axis), atom}) : xyzq[axis];
+    Value width = lattice.empty() ? load(a[2], {cx(axis), cx(1)}) : binsInfo[2*axis];
+    Value reciprocal = lattice.empty() ? load(a[2], {cx(axis), cx(2)}) : binsInfo[2*axis+1];
     Values located = locate(x, length, width, reciprocal, bins);
     Value v = located[0], quarter = located[1];
     Value bin = shrui(quarter, ci(2));
@@ -287,7 +289,7 @@ void TowersBuild::insert(Value item, ValueRange a, ValueRange lattice) {
     }
     coordinates = std::move(cartesian);
   }
-  coordinates.push_back(load(a[1], {atom}));
+  coordinates.push_back(xyzq.empty() ? load(a[1], {atom}) : xyzq[3]);
   store(vector::FromElementsOp::create(b, loc, xyzw, coordinates), a[5],
         {atom});
   Value rank;
@@ -518,11 +520,13 @@ void TowersBuild::emitOwnership(MemRefType spans, MemRefType ids) {
 }
 } // namespace
 
+void mdir::kernels::emitTowersGeometry(OpBuilder &b, Location loc, TowersLayout g, Value box, Value status, Value info) { TowersBuild(b, loc, g).geometry(box, status, info); }
+
 void mdir::kernels::emitTowersSetupRow(OpBuilder &b, Location loc, TowersLayout g, Value cell, ValueRange args, bool reset) {
   TowersBuild(b, loc, g).setup(cell, args, reset);
 }
-void mdir::kernels::emitTowersInsertRow(OpBuilder &b, Location loc, TowersLayout g, Value item, ValueRange args, ValueRange lattice) {
-  TowersBuild(b, loc, g).insert(item, args, lattice);
+void mdir::kernels::emitTowersInsertRow(OpBuilder &b, Location loc, TowersLayout g, Value item, ValueRange args, ValueRange lattice, ValueRange binsInfo, ValueRange xyzq) {
+  TowersBuild(b, loc, g).insert(item, args, lattice, binsInfo, xyzq);
 }
 
 void mdir::kernels::emitTowersEntry(
