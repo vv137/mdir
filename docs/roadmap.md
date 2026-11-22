@@ -21,7 +21,8 @@ The size sweeps of M3 take boxes of more than 99,999 waters (D339, #550).
 Features of classical MD (Section 5) continue between milestones.
 TOWERS (#931, D[towers]) has a rectangular rebuild and a mixed-precision force entry
 in the compiler. It screens rectangular tiles, builds mask records and evaluates
-the force pair region. Certification, exclusions and driver selection remain open. Double precision is tracked in #937.
+the force pair region. The checked force certifies narrow sums and replays failed
+evaluations into two limbs before publication. Exclusions and driver selection remain open. Double precision is tracked in #937.
 
 Physical constants (#805): D394 centralizes C/C++
 definitions and derives native and expression coefficients from the exact

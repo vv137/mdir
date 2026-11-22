@@ -1339,8 +1339,25 @@ a further stripe regenerates the features before the next screen.
 A stripe that exceeds record capacity is split before any endpoint update.
 
 One nearest-even rounding of each scaled force component supplies both
-endpoints with opposite integer contributions. A tile accumulates the low
-and high parts separately in block memory. A component outside the fast
-signed 32-bit range takes the signed 64-bit global path for both endpoints.
-The resulting blind force still requires exclusion corrections and a bound
-on the final sums before it can serve as a certified molecular force.
+endpoints with opposite integer contributions. The checked entry counts a
+pair once if any scaled component fails signed 32-bit conversion and omits
+that pair from the provisional result. Unique ownership limits each endpoint
+to $N-1$ direct contributions. The rectangular packing admits $N<2^{26}$,
+so the magnitude of every partial sum of accepted words is bounded by
+$(N-1)2^{31}<2^{57}$. After lifting the tile sums, a zero outstanding
+failure count and a final value in $[-2^{31},2^{31}-1]$ certify each
+component at the narrow precision.
+
+If certification fails, the traversal starts afresh with two 64-bit limbs
+per component. The low-word atomic gives the preceding unsigned low word,
+so its wrap supplies exactly the carry belonging to this addition. The
+high word also receives the sign extension of the addend. Negating the two
+limbs together handles the opposite of $-2^{63}$. The same ownership bound
+limits a wide partial sum to $(N-1)2^{63}<2^{89}$. The GPU combines narrow
+pairs in a tile before adding the lifted partials to the two limbs. A larger
+pair goes directly to the two-limb sum. The CPU enumerates owned spans.
+The result fits signed 64-bit output exactly when its high limb equals
+the sign extension of its low limb. A final publication pass ensures that
+an invalid contribution or endpoint preserves the preceding destination
+for every atom. This stage certifies the blind direct force. Molecular
+force evaluation also requires the topology's exclusions and corrections.

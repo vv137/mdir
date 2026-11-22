@@ -1,6 +1,6 @@
 # Appendix A. The control file
 
-D[towers] exposes the rectangular rebuild and provisional force evaluation
+D[towers] exposes the rectangular rebuild, checked direct force and wide recovery
 through a compiler pass. The planned explicit mixed-precision traversal and its
 `[execution] towers_unchecked = false` policy enter the control interface
 when the pair evaluator is qualified.

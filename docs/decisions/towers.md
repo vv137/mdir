@@ -162,5 +162,8 @@ The direct compiler entry now emits the rectangular blind force stage from
 one antisymmetric pair region. Its CPU implementation enumerates owned spans.
 Its GPU implementation uses a conservative screen and distributes the set
 bits of its mask records across the block. A record-capacity retry divides
-the target stripe before any force is committed for that tile. Exclusions,
-certification, recovery and driver integration are subsequent stages.
+the target stripe before any force is committed for that tile. A checked
+direct entry counts failed narrow conversions, validates the final endpoints
+and replays the whole frame into two-limb sums if necessary.
+The consumer receives a force only after every atom passes. Exclusions,
+other outputs and driver integration follow this direct-only stage.

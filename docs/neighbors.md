@@ -86,6 +86,29 @@ exclusion corrections and certification. The optional GPU `probe-force`
 entry additionally writes eight phase durations in cycles per tower, wall
 time in nanoseconds, the final cycle timestamp and the number of tile attempts.
 
+The internal `certify-force` pass option emits a checked rectangular force
+sequence. Use it for the direct stage before topology corrections. Zero the
+provisional force words, both 32-bit state words and a signed 64-bit failed-pair
+counter at the start of each evaluation. Pass the counter immediately after
+the force scale. For the same geometry, packing, parameters and table, issue
+the following entries in order. Each entry takes its own launch boundary.
+
+| Entry | Arguments and work |
+|---|---|
+| `towers_force` | Accumulate into provisional words. A pair with any component outside signed 32-bit conversion contributes one to the failed-pair counter and zero provisional words. |
+| `towers_certify` | Provisional words, counter, state. One item per atom checks the inclusive signed 32-bit range. An outstanding conversion count or failed endpoint sets the replay word. |
+| `towers_clear_wide` | State, low limbs, high limbs. One item per atom clears both scratch buffers when replay is requested. |
+| `towers_recover` | Force arguments with the low buffer in place of provisional words, plus a final high-buffer argument. The GPU uses the same tower grid, worker count and shared-record capacity as the force entry. Replay needs no probe argument. |
+| `towers_check_wide` | State, low limbs, high limbs. One item per atom checks exact signed 64-bit representability. |
+| `towers_publish` | State, provisional words, low limbs, destination. One item per atom copies the accepted result after all checks pass. |
+
+The low and high buffers, the provisional result and the publication destination
+are distinct particle-by-three arrays of 64-bit words. The first state word
+reports fatal errors. Bit 0 means an unrepresentable physical component, bit 1
+invalid geometry or scale, and bit 2 an unrepresentable final sum. A fatal
+error preserves the destination. The second word records whether this evaluation
+required replay. A successful narrow evaluation leaves wide scratch untouched.
+
 ### 2.1 Steps
 
 The host build is the IR template `lib/Runtime/Templates/NeighborsMatrix.mlir`.
