@@ -1,6 +1,8 @@
-# D[towers] Particle tower and plate traversal
+# D[towers]
 
-Design for #931, proposed November 22, 2026.
+Recorded at its merge.
+
+Particle tower and plate traversal: design for #931, proposed November 22, 2026.
 
 ## Selection and lowering
 
