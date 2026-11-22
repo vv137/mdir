@@ -49,7 +49,10 @@ combinations of forward integer-conversion and inverse influence load
 callbacks, including any explicit sweeps. Select by mesh dimensions,
 precision, device and cuFFT version. Keep the explicit path available,
 refresh influences on box changes, and retain the explicit energy and
-virial reductions on observation steps. Stage (a) uses explicit transforms.
+virial reductions on observation steps. The first evaluation warms each available combination and measures three
+complete transform pairs with CUDA events. The median decides the policy.
+The per-axis tables and current inverse cell supply the inverse callback.
+Fixed-order runs use the explicit transforms for reproducible rounding.
 All these choices are internal. Benchmark each phase on the six equal-grid
 frames of #933 and investigate any time above 1.15 times its reference
 before proceeding.

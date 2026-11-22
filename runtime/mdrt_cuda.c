@@ -338,6 +338,7 @@ static void enter(void) {
    down, and the memory of the device with it. */
 static void releaseDeviceConstants(void *owner, int all, int gone);
 static void releaseBlas(int gone);
+static void releaseDeviceFFT(int gone);
 
 void mgpuSetDefaultDevice(int32_t device) {
   defaultDevice = device;
@@ -346,6 +347,7 @@ void mgpuSetDefaultDevice(int32_t device) {
     int gone = cuCtxSetCurrent(context) != CUDA_SUCCESS;
     releaseDeviceConstants(NULL, 1, gone);
     releaseBlas(gone);
+    releaseDeviceFFT(gone);
     CUdevice old;
     check(cuCtxGetDevice(&old), "cuCtxGetDevice");
     check(cuDevicePrimaryCtxRelease(old), "cuDevicePrimaryCtxRelease");
@@ -1616,6 +1618,7 @@ static int checkFFT(cufftResult result, const char *what, int64_t k1,
 /* The plan of a grid, a direction, and a precision (f32 if `single`), on
    the stream of the kernels, in `plan`; 0 if it cannot be made, and the
    run stops. */
+static void trimPMETrials(void);
 static int getFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward,
                       int single, cufftHandle *plan) {
   for (int64_t i = 0; i != numFFTPlans; ++i)
@@ -1664,6 +1667,8 @@ static int getFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward,
     return 0;
   }
   /* The plans least recently taken make room for this one in the budget. */
+  if (fftPlanBytes + workspace > getFFTPlanBudget())
+    trimPMETrials();
   while (numFFTPlans && fftPlanBytes + workspace > getFFTPlanBudget()) {
     int64_t oldest = 0;
     for (int64_t i = 1; i != numFFTPlans; ++i)
@@ -1683,6 +1688,19 @@ static int getFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward,
   fftPlanBytes += workspace;
   *plan = made;
   return 1;
+}
+
+#include "mdrt_pme_callbacks.inc"
+
+static void releaseDeviceFFT(int gone) {
+  if (gone) {
+    memset(pmeTrials, 0, sizeof pmeTrials);
+    fftPlanBytes = 0;
+    numFFTPlans = 0;
+  }
+  trimPMETrials();
+  while (numFFTPlans)
+    destroyFFTPlan(numFFTPlans - 1);
 }
 
 static int isDriverGone(void);
@@ -1710,9 +1728,10 @@ static uint64_t trimIdle(void) {
     freeBlocks[i] = freeBlocks[--numFree];
     releaseArena(piece, 0, 1);
   }
+  trimPMETrials();
   while (numFFTPlans)
     destroyFFTPlan(numFFTPlans - 1);
-  return released;
+  return released - fftPlanBytes;
 }
 
 /* Gives the idle blocks of the pool and the plans of cuFFT back to the
@@ -1737,6 +1756,9 @@ void mdrtDeviceMemoryCounts(int64_t counts[8]) {
   counts[3] = (int64_t)poolBytes;
   counts[4] = numDriverBlocks;
   counts[5] = numFFTPlans;
+  for (int i = 0; i < 2; ++i)
+    counts[5] +=
+        (pmeTrials[i].callback[0] != 0) + (pmeTrials[i].callback[1] != 0);
   counts[6] = (int64_t)fftPlanBytes;
   size_t free = 0, total = 0;
   counts[7] = context && cuCtxSetCurrent(context) == CUDA_SUCCESS &&

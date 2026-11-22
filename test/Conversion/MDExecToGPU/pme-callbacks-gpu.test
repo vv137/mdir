@@ -1,0 +1,4 @@
+# REQUIRES: cuda
+# Check every available load callback on a known spectrum, including
+# changes of cell, narrow refusal, and reuse of the measured policy.
+# RUN: %python %S/Inputs/pme_callbacks.py %mdrt_cuda

@@ -53,6 +53,7 @@ private:
   template <bool tilted> void emitCellOrder(StringRef symbol);
   void emitPack(StringRef symbol);
   void emitIntegerPatch(StringRef symbol);
+  void emitPatchReal(StringRef symbol);
   Value meshCoordinate(Value fractional, Value size);
   std::pair<Value, Value> splitMeshAxis(Value mesh, Value size, Value support,
                                         bool cubic = false);
@@ -152,7 +153,7 @@ private:
   template <bool useList> void emitSpreadBricks(StringRef symbol);
   void emitReal(StringRef symbol);
   template <Window window, Splitting splitting, bool tilted>
-  void emitTables(StringRef symbol);
+  void emitTables(StringRef symbol, bool callbackInfo = false);
   template <Splitting splitting, bool tilted>
   void emitConvolve(StringRef symbol);
   template <Window window, Splitting splitting, bool tilted>

@@ -58,11 +58,14 @@ void DevicePME::emitSplineStages(bool potential, bool listed, int64_t tiles, boo
   emitGather<tilted, false, false, false>(name("gather"));
   emitGather<tilted, false, false, true>(name("gather_weights"));
   if (ordered) {
+    emitTables<Window::Spline, Splitting::Gaussian, tilted>(
+        name("tables_ordered"), true);
     emitCellOrder<tilted>(name("cell_order"));
     emitGather<tilted, false, false, true>(name("gather_ordered"), true);
     if constexpr (!tilted) {
       emitPack(name("pack"));
       emitIntegerPatch(name("spread_ordered"));
+      emitPatchReal(name("patch_real"));
     }
   }
   if (potential)

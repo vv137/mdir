@@ -1500,6 +1500,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       for (int64_t count : {cells, cells + 1, cells, (cells + 1023) / 1024})
         scratch.push_back(allocate(word, count));
       scratch.push_back(allocate(word, points));
+      scratch.push_back(allocate(IntegerType::get(context, 64), 14));
     } else if (usesBricks) {
       int64_t bricks =
           (grid[0] + 3) / 4 * ((grid[1] + 3) / 4) * 16 * grid[2];

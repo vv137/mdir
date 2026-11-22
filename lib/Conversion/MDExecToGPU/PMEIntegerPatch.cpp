@@ -9,17 +9,16 @@ void DevicePME::emitIntegerPatch(StringRef symbol) {
   OpBuilder::InsertionGuard guard(b);
   auto words = globalMem({ShapedType::kDynamic}, i32Type);
   auto wideWords = globalMem({ShapedType::kDynamic}, i64Type);
-  auto mesh = globalMem({ShapedType::kDynamic}, realType);
-  SmallVector<Type> args{records(), words, words, wideWords, words, mesh,
-                         idxType, idxType, idxType, idxType, idxType};
+  SmallVector<Type> args{records(), words,   words,   wideWords, words,
+                         idxType,   idxType, idxType, idxType,   idxType};
   auto fn = func::FuncOp::create(b, loc, symbol, b.getFunctionType(args, {}));
   fn.setPrivate();
   Block *entry = fn.addEntryBlock();
   b.setInsertionPointToStart(entry);
   auto a = entry->getArguments();
   Value particles = a[0], offsets = a[1], grid = a[2], wide = a[3];
-  Value flag = a[4], out = a[5], threads = a[9], patchX = a[10];
-  Value dims[] = {a[6], a[7], a[8]};
+  Value flag = a[4], threads = a[8], patchX = a[9];
+  Value dims[] = {a[5], a[6], a[7]};
   auto ix = [&](int n) -> Value { return arith::ConstantIndexOp::create(b, loc, n); };
   auto integer = [&](Type type, int n) -> Value {
     return arith::ConstantOp::create(b, loc, b.getIntegerAttr(type, n));
@@ -210,11 +209,41 @@ void DevicePME::emitIntegerPatch(StringRef symbol) {
     });
     gpu::TerminatorOp::create(b, loc);
   }
-  forParticles(b, loc, points, gridBlocks, threads, one, [&](Value i) {
-    auto convertGrid = [&](Value input) {
-      store(mulf(sitofp(realType, load(input, {i})), fp(realType, 1 / scale)), out, {i});
-    };
-    either(narrow(), [&] { convertGrid(grid); }, [&] { convertGrid(wide); });
+  func::ReturnOp::create(b, loc);
+}
+
+void DevicePME::emitPatchReal(StringRef symbol) {
+  OpBuilder::InsertionGuard guard(b);
+  auto words = globalMem({ShapedType::kDynamic}, i32Type);
+  auto wide = globalMem({ShapedType::kDynamic}, i64Type);
+  auto mesh = globalMem({ShapedType::kDynamic}, realType);
+  auto fn = func::FuncOp::create(
+      b, loc, symbol, b.getFunctionType({words, wide, words, mesh}, {}));
+  fn.setPrivate();
+  Block *entry = fn.addEntryBlock();
+  b.setInsertionPointToStart(entry);
+  auto a = entry->getArguments();
+  Value zero = arith::ConstantIndexOp::create(b, loc, 0);
+  Value one = arith::ConstantIndexOp::create(b, loc, 1);
+  Value threads = arith::ConstantIndexOp::create(b, loc, 128);
+  Value points = memref::DimOp::create(b, loc, a[3], zero);
+  Value blocks = arith::CeilDivUIOp::create(b, loc, points, threads);
+  forParticles(b, loc, points, blocks, threads, one, [&](Value i) {
+    Value bits = load(a[2], {zero});
+    Value zero32 = arith::ConstantIntOp::create(b, loc, 0, 32);
+    auto selectGrid =
+        scf::IfOp::create(b, loc, TypeRange{realType},
+                          cmpi(arith::CmpIPredicate::eq, bits, zero32), true);
+    {
+      OpBuilder::InsertionGuard scope(b);
+      b.setInsertionPointToStart(selectGrid.thenBlock());
+      scf::YieldOp::create(b, loc, sitofp(realType, load(a[0], {i})));
+      b.setInsertionPointToStart(selectGrid.elseBlock());
+      scf::YieldOp::create(b, loc, sitofp(realType, load(a[1], {i})));
+    }
+    Value inv = arith::ConstantOp::create(
+        b, loc, b.getFloatAttr(realType, realType.isF32() ? 0x1p-23 : 0x1p-40));
+    store(mulf(selectGrid.getResult(0), inv), a[3], {i});
   });
   func::ReturnOp::create(b, loc);
 }

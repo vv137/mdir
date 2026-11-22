@@ -549,7 +549,12 @@ in each dimension, the ordered device spread checks integer range on
 every frame. A block deposits its particles into a shared patch. The
 gather writes three Cartesian force components at each original atom
 index. The [range bounds and cell layout](decisions/pme-tiles.md)
-specify the narrow and wide paths (D[pme-tiles]).
+specify the narrow and wide paths (D[pme-tiles]). On the first evaluation,
+the runtime times the available forward conversion and inverse scaling
+callback combinations, including the cost of any explicit sweeps. A
+force-only step uses the measured winner. An observation step uses the
+explicit convolution and its energy and virial reductions. Fixed-order
+runs use explicit transforms.
 
 ### 3.4 One set of buffers for every sum (D315)
 

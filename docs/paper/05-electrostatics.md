@@ -303,6 +303,11 @@ absolute-sum certificate bounds all intermediate sums, so that changing
 the partition among blocks preserves the integer mesh. Four lanes per
 particle contract the potential with the spline gradients and place the
 three force components at the original atom index (D[pme-tiles]).
+A cuFFT forward load can convert the certified integer mesh and an inverse
+load can scale the complex modes from the current cell factors. The first
+evaluation times each available combination with its explicit sweeps.
+Force-only steps reuse the fastest median. Observations use the explicit
+energy and virial reduction.
 
 The fraction along the cell stays f64 because a position of a large cell
 in f32 would lose the digits that place it within a point: the product

@@ -54,6 +54,7 @@ def program(precision, case, source, opt):
         print(match[0])
         return match[1]
     spread = kernel("mdrt_gpu_pme_spread_ordered")
+    convert = kernel("mdrt_gpu_pme_patch_real")
     gather = kernel("mdrt_gpu_pme_gather_ordered")
     print("func.func private @printI64(i64)\nfunc.func private @printNewline()")
     print("func.func @main() {")
@@ -95,11 +96,13 @@ def program(precision, case, source, opt):
             print(f"memref.store %id{run}_{i}, %hids[%i{i}] : memref<?xi32>")
         copy("p", True)
         copy("ids", True)
-        names = ["p","off","grid","wide","flag","out"]
+        names = ["p","off","grid","wide","flag"]
         operands = ", ".join("%"+n for n in names)
         signature = ", ".join(types[n] for n in names)
         print(f"func.call @{spread}({operands}, %i9,%i9,%i7,%i{threads},%i{extent}) : "
               f"({signature}, index,index,index,index,index) -> ()")
+        print(f"func.call @{convert}(%grid,%wide,%flag,%out) : "
+              f"({types['grid']},{types['wide']},{types['flag']},{types['out']}) -> ()")
         copy("flag", False)
         print(f"%status{run} = memref.load %hflag[%i0] : memref<?xi32>")
         print(f"%s{run} = arith.extsi %status{run} : i32 to i64")

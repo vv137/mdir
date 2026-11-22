@@ -5601,10 +5601,14 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                                  cast<MemRefType>(forces.getType()).getMemorySpace());
     auto word = MemRefType::get({ShapedType::kDynamic}, builder.getI32Type(),
                                 MemRefLayoutAttrInterface(), record.getMemorySpace());
-    if (scratch.size() != 14 || scratch[4].getType() != record ||
+    if (scratch.size() != 15 || scratch[4].getType() != record ||
         scratch[6].getType() != record ||
-        !llvm::all_of(scratch.drop_front(7), [&](Value v) { return v.getType() == word; }))
-      return op.emitOpError("cell-order storage requires two four-component mesh buffers and seven i32 work buffers");
+        scratch[14].getType() != scratch[0].getType() ||
+        !llvm::all_of(scratch.slice(7, 7),
+                      [&](Value v) { return v.getType() == word; }))
+      return op.emitOpError(
+          "cell-order storage requires two four-component mesh buffers and "
+          "seven i32 work buffers plus i64 callback metadata");
     cellOrder = {scratch[10], scratch[8], scratch[6]};
   }
   Value bins = ordered ? Value() : getBins(op);
@@ -5628,6 +5632,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   auto instance = [&](StringRef name) {
     bool own = tilted && name != "mdrt_gpu_pme_real" &&
                name != "mdrt_gpu_pme_pack" &&
+               name != "mdrt_gpu_pme_patch_real" &&
                name != "mdrt_gpu_pme_spread_ordered" &&
                name != "mdrt_gpu_pme_spread_bricks" &&
                name != "mdrt_gpu_pme_spread_bricks_listed" &&
@@ -5730,11 +5735,12 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                    scratch[9], cellOrder.offsets, scratch[11], scratch[12], k1, k2, k3});
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_pack"),
                          ValueRange{scratch[4], cellOrder.permutation, cellOrder.particles});
-    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread_ordered"),
-                         ValueRange{cellOrder.particles, cellOrder.offsets, scratch[13], fixed,
-                                    scratch[11], real, k1, k2, k3,
-                                    createIndex(builder, loc, launch.blockSize),
-                                    createIndex(builder, loc, md_exec::PMECellEdge + 3)});
+    func::CallOp::create(
+        builder, loc, instance("mdrt_gpu_pme_spread_ordered"),
+        ValueRange{cellOrder.particles, cellOrder.offsets, scratch[13], fixed,
+                   scratch[11], k1, k2, k3,
+                   createIndex(builder, loc, launch.blockSize),
+                   createIndex(builder, loc, md_exec::PMECellEdge + 3)});
   } else if (tiles) {
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_weights"),
                          ValueRange{positions, box, weights, k1, k2, k3});
@@ -5806,8 +5812,6 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
       transform);
   for (func::FuncOp function : {forward, backward})
     function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
-  func::CallOp::create(builder, loc, forward,
-                       ValueRange{real, complex, sizes[0], sizes[1], sizes[2]});
   // Without its energy and virial, a step only scales the transform, and
   // the host need not wait for the sums of the rows.
   // The factors of the influence function along the edges first (D104).
@@ -5821,20 +5825,105 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // Influence "P3M" (D304) takes tables and a product with the
   // virial of its own; its tables give `scale` eq. 2.28 as they are.
   std::string tabled = op.getP3m() ? "_p3m" : kind;
-  func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_tables" + tabled),
-                       ValueRange{op.getModuli(), tables, box, beta, coulomb,
-                                  k1, k2, k3});
+  bool observe = !op.getEnergy().use_empty() || !op.getVirial().use_empty();
+  bool calibrate = ordered && !fixedPoint;
+  SmallVector<Value> tableArgs{op.getModuli(), tables, box, beta,
+                               coulomb,        k1,     k2,  k3};
+  auto makeTables = [&] {
+    if (calibrate)
+      tableArgs.append({fixed, scratch[11], scratch[14]});
+    func::CallOp::create(builder, loc,
+                         instance(calibrate ? "mdrt_gpu_pme_tables_ordered"
+                                            : "mdrt_gpu_pme_tables" + tabled),
+                         tableArgs);
+  };
+  auto toReal = [&] {
+    if (ordered)
+      func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_patch_real"),
+                           ValueRange{scratch[13], fixed, scratch[11], real});
+  };
+  auto fft = [&](bool inverse) {
+    func::CallOp::create(builder, loc, inverse ? backward : forward,
+                         ValueRange{inverse ? complex : real,
+                                    inverse ? real : complex, sizes[0],
+                                    sizes[1], sizes[2]});
+  };
+  auto scale = [&] {
+    func::CallOp::create(
+        builder, loc, instance("mdrt_gpu_pme_scale" + kind),
+        ValueRange{complex, tables, box, beta, coulomb, k1, k2, k3});
+  };
+  if (calibrate) {
+    makeTables();
+    auto word = [&](int n) -> Value {
+      return arith::ConstantIntOp::create(builder, loc, n, 64);
+    };
+    auto pointer = [&](Value buf) -> Value {
+      auto addr =
+          memref::ExtractAlignedPointerAsIndexOp::create(builder, loc, buf);
+      return arith::IndexCastOp::create(builder, loc, wide, addr);
+    };
+    auto runtime = [&](StringRef name, ValueRange args, bool returnsWord) {
+      auto fn = getOrDeclare(
+          name,
+          builder.getFunctionType(args.getTypes(),
+                                  returnsWord ? TypeRange{wide} : TypeRange{}));
+      return func::CallOp::create(builder, loc, fn, args);
+    };
+    Value state = runtime("mdrtCudaPMEPrepare",
+                          {sizes[0], sizes[1], sizes[2], word(narrow),
+                           word(tilted), pointer(scratch[14])},
+                          true)
+                      .getResult(0);
+    Value trials = runtime("mdrtCudaPMETrials", {state}, true).getResult(0);
+    Value count =
+        observe ? trials : arith::AddIOp::create(builder, loc, trials, word(1));
+    auto runs = scf::ForOp::create(builder, loc, word(0), count, word(1));
+    {
+      OpBuilder::InsertionGuard scope(builder);
+      builder.setInsertionPointToStart(runs.getBody());
+      Value iteration = runs.getInductionVar();
+      Value mode =
+          runtime("mdrtCudaPMEBegin", {state, iteration}, true).getResult(0);
+      auto transform = [&](int dir) {
+        Value bit = arith::AndIOp::create(builder, loc, mode, word(1 << dir));
+        Value callback = arith::CmpIOp::create(
+            builder, loc, arith::CmpIPredicate::ne, bit, word(0));
+        auto route = scf::IfOp::create(builder, loc, callback, true);
+        OpBuilder::InsertionGuard path(builder);
+        builder.setInsertionPointToStart(route.thenBlock());
+        Value input = dir ? complex : (narrow ? scratch[13] : fixed);
+        runtime(
+            "mdrtCudaPMEFFT",
+            {state, word(dir), pointer(input), pointer(dir ? real : complex)},
+            false);
+        builder.setInsertionPointToStart(route.elseBlock());
+        if (dir)
+          scale();
+        else
+          toReal();
+        fft(dir);
+      };
+      transform(0);
+      transform(1);
+      runtime("mdrtCudaPMEEnd", {state, iteration}, false);
+    }
+    runtime("mdrtCudaPMERelease", {state}, false);
+  }
   func::CallOp convolve;
-  if (op.getEnergy().use_empty() && op.getVirial().use_empty())
-    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_scale" + kind),
-                         ValueRange{complex, tables, box, beta, coulomb, k1,
-                                    k2, k3});
-  else
-    convolve = func::CallOp::create(
-        builder, loc, instance("mdrt_gpu_pme_convolve" + tabled),
-        ValueRange{complex, tables, rows, box, beta, coulomb, k1, k2, k3});
-  func::CallOp::create(builder, loc, backward,
-                       ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});
+  if (!calibrate || observe) {
+    toReal();
+    fft(false);
+    if (!calibrate)
+      makeTables();
+    if (observe)
+      convolve = func::CallOp::create(
+          builder, loc, instance("mdrt_gpu_pme_convolve" + tabled),
+          ValueRange{complex, tables, rows, box, beta, coulomb, k1, k2, k3});
+    else
+      scale();
+    fft(true);
+  }
   // The gathering takes the places of the particles from the weights
   // where it has them (D102). With a list, it takes the listed particles,
   // or with `gather_all` every particle, as without a list: there most
@@ -5887,7 +5976,10 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
 /// nothing with the allocator of the runtime: the transforms of cuFFT,
 /// whose plans hold their work areas (runtime/mdrt_cuda.c).
 static bool isAuditedNotToAllocate(StringRef name) {
-  return name == "mdrtCudaFFTForward3D" || name == "mdrtCudaFFTBackward3D" ||
+  return (name == "mdrtCudaPMEPrepare" || name == "mdrtCudaPMETrials" ||
+          name == "mdrtCudaPMEBegin" || name == "mdrtCudaPMEFFT" ||
+          name == "mdrtCudaPMEEnd" || name == "mdrtCudaPMERelease") ||
+         name == "mdrtCudaFFTForward3D" || name == "mdrtCudaFFTBackward3D" ||
          name == "mdrtCudaFFTForward3DF32" ||
          name == "mdrtCudaFFTBackward3DF32";
 }
