@@ -174,14 +174,8 @@ mdir::tool::prepareTowersSpecialization(const Control &control,
   }
   state->module = std::move(module);
   state->program = std::move(*program);
-  // The built-in Amber Lennard-Jones and Coulomb terms are finite at a
-  // positive cutoff. An additional user-defined expression may have a pole.
-  bool finiteAtCutoff =
-      system.topology && !control.prmtopFile.empty() && control.pme &&
-      control.pmeKernel == PMEKernel::Gaussian && !control.ljpme &&
-      !control.hasFreeEnergy && control.pairs.empty();
   return TowersEmitter([state, term, correction, layout, exclusions,
-                        finiteAtCutoff, options = std::move(*options)](
+                        options = std::move(*options)](
                            const TowersShape &shape,
                            TowersBuffers *trial) mutable
                            -> llvm::Expected<std::string> {
@@ -214,7 +208,6 @@ mdir::tool::prepareTowersSpecialization(const Control &control,
         true,
         exclusions,
         int(shape.split)};
-    launch.finiteAtCutoff = finiteAtCutoff;
     if (failed(kernels::emitTowersBuild(*image, layout)) ||
         failed(kernels::emitTowersForce(*image, layout, term, launch, false,
                                         correction)) ||

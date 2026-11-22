@@ -32,7 +32,7 @@ def displacement(u, image):
     )
 
 
-def reference(finite_at_cutoff):
+def reference():
     result = [0] * (3 * len(fractional))
     missed = 0
     for i, j in itertools.combinations(range(len(fractional)), 2):
@@ -47,7 +47,7 @@ def reference(finite_at_cutoff):
         if (i, j) in bonds:
             missed += norm2(d) < norm2(rounded)
             k = 2
-        elif (i, j) == (6, 7) and not finite_at_cutoff:
+        elif (i, j) == (6, 7):
             continue
         elif norm2(d) < 1:
             k = 8
@@ -61,7 +61,7 @@ def reference(finite_at_cutoff):
     return result
 
 
-def check(directory, gpu, reach, workers, finite_at_cutoff=True):
+def check(directory, gpu, reach, workers):
     source = Path(__file__).with_name("towers-force.mlir").read_bytes()
     body = source[source.index(b"  md_exec.pair_for") : source.index(b"  return")]
     physical = body.replace(
@@ -72,7 +72,6 @@ def check(directory, gpu, reach, workers, finite_at_cutoff=True):
     n, split = len(fractional), workers // 32
     opts = {
         "triclinic": 1,
-        "finite-at-cutoff": int(finite_at_cutoff),
         "certify-force": 1,
         "packed-charge-type": 1,
         "force-workers": workers,
@@ -126,7 +125,7 @@ def check(directory, gpu, reach, workers, finite_at_cutoff=True):
         r.packed_types,
         table,
     )
-    expected = reference(finite_at_cutoff)
+    expected = reference()
     for reverse in (False, True):
         r.step(reverse)
         state[:] = [0, 0]
@@ -171,4 +170,3 @@ if __name__ == "__main__":
     rebuild.MDIR_OPT = sys.argv[3]
     for reach, workers in itertools.product((1, 2), (32, 64)):
         check(directory, sys.argv[2] == "gpu", reach, workers)
-    check(directory, sys.argv[2] == "gpu", 2, 64, finite_at_cutoff=False)

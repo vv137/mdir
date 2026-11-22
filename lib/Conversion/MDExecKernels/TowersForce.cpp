@@ -35,7 +35,7 @@ public:
         stripe(shape.stripe), workers(shape.workers), recordCap(shape.records),
         residency(shape.residency), groups(panel / 32),
         packedChargeType(shape.packedChargeType), certified(shape.certified),
-        probe(probe), finiteAtCutoff(shape.finiteAtCutoff),
+        probe(probe),
         v3(VectorType::get({3}, f32)), v4(VectorType::get({4}, f32)) {}
   LogicalResult emit();
 
@@ -64,7 +64,7 @@ private:
   void exclusion(Value row);
 
   int panel, stripe, workers, recordCap, residency, groups;
-  bool packedChargeType, certified, probe, finiteAtCutoff;
+  bool packedChargeType, certified, probe;
   bool recovering = false;
   Value failedConversions, highWords, localVotes;
   bool shortVote() const {
@@ -1538,8 +1538,7 @@ void Force::bind(ValueRange args) {
   invalid = args[5];
   wordScale = args[6];
   double cutoff = term.getCutoff().convertToDouble();
-  cutoff2 = finiteAtCutoff ? cf(cutoff * cutoff)
-                           : createCutoff2(b, loc, f32, cutoff);
+  cutoff2 = createCutoff2(b, loc, f32, cutoff);
   unsigned n = 7;
   if (certified)
     failedConversions = args[n++];

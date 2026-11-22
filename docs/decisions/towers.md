@@ -77,7 +77,7 @@ that bounds their integer magnitudes by 1024. The squared-distance
 expansion then fits exactly in the 24-bit significand of the accumulator.
 Enlarge the screening radius by the norm of the componentwise endpoint
 error bounds, including packing and image arithmetic. Retain ambiguous
-candidates. The generated pair region applies the strict physical cutoff.
+candidates. The generated pair region applies the D159 cutoff in mixed precision.
 
 Compact surviving masks into eight-byte records with a 32-bit source mask
 and a packed target, source group and cumulative rank. Split the candidate
@@ -241,9 +241,6 @@ height. Otherwise each perpendicular height bounds the integer translations
 to enumerate. Direct cancellation uses the same two staged endpoints as the
 forward traversal.
 
-The internal `finite-at-cutoff` specialization uses the rounded square of
-the physical cutoff for pair regions known finite at the endpoint. The
-generic mixed specialization retains the D159 guard. The setup trial can
-establish this precondition for conventional Amber Gaussian PME and
-Lennard-Jones with no additional pair expression. The floating-point direct
+TOWERS uses the D159 mixed-precision cutoff for every direct pair region,
+including Amber Lennard-Jones and electrostatics. The floating-point direct
 virial still requires its own bitwise qualification for deterministic runs.

@@ -629,8 +629,6 @@ def AddTowersBuild : Pass<"add-towers-build", "::mlir::ModuleOp"> {
     Option<"certifyForce", "certify-force", "bool", "false", "Emit the checked force, wide replay and publication entries">,
     Option<"packedChargeType", "packed-charge-type", "bool", "false", "Bind the two force inputs to the rebuilt charge and type">,
     Option<"forceSplit", "force-split", "int", "1", "Disjoint source ranges per tower">,
-    Option<"finiteAtCutoff", "finite-at-cutoff", "bool", "false",
-           "Use the physical cutoff squared for a region known finite at its endpoint">,
     Option<"forcePanel", "force-panel", "int", "128", "Source slots per panel">,
     Option<"forceStripe", "force-stripe", "int", "128", "Target slots per stripe">,
     Option<"forceWorkers", "force-workers", "int", "128", "Threads per tower">,
