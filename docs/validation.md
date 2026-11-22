@@ -398,3 +398,43 @@ What went wrong in the comparisons of this work was never the arithmetic:
   their own order, not that of the request; they were misread three times.
 - Definitions differ between programs: the weights of the radius of
   gyration, the reference of a fit, nm against Å.
+
+### Mixed-precision pair loops
+
+`Driver/hotloop-audit.test` lowers the periodic OPC controls for sm_89 offline.
+For each MATRIX row, GROUPS entry round, prune pass, and matrix search candidate,
+it checks the address of the three coordinate reads against the placed center
+buffer and the candidate index. Fused pruning and evaluation each read the
+surviving source once. Parameter lookups, exclusion IDs, and the gather that
+constructs cell order have separate roles.
+
+The GROUPS entry round can narrow the box vector once to apply the image
+shift before rotation. The rotation, MATRIX row, search candidate and prune
+body have no f64 arithmetic exceptions. Bin assignment, reference positions,
+and widening row sums lie outside those scopes. To allow a new operation,
+identify the emitter and numerical reason here, match its opcode, types,
+scope and multiplicity in `scripts/hotloop/check-ir.py`, then inject an
+additional operation to verify the check still rejects it.
+
+To compare code generation, run the following from the repository root with
+the intended build's `mdir` and CUDA's `ptxas` on PATH. Use separate output
+directories for the main and branch builds and diff the resulting reports.
+
+```sh
+mkdir -p "$out"
+cp scripts/hotloop/*.toml test/Driver/Inputs/opc/opc.{prmtop,inpcrd} "$out/"
+for kind in MATRIX GROUPS; do
+  env MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 MDIR_COMPILE_CACHE=off \
+    mdir emit "$out/$kind.toml" --stage=lowered > "$out/$kind.final.mlir"
+done
+python3 scripts/hotloop/report.py "$out" > "$out/report.tsv"
+```
+
+Each entry and each natural loop has static counts of f64-typed PTX
+instructions and global loads (one instruction per vector load). Nested loops
+overlap. A fully unrolled loop contributes to its enclosing scope. Register
+allocation is per kernel. The baseline in `scripts/hotloop/registers.tsv`
+uses commit `2c9ddc93`, sm_89 and ptxas 13.2.51 at -O2. Compare identical
+controls and toolchains. A rise of more than four registers per thread flags
+the entry for review in the report. If module numbering changes, match the
+launch to its emitter before refreshing the baseline.
