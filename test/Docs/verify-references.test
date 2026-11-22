@@ -1,0 +1,9 @@
+# scripts/paper/verify-references.py unescapes the HTML entities of a
+# Crossref title before it compares it with the entry: Crossref returns
+# "Register allocation &amp; spilling via graph coloring" for Chaitin1982,
+# which was reported as a mismatch (#884). The record is given in place of
+# the network.
+#
+# RUN: %python %S/Inputs/verify_references_entities.py %S/../../scripts/paper/verify-references.py | FileCheck %s
+# CHECK: Chaitin1982: OK
+# CHECK: 1 DOIs checked, 0 with differences or errors, 0 entries without a DOI

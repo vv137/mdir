@@ -54,7 +54,8 @@ def record(doi):
         return (attributes["titles"][0]["title"],
                 str(attributes.get("publicationYear", "")), family, "", "")
     message = fetch(f"https://api.crossref.org/works/{quoted}")["message"]
-    title = (message.get("title") or [""])[0]
+    # Crossref escapes some titles: "Register allocation &amp; spilling".
+    title = html.unescape((message.get("title") or [""])[0])
     year = ""
     for field in ("published-print", "published-online", "issued",
                   "created"):
