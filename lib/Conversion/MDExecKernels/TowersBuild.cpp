@@ -2,7 +2,9 @@
 // The geometry is fixed at setup. All positions and memberships are rebuilt.
 #include "mdir/Conversion/TowersBuild.h"
 #include "NeighborBuildCode.h"
+#include "TowersForce.h"
 #include "mdir/Conversion/Passes.h"
+#include "mdir/Dialect/MDExec/MDExecOps.h"
 #include <array>
 #include <climits>
 
@@ -468,9 +470,26 @@ class AddTowersBuild : public mdir::impl::AddTowersBuildBase<AddTowersBuild> {
 public:
   using Base::Base;
   void runOnOperation() final {
-    if (failed(mdir::kernels::emitTowersBuild(
-            getOperation(), {atoms, nx, ny, nz, reach, capacity, host, compact},
-            audit)))
+    auto module = getOperation();
+    TowersLayout layout{atoms, nx, ny, nz, reach, capacity, host, compact};
+    if (failed(mdir::kernels::emitTowersBuild(module, layout, audit))) {
+      signalPassFailure();
+      return;
+    }
+    if (forceBody.empty())
+      return;
+    auto fn = module.lookupSymbol<func::FuncOp>(forceBody);
+    SmallVector<mdir::md_exec::PairForOp> terms;
+    if (fn)
+      fn.walk([&](mdir::md_exec::PairForOp term) { terms.push_back(term); });
+    if (terms.size() != 1) {
+      module.emitError(
+          "TOWERS force-body requires a function with one pair loop");
+      signalPassFailure();
+      return;
+    }
+    if (failed(mdir::kernels::emitTowersForce(module, layout, terms.front(),
+                                              probeForce)))
       signalPassFailure();
   }
 };

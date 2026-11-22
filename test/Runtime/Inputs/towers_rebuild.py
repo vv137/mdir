@@ -14,7 +14,7 @@ I, F, D = C.c_int32, C.c_float, C.c_double
 P = C.c_void_p
 
 
-def compile_entries(directory, dims, reach, n, capacity, compact, gpu, audit=True):
+def compile_entries(directory, dims, reach, n, capacity, compact, gpu, audit=True, force_body=None):
     options = dict(zip(("nx", "ny", "nz"), dims))
     options.update(
         reach=reach,
@@ -24,9 +24,12 @@ def compile_entries(directory, dims, reach, n, capacity, compact, gpu, audit=Tru
         host=int(not gpu),
         audit=int(audit),
     )
+    source = b"module {}"
+    if force_body:
+        options["force-body"], source = force_body
     flags = " ".join(f"{k}={v}" for k, v in options.items())
     ir = subprocess.check_output(
-        [MDIR_OPT, f"--add-towers-build={flags}"], input=b"module {}"
+        [MDIR_OPT, f"--add-towers-build={flags}", "--symbol-dce"], input=source
     )
     opts = ["mlir-opt", "--canonicalize", "--cse"]
     if gpu:

@@ -1,2 +1,3 @@
 # REQUIRES: cuda
 # RUN: %python %S/Inputs/towers_rebuild.py %t gpu mdir-opt
+# RUN: %python %S/Inputs/towers_force.py %t-force gpu mdir-opt

@@ -2,3 +2,4 @@
 # RUN: not mdir-opt --add-towers-build='nx=2' /dev/null 2>&1 | FileCheck %s
 # RUN: not mdir-opt --add-towers-build='reach=2 nz=4' /dev/null 2>&1 | FileCheck %s
 # CHECK: infeasible rectangular TOWERS layout
+# RUN: %python %S/Inputs/towers_force.py %t-force host mdir-opt

@@ -624,6 +624,9 @@ def AddTowersBuild : Pass<"add-towers-build", "::mlir::ModuleOp"> {
     Option<"capacity", "capacity", "int", "32", "Allocated slots per cell">,
     Option<"host", "host", "bool", "false", "Emit serial reference functions">,
     Option<"compact", "compact", "bool", "true", "Reset counts in sort/pack">,
+    Option<"probeForce", "probe-force", "bool", "false", "Emit per-tower force phase counters">,
+    Option<"forceBody", "force-body", "std::string", "\"\"",
+           "Function containing the pair region for a force entry">,
     Option<"audit", "audit", "bool", "false", "Emit ownership multiplicities for tests">
   ];
   let dependentDialects = ["::mlir::LLVM::LLVMDialect", "::mlir::NVVM::NVVMDialect",
