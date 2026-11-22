@@ -645,6 +645,13 @@ physics," in *Advances in Neural Information Processing Systems 33
 (NeurIPS 2020)* (Curran Associates, 2020), pp. 11428–11441. No DOI;
 [proceedings page](https://proceedings.neurips.cc/paper_files/paper/2020/hash/83d3d4b6c9579515e1679aca8cbc8033-Abstract.html).
 
+### Shaw2005
+
+D. E. Shaw, "A fast, scalable method for the parallel evaluation of
+distance-limited pairwise particle interactions," *J. Comput. Chem.*
+**26**, 1318–1328 (2005).
+[doi:10.1002/jcc.20267](https://doi.org/10.1002/jcc.20267)
+
 ### Shih2021
 
 Y.-H. Shih, G. Wright, J. Andén, J. Blaschke, A. H. Barnett, "cuFINUFFT: a

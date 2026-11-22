@@ -1284,3 +1284,36 @@ f32 compares $\mathrm{fl}(\mathbf h\cdot\mathbf h)$ with the largest f32 at
 most $e^2(1 - 2^{-20})$: the square of an offset narrowed from f64 is
 within $5u$ of the exact one, so no place beyond its radius passes.
 
+
+## 4.8 Rectangular tower and plate ownership (D[towers])
+
+Shaw assigns each pair to the intersection of a tower through one atom's
+home box and a half plate through the other's. The interaction box can
+contain neither atom. The outer tower extends the box by the cutoff in
+both axial directions. The outer plate has the thickness of the box and
+extends halfway around it, with edges rounded into quarter-cylinders of
+cutoff radius. This rounding defines the imported volume. Shaw varies
+the lateral-to-axial aspect ratio to minimize that volume and exports
+opposite forces to the two home boxes (pp. 1321–1325). [[Shaw2005]](references.md#shaw2005)
+
+For a rectangular cell at least as wide as the cutoff, a pair strictly
+inside the cutoff differs by at most one lateral bin on each axis after
+periodic imaging. The eight nonzero lateral offsets form four opposite
+pairs. Choosing the negative half in $y$, then in $x$ on the same row,
+selects exactly one source column and one target layer. This mirrors
+Shaw's lateral orientation. Axial bins at least as tall as the cutoff
+require only the nearest layers above and below. Halving the minimum
+height extends the column to two layers on each side, moving toward Shaw's
+shorter boxes. Within one column the target takes only earlier layers,
+and within one layer the later sorted slot supplies the source. Distinct
+periodic images of these offsets are required for uniqueness.
+
+In TOWERS the owning box maps to a GPU block and imported atoms occupy
+shared memory. The proposed traversal stages whole cells at cutoff scale.
+A lateral distance filter and a quantized tensor-core screen with a
+conservative error margin trim candidates. Masks encode records and
+workers divide their candidate ranks evenly. Newton's opposite forces
+become opposite integer words, with a certificate on the final sums and
+exact recovery. Blind evaluation and exact cancellation handle exclusions.
+The triclinic extension uses perpendicular face heights. Setup measures
+the launch shape and cell height on the device.

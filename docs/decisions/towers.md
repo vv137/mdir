@@ -9,7 +9,7 @@ Particle tower and plate traversal: design for #931, proposed November 22, 2026.
 An explicit `[execution] neighbor_structure = "TOWERS"` requests a fresh
 particle traversal at every direct-space evaluation. Keep the current AUTO
 resolution in `resolveNeighborStructure` throughout qualification. Benchmark
-AUTO changes separately on moving trajectories. Propose one additional key,
+AUTO changes separately on moving trajectories. The additional key is
 `[execution] towers_unchecked = false`, applicable only to explicit TOWERS.
 
 The strategy belongs on the neighbor structure and its consumers.
@@ -33,8 +33,15 @@ represented by these entries.
 
 ## Rebuild and unique ownership
 
-The tower and plate use the import region of D. E. Shaw, J. Comput. Chem.
-26, 1318–1328 (2005). [Published method](https://doi.org/10.1002/jcc.20267)
+Shaw's Neutral Territory interaction box takes its lateral coordinates from
+the tower atom and its height from the plate atom. It may contain neither
+endpoint. Shaw extends the tower by the cutoff in both axial directions.
+The outer half plate has the thickness of the box and quarter-cylinder
+edges. Rounding is part of the import region. TOWERS mirrors the lateral
+orientation, stages whole cells, and breaks same-cell ties by sorted slot.
+The lateral filter and conservative tensor screen reject excess staged
+volume. Section 4.8 derives the stencil and distinguishes Shaw's construction
+from the GPU implementation. [Shaw2005](../references.md#shaw2005)
 
 Wrap positions into half-open fractional bins and retain the stable particle
 ID. Count and insert, sort each cell on its locality key with ID as the
@@ -100,7 +107,7 @@ A force step instantiates only force arithmetic. An energy step reuses the
 packing and launches a separate energy entry. A barostat step also requests
 the direct tensor, including periodic image and replay corrections. Recovery
 replaces every requested output together. Certification is the default.
-With the proposed unchecked opt-in, force certification during minimization,
+With the unchecked opt-in, force certification during minimization,
 in deterministic mode if admitted, for ages 0 through 99 after setup or
 restart, and at subsequent multiples of 100. Unchecked modular output can
 wrap between audits.
@@ -126,7 +133,7 @@ Distinguish a static eligibility error from a frame-dependent rebuild retry.
 Report the requested and effective structure and certification policy.
 The kernel shape depends on live device and frame measurements.
 
-## Acceptance and decisions requested
+## Acceptance
 
 Commit and report each stage in order: rectangular rebuild and ownership,
 screen and force loop, certificate and recovery, exclusions, energy and
@@ -144,10 +151,9 @@ block intervals, and uninstrumented kernel and complete-step times. Investigate
 a phase over 1.15 times its baseline before advancing. Report moving whole-step
 rates against main separately from these fixed-frame captures.
 
-Issue #931 leaves production deterministic eligibility open. Propose admitting
-explicit TOWERS only after every requested reduction, including the virial,
-passes bitwise shape and restart tests. The issue also leaves the double
-contract open. Propose f64 physical predicates and pair arithmetic with a
-separately validated accumulation precision for double. Stage 4n's mixed
-fixed-point scales alone do not establish double accuracy. Confirm these two
-user-visible contracts and the unchecked key before implementing dispatch.
+Explicit TOWERS requires mixed precision. In double precision, `mdir check`
+must diagnose this requirement. Issue #937 tracks f64 predicates, pair
+arithmetic and validation of the accumulation scale. Deterministic mode
+remains ineligible until every requested output passes bitwise comparisons
+across both launch shapes and restarts. Once qualified, it always uses
+certified steps.
