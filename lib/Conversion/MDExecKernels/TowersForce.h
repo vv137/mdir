@@ -6,7 +6,7 @@
 
 namespace mdir::kernels {
 struct TowersForceShape {
-  int panel, stripe, workers, records;
+  int panel, stripe, workers, records, residency;
 };
 
 mlir::LogicalResult emitTowersForce(mlir::ModuleOp module, TowersLayout layout,

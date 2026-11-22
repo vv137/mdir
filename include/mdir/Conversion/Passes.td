@@ -627,6 +627,7 @@ def AddTowersBuild : Pass<"add-towers-build", "::mlir::ModuleOp"> {
     Option<"forcePanel", "force-panel", "int", "128", "Source slots per panel">,
     Option<"forceStripe", "force-stripe", "int", "128", "Target slots per stripe">,
     Option<"forceWorkers", "force-workers", "int", "128", "Threads per tower">,
+    Option<"forceResidency", "force-residency", "int", "1", "Target resident blocks per multiprocessor">,
     Option<"forceRecords", "force-records", "int", "512", "Eight-byte record capacity">,
     Option<"probeForce", "probe-force", "bool", "false", "Emit per-tower force phase counters">,
     Option<"forceBody", "force-body", "std::string", "\"\"",

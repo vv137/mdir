@@ -3,3 +3,5 @@
 # RUN: not mdir-opt --add-towers-build='reach=2 nz=4' /dev/null 2>&1 | FileCheck %s
 # CHECK: infeasible rectangular TOWERS layout
 # RUN: %python %S/Inputs/towers_force.py %t-force host mdir-opt
+# RUN: not mdir-opt --add-towers-build='force-body=spring force-records=1' %S/Inputs/towers-force.mlir 2>&1 | FileCheck %s --check-prefix=RECORDS
+# RECORDS: infeasible TOWERS panel, stripe, worker count, record count or residency

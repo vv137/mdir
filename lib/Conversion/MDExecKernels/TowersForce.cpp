@@ -6,6 +6,7 @@
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/SetVector.h"
 #include <cmath>
@@ -23,14 +24,15 @@ public:
         TowersForceShape shape, bool probe)
       : NeighborBuildCode(b, term.getLoc()), g(g), term(term),
         panel(shape.panel), stripe(shape.stripe), workers(shape.workers),
-        recordCap(shape.records), groups(panel / 32), probe(probe),
-        v3(VectorType::get({3}, f32)), v4(VectorType::get({4}, f32)) {}
+        recordCap(shape.records), residency(shape.residency),
+        groups(panel / 32), probe(probe), v3(VectorType::get({3}, f32)),
+        v4(VectorType::get({4}, f32)) {}
   LogicalResult emit();
 
 private:
   TowersLayout g;
   md_exec::PairForOp term;
-  int panel, stripe, workers, recordCap, groups;
+  int panel, stripe, workers, recordCap, residency, groups;
   bool probe;
   Value trace, owner;
   void mark(int phase);
@@ -142,7 +144,7 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
           Values result;
           Value valid = cb(true);
           for (Value x : scaled) {
-            Value fits = andi(cmpf(CmpFPredicate::OGE, x, cf(-0x1p63)),
+            Value fits = andi(cmpf(CmpFPredicate::OGT, x, cf(-0x1p63)),
                               cmpf(CmpFPredicate::OLT, x, cf(0x1p63)));
             valid = andi(valid, fits);
             Value safe = select(fits, x, cf(0));
@@ -621,25 +623,49 @@ void Force::traversal(Value owner) {
   }
   for (int i = columns; i < columns + 4; ++i)
     nt = addi(nt, counts[i]);
-  forLoop(cx(0), ns, cx(panel), {}, [&](Value sb, ValueRange) {
-    Value sc = minui(cx(panel), subi(ns, sb));
-    stage(starts, counts, sb, sc, true);
-    whileLoop(
-        {index, index}, {cx(0), cx(stripe)},
-        [&](ValueRange x) {
-          return std::make_pair(cmpi(CmpIPredicate::ult, x[0], nt), Values(x));
-        },
-        [&](ValueRange x) {
-          Value tb = x[0], tc = minui(x[1], subi(nt, tb));
-          stage(starts, counts, tb, tc, false);
-          Value last = andi(cmpi(CmpIPredicate::eq, addi(sb, sc), ns),
-                            cmpi(CmpIPredicate::eq, addi(tb, tc), nt));
-          Value fits = visitTile(sc, tc, sb, tb, counts[0], lower, last);
-          return Values{
-              select(fits, addi(tb, tc), tb),
-              select(fits, cx(stripe), divui(addi(tc, cx(1)), cx(2)))};
-        });
-    return Values{};
+  // A tower that fits in one panel and stripe needs no live loop state.
+  // On record overflow visitTile has written no forces and synchronized the
+  // block, so the streaming path may restart the entire tower.
+  Value oneTile = andi(cmpi(CmpIPredicate::ule, ns, cx(panel)),
+                       cmpi(CmpIPredicate::ule, nt, cx(stripe)));
+  Value complete = ifElse(
+      {i1}, oneTile,
+      [&] {
+        Value nonempty = andi(cmpi(CmpIPredicate::ne, ns, cx(0)),
+                              cmpi(CmpIPredicate::ne, nt, cx(0)));
+        return Values{ifElse(
+            {i1}, nonempty,
+            [&] {
+              stage(starts, counts, cx(0), ns, true);
+              stage(starts, counts, cx(0), nt, false);
+              return Values{
+                  visitTile(ns, nt, cx(0), cx(0), counts[0], lower, cb(true))};
+            },
+            [&] { return Values{cb(true)}; })[0]};
+      },
+      [&] { return Values{cb(false)}; })[0];
+  ifThen(notNarrow(complete), [&] {
+    forLoop(cx(0), ns, cx(panel), {}, [&](Value sb, ValueRange) {
+      Value sc = minui(cx(panel), subi(ns, sb));
+      stage(starts, counts, sb, sc, true);
+      whileLoop(
+          {index, index}, {cx(0), cx(stripe)},
+          [&](ValueRange x) {
+            return std::make_pair(cmpi(CmpIPredicate::ult, x[0], nt),
+                                  Values(x));
+          },
+          [&](ValueRange x) {
+            Value tb = x[0], tc = minui(x[1], subi(nt, tb));
+            stage(starts, counts, tb, tc, false);
+            Value last = andi(cmpi(CmpIPredicate::eq, addi(sb, sc), ns),
+                              cmpi(CmpIPredicate::eq, addi(tb, tc), nt));
+            Value fits = visitTile(sc, tc, sb, tb, counts[0], lower, last);
+            return Values{
+                select(fits, addi(tb, tc), tb),
+                select(fits, cx(stripe), divui(addi(tc, cx(1)), cx(2)))};
+          });
+      return Values{};
+    });
   });
 }
 
@@ -742,6 +768,9 @@ void Force::device() {
                                    b.getFunctionType(types, {}));
   fn.setKernel(true);
   fn.setKnownBlockSizeAttr(b.getDenseI32ArrayAttr({workers, 1, 1}));
+  if (residency > 1)
+    fn->setAttr(NVVM::NVVMDialect::getMinctasmAttrName(),
+                b.getI32IntegerAttr(residency));
   pos = shared(fn, {panel + stripe}, v4);
   id = shared(fn, {panel + stripe}, i32);
   xy = shared(fn, {panel + stripe}, i32);
@@ -804,9 +833,9 @@ LogicalResult Force::emit() {
   if (panel < 32 || panel > 512 || panel % 32 || workers < 32 ||
       workers > 1024 || workers % 32 || stripe < 1 || stripe > workers ||
       stripe * panel >= (1 << 18) || recordCap < groups ||
-      recordCap > groups * stripe)
-    return term.emitError(
-        "infeasible TOWERS panel, stripe, worker or record count");
+      recordCap > groups * stripe || residency < 1 || residency > 2)
+    return term.emitError("infeasible TOWERS panel, stripe, worker count, "
+                          "record count or residency");
   double rc = term.getCutoff().convertToDouble();
   if (!(rc > 0) || !std::isnormal(static_cast<float>(rc * rc)))
     return term.emitError(
@@ -819,6 +848,15 @@ LogicalResult Force::emit() {
       body.getTerminator()->getOperand(0).getType() != v3)
     return term.emitError(
         "TOWERS requires one mixed antisymmetric force contribution");
+  for (Operation &op : body.without_terminator())
+    if (op.walk([](Operation *nested) {
+            return isa<memref::LoadOp>(nested) || isMemoryEffectFree(nested) ||
+                           nested
+                               ->hasTrait<OpTrait::HasRecursiveMemoryEffects>()
+                       ? WalkResult::advance()
+                       : WalkResult::interrupt();
+          }).wasInterrupted())
+      return term.emitError("TOWERS requires a read-only pair region");
   auto mem = [&](ArrayRef<int64_t> shape, Type t) {
     return MemRefType::get(shape, t);
   };
