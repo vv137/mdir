@@ -2,8 +2,8 @@
 // The geometry is fixed at setup. All positions and memberships are rebuilt.
 #include "mdir/Conversion/TowersBuild.h"
 #include "NeighborBuildCode.h"
-#include "mdir/Conversion/TowersForce.h"
 #include "mdir/Conversion/Passes.h"
+#include "mdir/Conversion/TowersForce.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include <array>
 #include <climits>
@@ -483,8 +483,13 @@ public:
       signalPassFailure();
       return;
     }
-    if (forceBody.empty())
+    if (forceBody.empty()) {
+      if (!energyBody.empty() || directVirial) {
+        module.emitError("energy and virial entries require force-body");
+        signalPassFailure();
+      }
       return;
+    }
     auto fn = module.lookupSymbol<func::FuncOp>(forceBody);
     SmallVector<mdir::md_exec::PairForOp> terms;
     if (fn)
@@ -497,14 +502,33 @@ public:
       signalPassFailure();
       return;
     }
-    if (failed(mdir::kernels::emitTowersForce(
-            module, layout, terms.front(),
-            {forcePanel, forceStripe, forceWorkers, forceRecords,
-             forceResidency, packedChargeType, certifyForce, exclusions,
-             forceSplit},
-            probeForce,
-            exclusions ? terms.back() : mdir::md_exec::PairForOp{})))
+    using namespace mdir::kernels;
+    TowersForceShape shape{forcePanel,   forceStripe,    forceWorkers,
+                           forceRecords, forceResidency, packedChargeType,
+                           certifyForce, exclusions,     forceSplit};
+    auto emit = [&](ArrayRef<mdir::md_exec::PairForOp> regions,
+                    TowersOutput output) {
+      shape.output = output;
+      return emitTowersForce(module, layout, regions.front(), shape, probeForce,
+                             exclusions ? regions.back()
+                                        : mdir::md_exec::PairForOp{});
+    };
+    if (failed(emit(terms, TowersOutput::Force)) ||
+        (directVirial && failed(emit(terms, TowersOutput::Virial)))) {
       signalPassFailure();
+      return;
+    }
+    if (!energyBody.empty()) {
+      SmallVector<mdir::md_exec::PairForOp> energy;
+      if (auto body = module.lookupSymbol<func::FuncOp>(energyBody))
+        body.walk([&](mdir::md_exec::PairForOp op) { energy.push_back(op); });
+      if (energy.size() != terms.size()) {
+        module.emitError(
+            "expected matching direct and correction energy regions");
+        signalPassFailure();
+      } else if (failed(emit(energy, TowersOutput::Energy)))
+        signalPassFailure();
+    }
   }
 };
 } // namespace

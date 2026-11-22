@@ -1368,3 +1368,12 @@ excluded pair replaces one direct interaction with at most one physical
 correction per endpoint. The same final-sum bound applies. Wide recovery
 omits the excluded direct evaluation and includes the physical correction
 at every distance.
+
+
+The rectangular mixed-precision compiler shares the packed positions and
+ownership rule among separately requested force, energy and direct virial
+kernels. The energy kernel rounds each pair energy to Q32 and sums the
+words with signed two-limb arithmetic. The tensor kernel visits physical
+pairs and accumulates the six independent components of the minimum-image
+displacement times the target force in binary64. A force-only evaluation
+requires neither additional traversal.

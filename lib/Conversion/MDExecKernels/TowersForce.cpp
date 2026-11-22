@@ -30,9 +30,9 @@ public:
   Force(OpBuilder &b, TowersLayout g, md_exec::PairForOp term,
         TowersForceShape shape, bool probe, md_exec::PairForOp correction)
       : NeighborBuildCode(b, term.getLoc()), g(g), term(term),
-        correction(correction), exclusions(shape.exclusions),
-        split(shape.split), panel(shape.panel), stripe(shape.stripe),
-        workers(shape.workers), recordCap(shape.records),
+        correction(correction), output(shape.output),
+        exclusions(shape.exclusions), split(shape.split), panel(shape.panel),
+        stripe(shape.stripe), workers(shape.workers), recordCap(shape.records),
         residency(shape.residency), groups(panel / 32),
         packedChargeType(shape.packedChargeType), certified(shape.certified),
         probe(probe), v3(VectorType::get({3}, f32)),
@@ -42,6 +42,20 @@ public:
 private:
   TowersLayout g;
   md_exec::PairForOp term, correction;
+  TowersOutput output;
+  bool observer() const { return output != TowersOutput::Force; }
+  bool energy() const { return output == TowersOutput::Energy; }
+  StringRef observerName() const {
+    return energy() ? "towers_energy" : "towers_virial";
+  }
+  Value localSum;
+  Value clonePair(Value t, Value s, Value ti, Value si, Value r2, Value d,
+                  ValueRange targetParameters, bool physical);
+  void observe(Value result, Value d, bool physical);
+  void startObservation();
+  void flushObservation();
+  Value warpDown(Value v, int d);
+  void observationEntries();
   int exclusions, split;
   int64_t towerBlocks() const { return int64_t(g.cells()) * split; }
   Value bonds, inverse, raw, box;
@@ -149,12 +163,47 @@ Value Force::squared(Value d) {
   return math::FmaOp::create(b, loc, x, x, yz);
 }
 
+Value Force::clonePair(Value t, Value s, Value ti, Value si, Value r2, Value d,
+                       ValueRange targetParameters, bool physical) {
+  Block &body = (physical ? correction : term).getKernel().front();
+  IRMapping inside = mapping;
+  inside.map(body.getArgument(0), r2);
+  inside.map(body.getArgument(1), d);
+  for (auto [i, param] :
+       llvm::enumerate(g.host || excluding ? parameters : tileParameters)) {
+    inside.map(body.getArgument(2 + 2 * i),
+               targetParameters.empty()
+                   ? (param ? load(param, {ti}) : extract(t, 3))
+                   : targetParameters[i]);
+    inside.map(body.getArgument(3 + 2 * i),
+               param ? load(param, {si}) : extract(s, 3));
+  }
+  for (auto &op : body.without_terminator()) {
+    auto div = dyn_cast<arith::DivFOp>(op);
+    if (!g.host && div && div.getType() == f32 &&
+        arith::bitEnumContainsAny(div.getFastmath(),
+                                  arith::FastMathFlags::arcp) &&
+        matchPattern(div.getLhs(), m_OneFloat())) {
+      Value r =
+          LLVM::InlineAsmOp::create(
+              b, loc, TypeRange{f32}, ValueRange{inside.lookup(div.getRhs())},
+              "rcp.approx.f32 $0,$1;", "=f,f", false, false,
+              LLVM::TailCallKind::None, LLVM::AsmDialectAttr(), ArrayAttr())
+              .getResult(0);
+      inside.map(div.getResult(), r);
+    } else
+      b.clone(op, inside);
+  }
+  return inside.lookup(body.getTerminator()->getOperand(0));
+}
+
 Values Force::pair(Value t, Value s, Value ti, Value si,
                    ValueRange targetParameters, bool physical) {
   Value d = displacement(t, s), r2 = squared(d);
   auto wt = g.host || (excluding && recovering) ? i64 : i32;
   Value take = physical ? cb(true) : cmpf(CmpFPredicate::OLT, r2, cutoff2);
-  if (recovering && exclusions && !excluding) {
+  if ((recovering || output == TowersOutput::Virial) && exclusions &&
+      !excluding) {
     auto atom = [&](Value i) {
       if (!g.host)
         return load(id, {i});
@@ -162,40 +211,17 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
     };
     take = andi(take, notNarrow(isExcluded(atom(ti), atom(si))));
   }
+  if (observer()) {
+    ifThen(take, [&] {
+      observe(clonePair(t, s, ti, si, r2, d, targetParameters, physical), d,
+              physical);
+    });
+    return {};
+  }
   return ifElse(
       {wt, wt, wt}, take,
       [&] {
-        Block &body = (physical ? correction : term).getKernel().front();
-        IRMapping inside = mapping;
-        inside.map(body.getArgument(0), r2);
-        inside.map(body.getArgument(1), d);
-        for (auto [i, param] : llvm::enumerate(
-                 g.host || excluding ? parameters : tileParameters)) {
-          inside.map(body.getArgument(2 + 2 * i),
-                     targetParameters.empty()
-                         ? (param ? load(param, {ti}) : extract(t, 3))
-                         : targetParameters[i]);
-          inside.map(body.getArgument(3 + 2 * i),
-                     param ? load(param, {si}) : extract(s, 3));
-        }
-        for (auto &op : body.without_terminator()) {
-          auto div = dyn_cast<arith::DivFOp>(op);
-          if (!g.host && div && div.getType() == f32 &&
-              arith::bitEnumContainsAny(div.getFastmath(),
-                                        arith::FastMathFlags::arcp) &&
-              matchPattern(div.getLhs(), m_OneFloat())) {
-            Value r = LLVM::InlineAsmOp::create(
-                          b, loc, TypeRange{f32},
-                          ValueRange{inside.lookup(div.getRhs())},
-                          "rcp.approx.f32 $0,$1;", "=f,f", false, false,
-                          LLVM::TailCallKind::None, LLVM::AsmDialectAttr(),
-                          ArrayAttr())
-                          .getResult(0);
-            inside.map(div.getResult(), r);
-          } else
-            b.clone(op, inside);
-        }
-        Value f = inside.lookup(body.getTerminator()->getOperand(0));
+        Value f = clonePair(t, s, ti, si, r2, d, targetParameters, physical);
         Values scaled;
         Value narrow = cb(true);
         for (int a = 0; a < 3; ++a) {
@@ -425,8 +451,12 @@ void Force::exclusion(Value row) {
   // the cutoff branch, allowing CSE with the cloned direct pair region.
   Values corrected = eval(true);
   Values direct;
-  if (!recovering)
+  if (!recovering && output != TowersOutput::Virial)
     direct = eval(false);
+  if (observer()) {
+    excluding = false;
+    return;
+  }
   for (int axis = 0; axis < 3; ++axis) {
     Value word = corrected[axis];
     if (recovering) {
@@ -482,6 +512,226 @@ void Force::ownedPairs(Value owner) {
                     return Values{};
                   });
           return Values{};
+        });
+      });
+}
+
+// Each lane accumulates one exact signed Q32 energy in two limbs. With fewer
+// than 2^26 atoms even the sum of all signed i64 pair words fits in 128 bits.
+void Force::startObservation() {
+  localSum = memref::AllocaOp::create(b, loc, cast<MemRefType>(types[4]));
+  for (int j = 0; j < (energy() ? 2 : 6); ++j)
+    store(energy() ? cl(0) : cd(0), localSum, {cx(j)});
+}
+
+void Force::observe(Value value, Value d, bool physical) {
+  if (!energy()) {
+    int j = 0;
+    for (int a = 0; a < 3; ++a)
+      for (int k = a; k < 3; ++k) {
+        Value part =
+            mulf(arith::ExtFOp::create(b, loc, f64, extract(d, a)),
+                 arith::ExtFOp::create(b, loc, f64, extract(value, k)));
+        store(addf(load(localSum, {cx(j)}), part), localSum, {cx(j)});
+        ++j;
+      }
+    return;
+  }
+  if (value.getType() == f64)
+    value = truncf(value);
+  Value x = mulf(value, wordScale);
+  Value fits = andi(cmpf(CmpFPredicate::OGE, x, cf(-0x1p63)),
+                    cmpf(CmpFPredicate::OLT, x, cf(0x1p63)));
+  bool subtract = excluding && !physical;
+  Value safe = select(fits, x, cf(0));
+  Value word =
+      g.host
+          ? fptosi(i64, roundeven(safe))
+          : LLVM::InlineAsmOp::create(b, loc, TypeRange{i64}, ValueRange{safe},
+                                      "cvt.rni.s64.f32 $0,$1;", "=l,f", false,
+                                      false, LLVM::TailCallKind::None,
+                                      LLVM::AsmDialectAttr(), ArrayAttr())
+                .getResult(0);
+  Value upper = shrsi(word, cl(63));
+  if (subtract) {
+    upper = addi(xori(upper, cl(-1)),
+                 arith::ExtUIOp::create(b, loc, i64,
+                                        cmpi(CmpIPredicate::eq, word, cl(0))));
+    word = subi(cl(0), word);
+  }
+  Value low = load(localSum, {cx(0)}), next = addi(low, word);
+  Value carry =
+      arith::ExtUIOp::create(b, loc, i64, cmpi(CmpIPredicate::ult, next, low));
+  store(next, localSum, {cx(0)});
+  store(addi(load(localSum, {cx(1)}), addi(upper, carry)), localSum, {cx(1)});
+  ifThen(notNarrow(fits), [&] {
+    if (recovering)
+      flag(invalid, Fatal, InvalidContribution);
+    else if (g.host)
+      store(addi(load(failedConversions, {cx(0)}), cl(subtract ? -1 : 1)),
+            failedConversions, {cx(0)});
+    else {
+      Value vote = shortVote() ? ci(subtract ? -1 : 1) : cl(subtract ? -1 : 1);
+      store(addi(load(localVotes, {}), vote), localVotes, {});
+    }
+  });
+}
+
+Value Force::warpDown(Value v, int d) {
+  return LLVM::InlineAsmOp::create(
+             b, loc, TypeRange{i64}, ValueRange{v, ci(d)},
+             "{ .reg .b32 l,h; mov.b64 {l,h},$1; "
+             "shfl.sync.down.b32 l,l,$2,31,0xffffffff; "
+             "shfl.sync.down.b32 h,h,$2,31,0xffffffff; mov.b64 $0,{l,h}; }",
+             "=l,l,r", false, false, LLVM::TailCallKind::None,
+             LLVM::AsmDialectAttr(), ArrayAttr())
+      .getResult(0);
+}
+
+void Force::flushObservation() {
+  if (!energy()) {
+    for (int j = 0; j < 6; ++j) {
+      Value part = load(localSum, {cx(j)});
+      if (g.host)
+        store(addf(load(words, {cx(j)}), part), words, {cx(j)});
+      else {
+        for (int delta : {16, 8, 4, 2, 1}) {
+          Value bits = arith::BitcastOp::create(b, loc, i64, part);
+          part = addf(part, arith::BitcastOp::create(b, loc, f64,
+                                                     warpDown(bits, delta)));
+        }
+        ifThen(cmpi(CmpIPredicate::eq, lane, ci(0)), [&] {
+          atomic(LLVM::AtomicBinOp::fadd,
+                 pointerTo(baseAddress(words), cl(8 * j)), part);
+        });
+      }
+    }
+    return;
+  }
+  Value low = load(localSum, {cx(0)}), high = load(localSum, {cx(1)});
+  if (!g.host) {
+    // Reduce the signed two-limb sums in each warp before issuing the
+    // contended low-word atomic whose return value supplies its carry.
+    for (int d : {16, 8, 4, 2, 1}) {
+      Value other = warpDown(low, d), next = addi(low, other);
+      high = addi(addi(high, warpDown(high, d)),
+                  arith::ExtUIOp::create(b, loc, i64,
+                                         cmpi(CmpIPredicate::ult, next, low)));
+      low = next;
+    }
+  }
+  auto add = [&](int slot, Value delta) {
+    if (!g.host)
+      return atomic(LLVM::AtomicBinOp::add,
+                    pointerTo(baseAddress(words), cl(8 * slot)), delta);
+    Value old = load(words, {cx(slot)});
+    store(addi(old, delta), words, {cx(slot)});
+    return old;
+  };
+  Value writes = cmpi(CmpIPredicate::ne, ori(low, high), cl(0));
+  if (!g.host)
+    writes = andi(writes, cmpi(CmpIPredicate::eq, lane, ci(0)));
+  ifThen(writes, [&] {
+    Value old = add(0, low);
+    Value carry = arith::ExtUIOp::create(
+        b, loc, i64, cmpi(CmpIPredicate::ult, addi(old, low), old));
+    Value delta = addi(high, carry);
+    ifThen(cmpi(CmpIPredicate::ne, delta, cl(0)), [&] { add(1, delta); });
+  });
+}
+
+void Force::observationEntries() {
+  Type sum = types[4], state = types[5];
+  if (!energy()) {
+    emitTowersEntry(
+        b, loc, g.host, "towers_virial_check", {sum, state}, 6,
+        [&](Value j, ValueRange a) {
+          Value v = absf(load(a[0], {j}));
+          ifThen(notNarrow(cmpf(CmpFPredicate::OLE, v,
+                                cd(std::numeric_limits<double>::max()))),
+                 [&] { flag(a[1], Fatal, InvalidContribution); });
+        });
+    emitTowersEntry(
+        b, loc, g.host, "towers_publish_virial", {state, sum, sum}, 6,
+        [&](Value j, ValueRange a) {
+          ifThen(cmpi(CmpIPredicate::eq, load(a[0], {cx(Fatal)}), ci(0)),
+                 [&] { store(load(a[1], {j}), a[2], {j}); });
+        });
+    return;
+  }
+  auto overflow = [&](Value sums) {
+    return cmpi(CmpIPredicate::ne, load(sums, {cx(1)}),
+                shrsi(load(sums, {cx(0)}), cl(63)));
+  };
+  auto retry = [&](Value flags) {
+    return cmpi(CmpIPredicate::ne, load(flags, {cx(Replay)}), ci(0));
+  };
+  // An output step certifies both provisional results before either is
+  // published. The force and energy entries debit the same failure counter.
+  Type forces = MemRefType::get({g.atoms, 3}, i64),
+       result = MemRefType::get({1}, i64);
+  emitTowersEntry(
+      b, loc, g.host, "towers_certify_outputs", {forces, sum, types[7], state},
+      g.atoms, [&](Value i, ValueRange a) {
+        Value bad = andi(cmpi(CmpIPredicate::eq, i, cx(0)),
+                         ori(overflow(a[1]), cmpi(CmpIPredicate::ne,
+                                                  load(a[2], {cx(0)}), cl(0))));
+        for (int k = 0; k < 3; ++k) {
+          Value word = load(a[0], {i, cx(k)});
+          bad =
+              ori(bad, cmpi(CmpIPredicate::ne, word,
+                            arith::ExtSIOp::create(b, loc, i64, trunci(word))));
+        }
+        ifThen(bad, [&] { flag(a[3], Replay, 1); });
+      });
+  emitTowersEntry(
+      b, loc, g.host, "towers_publish_outputs",
+      {state, forces, forces, forces, sum, sum, result}, g.atoms,
+      [&](Value i, ValueRange a) {
+        ifThen(cmpi(CmpIPredicate::eq, load(a[0], {cx(Fatal)}), ci(0)), [&] {
+          Value replay = retry(a[0]);
+          Value src = select(replay, a[2], a[1]);
+          for (int k = 0; k < 3; ++k)
+            store(load(src, {i, cx(k)}), a[3], {i, cx(k)});
+          ifThen(cmpi(CmpIPredicate::eq, i, cx(0)), [&] {
+            store(load(select(replay, a[5], a[4]), {cx(0)}), a[6], {cx(0)});
+          });
+        });
+      });
+  emitTowersEntry(
+      b, loc, g.host, "towers_certify_energy", {sum, types[7], state}, 1,
+      [&](Value, ValueRange a) {
+        ifThen(ori(overflow(a[0]),
+                   cmpi(CmpIPredicate::ne, load(a[1], {cx(0)}), cl(0))),
+               [&] { flag(a[2], Replay, 1); });
+      });
+  if (g.host) {
+    OpBuilder::InsertionGuard guard(b);
+    auto fn = func::FuncOp::create(b, loc, "towers_energy_recover",
+                                   b.getFunctionType(types, {}));
+    Block *entry = fn.addEntryBlock();
+    b.setInsertionPointToStart(entry);
+    bind(entry->getArguments());
+    recovering = true;
+    ifThen(retry(invalid), [&] {
+      startObservation();
+      host();
+      flushObservation();
+    });
+    recovering = false;
+    func::ReturnOp::create(b, loc);
+  }
+  emitTowersEntry(b, loc, g.host, "towers_check_recovered_energy", {sum, state},
+                  1, [&](Value, ValueRange a) {
+                    ifThen(andi(retry(a[1]), overflow(a[0])),
+                           [&] { flag(a[1], Fatal, InvalidTotal); });
+                  });
+  emitTowersEntry(
+      b, loc, g.host, "towers_publish_energy",
+      {state, sum, sum, MemRefType::get({1}, i64)}, 1,
+      [&](Value, ValueRange a) {
+        ifThen(cmpi(CmpIPredicate::eq, load(a[0], {cx(Fatal)}), ci(0)), [&] {
+          store(load(select(retry(a[0]), a[2], a[1]), {cx(0)}), a[3], {cx(0)});
         });
       });
 }
@@ -824,51 +1074,70 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
   Value high = select(atHome, minui(addi(sb, sc), lower), addi(sb, sc));
   Value low = select(atHome, maxui(addi(orig, cx(1)), sb), sb);
   mark(1);
-  Values operands = targetOperands(target);
-  Values masks;
-  Value counts = ci(0);
-  for (int j = 0; j < groups; ++j) {
-    Value first = addi(indexCast(i32, sb), ci(32 * j));
-    Value left = maxsi(ci(0), subi(indexCast(i32, low), first));
-    Value right = maxsi(ci(0), subi(addi(first, ci(32)), indexCast(i32, high)));
-    Value m = ifElse(
-        {i32}, andi(warpActive, cmpi(CmpIPredicate::ult, cx(32 * j), sc)),
-        [&] { return Values{mask(operands, cx(32 * j), sc)}; },
-        [&] { return Values{ci(0)}; })[0];
-    // PTX shifts by the word width or more return zero for an empty interval.
-    Value range = LLVM::InlineAsmOp::create(
-                      b, loc, TypeRange{i32}, ValueRange{left, right},
-                      "{ .reg .b32 l,r; shl.b32 l, -1, $1; shr.u32 r, -1, $2; "
-                      "and.b32 $0,l,r; }",
+  // Empty warps take no target loads, matrix instructions or mask counts.
+  auto screen = [&]() {
+    Values operands = targetOperands(target);
+    Values masks;
+    Value counts = ci(0);
+    for (int j = 0; j < groups; ++j) {
+      Value first = addi(indexCast(i32, sb), ci(32 * j));
+      Value left = maxsi(ci(0), subi(indexCast(i32, low), first));
+      Value right =
+          maxsi(ci(0), subi(addi(first, ci(32)), indexCast(i32, high)));
+      Value m = ifElse(
+          {i32},
+          observer()
+              ? cmpi(CmpIPredicate::ult, cx(32 * j), sc)
+              : andi(warpActive, cmpi(CmpIPredicate::ult, cx(32 * j), sc)),
+          [&] { return Values{mask(operands, cx(32 * j), sc)}; },
+          [&] { return Values{ci(0)}; })[0];
+      // PTX shifts by the word width or more return zero for an empty interval.
+      Value range =
+          LLVM::InlineAsmOp::create(
+              b, loc, TypeRange{i32}, ValueRange{left, right},
+              "{ .reg .b32 l,r; shl.b32 l, -1, $1; shr.u32 r, -1, $2; "
+              "and.b32 $0,l,r; }",
+              "=r,r,r", false, false, LLVM::TailCallKind::None,
+              LLVM::AsmDialectAttr(), ArrayAttr())
+              .getResult(0);
+      m = select(keep, andi(m, range), ci(0));
+      masks.push_back(m);
+      counts = addi(counts, addi(select(cmpi(CmpIPredicate::ne, m, ci(0)),
+                                        ci(1 << 18), ci(0)),
+                                 math::CtPopOp::create(b, loc, m)));
+    }
+    masks.push_back(counts);
+    return masks;
+  };
+  Values masks = observer()
+                     ? ifElse(SmallVector<Type>(groups + 1, i32), warpActive,
+                              screen, [&] { return Values(groups + 1, ci(0)); })
+                     : screen();
+  Value counts = masks.pop_back_val();
+  mark(2);
+  auto prefix = [&] {
+    Value inclusive = counts;
+    for (int offset : {1, 2, 4, 8, 16}) {
+      inclusive = LLVM::InlineAsmOp::create(
+                      b, loc, TypeRange{i32}, ValueRange{inclusive, ci(offset)},
+                      "{ .reg .pred p; .reg .b32 up; shfl.sync.up.b32 "
+                      "up|p,$1,$2,0,0xffffffff; "
+                      "mov.b32 $0,$1; @p add.u32 $0,up,$1; }",
                       "=r,r,r", false, false, LLVM::TailCallKind::None,
                       LLVM::AsmDialectAttr(), ArrayAttr())
                       .getResult(0);
-    m = select(keep, andi(m, range), ci(0));
-    masks.push_back(m);
-    counts =
-        addi(counts,
-             addi(select(cmpi(CmpIPredicate::ne, m, ci(0)), ci(1 << 18), ci(0)),
-                  math::CtPopOp::create(b, loc, m)));
-  }
-  mark(2);
-  Value inclusive = counts;
-  for (int offset : {1, 2, 4, 8, 16}) {
-    inclusive = LLVM::InlineAsmOp::create(
-                    b, loc, TypeRange{i32}, ValueRange{inclusive, ci(offset)},
-                    "{ .reg .pred p; .reg .b32 up; shfl.sync.up.b32 "
-                    "up|p,$1,$2,0,0xffffffff; "
-                    "mov.b32 $0,$1; @p add.u32 $0,up,$1; }",
-                    "=r,r,r", false, false, LLVM::TailCallKind::None,
-                    LLVM::AsmDialectAttr(), ArrayAttr())
-                    .getResult(0);
-  }
-  Value base = ifElse(
-      {i32},
-      andi(cmpi(CmpIPredicate::eq, lane, ci(31)),
-           cmpi(CmpIPredicate::ne, inclusive, ci(0))),
-      [&] { return Values{sharedAdd(totals, cl(0), inclusive)}; },
-      [&] { return Values{ci(0)}; })[0];
-  base = addi(indexed(base, ci(31)), subi(inclusive, counts));
+    }
+    Value base = ifElse(
+        {i32},
+        andi(cmpi(CmpIPredicate::eq, lane, ci(31)),
+             cmpi(CmpIPredicate::ne, inclusive, ci(0))),
+        [&] { return Values{sharedAdd(totals, cl(0), inclusive)}; },
+        [&] { return Values{ci(0)}; })[0];
+    return Values{addi(indexed(base, ci(31)), subi(inclusive, counts))};
+  };
+  Value base = observer() ? ifElse({i32}, warpActive, prefix,
+                                   [&] { return Values{ci(0)}; })[0]
+                          : prefix()[0];
   barrier();
   Value total = load(totals, {cx(0)});
   Value fits = cmpi(CmpIPredicate::ule, shrui(total, ci(18)), ci(recordCap));
@@ -886,13 +1155,15 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
                                     ci(1 << 18), ci(0)),
                              math::CtPopOp::create(b, loc, m)));
     }
-    forLoop(tid, cx(panel + stripe), cx(workers), {}, [&](Value i, ValueRange) {
-      for (int a = 0; a < 3; ++a) {
-        store(ci(0), accum, {cx(a), i});
-        store(ci(0), coarse, {cx(a), i});
-      }
-      return Values{};
-    });
+    if (!observer())
+      forLoop(tid, cx(panel + stripe), cx(workers), {},
+              [&](Value i, ValueRange) {
+                for (int a = 0; a < 3; ++a) {
+                  store(ci(0), accum, {cx(a), i});
+                  store(ci(0), coarse, {cx(a), i});
+                }
+                return Values{};
+              });
     barrier();
     mark(4);
     Value nc = andi(total, ci(0x3ffff));
@@ -946,11 +1217,12 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
                 [&] { return Values{x[0], x[1], x[2]}; });
             Value prev = targetSlot(x[1]), t = targetSlot(v[1]),
                   changed = cmpi(CmpIPredicate::ne, prev, t);
-            ifThen(changed, [&] {
-              for (int a = 0; a < 3; ++a) {
-                addWord(accum, prev, cx(a), x[3 + a]);
-              }
-            });
+            if (!observer())
+              ifThen(changed, [&] {
+                for (int a = 0; a < 3; ++a) {
+                  addWord(accum, prev, cx(a), x[3 + a]);
+                }
+              });
             Value s = indexCast(
                 index, addi(shli(andi(shrui(v[1], ci(10)), ci(15)), ci(5)),
                             math::CountTrailingZerosOp::create(b, loc, v[2])));
@@ -960,6 +1232,11 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
             Values f = pair(targetData[0], load(pos, {s}), t, s,
                             targetData.drop_front());
             Values next{v[0], v[1], andi(v[2], subi(v[2], ci(1)))};
+            if (observer()) {
+              next.append(x.begin() + 3, x.begin() + 6);
+              next.append(targetData.begin(), targetData.end());
+              return next;
+            }
             // Separate the rounded quotient at a power of two. At most
             // max(panel,stripe) half-unit residuals reach either endpoint.
             int shift = std::max(panel, stripe) <= 512 ? 22 : 21;
@@ -981,36 +1258,40 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
             next.append(targetData.begin(), targetData.end());
             return next;
           });
-      for (int a = 0; a < 3; ++a) {
-        addWord(accum, targetSlot(endState[1]), cx(a), endState[3 + a]);
-      }
+      if (!observer())
+        for (int a = 0; a < 3; ++a) {
+          addWord(accum, targetSlot(endState[1]), cx(a), endState[3 + a]);
+        }
     });
     barrier();
     mark(5);
-    forLoop(tid, cx(panel + stripe), cx(workers), {}, [&](Value i, ValueRange) {
-      ifThen(ori(cmpi(CmpIPredicate::ult, i, sc),
-                 andi(cmpi(CmpIPredicate::uge, i, cx(panel)),
-                      cmpi(CmpIPredicate::ult, i, addi(cx(panel), tc)))),
-             [&] {
-               Value atom = indexCast(index, load(id, {i}));
-               for (int a = 0; a < 3; ++a) {
-                 int shift = std::max(panel, stripe) <= 512 ? 22 : 21;
-                 Value q = load(coarse, {cx(a), i});
-                 Value residual =
-                     subi(load(accum, {cx(a), i}), shli(q, ci(shift)));
-                 Value w = addi(
-                     shli(arith::ExtSIOp::create(b, loc, i64, q), cl(shift)),
-                     arith::ExtSIOp::create(b, loc, i64, residual));
-                 ifThen(cmpi(CmpIPredicate::ne, w, cl(0)), [&] {
-                   if (recovering)
-                     addWide(atom, cx(a), w, false);
-                   else
-                     addWord(words, atom, cx(a), w);
-                 });
-               }
-             });
-      return Values{};
-    });
+    if (!observer())
+      forLoop(
+          tid, cx(panel + stripe), cx(workers), {}, [&](Value i, ValueRange) {
+            ifThen(ori(cmpi(CmpIPredicate::ult, i, sc),
+                       andi(cmpi(CmpIPredicate::uge, i, cx(panel)),
+                            cmpi(CmpIPredicate::ult, i, addi(cx(panel), tc)))),
+                   [&] {
+                     Value atom = indexCast(index, load(id, {i}));
+                     for (int a = 0; a < 3; ++a) {
+                       int shift = std::max(panel, stripe) <= 512 ? 22 : 21;
+                       Value q = load(coarse, {cx(a), i});
+                       Value residual =
+                           subi(load(accum, {cx(a), i}), shli(q, ci(shift)));
+                       Value w =
+                           addi(shli(arith::ExtSIOp::create(b, loc, i64, q),
+                                     cl(shift)),
+                                arith::ExtSIOp::create(b, loc, i64, residual));
+                       ifThen(cmpi(CmpIPredicate::ne, w, cl(0)), [&] {
+                         if (recovering)
+                           addWide(atom, cx(a), w, false);
+                         else
+                           addWord(words, atom, cx(a), w);
+                       });
+                     }
+                   });
+            return Values{};
+          });
     mark(6);
   });
   ifThen(notNarrow(andi(lastTile, fits)), barrier);
@@ -1256,10 +1537,14 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
                    bool singleBlock) {
   OpBuilder::InsertionGuard guard(b);
   tileParameters.clear();
-  auto fn = gpu::GPUFuncOp::create(b, loc,
-                                   singleBlock  ? "towers_recover_once"
-                                   : recovering ? "towers_recover"
-                                                : "towers_force",
+  StringRef entryName =
+      observer()    ? (recovering ? (singleBlock ? "towers_energy_recover_once"
+                                                 : "towers_energy_recover")
+                                  : observerName())
+      : singleBlock ? "towers_recover_once"
+      : recovering  ? "towers_recover"
+                    : "towers_force";
+  auto fn = gpu::GPUFuncOp::create(b, loc, entryName,
                                    b.getFunctionType(entryTypes, {}));
   fn.setKernel(true);
   fn.setKnownBlockSizeAttr(b.getDenseI32ArrayAttr({workers, 1, 1}));
@@ -1272,7 +1557,9 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
   int slots = panel + stripe;
   // Screen features and the compacted target list die at the prefix barrier.
   // Six force planes cover all four arrays, even when the stripe dominates.
-  Value scratch = shared(fn, {6 * slots * 4}, b.getI8Type());
+  Value scratch =
+      shared(fn, {(observer() ? 2 * slots + 2 * stripe : 6 * slots) * 4},
+             b.getI8Type());
   fn.setWorkgroupAttributionAttr(fn.getNumWorkgroupAttributions() - 1,
                                  "llvm.align", b.getI64IntegerAttr(16));
   Block &entry = fn.getBody().front();
@@ -1287,8 +1574,10 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
   features = view(0, {slots}, VectorType::get({2}, i32));
   bias = view(2 * slots, {stripe}, f32);
   keptSlots = view(2 * slots + stripe, {stripe}, i32);
-  accum = view(0, {3, slots}, i32);
-  coarse = view(3 * slots, {3, slots}, i32);
+  if (!observer()) {
+    accum = view(0, {3, slots}, i32);
+    coarse = view(3 * slots, {3, slots}, i32);
+  }
   bind(entry.getArguments());
   records = LLVM::AddressOfOp::create(b, loc, recordsGlobal);
   tid = gpu::ThreadIdOp::create(b, loc, gpu::Dimension::x);
@@ -1315,6 +1604,8 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
         b, loc, MemRefType::get({}, shortVote() ? i32 : i64));
     store(shortVote() ? ci(0) : cl(0), localVotes, {});
   }
+  if (observer())
+    startObservation();
   auto evaluate = [&] {
     auto tower = [&] {
       stageParameters(fn);
@@ -1333,7 +1624,8 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
     });
   };
   if (recovering) {
-    highWords = entry.getArgument(entryTypes.size() - 1);
+    if (!observer())
+      highWords = entry.getArgument(entryTypes.size() - 1);
     ifThen(cmpi(CmpIPredicate::ne, load(invalid, {cx(Replay)}), ci(0)), [&] {
       if (!singleBlock) {
         evaluate();
@@ -1347,12 +1639,18 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
           return Values{};
         });
       };
-      atoms([&](Value i) {
-        for (int axis = 0; axis < 3; ++axis) {
-          store(cl(0), words, {i, cx(axis)});
-          store(cl(0), highWords, {i, cx(axis)});
-        }
-      });
+      if (energy()) {
+        ifThen(cmpi(CmpIPredicate::eq, tid, cx(0)), [&] {
+          store(cl(0), words, {cx(0)});
+          store(cl(0), words, {cx(1)});
+        });
+      } else
+        atoms([&](Value i) {
+          for (int axis = 0; axis < 3; ++axis) {
+            store(cl(0), words, {i, cx(axis)});
+            store(cl(0), highWords, {i, cx(axis)});
+          }
+        });
       gpu::BarrierOp::create(b, loc);
       auto globalMapping = mapping;
       stageParameters(fn);
@@ -1370,7 +1668,15 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
                 });
         gpu::BarrierOp::create(b, loc);
       }
-      atoms([&](Value i) { checkWide(invalid, words, highWords, i); });
+      if (energy()) {
+        flushObservation();
+        gpu::BarrierOp::create(b, loc);
+        ifThen(andi(cmpi(CmpIPredicate::eq, tid, cx(0)),
+                    cmpi(CmpIPredicate::ne, load(words, {cx(1)}),
+                         shrsi(load(words, {cx(0)}), cl(63)))),
+               [&] { flag(invalid, Fatal, InvalidTotal); });
+      } else
+        atoms([&](Value i) { checkWide(invalid, words, highWords, i); });
     });
   } else
     withValidGeometry(evaluate);
@@ -1392,13 +1698,23 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
              pointerTo(baseAddress(failedConversions), cl(0)), count);
     });
   }
+  if (observer() && !singleBlock)
+    flushObservation();
   mark(7);
   if (probe && !recovering)
     ifThen(cmpi(CmpIPredicate::eq, tid, cx(0)), [&] {
-      store(
-          subi(NVVM::GlobalTimerOp::create(b, loc, i64), load(trace, {cx(8)})),
-          trace, {cx(8)});
+      Value start = load(trace, {cx(8)});
+      store(subi(NVVM::GlobalTimerOp::create(b, loc, i64), start), trace,
+            {cx(8)});
       Value output = entry.getArgument(types.size() - 1);
+      if (observer()) {
+        ifThen(cmpi(CmpIPredicate::ult, owner, cx(towerBlocks())), [&] {
+          store(start, output, {owner, cx(11)});
+          store(arith::ExtUIOp::create(b, loc, i64,
+                                       NVVM::SmIdOp::create(b, loc, i32)),
+                output, {owner, cx(12)});
+        });
+      }
       for (int i = 0; i < 11; ++i)
         ifThen(cmpi(CmpIPredicate::ult, owner, cx(towerBlocks())),
                [&] { store(load(trace, {cx(i)}), output, {owner, cx(i)}); });
@@ -1419,13 +1735,26 @@ LogicalResult Force::emit() {
     return term.emitError(
         "TOWERS requires a positive cutoff with a normal binary32 square");
   Block &body = term.getKernel().front();
-  if (term.getCenters() || term.getImages() != md_exec::Images::Minimum ||
-      term.getOuts().size() != 1 || !term.getReduce().empty() ||
-      term.getExchange(0) != md::Exchange::Antisymmetric ||
-      body.getArgument(0).getType() != f32 ||
-      body.getTerminator()->getOperand(0).getType() != v3)
-    return term.emitError(
-        "TOWERS requires one mixed antisymmetric force contribution");
+  auto supported = [&](md_exec::PairForOp op) {
+    if (op.getCenters() || op.getImages() != md_exec::Images::Minimum ||
+        op.getKernel().front().getArgument(0).getType() != f32)
+      return false;
+    auto yield = op.getKernel().front().getTerminator();
+    if (yield->getNumOperands() != 1)
+      return false;
+    if (energy())
+      return op.getOuts().empty() && op.getReduce().size() == 1 &&
+             op.getExchange(0) == md::Exchange::Symmetric && op.getWeights() &&
+             (*op.getWeights())[0] == 0.5 &&
+             (yield->getOperand(0).getType() == f32 ||
+              yield->getOperand(0).getType() == f64);
+    return op.getOuts().size() == 1 && op.getReduce().empty() &&
+           op.getExchange(0) == md::Exchange::Antisymmetric &&
+           yield->getOperand(0).getType() == v3;
+  };
+  if (!supported(term) || (observer() && !certified))
+    return term.emitError("TOWERS requires a mixed antisymmetric force or "
+                          "checked symmetric energy region");
   for (auto region : {term, correction}) {
     if (!region)
       continue;
@@ -1448,7 +1777,8 @@ LogicalResult Force::emit() {
            mem({slots}, v4),
            mem({slots}, i32),
            packedChargeType && !g.host ? mem({7}, f32) : mem({3, 3}, f64),
-           mem({g.atoms, 3}, i64),
+           observer() ? mem({energy() ? 2 : 6}, energy() ? i64 : f64)
+                      : mem({g.atoms, 3}, i64),
            mem({certified ? 2 : 1}, i32),
            f32};
   if (certified)
@@ -1456,15 +1786,10 @@ LogicalResult Force::emit() {
   if (exclusions) {
     types.append({mem({exclusions, 2}, i32), mem({g.atoms}, i32),
                   mem({3, g.atoms}, f64), mem({3}, f64)});
-    if (correction.getOuts().size() != 1 || correction.getCenters() ||
-        correction.getImages() != md_exec::Images::Minimum ||
-        !correction.getReduce().empty() ||
+    if (!supported(correction) ||
         !llvm::equal(correction.getIns(), term.getIns()) ||
         correction.getKernel().front().getArgumentTypes() !=
-            body.getArgumentTypes() ||
-        correction.getKernel().front().getTerminator()->getOperandTypes() !=
-            body.getTerminator()->getOperandTypes() ||
-        correction.getExchange(0) != md::Exchange::Antisymmetric)
+            body.getArgumentTypes())
       return correction.emitError(
           "expected matching direct and exclusion force signatures");
   }
@@ -1500,33 +1825,56 @@ LogicalResult Force::emit() {
   if (probe) {
     if (g.host)
       return term.emitError("TOWERS force phase counters require a GPU");
-    types.push_back(mem({towerBlocks(), 11}, i64));
+    types.push_back(mem({towerBlocks(), observer() ? 13 : 11}, i64));
   }
-  if (certified)
+  if (observer())
+    observationEntries();
+  else if (certified)
     recoveryEntries();
   if (g.host) {
-    auto fn = func::FuncOp::create(b, loc, "towers_force",
+    auto fn = func::FuncOp::create(b, loc,
+                                   observer() ? observerName() : "towers_force",
                                    b.getFunctionType(types, {}));
     Block *entry = fn.addEntryBlock();
     b.setInsertionPointToStart(entry);
     bind(entry->getArguments());
+    if (observer())
+      startObservation();
     withValidGeometry([&] { host(); });
+    if (observer())
+      flushObservation();
     func::ReturnOp::create(b, loc);
   } else {
-    if (packedChargeType)
+    if (packedChargeType && !observer())
       prepareGeometry();
-    auto dyn = LLVM::GlobalOp::create(b, loc, LLVM::LLVMArrayType::get(i32, 0),
-                                      false, LLVM::Linkage::External,
-                                      "towers_records", Attribute(), 8, 3);
-    device(dyn, types);
-    if (certified) {
+    auto dyn = b.getInsertionBlock()
+                   ->getParentOp()
+                   ->getRegion(0)
+                   .getOps<LLVM::GlobalOp>();
+    LLVM::GlobalOp recordsGlobal;
+    for (auto var : dyn)
+      if (var.getSymName() == "towers_records")
+        recordsGlobal = var;
+    if (!recordsGlobal)
+      recordsGlobal = LLVM::GlobalOp::create(
+          b, loc, LLVM::LLVMArrayType::get(i32, 0), false,
+          LLVM::Linkage::External, "towers_records", Attribute(), 8, 3);
+    device(recordsGlobal, types);
+    if (energy()) {
+      recovering = true;
+      auto replay = types;
+      if (probe)
+        replay.pop_back();
+      device(recordsGlobal, replay);
+      device(recordsGlobal, replay, true);
+    } else if (!observer() && certified) {
       SmallVector<Type> replay(types);
       if (probe)
         replay.pop_back();
       replay.push_back(types[4]);
       recovering = true;
-      device(dyn, replay);
-      device(dyn, replay, true);
+      device(recordsGlobal, replay);
+      device(recordsGlobal, replay, true);
       recovering = false;
     }
   }

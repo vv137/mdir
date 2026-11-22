@@ -112,6 +112,27 @@ in deterministic mode if admitted, for ages 0 through 99 after setup or
 restart, and at subsequent multiples of 100. Unchecked modular output can
 wrap between audits.
 
+### Rectangular output entries
+
+The compiler emits force alone by default. For checked mixed precision,
+`energy-body` supplies a symmetric scalar direct energy region and the
+corresponding exclusion correction when exclusions are present. The
+traversal owns each pair once and consumes the unweighted pair energy.
+It converts the mixed result to Q32 once per pair. Each warp reduces
+signed two-limb integers before adding its total to the frame. The
+certificate checks the signed range of the final sum and the net failed
+conversion count. Physical replay skips excluded direct pairs and adds
+their physical correction at any distance. The joint publication entry
+commits both force and energy only after both recovery checks pass.
+
+`direct-virial` uses the force region in a separate traversal. It skips
+excluded direct pairs, evaluates their physical corrections and accumulates
+the minimum-image displacement times the force on the target in binary64.
+The six components are xx, xy, xz, yy, yz and zz, in kJ/mol. A nonfinite
+component sets the shared fatal status before publication. Floating-point
+addition order can change tensor bits across launch layouts. Deterministic
+mode still requires its separate output and restart qualification.
+
 ## Setup and diagnostics
 
 Select FULL or HALF from the atom count, rectangular cell and cutoff in every mode.

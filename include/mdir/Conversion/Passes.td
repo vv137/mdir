@@ -634,6 +634,10 @@ def AddTowersBuild : Pass<"add-towers-build", "::mlir::ModuleOp"> {
     Option<"forceResidency", "force-residency", "int", "1", "Target resident blocks per multiprocessor">,
     Option<"forceRecords", "force-records", "int", "512", "Eight-byte record capacity">,
     Option<"probeForce", "probe-force", "bool", "false", "Emit per-tower force phase counters">,
+    Option<"energyBody", "energy-body", "std::string", "\"\"",
+           "Function containing symmetric scalar pair energy and correction regions">,
+    Option<"directVirial", "direct-virial", "bool", "false",
+           "Emit a separate direct configurational virial entry">,
     Option<"forceBody", "force-body", "std::string", "\"\"",
            "Function containing the pair region for a force entry">,
     Option<"audit", "audit", "bool", "false", "Emit ownership multiplicities for tests">

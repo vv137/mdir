@@ -1,0 +1,3 @@
+# RUN: %python %S/Inputs/towers_outputs.py %t host mdir-opt
+# RUN: mdir-opt %S/Inputs/towers-force.mlir --add-towers-build="host=true atoms=4 nx=6 ny=6 nz=6 reach=1 capacity=8 force-body=spring" | FileCheck %s --implicit-check-not=towers_energy --implicit-check-not=towers_virial
+# CHECK: func.func @towers_force(
