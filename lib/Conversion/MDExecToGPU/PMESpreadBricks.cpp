@@ -311,6 +311,17 @@ template <bool useList> void DevicePME::emitSpreadBricks(StringRef symbol) {
     }
     gpu::TerminatorOp::create(b, loc);
   }
+  copyBricks(bricks, realBuffer, k1, k2, k3, b2, b12, c0, c1, c4, c16, c32,
+             c128);
+  func::ReturnOp::create(b, loc);
+}
+
+template void DevicePME::emitSpreadBricks<false>(StringRef);
+template void DevicePME::emitSpreadBricks<true>(StringRef);
+
+void DevicePME::copyBricks(Value bricks, Value realBuffer, Value k1, Value k2,
+                           Value k3, Value b2, Value b12, Value c0, Value c1,
+                           Value c4, Value c16, Value c32, Value c128) {
   arith::ConstantIndexOp::create(b, loc, 8);
   Value c17 = arith::ConstantIndexOp::create(b, loc, 17);
   Value c31 = arith::ConstantIndexOp::create(b, loc, 31);
@@ -436,8 +447,4 @@ template <bool useList> void DevicePME::emitSpreadBricks(StringRef symbol) {
         });
     gpu::TerminatorOp::create(b, loc);
   }
-  func::ReturnOp::create(b, loc);
 }
-
-template void DevicePME::emitSpreadBricks<false>(StringRef);
-template void DevicePME::emitSpreadBricks<true>(StringRef);

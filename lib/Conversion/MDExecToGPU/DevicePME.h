@@ -113,6 +113,9 @@ private:
   Influence gaussianInfluenceTriclinic(Value msqr, Value rzero, Value rone,
                                        Value t1, Value t2, Value t3,
                                        Value gaussr);
+  void copyBricks(Value bricks, Value realBuffer, Value k1, Value k2, Value k3,
+                  Value b2, Value b12, Value c0, Value c1, Value c4, Value c16,
+                  Value c32, Value c128);
   void emitBlocks(StringRef symbol);
   template <bool tilted, bool useList, bool fixedGrid>
   void emitSpread(StringRef symbol);

@@ -101,8 +101,7 @@ template <bool tilted> void DevicePME::emitWeights(StringRef symbol) {
       Value yc;
       Value zc;
       Value fr_one;
-      Value fr_z;
-      Value fr_y;
+      FractionalPosition fractional;
       if constexpr (tilted) {
         yc = arith::ConstantIndexOp::create(b, loc, 1);
         Value ys = load(x, {i, yc});
@@ -112,16 +111,9 @@ template <bool tilted> void DevicePME::emitWeights(StringRef symbol) {
         Value zp = convert(f64Type, zs);
         fr_one =
             arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 1.0));
-        fr_z = mulf(zp, h22);
-        Value fr_y1 = mulf(yp, h11);
-        Value fr_y2 = mulf(zp, h21);
-        fr_y = addf(fr_y1, fr_y2);
-        Value fr_x1 = mulf(xp, h00);
-        Value fr_x2 = mulf(yp, h10);
-        Value fr_x3 = mulf(zp, h20);
-        Value fr_x12 = addf(fr_x1, fr_x2);
-        Value fr_x = addf(fr_x12, fr_x3);
-        xPlacement = placeAxis(fr_x, fr_one, k1, pointCount);
+        fractional =
+            fractionalPosition(xp, yp, zp, h00, h10, h11, h20, h21, h22);
+        xPlacement = placeAxis(fractional.x, fr_one, k1, pointCount);
       }
       Value px_start = xPlacement.first;
       Value px_w = xPlacement.second;
@@ -141,7 +133,7 @@ template <bool tilted> void DevicePME::emitWeights(StringRef symbol) {
         Value yp = convert(f64Type, ys);
         yPlacement = placeAxis(yp, ily, k2, pointCount);
       } else {
-        yPlacement = placeAxis(fr_y, fr_one, k2, pointCount);
+        yPlacement = placeAxis(fractional.y, fr_one, k2, pointCount);
       }
       Value py_start = yPlacement.first;
       Value py_w = yPlacement.second;
@@ -161,7 +153,7 @@ template <bool tilted> void DevicePME::emitWeights(StringRef symbol) {
         Value zp = convert(f64Type, zs);
         zPlacement = placeAxis(zp, ilz, k3, pointCount);
       } else {
-        zPlacement = placeAxis(fr_z, fr_one, k3, pointCount);
+        zPlacement = placeAxis(fractional.z, fr_one, k3, pointCount);
       }
       Value pz_start = zPlacement.first;
       Value pz_w = zPlacement.second;

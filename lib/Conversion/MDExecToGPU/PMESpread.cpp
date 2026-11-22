@@ -171,21 +171,13 @@ void DevicePME::emitSpread(StringRef symbol) {
         xPlacement = placeAxis(xi, ilx, k1, pointCount);
       }
       Value fr_one;
-      Value fr_z;
-      Value fr_y;
+      FractionalPosition fractional;
       if constexpr (tilted) {
         fr_one =
             arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 1.0));
-        fr_z = mulf(zi, h22);
-        Value fr_y1 = mulf(yi, h11);
-        Value fr_y2 = mulf(zi, h21);
-        fr_y = addf(fr_y1, fr_y2);
-        Value fr_x1 = mulf(xi, h00);
-        Value fr_x2 = mulf(yi, h10);
-        Value fr_x3 = mulf(zi, h20);
-        Value fr_x12 = addf(fr_x1, fr_x2);
-        Value fr_x = addf(fr_x12, fr_x3);
-        xPlacement = placeAxis(fr_x, fr_one, k1, pointCount);
+        fractional =
+            fractionalPosition(xi, yi, zi, h00, h10, h11, h20, h21, h22);
+        xPlacement = placeAxis(fractional.x, fr_one, k1, pointCount);
       }
       Value px_start = xPlacement.first;
       Value px_w = xPlacement.second;
@@ -194,7 +186,7 @@ void DevicePME::emitSpread(StringRef symbol) {
       if constexpr (!tilted) {
         yPlacement = placeAxis(yi, ily, k2, pointCount);
       } else {
-        yPlacement = placeAxis(fr_y, fr_one, k2, pointCount);
+        yPlacement = placeAxis(fractional.y, fr_one, k2, pointCount);
       }
       Value py_start = yPlacement.first;
       Value py_w = yPlacement.second;
@@ -203,7 +195,7 @@ void DevicePME::emitSpread(StringRef symbol) {
       if constexpr (!tilted) {
         zPlacement = placeAxis(zi, ilz, k3, pointCount);
       } else {
-        zPlacement = placeAxis(fr_z, fr_one, k3, pointCount);
+        zPlacement = placeAxis(fractional.z, fr_one, k3, pointCount);
       }
       Value pz_start = zPlacement.first;
       Value pz_w = zPlacement.second;

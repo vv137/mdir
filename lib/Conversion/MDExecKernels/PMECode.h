@@ -28,6 +28,24 @@ protected:
     return arith::TruncFOp::create(b, loc, type, input);
   }
 
+  struct FractionalPosition {
+    Value x, y, z;
+  };
+  FractionalPosition fractionalPosition(Value x, Value y, Value z, Value h00,
+                                        Value h10, Value h11, Value h20,
+                                        Value h21, Value h22) {
+    Value sz = mulf(z, h22);
+    Value yy = mulf(y, h11);
+    Value zy = mulf(z, h21);
+    Value sy = addf(yy, zy);
+    Value xx = mulf(x, h00);
+    Value yx = mulf(y, h10);
+    Value zx = mulf(z, h20);
+    Value xy = addf(xx, yx);
+    Value sx = addf(xy, zx);
+    return {sx, sy, sz};
+  }
+
   std::tuple<Value, Value, Value, Value, Value, Value>
   inverseCell(Value box, Value lx, Value ly, Value lz) {
     Value tbx = extract(box, 3);

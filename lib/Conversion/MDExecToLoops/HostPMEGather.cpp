@@ -430,15 +430,8 @@ void HostPME::emitSplinesTriclinic() {
   Value xi = convert(f64Type, xs);
   Value yi = convert(f64Type, ys);
   Value zi = convert(f64Type, zs);
-  Value s3 = arith::MulFOp::create(b, loc, zi, h22);
-  Value s2y = arith::MulFOp::create(b, loc, yi, h11);
-  Value s2z = arith::MulFOp::create(b, loc, zi, h21);
-  Value s2 = arith::AddFOp::create(b, loc, s2y, s2z);
-  Value s1x = arith::MulFOp::create(b, loc, xi, h00);
-  Value s1y = arith::MulFOp::create(b, loc, yi, h10);
-  Value s1z = arith::MulFOp::create(b, loc, zi, h20);
-  Value s1xy = arith::AddFOp::create(b, loc, s1x, s1y);
-  Value s1 = arith::AddFOp::create(b, loc, s1xy, s1z);
+  auto [s1, s2, s3] =
+      fractionalPosition(xi, yi, zi, h00, h10, h11, h20, h21, h22);
   auto sxCall = func::CallOp::create(b, loc, "mdrt.pme_place",
                                      TypeRange{idxType, f64Type},
                                      ValueRange{s1, unit, k1, n, moduli});

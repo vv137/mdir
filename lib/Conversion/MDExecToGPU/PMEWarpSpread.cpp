@@ -216,277 +216,64 @@ void DevicePME::emitWarpSpread(StringRef symbol) {
           scf::YieldOp::create(b, loc);
         });
   };
-  {
-    gpu::LaunchOp launch;
-    if constexpr (!fixedGrid) {
-      launch = gpu::LaunchOp::create(b, loc, blocks, c1, c1, c128, c1, c1);
-    } else {
-      launch = gpu::LaunchOp::create(b, loc, blocks_grid, c1, c1, c128, c1, c1);
-    }
+
+  auto launchBlocks = [&](Value count, auto body) {
+    auto launch = gpu::LaunchOp::create(b, loc, count, c1, c1, c128, c1, c1);
     OpBuilder::InsertionGuard guard(b);
     b.setInsertionPointToStart(&launch.getBody().front());
-    Value bx = launch.getBlockIds().x;
-
-    Value tx = launch.getThreadIds().x;
-
-    Value c0w;
-    Value c32w;
-    Value two_i;
-    Value three_i;
-    Value warp;
-    Value lane;
-    Value wb;
-    if constexpr (!fixedGrid) {
-      c0w = arith::ConstantIndexOp::create(b, loc, 0);
-      c32w = arith::ConstantIndexOp::create(b, loc, 32);
-      two_i = arith::ConstantIndexOp::create(b, loc, 2);
-      three_i = arith::ConstantIndexOp::create(b, loc, 3);
-      Value four_w = arith::ConstantIndexOp::create(b, loc, 4);
-      warp = divui(tx, c32w);
-      Value lane_x = remui(tx, c32w);
-      lane = indexCast(i32Type, lane_x);
-      wb = muli(bx, four_w);
-    }
-    Value i;
-    Value inside;
-    if constexpr (!useList && !fixedGrid) {
-      i = addi(wb, warp);
-      inside = cmpi(arith::CmpIPredicate::ult, i, n_all);
-    }
-    Value item;
-    if constexpr (fixedGrid) {
-      Value base = muli(bx, c128);
-      item = addi(base, tx);
-      inside = cmpi(arith::CmpIPredicate::ult, item, points_grid);
-    }
-    Value slot;
-    if constexpr (useList && !fixedGrid) {
-      slot = addi(wb, warp);
-      inside = cmpi(arith::CmpIPredicate::ult, slot, n_all);
-    }
-    auto insideBranch =
-        scf::IfOp::create(b, loc, TypeRange{}, inside, true, false);
-    {
-      OpBuilder::InsertionGuard guard(b);
-      b.setInsertionPointToStart(insideBranch.thenBlock());
-      scf::IfOp is_listedBranch;
-      if constexpr (useList && !fixedGrid) {
-        Value listed = load(list, {slot});
-        Value listed_none =
-            arith::ConstantOp::create(b, loc, b.getIntegerAttr(i32Type, 0));
-        Value is_listed = cmpi(arith::CmpIPredicate::sge, listed, listed_none);
-        is_listedBranch =
-            scf::IfOp::create(b, loc, TypeRange{}, is_listed, true, false);
-        b.setInsertionPointToStart(is_listedBranch.thenBlock());
-        i = indexCast(idxType, listed);
-      }
-      if constexpr (!fixedGrid) {
-        spreadParticle(lane, i, c0w, c32w, two_i, three_i);
-      } else {
-        Value none =
+    body(launch.getBlockIds().x, launch.getThreadIds().x);
+    gpu::TerminatorOp::create(b, loc);
+  };
+  auto when = [&](Value condition, auto body) {
+    auto branch =
+        scf::IfOp::create(b, loc, TypeRange{}, condition, true, false);
+    OpBuilder::InsertionGuard guard(b);
+    b.setInsertionPointToStart(branch.thenBlock());
+    body();
+    scf::YieldOp::create(b, loc);
+  };
+  if constexpr (fixedGrid) {
+    launchBlocks(blocks_grid, [&](Value block, Value thread) {
+      Value base = muli(block, c128);
+      Value item = addi(base, thread);
+      Value inside = cmpi(arith::CmpIPredicate::ult, item, points_grid);
+      when(inside, [&] {
+        Value zero =
             arith::ConstantOp::create(b, loc, b.getIntegerAttr(i64Type, 0));
-        store(none, grid, {item});
-      }
-      scf::YieldOp::create(b, loc);
-      if constexpr (useList && !fixedGrid) {
-        b.setInsertionPointAfter(is_listedBranch);
-        scf::YieldOp::create(b, loc);
-      }
-    }
-    gpu::TerminatorOp::create(b, loc);
+        store(zero, grid, {item});
+      });
+    });
   }
-  Value c17;
-  Value zchunks;
-  Value copy_blocks;
-  if constexpr (!fixedGrid) {
-    arith::ConstantIndexOp::create(b, loc, 8);
-    c17 = arith::ConstantIndexOp::create(b, loc, 17);
-    Value c31 = arith::ConstantIndexOp::create(b, loc, 31);
-    Value k3_31 = addi(k3, c31);
-    zchunks = divui(k3_31, c32);
-    copy_blocks = muli(b12, zchunks);
-  }
-  {
-    gpu::LaunchOp launch;
-    if constexpr (!fixedGrid) {
-      launch = gpu::LaunchOp::create(b, loc, copy_blocks, c1, c1, c128, c1, c1,
-                                     Value{}, Type{}, ValueRange{},
-                                     TypeRange{shared(544, realType)});
-    } else {
-      launch = gpu::LaunchOp::create(b, loc, blocks, c1, c1, c128, c1, c1);
-    }
-    OpBuilder::InsertionGuard guard(b);
-    b.setInsertionPointToStart(&launch.getBody().front());
-    Value bx = launch.getBlockIds().x;
-    Value tx = launch.getThreadIds().x;
-    if constexpr (!fixedGrid) {
-      Value tile = launch.getWorkgroupAttributionBBArgs()[0];
-      Value bxy = divui(bx, zchunks);
-      Value zc = remui(bx, zchunks);
-      Value z0 = muli(zc, c32);
-      Value bx1 = divui(bxy, b2);
-      Value by1 = remui(bxy, b2);
-      Value slab0 = muli(bxy, k3);
-      Value zero_r =
-          arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 0.0));
-      Value bytes = arith::ConstantOp::create(
-          b, loc, b.getIntegerAttr(i64Type, realBytes));
-      Value bindex =
-          memref::ExtractAlignedPointerAsIndexOp::create(b, loc, bricks);
-      Value bbase = indexCast(i64Type, bindex);
-      scf::ForOp::create(
-          b, loc, c0, c4, c1, ValueRange{},
-          [&](OpBuilder &b, Location, Value j, ValueRange carried) {
-            Value j128 = muli(j, c128);
-            Value e = addi(j128, tx);
-            Value zz = divui(e, c16);
-            Value inxy = remui(e, c16);
-            Value z = addi(z0, zz);
-            Value in = cmpi(arith::CmpIPredicate::ult, z, k3);
-            auto inBranch2 =
-                scf::IfOp::create(b, loc, TypeRange{}, in, true, false);
-            {
-              OpBuilder::InsertionGuard guard(b);
-              b.setInsertionPointToStart(inBranch2.thenBlock());
-              Value slab = addi(slab0, z);
-              Value slab16 = muli(slab, c16);
-              Value at = addi(slab16, inxy);
-              Value ati = indexCast(i64Type, at);
-              Value offset = muli(ati, bytes);
-              Value address = addi(bbase, offset);
-              Value pointer =
-                  LLVM::IntToPtrOp::create(b, loc, globalPointer, address);
-              Value value =
-                  LLVM::LoadOp::create(b, loc, realType, pointer, realBytes);
-              Value t17 = muli(zz, c17);
-              Value tat = addi(t17, inxy);
-              store(value, tile, {tat});
-              scf::YieldOp::create(b, loc);
-            }
-            scf::YieldOp::create(b, loc);
-          });
-      gpu::BarrierOp::create(b, loc);
-      scf::ForOp::create(
-          b, loc, c0, c4, c1, ValueRange{},
-          [&](OpBuilder &b, Location, Value j, ValueRange carried) {
-            Value j128 = muli(j, c128);
-            Value e = addi(j128, tx);
-            Value zz = divui(e, c16);
-            Value inxy = remui(e, c16);
-            Value z = addi(z0, zz);
-            Value in = cmpi(arith::CmpIPredicate::ult, z, k3);
-            auto inBranch3 =
-                scf::IfOp::create(b, loc, TypeRange{}, in, true, false);
-            {
-              OpBuilder::InsertionGuard guard(b);
-              b.setInsertionPointToStart(inBranch3.thenBlock());
-              Value slab = addi(slab0, z);
-              Value slab16 = muli(slab, c16);
-              Value at = addi(slab16, inxy);
-              Value ati = indexCast(i64Type, at);
-              Value offset = muli(ati, bytes);
-              Value address = addi(bbase, offset);
-              Value pointer =
-                  LLVM::IntToPtrOp::create(b, loc, globalPointer, address);
-              LLVM::StoreOp::create(b, loc, zero_r, pointer, realBytes);
-              scf::YieldOp::create(b, loc);
-            }
-            scf::YieldOp::create(b, loc);
-          });
-      Value warp = divui(tx, c32);
-      Value lane = remui(tx, c32);
-      Value z = addi(z0, lane);
-      Value in = cmpi(arith::CmpIPredicate::ult, z, k3);
-      Value t17 = muli(lane, c17);
-      scf::ForOp::create(
-          b, loc, c0, c4, c1, ValueRange{},
-          [&](OpBuilder &b, Location, Value pass, ValueRange carried) {
-            Value pass4 = muli(pass, c4);
-            Value r = addi(pass4, warp);
-            Value inx = remui(r, c4);
-            Value iny = divui(r, c4);
-            Value g1a = muli(bx1, c4);
-            Value g1 = addi(g1a, inx);
-            Value g2a = muli(by1, c4);
-            Value g2 = addi(g2a, iny);
-            Value in1 = cmpi(arith::CmpIPredicate::ult, g1, k1);
-            Value in2 = cmpi(arith::CmpIPredicate::ult, g2, k2);
-            Value in12 = andi(in1, in2);
-            Value writes = andi(in12, in);
-            auto writesBranch =
-                scf::IfOp::create(b, loc, TypeRange{}, writes, true, false);
-            {
-              OpBuilder::InsertionGuard guard(b);
-              b.setInsertionPointToStart(writesBranch.thenBlock());
-              Value row1 = muli(g1, k2);
-              Value row = addi(row1, g2);
-              Value gbase = muli(row, k3);
-              Value tat = addi(t17, r);
-              Value value = load(tile, {tat});
-              Value gat = addi(gbase, z);
-              store(value, realBuffer, {gat});
-              scf::YieldOp::create(b, loc);
-            }
-            scf::YieldOp::create(b, loc);
-          });
-    }
-    Value c0w;
-    Value c32w;
-    Value two_i;
-    Value three_i;
-    Value warp;
-    Value lane;
-    Value wb;
-    if constexpr (fixedGrid) {
-      c0w = arith::ConstantIndexOp::create(b, loc, 0);
-      c32w = arith::ConstantIndexOp::create(b, loc, 32);
-      two_i = arith::ConstantIndexOp::create(b, loc, 2);
-      three_i = arith::ConstantIndexOp::create(b, loc, 3);
-      Value four_w = arith::ConstantIndexOp::create(b, loc, 4);
-      warp = divui(tx, c32w);
-      Value lane_x = remui(tx, c32w);
-      lane = indexCast(i32Type, lane_x);
-      wb = muli(bx, four_w);
-    }
-    Value i;
-    Value inside;
-    if constexpr (!useList && fixedGrid) {
-      i = addi(wb, warp);
-      inside = cmpi(arith::CmpIPredicate::ult, i, n_all);
-    }
-    Value slot;
-    if constexpr (useList && fixedGrid) {
-      slot = addi(wb, warp);
-      inside = cmpi(arith::CmpIPredicate::ult, slot, n_all);
-    }
-    if constexpr (fixedGrid) {
-      auto insideBranch2 =
-          scf::IfOp::create(b, loc, TypeRange{}, inside, true, false);
-      {
-        OpBuilder::InsertionGuard guard(b);
-        b.setInsertionPointToStart(insideBranch2.thenBlock());
-        scf::IfOp is_listedBranch;
-        if constexpr (useList) {
-          Value listed = load(list, {slot});
-          Value listed_none =
-              arith::ConstantOp::create(b, loc, b.getIntegerAttr(i32Type, 0));
-          Value is_listed =
-              cmpi(arith::CmpIPredicate::sge, listed, listed_none);
-          is_listedBranch =
-              scf::IfOp::create(b, loc, TypeRange{}, is_listed, true, false);
-          b.setInsertionPointToStart(is_listedBranch.thenBlock());
-          i = indexCast(idxType, listed);
-        }
-        spreadParticle(lane, i, c0w, c32w, two_i, three_i);
-        scf::YieldOp::create(b, loc);
-        if constexpr (useList) {
-          b.setInsertionPointAfter(is_listedBranch);
-          scf::YieldOp::create(b, loc);
-        }
+  launchBlocks(blocks, [&](Value block, Value thread) {
+    Value zero = arith::ConstantIndexOp::create(b, loc, 0);
+    Value width = arith::ConstantIndexOp::create(b, loc, 32);
+    Value two = arith::ConstantIndexOp::create(b, loc, 2);
+    Value three = arith::ConstantIndexOp::create(b, loc, 3);
+    Value four = arith::ConstantIndexOp::create(b, loc, 4);
+    Value warp = divui(thread, width);
+    Value laneIndex = remui(thread, width);
+    Value lane = indexCast(i32Type, laneIndex);
+    Value base = muli(block, four);
+    Value slot = addi(base, warp);
+    Value inside = cmpi(arith::CmpIPredicate::ult, slot, n_all);
+    when(inside, [&] {
+      if constexpr (useList) {
+        Value listed = load(list, {slot});
+        Value lower =
+            arith::ConstantOp::create(b, loc, b.getIntegerAttr(i32Type, 0));
+        Value active = cmpi(arith::CmpIPredicate::sge, listed, lower);
+        when(active, [&] {
+          Value particle = indexCast(idxType, listed);
+          spreadParticle(lane, particle, zero, width, two, three);
+        });
+      } else {
+        spreadParticle(lane, slot, zero, width, two, three);
       }
-    }
-    gpu::TerminatorOp::create(b, loc);
-  }
+    });
+  });
+  if constexpr (!fixedGrid)
+    copyBricks(bricks, realBuffer, k1, k2, k3, b2, b12, c0, c1, c4, c16, c32,
+               c128);
   func::ReturnOp::create(b, loc);
 }
 
