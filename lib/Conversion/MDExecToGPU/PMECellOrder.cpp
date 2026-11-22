@@ -95,13 +95,10 @@ template <bool tilted> void DevicePME::emitCellOrder(StringRef symbol) {
   func::ReturnOp::create(b, loc);
 }
 
-void DevicePME::emitPack(StringRef symbol, bool forceOutput) {
+void DevicePME::emitPack(StringRef symbol) {
   OpBuilder::InsertionGuard scope(b);
-  SmallVector<Type> types{records()};
-  if (forceOutput)
-    types.push_back(globalMem({ShapedType::kDynamic, 3}, realType));
-  else
-    types.append({globalMem({ShapedType::kDynamic}, i32Type), records()});
+  SmallVector<Type> types{records(), globalMem({ShapedType::kDynamic}, i32Type),
+                          records()};
   auto fn = func::FuncOp::create(b, loc, symbol, b.getFunctionType(types, {}));
   fn.setPrivate();
   Block *entry = fn.addEntryBlock();
@@ -113,14 +110,8 @@ void DevicePME::emitPack(StringRef symbol, bool forceOutput) {
   Value n = memref::DimOp::create(b, loc, a[0], zero);
   Value grid = maxui(one, arith::CeilDivUIOp::create(b, loc, n, threads));
   forParticles(b, loc, n, grid, threads, one, [&](Value i) {
-    if (forceOutput) {
-      Value record = readRecord(a[0], i);
-      for (int axis = 0; axis < 3; ++axis)
-        store(extract(record, axis), a[1], {i, arith::ConstantIndexOp::create(b, loc, axis)});
-    } else {
-      Value atom = indexCast(idxType, load(a[1], {i}));
-      writeRecord(readRecord(a[0], atom), a[2], i);
-    }
+    Value atom = indexCast(idxType, load(a[1], {i}));
+    writeRecord(readRecord(a[0], atom), a[2], i);
   });
   func::ReturnOp::create(b, loc);
 }

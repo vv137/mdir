@@ -1494,8 +1494,8 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
         cells *= (k + 3) / 4;
       Type word = IntegerType::get(context, 32);
 
-      // Ordered mesh records, padded forces, keys, and slot-to-atom IDs.
-      for (Type element : {gridType, gridType, word, word})
+      // Ordered mesh records, keys, and slot-to-atom IDs.
+      for (Type element : {gridType, word, word})
         scratch.push_back(particleBuffer(element, element == word ? 1 : 4));
       for (int64_t count : {cells, cells + 1, cells, (cells + 1023) / 1024})
         scratch.push_back(allocate(word, count));

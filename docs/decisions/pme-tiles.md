@@ -31,14 +31,12 @@ discard the narrow result and use a certified wide accumulation before
 the transform. Select a scale for the precision being computed and check
 the quantization error against the same-grid double oracle.
 
-For cubic gathering, two or four neighboring lanes contract consecutive
-z slices. Reduce the derivatives in a fixed shuffle tree and store an
-aligned four-component result in original atom order, with one padding
-component. Compare integer grids bitwise against a direct wide scatter,
-including forced patch escape. Test gather reproducibility at fixed lane
-mapping across block sizes. Different lane mappings have different
-floating-point summation trees and require a fixed contraction order for
-bitwise comparison.
+For cubic gathering, four neighboring lanes each contract one z slice.
+Reduce the derivatives in a fixed shuffle tree. The producing lane
+writes the three Cartesian components directly to the driver's force
+array at the slot's original atom index. Compare integer grids bitwise
+against a direct wide scatter, including forced patch escape. Test
+gather reproducibility across block sizes with the same contraction order.
 
 At setup, time the complete force-only transform sequence for the available
 combinations of forward integer-conversion and inverse influence load
@@ -59,6 +57,4 @@ charge. The local producer groups the first wrapped stencil point on each
 axis in cells four grid points wide, with z varying fastest. The last
 cell along an axis may be shorter. A shared producer must use the same
 frame, box, mesh placement and cell numbering. The order within one cell
-is immaterial to the consumer. Gathering scatters an aligned force record
-by the slot's atom index. Conversion to the consumer's three Cartesian
-components is included in the gather time.
+is immaterial to the consumer.

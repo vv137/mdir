@@ -5593,7 +5593,6 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   bool ordered = scratch.size() > 4 &&
                  cast<MemRefType>(scratch[4].getType()).getRank() == 2;
   PMECellOrder cellOrder;
-  Value packedForces;
   if (ordered) {
     if (!md_exec::canUsePMECellOrder(op))
       return op.emitOpError("cell-order storage requires a cubic Gaussian force sum with compatible scatter and grid");
@@ -5602,12 +5601,11 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                                  cast<MemRefType>(forces.getType()).getMemorySpace());
     auto word = MemRefType::get({ShapedType::kDynamic}, builder.getI32Type(),
                                 MemRefLayoutAttrInterface(), record.getMemorySpace());
-    if (scratch.size() != 14 || scratch[4].getType() != record ||
-        scratch[6].getType() != record || scratch[7].getType() != record ||
-        !llvm::all_of(scratch.drop_front(8), [&](Value v) { return v.getType() == word; }))
-      return op.emitOpError("cell-order storage requires three four-component mesh buffers and six i32 work buffers");
-    cellOrder = {scratch[11], scratch[9], scratch[6]};
-    packedForces = scratch[7];
+    if (scratch.size() != 13 || scratch[4].getType() != record ||
+        scratch[6].getType() != record ||
+        !llvm::all_of(scratch.drop_front(7), [&](Value v) { return v.getType() == word; }))
+      return op.emitOpError("cell-order storage requires two four-component mesh buffers and six i32 work buffers");
+    cellOrder = {scratch[10], scratch[8], scratch[6]};
   }
   Value bins = ordered ? Value() : getBins(op);
   if (tiles) {
@@ -5629,7 +5627,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // the tiles.
   auto instance = [&](StringRef name) {
     bool own = tilted && name != "mdrt_gpu_pme_real" &&
-               name != "mdrt_gpu_pme_pack" && name != "mdrt_gpu_pme_force_xyz" &&
+               name != "mdrt_gpu_pme_pack" &&
                name != "mdrt_gpu_pme_spread_ordered" &&
                name != "mdrt_gpu_pme_spread_bricks" &&
                name != "mdrt_gpu_pme_spread_bricks_listed" &&
@@ -5728,8 +5726,8 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   std::string edge = std::to_string(tiles);
   if (ordered) {
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_cell_order"),
-        ValueRange{positions, charges, box, scratch[4], scratch[8], cellOrder.permutation,
-                   scratch[10], cellOrder.offsets, scratch[12], scratch[13], k1, k2, k3});
+        ValueRange{positions, charges, box, scratch[4], scratch[7], cellOrder.permutation,
+                   scratch[9], cellOrder.offsets, scratch[11], scratch[12], k1, k2, k3});
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_pack"),
                          ValueRange{scratch[4], cellOrder.permutation, cellOrder.particles});
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread_ordered"),
@@ -5842,15 +5840,9 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   if (op.getGatherAll())
     listed = Value();
   if (ordered) {
-    // The two measured meshes where two adjacent z slices were faster.
-    bool paired = grid == ArrayRef<int64_t>({144, 84, 80}) ||
-                  grid == ArrayRef<int64_t>({224, 224, 240});
-    func::CallOp::create(builder, loc, instance(paired ? "mdrt_gpu_pme_gather_ordered_z2"
-                                                       : "mdrt_gpu_pme_gather_ordered"),
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_gather_ordered"),
                          ValueRange{cellOrder.particles, cellOrder.permutation, real, box,
-                                    k1, k2, k3, packedForces});
-    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_force_xyz"),
-                         ValueRange{packedForces, forces});
+                                    k1, k2, k3, forces});
   } else if (listed && usesWeights)
     func::CallOp::create(builder, loc,
                          instance("mdrt_gpu_pme_gather_weights_listed"),

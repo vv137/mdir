@@ -12,7 +12,7 @@ md.particle_set @atoms
 
 // CHECK-LABEL: func.func @tiled(
 // CHECK-NOT: gpu.memset
-// CHECK: md_exec.reciprocal {{.*}} scratch({{[^:]+}} : memref<?xi64, 1>, memref<?xf32, 1>, memref<?xf32, 1>, memref<?xf64, 1>, memref<?x4xf32, 1>, memref<?xf32, 1>, memref<?x4xf32, 1>, memref<?x4xf32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>)
+// CHECK: md_exec.reciprocal {{.*}} scratch({{[^:]+}} : memref<?xi64, 1>, memref<?xf32, 1>, memref<?xf32, 1>, memref<?xf64, 1>, memref<?x4xf32, 1>, memref<?xf32, 1>, memref<?x4xf32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>)
 // CHECK-SAME: scatter(tile(8))
 func.func @tiled(%x: !vec, %q: !real, %cell: !md.cell,
                  %b: memref<?x?xf64>) -> (f64, vector<9xf64>, !vec) {
@@ -26,7 +26,7 @@ func.func @tiled(%x: !vec, %q: !real, %cell: !md.cell,
 
 // CHECK-LABEL: func.func @non_tiled(
 // CHECK-NOT: gpu.memset
-// CHECK: md_exec.reciprocal {{.*}} scratch({{[^:]+}} : memref<?xi64, 1>, memref<?xf32, 1>, memref<?xf32, 1>, memref<?xf64, 1>, memref<?x4xf32, 1>, memref<?xf32, 1>, memref<?x4xf32, 1>, memref<?x4xf32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>)
+// CHECK: md_exec.reciprocal {{.*}} scratch({{[^:]+}} : memref<?xi64, 1>, memref<?xf32, 1>, memref<?xf32, 1>, memref<?xf64, 1>, memref<?x4xf32, 1>, memref<?xf32, 1>, memref<?x4xf32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>)
 // FIXED-LABEL: func.func @non_tiled(
 // FIXED-NOT: gpu.memset
 // FIXED: md_exec.reciprocal {{.*}} scratch(%{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}} :

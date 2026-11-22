@@ -51,7 +51,7 @@ private:
                             false, llvm::Align(4 * realBytes));
   }
   template <bool tilted> void emitCellOrder(StringRef symbol);
-  void emitPack(StringRef symbol, bool forceOutput);
+  void emitPack(StringRef symbol);
   Value meshCoordinate(Value fractional, Value size);
   std::pair<Value, Value> splitMeshAxis(Value mesh, Value size, Value support);
   int64_t realBytes = realType.getIntOrFloatBitWidth() / 8;
@@ -156,7 +156,7 @@ private:
   template <Window window, Splitting splitting, bool tilted>
   void emitScale(StringRef symbol);
   template <bool tilted, bool useList, bool potentialOnly, bool cachedWeights>
-  void emitGather(StringRef symbol, unsigned orderedLanes = 0);
+  void emitGather(StringRef symbol, bool ordered = false);
   template <bool useList, int tileEdge> void emitBin(StringRef symbol);
   template <Window window, int tileEdge, bool ordered = false> void emitSpreadTile(StringRef symbol);
   void emitCoefficients(StringRef symbol);
