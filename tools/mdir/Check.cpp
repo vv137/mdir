@@ -592,6 +592,15 @@ static void checkCutoffJump(const Control &control, const System &system,
            .str()});
 }
 
+static const char *pmeForcePath(const Control &control) {
+  if (control.target == Target::CPU || control.pmeKernel != PMEKernel::Gaussian ||
+      control.pmeOrder != 4 || control.pmeInfluence == PMEInfluence::P3M ||
+      llvm::any_of(control.pmeGrid, [](int64_t n) { return n && n < 7; }))
+    return "current";
+  return control.deterministic ? "tiled for eligible sums (deterministic)"
+       : "current or tiled by whole-step timing at setup for eligible sums";
+}
+
 static void describeRun(const Control &control, const System &system,
                         const Preflight &report) {
   std::printf("ensemble:           %s\n", getEnsemble(control));
@@ -631,6 +640,7 @@ static void describeRun(const Control &control, const System &system,
     std::printf("\n");
   }
   if (control.pme) {
+    std::printf("PME force path:     %s\n", pmeForcePath(control));
     if (control.pmeGrid[0] > 0)
       std::printf("PME grid:           %lld %lld %lld, order %lld\n",
                   static_cast<long long>(control.pmeGrid[0]),
@@ -835,6 +845,7 @@ static llvm::json::Object makeJSON(const Control &control, const System &system,
       grid.push_back(control.pmeGrid[k] ? Value(control.pmeGrid[k]) : Value(nullptr));
     run["pme"] = Object{
         {"grid_points", std::move(grid)}, {"order", control.pmeOrder},
+        {"force_path", pmeForcePath(control)},
         {"max_spacing_angstrom", control.pmeMaxSpacing},
         {"beta_inverse_angstrom", control.pmeAlpha > 0 ? Value(control.pmeAlpha)
                                                        : Value(nullptr)},

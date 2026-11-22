@@ -1693,6 +1693,16 @@ static int getFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward,
 #include "mdrt_pme_callbacks.inc"
 
 static void releaseDeviceFFT(int gone) {
+  while (pmePaths) {
+    struct PMEPath *p = pmePaths;
+    pmePaths = p->next;
+    if (!gone && p->winner < 0) {
+      cuEventDestroy(p->start);
+      cuEventDestroy(p->stop);
+    }
+    free(p);
+  }
+  lastPMEPath = 0;
   if (gone) {
     memset(pmeTrials, 0, sizeof pmeTrials);
     fftPlanBytes = 0;

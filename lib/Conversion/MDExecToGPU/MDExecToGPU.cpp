@@ -906,6 +906,7 @@ private:
   LogicalResult addProlateKernels(Type position, Type charge, Type force,
                                     int64_t order, bool listed,
                                     int64_t tiles = 0);
+  LogicalResult selectReciprocal(md_exec::ReciprocalOp op);
   LogicalResult lowerReciprocal(md_exec::ReciprocalOp op);
   LogicalResult inlineFrameReadbacks(func::FuncOp function);
   LogicalResult lowerLinearTransform(md_exec::LinearTransformOp op);
@@ -5558,6 +5559,89 @@ LogicalResult Lowering::lowerLinearTransform(md_exec::LinearTransformOp op) {
   return success();
 }
 
+/// Both candidates overwrite the same output and reuse the FFT buffers. Time
+/// force-only evaluations, even if the first caller requests an observation.
+LogicalResult Lowering::selectReciprocal(md_exec::ReciprocalOp op) {
+  OpBuilder b(op);
+  Location loc = op.getLoc();
+  Type wide = b.getI64Type();
+  auto word = [&](int64_t value) -> Value {
+    return arith::ConstantIntOp::create(b, loc, value, 64);
+  };
+  auto call = [&](StringRef name, ValueRange args, bool result) {
+    return func::CallOp::create(b, loc, getOrDeclare(name, b.getFunctionType(
+        args.getTypes(), result ? TypeRange{wide} : TypeRange{})), args);
+  };
+  auto count = [&](Value values) -> Value {
+    return arith::IndexCastOp::create(b, loc, wide,
+                                      memref::DimOp::create(b, loc, values, 0));
+  };
+  bool side = op->hasAttr(md_exec::kSideAttrName);
+  if (side)
+    call("mdrtSideBegin", {}, false);
+  auto scratch = op.getScratch();
+  auto grid = op.getGrid();
+  Value n = count(op.getPositions());
+  Value state = call("mdrtCudaPMEPathPrepare",
+      {word(grid[0]), word(grid[1]), word(grid[2]), n,
+       op.getListed() ? count(op.getListed()) : word(-1),
+       word(cast<MemRefType>(scratch[1].getType()).getElementType().isF32()),
+       word(isTriclinic(op.getCellMutable().get())), word(getTileEdge(op))},
+      true).getResult(0);
+  Value trials = call("mdrtCudaPMEPathTrials", {state}, true).getResult(0);
+  auto dispatch = [&](Value path, bool observe) -> LogicalResult {
+    Value tiled = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne,
+                                        path, word(0));
+    SmallVector<Type> types;
+    if (observe)
+      types.append({op.getEnergy().getType(), op.getVirial().getType()});
+    auto route = scf::IfOp::create(b, loc, types, tiled, true);
+    for (bool ordered : {true, false}) {
+      OpBuilder::InsertionGuard guard(b);
+      b.setInsertionPointToStart(ordered ? route.thenBlock() : route.elseBlock());
+      auto candidate = cast<md_exec::ReciprocalOp>(b.clone(*op));
+      candidate->removeAttr(md_exec::kSideAttrName);
+      SmallVector<Value> buffers;
+      if (ordered)
+        llvm::append_range(buffers, scratch.take_front(15));
+      else {
+        llvm::append_range(buffers, scratch.take_front(4));
+        buffers.append({scratch[15], scratch[5]});
+        llvm::append_range(buffers, scratch.drop_front(16));
+      }
+      candidate.getScratchMutable().assign(buffers);
+      if (observe)
+        scf::YieldOp::create(b, loc, candidate.getResults());
+      if (failed(lowerReciprocal(candidate)))
+        return failure();
+      candidate.erase();
+    }
+    if (observe) {
+      op.getEnergy().replaceAllUsesWith(route.getResult(0));
+      op.getVirial().replaceAllUsesWith(route.getResult(1));
+    }
+    return success();
+  };
+  bool observe = !op.getEnergy().use_empty() || !op.getVirial().use_empty();
+  Value end = observe ? trials : arith::AddIOp::create(b, loc, trials, word(1));
+  auto loop = scf::ForOp::create(b, loc, word(0), end, word(1));
+  {
+    OpBuilder::InsertionGuard guard(b);
+    b.setInsertionPointToStart(loop.getBody());
+    Value i = loop.getInductionVar();
+    Value path = call("mdrtCudaPMEPathBegin", {state, i}, true).getResult(0);
+    if (failed(dispatch(path, false)))
+      return failure();
+    call("mdrtCudaPMEPathEnd", {state, i}, false);
+  }
+  if (observe && failed(dispatch(
+          call("mdrtCudaPMEPathBegin", {state, trials}, true).getResult(0), true)))
+    return failure();
+  if (side)
+    call("mdrtSideEnd", {}, false);
+  return success();
+}
+
 LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   if (!op.isStorageForm() || !isDeviceType(op.getPositions().getType()))
     return op->emitOpError()
@@ -5593,6 +5677,8 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   bool ordered = scratch.size() > 4 &&
                  cast<MemRefType>(scratch[4].getType()).getRank() == 2;
   PMECellOrder cellOrder;
+  if (ordered && !fixedPoint && scratch.size() >= 16)
+    return selectReciprocal(op);
   if (ordered) {
     if (!md_exec::canUsePMECellOrder(op))
       return op.emitOpError("cell-order storage requires a cubic Gaussian force sum with compatible scatter and grid");
@@ -5730,6 +5816,10 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // entries of the list, and the tiles.
   std::string edge = std::to_string(tiles);
   if (ordered) {
+    if (fixedPoint)
+      func::CallOp::create(builder, loc,
+          getOrDeclare("mdrtCudaPMEFixedPath", builder.getFunctionType({}, {})),
+          ValueRange{});
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_cell_order"),
         ValueRange{positions, charges, box, scratch[4], scratch[7], cellOrder.permutation,
                    scratch[9], cellOrder.offsets, scratch[11], scratch[12], k1, k2, k3});
@@ -5976,7 +6066,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
 /// nothing with the allocator of the runtime: the transforms of cuFFT,
 /// whose plans hold their work areas (runtime/mdrt_cuda.c).
 static bool isAuditedNotToAllocate(StringRef name) {
-  return (name == "mdrtCudaPMEPrepare" || name == "mdrtCudaPMETrials" ||
+  return name == "mdrtCudaPMEFixedPath" || name.starts_with("mdrtCudaPMEPath") || (name == "mdrtCudaPMEPrepare" || name == "mdrtCudaPMETrials" ||
           name == "mdrtCudaPMEBegin" || name == "mdrtCudaPMEFFT" ||
           name == "mdrtCudaPMEEnd" || name == "mdrtCudaPMERelease") ||
          name == "mdrtCudaFFTForward3D" || name == "mdrtCudaFFTBackward3D" ||

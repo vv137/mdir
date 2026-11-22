@@ -1462,9 +1462,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
                    [&](MemRefType type) { return allocateLength(type, size); },
                    components);
     };
-    if (ordered) {
-      scratch.push_back(particleBuffer(gridType, 4));
-    } else {
+    auto allocateWeights = [&] {
       scratch.push_back(share(
           gridType, PerParticle, 6, /*zeroed=*/false, [&](MemRefType type) {
             return allocateLength(
@@ -1473,7 +1471,11 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
                     root->builder, loc, size,
                     arith::ConstantIndexOp::create(root->builder, loc, 6)));
           }));
-    }
+    };
+    if (ordered)
+      scratch.push_back(particleBuffer(gridType, 4));
+    else
+      allocateWeights();
     // The factors of the influence function along the edges, three for
     // each point of each edge (D104), five with `p3m` (D304).
     // The prolate kernel keeps its coefficients after them: at most
@@ -1501,7 +1503,10 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
         scratch.push_back(allocate(word, count));
       scratch.push_back(allocate(word, points));
       scratch.push_back(allocate(IntegerType::get(context, 64), 14));
-    } else if (usesBricks) {
+      if (!fixedOrder)
+        allocateWeights();
+    }
+    if (usesBricks) {
       int64_t bricks =
           (grid[0] + 3) / 4 * ((grid[1] + 3) / 4) * 16 * grid[2];
       scratch.push_back(share(
@@ -1532,7 +1537,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
     // the mean number of particles of a bin and 8 more, and n places for
     // those that overflow (bin_header of
     // PMEBin.cpp, which computes the same).
-    if (tiled && !ordered) {
+    if (tiled && !fixedOrder) {
       int64_t edge = scatter.getEdge();
       int64_t bins = 1;
       for (int64_t points : grid)

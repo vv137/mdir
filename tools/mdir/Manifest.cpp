@@ -266,10 +266,13 @@ llvm::Error Manifest::start(const std::string &given, bool append, Object metada
   return write(std::move(metadata));
 }
 
-llvm::Error Manifest::finish(StringRef status, int64_t step, StringRef reason) {
+llvm::Error Manifest::finish(StringRef status, int64_t step, StringRef reason, StringRef pmePath) {
   if (!file)
     return llvm::Error::success();
   double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - began).count();
-  return write(Object{{"event", "end"}, {"status", status}, {"step", step},
-                      {"reason", reason}, {"elapsed_seconds", elapsed}});
+  Object event{{"event", "end"}, {"status", status}, {"step", step},
+                      {"reason", reason}, {"elapsed_seconds", elapsed}};
+  if (!pmePath.empty())
+    event["pme_force_path"] = pmePath;
+  return write(std::move(event));
 }

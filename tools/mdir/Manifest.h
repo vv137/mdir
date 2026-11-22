@@ -36,7 +36,7 @@ public:
   llvm::Error start(const std::string &path, bool append,
                      llvm::json::Object metadata);
   llvm::Error finish(llvm::StringRef status, int64_t step,
-                      llvm::StringRef reason = "");
+                      llvm::StringRef reason = "", llvm::StringRef pmePath = "");
 private:
   llvm::Error write(llvm::json::Object event);
   std::FILE *file = nullptr;

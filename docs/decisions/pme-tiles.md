@@ -69,3 +69,12 @@ at its first subcell offset and ends after its eighth subcell. Empty
 subcells at the mesh boundary have equal consecutive offsets. A shared producer must use the same
 frame, box, mesh placement and cell numbering. The order within one cell
 is immaterial to the consumer.
+
+For an eligible sum outside deterministic mode, setup warms both the current
+scatter strategy and the integer tiled implementation, then alternates three
+timed force evaluations of each. CUDA events enclose preparation, the cell
+rebuild, transforms, solve and gather on the reciprocal stream. The lower
+median wins. The process caches this choice by mesh, particle and listed
+counts, mesh precision, geometry, scatter edge, device and cuFFT version.
+The first observation calibrates using force-only evaluations before computing
+its energy and virial. Deterministic evaluation always takes the integer path.

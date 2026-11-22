@@ -78,6 +78,17 @@
 # RUN: cd %t && env MDIR_PME_SPREAD=tiles8 mdir run det.toml > det-b.log 2>&1 && mv run.h5 det-b.h5
 # RUN: mdir checkpoint %t/det-a.h5 %t/det-b.h5 | FileCheck %s --check-prefix=SAME
 
+# RUN: sed '/^\[output\]/a manifest = "path.jsonl"' %t/m4.toml > %t/path.toml
+# RUN: cd %t && mdir check path.toml | FileCheck %s --check-prefix=POLICY
+# RUN: cd %t && env MDRT_PME_FORCE_PATH=current mdir run path.toml | FileCheck %s --check-prefix=CURRENT
+# RUN: cd %t && %python -c "import json; assert json.loads(open('path.jsonl').readlines()[-1])['pme_force_path']=='current'"
+# RUN: cd %t && env MDRT_PME_FORCE_PATH=tiled mdir run path.toml | FileCheck %s --check-prefix=TILED
+# RUN: cd %t && %python -c "import json; assert json.loads(open('path.jsonl').readlines()[-1])['pme_force_path']=='tiled'"
+# RUN: FileCheck %s --check-prefix=TILED < %t/det-b.log
+# POLICY: PME force path: current or tiled by whole-step timing
+# CURRENT: MDIR: PME force path: current
+# TILED: MDIR: PME force path: tiled
+
 # M4: tiles4: forces ok, energies ok
 # M4: tiles8: forces ok, energies ok
 # M4: tiles16: forces ok, energies ok

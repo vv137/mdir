@@ -1294,3 +1294,9 @@ call), ms a step:
 ## The axes of the grid
 
 Planned, from the roadmap (#603). TODO: the longest edge as the contiguous axis of the grid, along which the real-to-complex transform runs: cuFFT on an RTX 3090 takes 277 µs for the pair of transforms of 126 × 126 × 270 against 292 for 270 × 126 × 126 (Cellulose; 255 against 275 for 128 × 128 × 256). The spreading, the weights, the tables of D104, the products, and the gathering then take the axes permuted; nothing for a cubic cell (STMV)
+
+On a GPU, eligible cubic Gaussian sums time the current and cell-ordered
+force paths at setup, including the cost of rebuilding the particle order.
+Deterministic mode selects the cell-ordered integer spread directly.
+`mdir check` describes the setup policy. The run log and the manifest end
+event (`pme_force_path`) give the path used.

@@ -254,3 +254,81 @@ void mdrtCudaPMERelease(intptr_t handle) {
   check(cuEventRecord(s->lastUse, s->stream), "cuEventRecord PME");
   s->pinned = 0;
 }
+
+/* The current path can use a particle list, and the rebuild cost grows with
+   the particle count even at a fixed mesh. Include both in the policy key. */
+struct PMEPath {
+  int64_t key[10];
+  int winner;
+  CUevent start, stop;
+  float samples[2][3];
+  struct PMEPath *next;
+};
+static struct PMEPath *pmePaths;
+static int pmePathVersion;
+static int lastPMEPath;
+void mdrtCudaPMEFixedPath(void) { lastPMEPath = 2; }
+int mdrtCudaPMESelectedPath(void) { return lastPMEPath; }
+
+intptr_t mdrtCudaPMEPathPrepare(int64_t x, int64_t y, int64_t z, int64_t n,
+                                int64_t listed, int64_t single, int64_t tilted,
+                                int64_t tile) {
+  if (!pmePathVersion)
+    cufftGetVersion(&pmePathVersion);
+  int64_t key[] = {x,y,z,n,listed,single,tilted,tile,defaultDevice,pmePathVersion};
+  for (struct PMEPath *p = pmePaths; p; p = p->next)
+    if (!memcmp(p->key, key, sizeof key))
+      return (intptr_t)p;
+  struct PMEPath *p = calloc(1, sizeof *p);
+  if (!p)
+    return 0;
+  memcpy(p->key, key, sizeof key);
+  const char *forced = getenv("MDRT_PME_FORCE_PATH");
+  p->winner = forced && !strcmp(forced, "current") ? 0
+            : forced && !strcmp(forced, "tiled") ? 1 : -1;
+  if (p->winner < 0) {
+    check(cuEventCreate(&p->start, CU_EVENT_DEFAULT), "cuEventCreate PME path");
+  check(cuEventCreate(&p->stop, CU_EVENT_DEFAULT), "cuEventCreate PME path");
+  }
+  p->next = pmePaths;
+  pmePaths = p;
+  return (intptr_t)p;
+}
+
+int64_t mdrtCudaPMEPathTrials(intptr_t state) {
+  return state && ((struct PMEPath *)state)->winner < 0 ? 8 : 0;
+}
+
+int64_t mdrtCudaPMEPathBegin(intptr_t state, int64_t i) {
+  struct PMEPath *p = (struct PMEPath *)state;
+  if (!p || p->winner >= 0) {
+    lastPMEPath = p ? p->winner + 1 : 1;
+    return lastPMEPath - 1;
+  }
+  check(cuEventRecord(p->start, mgpuStreamCreate()), "cuEventRecord PME path");
+  return i % 2;
+}
+
+void mdrtCudaPMEPathEnd(intptr_t state, int64_t i) {
+  struct PMEPath *p = (struct PMEPath *)state;
+  if (!p || p->winner >= 0)
+    return;
+  check(cuEventRecord(p->stop, mgpuStreamCreate()), "cuEventRecord PME path");
+  check(cuEventSynchronize(p->stop), "cuEventSynchronize PME path");
+  if (i < 2)
+    return;
+  check(cuEventElapsedTime(&p->samples[i % 2][i / 2 - 1], p->start, p->stop),
+        "cuEventElapsedTime PME path");
+  if (i == 7) {
+    float *a = p->samples[0], *b = p->samples[1];
+    float current = medianPME(a[0], a[1], a[2]);
+    float tiled = medianPME(b[0], b[1], b[2]);
+    p->winner = tiled < current;
+    lastPMEPath = p->winner + 1;
+    cuEventDestroy(p->start);
+    cuEventDestroy(p->stop);
+    if (getenv("MDRT_PME_REPORT"))
+      fprintf(stderr, "mdrt: PME force path %s (current %.3f us, tiled %.3f us)\n",
+              p->winner ? "tiled" : "current", 1000 * current, 1000 * tiled);
+  }
+}

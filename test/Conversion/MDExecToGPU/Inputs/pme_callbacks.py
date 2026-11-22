@@ -103,3 +103,26 @@ def compare(single, tilted, use_wide):
 
 for single, tilted, wide in ((1, 0, 0), (1, 1, 1), (0, 1, 1)):
     compare(single, tilted, wide)
+
+# Force each policy by delaying one candidate between its two event records.
+# A different particle count on the same grid must get an independent trial.
+import time
+
+path_prepare = bind(rt, "mdrtCudaPMEPathPrepare", ptr, *([word] * 8))
+path_trials = bind(rt, "mdrtCudaPMEPathTrials", word, ptr)
+path_begin = bind(rt, "mdrtCudaPMEPathBegin", word, ptr, word)
+path_end = bind(rt, "mdrtCudaPMEPathEnd", None, ptr, word)
+for wanted in (0, 1):
+    key = [40, 40, 40, 10000 + wanted, -1, 1, 0, 8]
+    state = path_prepare(*key)
+    assert path_trials(state) == 8
+    for i in range(8):
+        if path_begin(state, i) != wanted:
+            time.sleep(0.01)
+        path_end(state, i)
+    assert path_prepare(*key) == state and path_trials(state) == 0
+    assert path_begin(state, 0) == wanted
+    for field in (0, 1, 2, 4, 5, 6, 7):
+        changed = key.copy()
+        changed[field] += 1
+        assert path_trials(path_prepare(*changed)) == 8
