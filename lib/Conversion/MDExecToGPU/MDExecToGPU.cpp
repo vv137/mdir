@@ -4,6 +4,7 @@
 // is. See docs/ops.md, Section 10.8.
 
 #include "mdir/Conversion/Passes.h"
+#include "DevicePME.h"
 #include "mdir/Runtime/GroupsABI.h"
 
 #include "mdir/Conversion/MDExecKernels.h"
@@ -5265,27 +5266,16 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
       (!potential || has("mdrt_gpu_pme_potential")) &&
       (!listed || has("mdrt_gpu_pme_spread_listed")) && hasTiles())
     return success();
-  ParserConfig config(context);
-  // The template takes the aliases of the types of the instance from a
-  // header above its text, and its names in IR (D374,
-  // #739).
-  OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
-      kernels::getPMETemplateHeader(position, charge, force, order,
-                                    /*tiles=*/true) +
-          (tilted ? pmeGPUTriclinicTemplate : pmeGPUTemplate),
-      config);
-  if (!templates)
-    return module.emitError()
-           << "cannot parse the template of particle mesh Ewald for devices";
+  OwningOpRef<ModuleOp> templates = ModuleOp::create(module.getLoc());
+  OpBuilder pmeBuilder(context);
+  kernels::DevicePME emitter(pmeBuilder, *templates, position, charge, force, order,
+                             launch.getGatherLanes(order));
+  if (tilted)
+    emitter.emitTriclinic(potential, listed, tiles);
+  else
+    emitter.emitOrthorhombic(potential, listed, tiles);
   if (failed(kernels::instantiatePMESymbols(*templates, position, charge,
                                             force, order)))
-    return failure();
-  // The parameters of the instance: the order, the constants of the
-  // tiles, and the atomic additions (D369, #739).
-  if (failed(kernels::resolveTemplateParameters(*templates, force, order,
-                                               launch.getGatherLanes(order))))
-    return failure();
-  if (failed(kernels::resolveTemplateConversions(*templates)))
     return failure();
   // The accessors of the template (md_alg.wrap, md_alg.grid_read) are
   // lowered here, not by convert-md-alg-to-gpu: the unrolling and the
@@ -5353,24 +5343,13 @@ LogicalResult Lowering::addProlateTemplates(Type position, Type charge,
       (!listed || has("mdrt_gpu_pme_prolate_gather_listed")) &&
       (!tiles || has("mdrt_gpu_pme_prolate_spread_tiles" + edge)))
     return success();
-  ParserConfig config(context);
-  OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
-      kernels::getPMETemplateHeader(position, charge, force, order,
-                                    /*tiles=*/true) +
-          pmeGPUProlateTemplate,
-      config);
-  if (!templates)
-    return module.emitError()
-           << "cannot parse the template of the prolate kernel for devices";
+  OwningOpRef<ModuleOp> templates = ModuleOp::create(module.getLoc());
+  OpBuilder pmeBuilder(context);
+  kernels::DevicePME emitter(pmeBuilder, *templates, position, charge, force, order,
+                             launch.getGatherLanes(order));
+  emitter.emitProlate(true, listed, tiles);
   if (failed(kernels::instantiatePMESymbols(*templates, position, charge,
                                             force, order)))
-    return failure();
-  // The parameters of the instance: the order, the constants of the
-  // tiles, and the atomic additions (D369, #739).
-  if (failed(kernels::resolveTemplateParameters(*templates, force, order,
-                                               launch.getGatherLanes(order))))
-    return failure();
-  if (failed(kernels::resolveTemplateConversions(*templates)))
     return failure();
   // The accessors here, as addPMETemplates.
   if (failed(kernels::lowerAlgToSIMT(*templates)))
