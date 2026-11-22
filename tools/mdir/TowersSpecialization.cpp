@@ -95,7 +95,8 @@ mdir::tool::prepareTowersSpecialization(const Control &control,
       capacity,
       false,
       true,
-      geometry.triclinic};
+      geometry.triclinic,
+      true};
   // Give the compiled kernel its real table dimensions and bare-pointer
   // arguments. The regular GPU lowering also expands md.lookup to a load.
   SmallVector<md::LookupOp> lookups;
@@ -175,9 +176,9 @@ mdir::tool::prepareTowersSpecialization(const Control &control,
   state->module = std::move(module);
   state->program = std::move(*program);
   return TowersEmitter([state, term, correction, layout, exclusions,
-                        options = std::move(*options)](
-                           const TowersShape &shape,
-                           TowersBuffers *trial) mutable
+                        options =
+                            std::move(*options)](const TowersShape &shape,
+                                                 TowersBuffers *trial) mutable
                            -> llvm::Expected<std::string> {
     std::string diagnostic;
     ScopedDiagnosticHandler handler(

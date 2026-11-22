@@ -35,8 +35,8 @@ public:
         stripe(shape.stripe), workers(shape.workers), recordCap(shape.records),
         residency(shape.residency), groups(panel / 32),
         packedChargeType(shape.packedChargeType), certified(shape.certified),
-        probe(probe),
-        v3(VectorType::get({3}, f32)), v4(VectorType::get({4}, f32)) {}
+        probe(probe), v3(VectorType::get({3}, f32)),
+        v4(VectorType::get({4}, f32)) {}
   LogicalResult emit();
 
 private:
@@ -69,7 +69,8 @@ private:
   Value failedConversions, highWords, localVotes;
   bool shortVote() const {
     // A warp's subtotal fits whenever the whole tile's Cartesian product does.
-    return g.capacity <= INT_MAX / (5 * (2 * g.reach + 1)) / g.capacity;
+    int bound = g.growCells ? g.atoms : g.capacity;
+    return bound <= INT_MAX / (5 * (2 * g.reach + 1)) / bound;
   }
   void flag(Value state, int slot, int bits);
   void addWide(Value atom, Value axis, Value word, bool negative);
@@ -477,7 +478,11 @@ void Force::exclusion(Value row) {
   Value a = indexCast(index, load(bonds, {row, cx(0)}));
   Value c = indexCast(index, load(bonds, {row, cx(1)}));
   Value sa = load(inverse, {a}), sc = load(inverse, {c});
-  Value ca = divui(sa, ci(g.capacity)), cc = divui(sc, ci(g.capacity));
+  auto owner = [&](Value atom, Value slot) {
+    return g.growCells ? load(inverse, {addi(cx(g.atoms), atom)})
+                       : divui(slot, ci(g.capacity));
+  };
+  Value ca = owner(a, sa), cc = owner(c, sc);
   Values delta, image;
   if (g.triclinic)
     image = closestImage(a, c);
@@ -1950,7 +1955,7 @@ LogicalResult Force::emit() {
   auto mem = [&](ArrayRef<int64_t> shape, Type t) {
     return MemRefType::get(shape, t);
   };
-  int slots = g.cells() * g.capacity;
+  int64_t slots = g.slots();
   types = {mem({g.cells(), 5 + 2 * g.reach, 2}, i32),
            mem({slots}, v4),
            mem({slots}, i32),
@@ -1963,7 +1968,7 @@ LogicalResult Force::emit() {
   if (certified)
     types.push_back(mem({1}, i64));
   if (exclusions) {
-    types.append({mem({exclusions, 2}, i32), mem({g.atoms}, i32),
+    types.append({mem({exclusions, 2}, i32), mem({g.inverseWords()}, i32),
                   mem({3, g.atoms}, f64), mem({g.boxSize()}, f64)});
     if (!supported(correction) ||
         !llvm::equal(correction.getIns(), term.getIns()) ||

@@ -157,20 +157,20 @@ class Entries:
 
 
 class Rebuild:
-    def __init__(self, entries, dims, reach, n, capacity, compact):
+    def __init__(self, entries, dims, reach, n, capacity, compact, grow=False):
         self.entries, self.n, self.compact = entries, n, compact
         self.cells = math.prod(dims)
         self.fields = 5 + 2 * reach
-        slots = capacity * self.cells
+        slots = capacity * self.cells + (n if grow else 0)
         alloc = entries.array
         self.map = alloc(I, self.cells * self.fields)
-        self.count = alloc(I, self.cells)
+        self.count = alloc(I, 2 * self.cells + 1 if grow else self.cells)
         self.status = alloc(I, 1)
         self.raw, self.box = alloc(D, 3 * n), alloc(D, 3)
         self.charge, self.types = alloc(F, n), alloc(I, n)
-        self.keys, self.local = alloc(I, slots), alloc(F, 4 * n)
+        self.keys, self.local = alloc(I, slots + (n if grow else 0)), alloc(F, 4 * n)
         self.packed, self.packed_types = alloc(F, 4 * slots), alloc(I, slots)
-        self.ids, self.inverse = alloc(I, slots), alloc(I, n)
+        self.ids, self.inverse = alloc(I, slots), alloc(I, 2 * n if grow else n)
         self.spans = alloc(I, 2 * self.cells * self.fields)
         self.geometry = alloc(D, 9)
 

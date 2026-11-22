@@ -8,6 +8,15 @@ struct TowersLayout {
   int atoms, nx, ny, nz, reach, capacity;
   bool host, compact;
   bool triclinic = false;
+  // The moving layout allocates dense cells from a pool of at most one
+  // additional slot per atom. Inverse entries also carry the owning cell.
+  bool growCells = false;
+  int64_t slots() const {
+    return int64_t(cells()) * capacity + (growCells ? atoms : 0);
+  }
+  int64_t keyWords() const { return slots() + (growCells ? atoms : 0); }
+  int64_t countWords() const { return growCells ? 2LL * cells() + 1 : cells(); }
+  int inverseWords() const { return growCells ? 2 * atoms : atoms; }
   // Triclinic entries take fractional coordinates and the row-major lattice.
   // Setup stores fractional bin geometry, the lattice, Cartesian bin vectors,
   // the unit face normals and perpendicular bin widths in each axis row.

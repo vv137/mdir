@@ -9,7 +9,7 @@ import sys
 import towers_rebuild as rebuild
 
 
-def evaluate(directory, gpu, workers, shape=None, reach=1):
+def evaluate(directory, gpu, workers, shape=None, reach=1, capacity=8, grow=False):
     source = Path(__file__).with_name("towers-force.mlir").read_bytes()
     body = source[source.index(b"  md_exec.pair_for"):source.index(b"  return")]
     # The unconditional physical spring is independent of the direct table.
@@ -27,13 +27,13 @@ def evaluate(directory, gpu, workers, shape=None, reach=1):
         panel, stripe = shape["panel"], shape["stripe"]
         records, residency, split = shape["records"], shape["blocks_per_sm"], shape["split"]
     image = rebuild.compile_entries(
-        directory, dims, reach, n, 8, True, gpu, False, ("spring", source),
-        {"certify-force": 1, "exclusions": len(bonds), "packed-charge-type": 1,
+        directory, dims, reach, n, capacity, True, gpu, False, ("spring", source),
+        {"grow-cells": int(grow), "certify-force": 1, "exclusions": len(bonds), "packed-charge-type": 1,
          "force-workers": workers, "force-panel": panel, "force-stripe": stripe,
          "force-records": records, "force-residency": residency, "force-split": split},
     )
     e = rebuild.Entries(image, gpu)
-    r = rebuild.Rebuild(e, dims, reach, n, 8, True)
+    r = rebuild.Rebuild(e, dims, reach, n, capacity, True, grow)
     r.box[:] = [6] * 3
     r.setup()
     r.raw[:] = [0] * (2 * n) + list(x)
@@ -78,6 +78,8 @@ def evaluate(directory, gpu, workers, shape=None, reach=1):
             e.run("check_wide", n, state, lo, hi)
         e.run("publish", n, state, words, lo, output)
         e.sync()
+        if grow and capacity == 1:
+            assert r.count[-1] > r.cells * capacity and r.status[0] == 0
         expected = [0] * (3 * n)
         bad = 0
         for i, j in itertools.combinations(range(n), 2):
@@ -144,6 +146,7 @@ if __name__ == "__main__":
     for reach in (1, 2):
         outputs = evaluate(directory, gpu, 32, reach=reach)
         assert outputs == evaluate(directory, gpu, 64, reach=reach)
+        assert outputs == evaluate(directory, gpu, 64, reach=reach, capacity=1, grow=True)
         by_height.append(outputs[-1])
     full, half = by_height
     assert math.dist(full, half) <= 1.4e-5 * math.hypot(*full)

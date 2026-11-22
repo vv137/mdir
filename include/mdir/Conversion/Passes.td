@@ -628,6 +628,7 @@ def AddTowersBuild : Pass<"add-towers-build", "::mlir::ModuleOp"> {
     Option<"exclusions", "exclusions", "int", "0", "Number of sorted unique excluded atom pairs; a second pair region supplies their physical correction">,
     Option<"certifyForce", "certify-force", "bool", "false", "Emit the checked force, wide replay and publication entries">,
     Option<"packedChargeType", "packed-charge-type", "bool", "false", "Bind the two force inputs to the rebuilt charge and type">,
+    Option<"growCells", "grow-cells", "bool", "false", "Grow overflowing cells on device before publishing their spans">,
     Option<"forceSplit", "force-split", "int", "1", "Disjoint source ranges per tower">,
     Option<"forcePanel", "force-panel", "int", "128", "Source slots per panel">,
     Option<"forceStripe", "force-stripe", "int", "128", "Target slots per stripe">,

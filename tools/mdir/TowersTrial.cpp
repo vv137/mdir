@@ -122,7 +122,7 @@ struct TowersTrial {
       edges.push_back(i);
       edges.push_back(j);
     }
-    size_t n = atoms, c = cells, slots = c * capacity;
+    size_t n = atoms, c = cells, slots = c * capacity + n;
     size_t entries = c * (5 + 2 * reach);
     if (!check(api().cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING),
                "cuStreamCreate") ||
@@ -131,13 +131,13 @@ struct TowersTrial {
         !allocate(raw, 24 * n, positions.data()) ||
         !allocate(box, cell.triclinic ? 72 : 24,
                   cell.triclinic ? cell.lattice.data() : system.box) ||
-        !allocate(map, 4 * entries) || !allocate(counts, 4 * c) ||
+        !allocate(map, 4 * entries) || !allocate(counts, 4 * (2 * c + 1)) ||
         !allocate(rebuildStatus, 4) ||
         !allocate(geometry, 24 * (cell.triclinic ? 13 : 3)) ||
         !allocate(charge, 4 * n) || !allocate(types, 4 * n) ||
-        !allocate(keys, 4 * slots) || !allocate(local, 16 * n) ||
+        !allocate(keys, 4 * (slots + n)) || !allocate(local, 16 * n) ||
         !allocate(packed, 16 * slots) || !allocate(packedTypes, 4 * slots) ||
-        !allocate(ids, 4 * slots) || !allocate(inverse, 4 * n) ||
+        !allocate(ids, 4 * slots) || !allocate(inverse, 8 * n) ||
         !allocate(spans, 8 * entries) || !allocate(state, 8) ||
         !allocate(failed, 8) || !allocate(words, 24 * n) ||
         !allocate(low, 24 * n) || !allocate(high, 24 * n) ||

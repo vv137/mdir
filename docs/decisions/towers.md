@@ -49,7 +49,13 @@ tie-breaker, pack position and type, and scatter the descriptors using the
 inverse stencil. For small grids whose fixed-capacity packing fits in L2,
 each sorting warp clears its count for the next insertion. Large grids use a
 separate clear. Grow an overflowing allocation and rebuild from the same
-coordinates before consuming any descriptor.
+coordinates before consuming any descriptor. The device reserves one extra
+slot per atom for growth. Insertion saves excess keys by cell. During
+packing, an overflowing cell claims its full population from the reserve
+and rebuilds the sorted span from those keys and the original local
+coordinates. Different cells claim disjoint ranges and their populations
+sum to at most the atom count. The force launch follows packing on the
+same stream.
 
 Use lateral cell widths at least the cutoff and a layer height at least the
 cutoff or half the cutoff. Write $k=1$ or $2$ for the corresponding axial
