@@ -311,22 +311,11 @@ Syntax:
 operation ::= `mdrt.template_convert` $in attr-dict `:` type($in) `to` type($out)
 ```
 
-A template of the lowering (`lib/Runtime/Templates`) is written once for
-every type of the positions, the charges, and the forces of an instance
-(D370, #739). Where it converts between two of
-them, or between one of them and `f64`, it writes this op, since which
-conversion is needed depends on the types of the instance:
-
-```mlir
-%y = mdrt.template_convert %x : !pme_pos to f64
-```
-
-After the template is parsed for an instance, the compiler replaces
-each op by `arith.extf` where the result is wider than the operand,
-`arith.truncf` where it is narrower, and `arith.bitcast` where the two
-types are the same (`kernels::resolveTemplateConversions`). No program
-holds the op after that. The operand and the result are floating point,
-or vectors of it of the same shape.
+Represents a floating-point conversion in textual template IR (D370).
+Both types are floats or identically shaped vectors of floats.
+A wider result requires `arith.extf`, a narrower result requires
+`arith.truncf`, and equal types use `arith.bitcast`. The PME emitters
+construct those concrete operations directly (D[pme-emitters]).
 
 Traits: `AlwaysSpeculatableImplTrait`
 

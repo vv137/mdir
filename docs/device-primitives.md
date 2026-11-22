@@ -61,7 +61,7 @@ of #567 checks completion and buffer borrows while retaining current waits.
 
 | Primitive | CUB's counterpart | Issue | Status | Decision |
 |---|---|---|---|---|
-| Privatized scatter-accumulate: `tile`, `hash` (Section 2) | `BlockHistogram`, atomic specialization | #416 | Built. One attribute, one pass, and one set of preconditions (step 1). The table `hash` is one emitter that every site calls (`ScatterEmitter.h`, step 3). Its sites are the tuples, the op `md_exec.scatter_add`, and the loops over pairs that add at both ends (over groups, and `(directed, atomic)` over a matrix), where it was measured slower and is off by default (Section 2.7). The tile of PME keeps its template. Fixed point in the deterministic mode (step 2) is planned | D282 (`tile`), D283 (`hash`), D285 (the attribute and the pass), D291 (the op, the emitter, the groups) |
+| Privatized scatter-accumulate: `tile`, `hash` (Section 2) | `BlockHistogram`, atomic specialization | #416 | Built. One attribute, one pass, and one set of preconditions (step 1). The table `hash` is one emitter that every site calls (`ScatterEmitter.h`, step 3). Its sites are the tuples, the op `md_exec.scatter_add`, and the loops over pairs that add at both ends (over groups, and `(directed, atomic)` over a matrix), where it was measured slower and is off by default (Section 2.7). The PME spreading stage emits the tile update. Fixed point in the deterministic mode (step 2) is planned | D282 (`tile`), D283 (`hash`), D285 (the attribute and the pass), D291 (the op, the emitter, the groups) |
 | Sorted scatter: runs reduced without atomics | `BlockHistogram`, sort specialization; `BlockDiscontinuity` | #417 | Planned. `sorted` is reserved in the attribute and refused | — |
 | Warp-aggregated atomics | `WarpReduce`, matching by key | #418 | Planned | — |
 | Grid gathers; vectorized and transposed strategies to measure | `BlockLoad`, `WarpLoad`, `BlockExchange` for future strategies | #539, #419 | The wrapped z coordinate and scalar grid read are shared by the Gaussian and prolate PME gathers. The existing scalar strategy and lane mapping remain; vectorized and transposed strategies are #419, tiled gathering at orders 6 and 8 is #411 | D325 |
@@ -93,7 +93,7 @@ preconditions.
 | Primitive | Emitter | Precondition | Where checked |
 |---|---|---|---|
 | Privatized scatter-accumulate, `tile` and `hash` (Section 2.3) | `ScatterEmitter.h` | The values may be added in another order (the algebra, Section 5) | `checkReorder` (`Scatter.h`): `md-exec-choose-scatter` refuses, the lowering fails |
-| `tile` | the PME tile template | The footprint of a tile wraps the grid once at most: every edge has at least $E + P - 1$ points | `checkTile`: the pass refuses, the lowering fails |
+| `tile` | the PME tile emitter | The footprint of a tile wraps the grid once at most: every edge has at least $E + P - 1$ points | `checkTile`: the pass refuses, the lowering fails |
 | `tile`, `hash` | as above | The copy fits 48 KiB of block memory | `getTileBytes`, `getHashBytes`: the pass refuses; a tile fails in the lowering, a run of loops keeps the atomics |
 | `hash` | `BlockHashTable` | A fallback exists: every destination has an atomic of the device | `getHashDestination`: the pass refuses, the lowering fails |
 | `hash` | `BlockHashTable` | The site scatters | the verifier, the pass |
@@ -189,7 +189,7 @@ lowering does not have:
 - `tile` on `md_exec.tuple_for`, `md_exec.pair_for`, and
   `md_exec.scatter_add`: the members of a tuple, the entries of a list,
   and the indices may be anywhere, so no footprint is bounded;
-- `hash` on `md_exec.reciprocal`: the template of the spreading has the
+- `hash` on `md_exec.reciprocal`: the spreading emitter supports the
   kernels of tiles alone;
 - `hash` on a `pair_for` whose conflict is not `atomic`: a loop that
   writes only at its centers scatters nothing. Both `(unique, atomic)`
@@ -202,13 +202,10 @@ sizes the bins of the tiles from it. `md-exec-assign-storage` carries the
 attribute onto the storage form. A loop that the storage makes overwrite a
 destination writes the rows of its particles and loses it.
 
-Why PME keeps its template and is not a `scatter_add`: the spreading of
-PME is a kernel of the runtime template
-(`lib/Runtime/Templates/PMEGPU.mlir`, written by
-`scripts/generate-pme-gpu-template.py`), in which the compiler instantiates
-the addition to the tile. Moving it onto the op would mean generating the
-spreading instead of the template, and storing a value for every point of
-every stencil.
+PME spreading computes each stencil weight and immediately adds its charge
+to the grid or tile. A standalone `scatter_add` would need a value for
+each point of every particle stencil. The tiled stage emits its own
+block-scoped atomic addition (D[pme-emitters]).
 
 The FFT is an independent `md_exec.linear_transform` primitive
 (D306, #480), with `kind("fft3d")`, `direction`, the opposite
@@ -360,7 +357,7 @@ lowering's refusals. The tests of D291:
 
 | Site | Strategy | Kernel | Described in |
 |---|---|---|---|
-| The spreading of PME on a device: the charges, the coefficients of LJ-PME (D162), the prolate kernel (D266), orthorhombic and triclinic cells | `tile(8)` | `mdrt_gpu_pme_bin<E>`, `mdrt_gpu_pme_spread_tiles<E>` of the template; the addition to the tile is a relaxed `atomicrmw fadd` at the scope of the block (`@mdir.template.shared_add_E`, resolved by `resolveTemplateParameters` in `MDExecKernels.cpp`, D369) | [pme.md](pme.md#33-spreading-through-tiles), Section 3.3 |
+| The spreading of PME on a device: the charges, the coefficients of LJ-PME (D162), the prolate kernel (D266), orthorhombic and triclinic cells | `tile(8)` | `mdrt_gpu_pme_bin<E>`, `mdrt_gpu_pme_spread_tiles<E>` from the binning and tiled spreading emitters; the addition to the tile is a relaxed `atomicrmw fadd` at block scope | [pme.md](pme.md#33-spreading-through-tiles), Section 3.3 |
 | The kernel of the tuples evaluated once: the bonded terms, the 1-4 pairs, the excluded pairs of the reciprocal sum | `hash(512, 8, 100000)` for a run with dihedrals | `launchTupleBlocks` in `MDExecToGPU.cpp`, through the emitter | [device-tuples.md](device-tuples.md), Section 11 |
 | `md_exec.scatter_add`: no site on `main` yet; `halo_sum` of #443 is the first | `hash(128, 8, 100000)` | `lowerScatterAdd` in `MDExecToGPU.cpp`, through the emitter | Section 2.2 |
 | The loops over groups, each pair once (D89): the nonbonded forces, EAM's density and its forces | none by default; `hash(512, 8, 0)` with `pair-hash=on` | `lowerGroupPairFor` and `emitGroupPairKernel`, through the emitter | [neighbor-groups.md](neighbor-groups.md) |
@@ -389,7 +386,7 @@ are byte-identical to those of `main` (1690b051) on JAC NVE, JAC NPT,
 Factor IX NVE, and Cellulose NVE: the module after
 `convert-md-exec-to-gpu`, and the program as executed with the PTX of
 every kernel (`mdir emit --stage=lowered`, `MDIR_GPU_BINARY=ptx`). The
-tile of PME keeps its own addition in its template, a relaxed `atomicrmw
+tile of PME keeps its own addition in its emitter, a relaxed `atomicrmw
 fadd` at the scope of the block.
 
 ### 2.7 Measured effect
@@ -683,7 +680,7 @@ partitions to come (#38, with the ghost flag in the key). It is the op
 
 The lowering calls the emitters where it builds its kernels. The build of
 the groups (the emitter of `GroupsBuild.cpp`, D404), the matrix emitter
-`MatrixBuild.cpp`, and the templates of PME write the collection
+`MatrixBuild.cpp`, and the PME stage emitters write the collection
 algorithms as ops of the dialect `md_alg`
 (D406, #861; [dialects/md_alg.md](dialects/md_alg.md)), and the warp's votes
 as the upstream ops that the emitters give:

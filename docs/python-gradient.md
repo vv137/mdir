@@ -314,11 +314,9 @@ k)$, with the weights in place of their gradient and without the charge.
   forces. It is stored in f64 in every precision mode, and the grid of that
   sum is computed in f64 as well, on a device too, where the grid of the
   forces is f32 in mixed precision.
-- The templates gain `@mdrt.pme_potential` (and `_triclinic`) in
-  `PME.mlir` and `@mdrt_gpu_pme_potential` in `PMEGPU.mlir` and
-  `PMEGPUTriclinic.mlir`: the gather with the weights. A module takes
-  these functions only if one of its sums asks for the potential, so a
-  program without the derivative in the charges lowers to what it did.
+- The host and device gather emitters build the potential functions for
+  either cell shape when a sum requests the potential. These functions
+  gather the grid with the window weights.
 - The host adds the derivatives of the constants of PME,
   $\partial E_\text{self}/\partial q_i = -2f\beta q_i/\sqrt\pi$ and
   $\partial E_\text{bg}/\partial q_i = -f\pi Q/(V\beta^2)$, the second
