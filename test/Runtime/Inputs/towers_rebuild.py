@@ -14,7 +14,7 @@ I, F, D = C.c_int32, C.c_float, C.c_double
 P = C.c_void_p
 
 
-def compile_entries(directory, dims, reach, n, capacity, compact, gpu, audit=True, force_body=None):
+def compile_entries(directory, dims, reach, n, capacity, compact, gpu, audit=True, force_body=None, force_options=None):
     options = dict(zip(("nx", "ny", "nz"), dims))
     options.update(
         reach=reach,
@@ -27,9 +27,10 @@ def compile_entries(directory, dims, reach, n, capacity, compact, gpu, audit=Tru
     source = b"module {}"
     if force_body:
         options["force-body"], source = force_body
+        options.update(force_options or {})
     flags = " ".join(f"{k}={v}" for k, v in options.items())
     ir = subprocess.check_output(
-        [MDIR_OPT, f"--add-towers-build={flags}", "--symbol-dce"], input=source
+        [MDIR_OPT, f"--add-towers-build={flags}"] + (["--symbol-dce"] if force_body else []), input=source
     )
     opts = ["mlir-opt", "--canonicalize", "--cse"]
     if gpu:
@@ -104,7 +105,7 @@ class Entries:
         self.allocations.append(ptr)
         return (kind * n).from_address(ptr.value)
 
-    def run(self, phase, items, *args):
+    def run(self, phase, items, *args, block=128, shared=0):
         name = "towers_" + phase
         if not self.gpu:
             getattr(self.lib, name)(*args)
@@ -118,13 +119,13 @@ class Entries:
         self.cuda(
             "cuLaunchKernel",
             self.functions[name],
-            (items + 127) // 128,
+            (items + block - 1) // block,
             1,
             1,
-            128,
+            block,
             1,
             1,
-            0,
+            shared,
             None,
             argv,
             None,

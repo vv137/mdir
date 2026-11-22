@@ -21,11 +21,12 @@ def check(directory, gpu, reach):
     xyz += [tuple(rng.randrange(int(128 * box)) / 128 for box in lengths) for _ in range(121)]
     xyz += [(0, 0, 0), (1, 0, 0), (127/128, 0, 0), (129/128, 0, 0)]
     n = len(xyz)
+    capacity = 29 if reach == 2 else 512
     source = Path(__file__).with_name("towers-force.mlir").read_bytes()
     image = rebuild.compile_entries(directory, dims, reach, n, 192, True, gpu,
-                                    False, ("spring", source))
+                                    False, ("spring", source), {"force-records": capacity})
     if gpu:
-        assert b"mma.sync.aligned.m16n8k8" in image
+        assert b"mma.sync.aligned.m16n8k8" in image and b"cvt.rm.f16.f32" in image
     entries = rebuild.Entries(image, gpu)
     r = rebuild.Rebuild(entries, dims, reach, n, 192, True)
     r.box[:] = lengths
@@ -36,7 +37,7 @@ def check(directory, gpu, reach):
     status = entries.array(rebuild.I, 1)
     table = entries.array(rebuild.F, 4)
     for reverse in (False, True):
-        table[:] = [1, 3, 3, -2] if reverse else [2, -0.5, -0.5, 4]
+        table[:] = [2**16, 3, 3, -(2**17)] if reverse else [2, -0.5, -0.5, 4]
         expected = [0] * (3*n)
         pairs = 0
         for i,j in itertools.combinations(range(n),2):
@@ -54,10 +55,22 @@ def check(directory, gpu, reach):
         words[:] = [0]*(3*n)
         status[0] = 0
         entries.run("force", r.cells*128, r.spans, r.packed, r.ids, r.geometry,
-                    words, status, rebuild.F(2**18), r.types, table)
+                    words, status, rebuild.F(2**18), r.types, table, shared=8*capacity)
         entries.sync()
         assert status[0] == 0
         assert words[:] == expected, max(abs(a-b) for a,b in zip(words,expected))
+    table[0] = float("inf")
+    entries.run("force",r.cells*128,r.spans,r.packed,r.ids,r.geometry,words,status,
+                rebuild.F(2**18),r.types,table,shared=8*capacity)
+    entries.sync()
+    assert status[0] == 1
+    r.box[0] = 0.75*dims[0]
+    r.setup()
+    status[0] = 0
+    entries.run("force",r.cells*128,r.spans,r.packed,r.ids,r.geometry,words,status,
+                rebuild.F(2**18),r.types,table,shared=8*capacity)
+    entries.sync()
+    assert status[0] == 2
     entries.close()
     print(f"reach {reach}: {pairs} pairs, {3*n} force words match in both orders")
 

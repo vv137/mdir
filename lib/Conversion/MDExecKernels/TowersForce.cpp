@@ -2,10 +2,14 @@
 // records and rank partition are the stage 4n GPU implementation of D[towers].
 #include "TowersForce.h"
 #include "NeighborBuildCode.h"
+#include "mdir/Conversion/CompactionEmitter.h"
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/TypeUtilities.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/SetVector.h"
+#include <cmath>
+#include <limits>
 
 using namespace mlir;
 using namespace mdir;
@@ -13,47 +17,60 @@ using namespace mdir::kernels;
 using namespace mdir::kernels::detail;
 
 namespace {
-constexpr int panel = 128, stripe = 128, workers = 128, groups = panel / 32;
 class Force : public NeighborBuildCode {
 public:
-  Force(OpBuilder &b, TowersLayout g, md_exec::PairForOp term, bool probe)
-      : NeighborBuildCode(b, term.getLoc()), g(g), term(term), probe(probe),
+  Force(OpBuilder &b, TowersLayout g, md_exec::PairForOp term,
+        TowersForceShape shape, bool probe)
+      : NeighborBuildCode(b, term.getLoc()), g(g), term(term),
+        panel(shape.panel), stripe(shape.stripe), workers(shape.workers),
+        recordCap(shape.records), groups(panel / 32), probe(probe),
         v3(VectorType::get({3}, f32)), v4(VectorType::get({4}, f32)) {}
   LogicalResult emit();
 
 private:
   TowersLayout g;
   md_exec::PairForOp term;
+  int panel, stripe, workers, recordCap, groups;
   bool probe;
   Value trace, owner;
   void mark(int phase);
+  Value recordPtr(Value rec, int col) {
+    Value at = addi(shli(rec, ci(1)), ci(col));
+    return LLVM::GEPOp::create(b, loc, records.getType(), i32, records,
+                               ValueRange{at});
+  }
+  Value recordWord(Value rec, int col) {
+    return LLVM::LoadOp::create(b, loc, i32, recordPtr(rec, col));
+  }
   VectorType v3, v4;
   SmallVector<Type> types;
   llvm::SetVector<Value> captures;
   IRMapping mapping;
   Value descriptors, packed, atomIds, geometry, words, invalid, wordScale;
-  Values parameters;
-  Value pos, id, xy, zn, bias, records, totals, accum;
-  Value tid, lane, scale, limit, cutoff2;
+  Values parameters, tileParameters;
+  void stageParameters(gpu::GPUFuncOp fn);
+  Value pos, id, xy, zn, bias, records, totals, keptSlots, accum, coarse;
+  Value tid, lane, scale, limit, cutoff2, filterLimit;
   void bind(ValueRange args);
+  void withValidGeometry(function_ref<void()> body);
   void host();
   void device();
   Value point(Value slot, Value field);
   Value displacement(Value target, Value source);
   Value squared(Value d);
-  void pair(Value t, Value s, Value ti, Value si,
-            function_ref<void(int, Value)> add);
+  Values pair(Value t, Value s, Value ti, Value si,
+              ValueRange targetParameters = {});
   Value sharedAdd(Value dst, Value byteOffset, Value word);
   void addWord(Value dst, Value i, Value axis, Value w);
   Value shared(gpu::GPUFuncOp fn, ArrayRef<int64_t> shape, Type t);
-  void stage(Value first, Value count, Value tileFirst, Value field,
-             Value begin, Value size, bool source);
+  void stage(ArrayRef<Value> starts, ArrayRef<Value> counts, Value begin,
+             Value size, bool source);
   Value mask(Value target, Value group, Value sourceCount);
   Value indexed(Value v, Value from) {
     return shuffle(gpu::ShuffleMode::IDX, v, from, ci(32)).first;
   }
-  void visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
-                 Value lower);
+  Value visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
+                  Value lower, Value lastTile);
   void traversal(Value owner);
 };
 
@@ -93,35 +110,94 @@ Value Force::squared(Value d) {
   return math::FmaOp::create(b, loc, x, x, yz);
 }
 
-void Force::pair(Value t, Value s, Value ti, Value si,
-                 function_ref<void(int, Value)> add) {
+Values Force::pair(Value t, Value s, Value ti, Value si,
+                   ValueRange targetParameters) {
   Value d = displacement(t, s), r2 = squared(d);
-  ifThen(cmpf(CmpFPredicate::OLT, r2, cutoff2), [&] {
-    Block &body = term.getKernel().front();
-    IRMapping inside = mapping;
-    inside.map(body.getArgument(0), r2);
-    inside.map(body.getArgument(1), d);
-    for (auto [i, param] : llvm::enumerate(parameters)) {
-      inside.map(body.getArgument(2 + 2 * i), load(param, {ti}));
-      inside.map(body.getArgument(3 + 2 * i), load(param, {si}));
-    }
-    for (auto &op : body.without_terminator())
-      b.clone(op, inside);
-    Value f = inside.lookup(body.getTerminator()->getOperand(0));
-    for (int a = 0; a < 3; ++a) {
-      Value scaled = mulf(extract(f, a), wordScale);
-      Value fits = andi(cmpf(CmpFPredicate::OGE, scaled, cf(-0x1p63)),
-                        cmpf(CmpFPredicate::OLT, scaled, cf(0x1p63)));
-      ifThen(notNarrow(fits), [&] {
+  auto wt = g.host ? i64 : i32;
+  return ifElse(
+      {wt, wt, wt}, cmpf(CmpFPredicate::OLT, r2, cutoff2),
+      [&] {
+        Block &body = term.getKernel().front();
+        IRMapping inside = mapping;
+        inside.map(body.getArgument(0), r2);
+        inside.map(body.getArgument(1), d);
+        for (auto [i, param] :
+             llvm::enumerate(g.host ? parameters : tileParameters)) {
+          inside.map(body.getArgument(2 + 2 * i), targetParameters.empty()
+                                                      ? load(param, {ti})
+                                                      : targetParameters[i]);
+          inside.map(body.getArgument(3 + 2 * i), load(param, {si}));
+        }
+        for (auto &op : body.without_terminator())
+          b.clone(op, inside);
+        Value f = inside.lookup(body.getTerminator()->getOperand(0));
+        Values scaled;
+        Value narrow = cb(true);
+        for (int a = 0; a < 3; ++a) {
+          Value x = mulf(extract(f, a), wordScale);
+          scaled.push_back(x);
+          narrow = andi(narrow, cmpf(CmpFPredicate::OLT, absf(x), cf(0x1p31)));
+        }
+        auto wide = [&] {
+          Values result;
+          Value valid = cb(true);
+          for (Value x : scaled) {
+            Value fits = andi(cmpf(CmpFPredicate::OGE, x, cf(-0x1p63)),
+                              cmpf(CmpFPredicate::OLT, x, cf(0x1p63)));
+            valid = andi(valid, fits);
+            Value safe = select(fits, x, cf(0));
+            if (g.host)
+              result.push_back(fptosi(i64, roundeven(safe)));
+            else
+              result.push_back(LLVM::InlineAsmOp::create(
+                                   b, loc, TypeRange{i64}, ValueRange{safe},
+                                   "cvt.rni.s64.f32 $0, $1;", "=l,f", false,
+                                   false, LLVM::TailCallKind::None,
+                                   LLVM::AsmDialectAttr(), ArrayAttr())
+                                   .getResult(0));
+          }
+          ifThen(notNarrow(valid), [&] {
+            if (g.host)
+              store(ci(1), invalid, {cx(0)});
+            else
+              atomic(LLVM::AtomicBinOp::_or,
+                     pointerTo(baseAddress(invalid), cl(0)), ci(1));
+          });
+          return result;
+        };
         if (g.host)
-          store(ci(1), invalid, {cx(0)});
-        else
-          atomic(LLVM::AtomicBinOp::_or, pointerTo(baseAddress(invalid), cl(0)),
-                 ci(1));
-      });
-      add(a, fptosi(i64, roundeven(select(fits, scaled, cf(0)))));
-    }
-  });
+          return wide();
+        Values result = ifElse(
+            {i32, i32, i32}, narrow,
+            [&] {
+              Values words;
+              for (Value x : scaled) {
+                Value q = LLVM::InlineAsmOp::create(
+                              b, loc, TypeRange{i32}, ValueRange{x},
+                              "cvt.rni.s32.f32 $0, $1;", "=r,f", false, false,
+                              LLVM::TailCallKind::None, LLVM::AsmDialectAttr(),
+                              ArrayAttr())
+                              .getResult(0);
+                words.push_back(q);
+              }
+              return words;
+            },
+            [&] {
+              // A blind bonded interaction can exceed i32 before exclusion
+              // replay. Keep its actual word for this stage's direct-only
+              // oracle.
+              Values f = wide();
+              Value target = indexCast(index, load(id, {ti})),
+                    source = indexCast(index, load(id, {si}));
+              for (int a = 0; a < 3; ++a) {
+                addWord(words, target, cx(a), f[a]);
+                addWord(words, source, cx(a), subi(cl(0), f[a]));
+              }
+              return Values(3, ci(0));
+            });
+        return result;
+      },
+      [&] { return Values(3, g.host ? cl(0) : ci(0)); });
 }
 
 // Only lanes of this CTA access the tile. The barriers protect its reuse.
@@ -140,7 +216,10 @@ void Force::addWord(Value dst, Value i, Value axis, Value w) {
     Value offset = muli(indexCast(i64, addi(muli(i, cx(3)), axis)), cl(8));
     atomic(LLVM::AtomicBinOp::add, pointerTo(baseAddress(dst), offset), w);
   } else {
-    sharedAdd(dst, muli(indexCast(i64, addi(muli(i, cx(3)), axis)), cl(8)), w);
+    sharedAdd(
+        dst,
+        muli(indexCast(i64, addi(muli(axis, cx(panel + stripe)), i)), cl(4)),
+        w);
   }
 }
 
@@ -156,11 +235,11 @@ void Force::host() {
                     [&](Value j, ValueRange) {
                       Value ts = addi(t.first, j),
                             ti = indexCast(index, load(atomIds, {ts}));
-                      pair(point(ts, t.field), source, ti, si,
-                           [&](int a, Value w) {
-                             addWord(words, ti, cx(a), w);
-                             addWord(words, si, cx(a), subi(cl(0), w));
-                           });
+                      auto force = pair(point(ts, t.field), source, ti, si);
+                      for (auto [axis, w] : llvm::enumerate(force)) {
+                        addWord(words, ti, cx(axis), w);
+                        addWord(words, si, cx(axis), subi(cl(0), w));
+                      }
                       return Values{};
                     });
             return Values{};
@@ -177,16 +256,30 @@ Value Force::shared(gpu::GPUFuncOp fn, ArrayRef<int64_t> shape, Type t) {
       MemRefType::get(shape, t, MemRefLayoutAttrInterface(), space), loc);
 }
 
-void Force::stage(Value first, Value count, Value tileFirst, Value field,
-                  Value begin, Value size, bool source) {
-  Value start = maxui(first, begin),
-        end = minui(addi(first, count), addi(begin, size));
-  forLoop(addi(start, tid), end, cx(workers), {}, [&](Value i, ValueRange) {
-    Value addr = addi(tileFirst, subi(i, first)),
-          slot = addi(cx(source ? 0 : panel), subi(i, begin));
+void Force::stage(ArrayRef<Value> starts, ArrayRef<Value> counts, Value begin,
+                  Value size, bool source) {
+  // Each lane imports one slot. Resolve its descriptor in registers instead
+  // of reusing the front of every warp for each (usually short) span.
+  forLoop(tid, size, cx(workers), {}, [&](Value laneSlot, ValueRange) {
+    Value logical = addi(begin, laneSlot), first = cx(0), field = cx(0);
+    Value addr = addi(starts[0], logical);
+    int columns = 2 * g.reach + 1;
+    for (int k = 0; k < (source ? columns : 5); ++k) {
+      int j = source || k == 0 ? k : columns + k - 1;
+      if (k) {
+        Value inside = cmpi(CmpIPredicate::uge, logical, first);
+        addr = select(inside, addi(starts[j], subi(logical, first)), addr);
+        field = select(inside, cx(j), field);
+      }
+      first = addi(first, counts[j]);
+    }
+    Value slot = addi(cx(source ? 0 : panel), laneSlot);
     Value p = point(addr, field);
     store(p, pos, {slot});
-    store(load(atomIds, {addr}), id, {slot});
+    Value atom = load(atomIds, {addr});
+    store(atom, id, {slot});
+    for (auto [src, dst] : llvm::zip(parameters, tileParameters))
+      store(load(src, {indexCast(index, atom)}), dst, {slot});
     Values q;
     for (int a = 0; a < 3; ++a)
       q.push_back(roundeven(mulf(extract(p, a), scale)));
@@ -195,9 +288,14 @@ void Force::stage(Value first, Value count, Value tileFirst, Value field,
     Value fourth = cf(64);
     if (source) {
       // Round the source norm downward. This can only add screen positives.
-      auto half = arith::TruncFOp::create(b, loc, b.getF16Type(),
-                                          mulf(norm, cf(1.0 / 64)));
-      half.setRoundingmode(arith::RoundingMode::toward_zero);
+      Value bits =
+          LLVM::InlineAsmOp::create(b, loc, TypeRange{b.getI16Type()},
+                                    ValueRange{mulf(norm, cf(1.0 / 64))},
+                                    "cvt.rm.f16.f32 $0, $1;", "=h,f", false,
+                                    false, LLVM::TailCallKind::None,
+                                    LLVM::AsmDialectAttr(), ArrayAttr())
+              .getResult(0);
+      Value half = arith::BitcastOp::create(b, loc, b.getF16Type(), bits);
       fourth =
           arith::ExtFOp::create(b, loc, f32, half, arith::FastMathFlagsAttr());
       for (Value &v : q)
@@ -285,23 +383,16 @@ void Force::mark(int phase) {
   });
 }
 
-void Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
-                      Value lower) {
+Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
+                       Value lower, Value lastTile) {
   auto barrier = [&] { gpu::BarrierOp::create(b, loc); };
-  ifThen(cmpi(CmpIPredicate::eq, tid, cx(0)),
-         [&] { store(ci(0), totals, {cx(0)}); });
-  forLoop(tid, cx(panel + stripe), cx(workers), {}, [&](Value i, ValueRange) {
-    for (int a = 0; a < 3; ++a)
-      store(cl(0), accum, {i, cx(a)});
-    return Values{};
+  ifThen(cmpi(CmpIPredicate::eq, tid, cx(0)), [&] {
+    store(ci(0), totals, {cx(0)});
+    store(ci(0), totals, {cx(1)});
   });
   barrier();
   mark(0);
   Value target = minui(tid, subi(tc, cx(1)));
-  Value orig = addi(tb, target);
-  Value atHome = cmpi(CmpIPredicate::ult, orig, home);
-  Value high = select(atHome, minui(addi(sb, sc), lower), addi(sb, sc));
-  Value low = select(atHome, maxui(addi(orig, cx(1)), sb), sb);
   Value p = load(pos, {addi(cx(panel), target)});
   Value gap2 = cf(0);
   for (int a = 0; a < 2; ++a) {
@@ -309,9 +400,36 @@ void Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
     Value gap = maxnumf(cf(0), subf(absf(extract(p, a)), half));
     gap2 = addf(gap2, mulf(gap, gap));
   }
-  Value keep =
-      andi(cmpi(CmpIPredicate::ult, tid, tc),
-           cmpf(CmpFPredicate::OLE, gap2, mulf(cutoff2, cf(1 + 0x1p-19))));
+  Value keep = andi(cmpi(CmpIPredicate::ult, tid, tc),
+                    cmpf(CmpFPredicate::OLE, gap2, filterLimit));
+  Value votes = emitWarpBallot(b, loc, keep);
+  Value reserve = ifElse(
+      {i32},
+      andi(cmpi(CmpIPredicate::eq, lane, ci(0)),
+           cmpi(CmpIPredicate::ne, votes, ci(0))),
+      [&] {
+        return Values{sharedAdd(totals, cl(4), emitWarpCount(b, loc, votes))};
+      },
+      [&] { return Values{ci(0)}; })[0];
+  reserve = indexed(reserve, ci(0));
+  ifThen(keep, [&] {
+    Value place = addi(
+        reserve, emitWarpRank(b, loc, votes, emitLanesBelow(b, loc, lane)));
+    store(indexCast(i32, target), keptSlots, {indexCast(index, place)});
+  });
+  barrier();
+  Value kept = indexCast(index, load(totals, {cx(1)}));
+  keep = cmpi(CmpIPredicate::ult, tid, kept);
+  target = ifElse(
+      {index}, keep,
+      [&] { return Values{indexCast(index, load(keptSlots, {tid}))}; },
+      [&] { return Values{cx(0)}; })[0];
+  Value warpActive =
+      cmpi(CmpIPredicate::ult, subi(tid, indexCast(index, lane)), kept);
+  Value orig = addi(tb, target);
+  Value atHome = cmpi(CmpIPredicate::ult, orig, home);
+  Value high = select(atHome, minui(addi(sb, sc), lower), addi(sb, sc));
+  Value low = select(atHome, maxui(addi(orig, cx(1)), sb), sb);
   mark(1);
   Values masks;
   Value counts = ci(0);
@@ -321,7 +439,7 @@ void Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
     Value h = indexCast(i32, minui(cx(32), subi(maxui(first, high), first)));
     Value active = cmpi(CmpIPredicate::ult, l, h);
     Value m = ifElse(
-        {i32}, cmpi(CmpIPredicate::ult, cx(32 * j), sc),
+        {i32}, andi(warpActive, cmpi(CmpIPredicate::ult, cx(32 * j), sc)),
         [&] { return Values{mask(target, cx(32 * j), sc)}; },
         [&] { return Values{ci(0)}; })[0];
     // Mask the shift amounts too: an empty interval may begin or end at 32.
@@ -335,96 +453,155 @@ void Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
                   math::CtPopOp::create(b, loc, m)));
   }
   mark(2);
-  Value inclusive = counts;
-  for (int d = 1; d < 32; d *= 2) {
-    Value v = shuffle(gpu::ShuffleMode::UP, inclusive, ci(d), ci(32)).first;
-    inclusive = addi(inclusive,
-                     select(cmpi(CmpIPredicate::uge, lane, ci(d)), v, ci(0)));
-  }
+  Value inclusive = emitWarpScan(b, loc, counts, lane, ci(0), ci(32), 32, true);
   Value base = ifElse(
       {i32}, cmpi(CmpIPredicate::eq, lane, ci(31)),
       [&] { return Values{sharedAdd(totals, cl(0), inclusive)}; },
       [&] { return Values{ci(0)}; })[0];
   base = addi(indexed(base, ci(31)), subi(inclusive, counts));
+  barrier();
+  Value total = load(totals, {cx(0)});
+  Value fits = cmpi(CmpIPredicate::ule, shrui(total, ci(18)), ci(recordCap));
   mark(3);
-  for (auto [j, m] : llvm::enumerate(masks)) {
-    ifThen(cmpi(CmpIPredicate::ne, m, ci(0)), [&] {
-      Value rec = indexCast(index, shrui(base, ci(18)));
-      Value header =
-          ori(shli(base, ci(14)), ori(ci(j << 10), indexCast(i32, tid)));
-      store(header, records, {rec, cx(0)});
-      store(m, records, {rec, cx(1)});
+  ifThen(fits, [&] {
+    for (auto [j, m] : llvm::enumerate(masks)) {
+      ifThen(cmpi(CmpIPredicate::ne, m, ci(0)), [&] {
+        Value rec = shrui(base, ci(18));
+        Value header =
+            ori(shli(base, ci(14)), ori(ci(j << 10), indexCast(i32, target)));
+        LLVM::StoreOp::create(b, loc, header, recordPtr(rec, 0));
+        LLVM::StoreOp::create(b, loc, m, recordPtr(rec, 1));
+      });
+      base = addi(base, addi(select(cmpi(CmpIPredicate::ne, m, ci(0)),
+                                    ci(1 << 18), ci(0)),
+                             math::CtPopOp::create(b, loc, m)));
+    }
+    forLoop(tid, cx(panel + stripe), cx(workers), {}, [&](Value i, ValueRange) {
+      for (int a = 0; a < 3; ++a) {
+        store(ci(0), accum, {cx(a), i});
+        store(ci(0), coarse, {cx(a), i});
+      }
+      return Values{};
     });
-    base =
-        addi(base,
-             addi(select(cmpi(CmpIPredicate::ne, m, ci(0)), ci(1 << 18), ci(0)),
-                  math::CtPopOp::create(b, loc, m)));
-  }
-  barrier();
-  mark(4);
-  Value total = load(totals, {cx(0)}), nc = andi(total, ci(0x3ffff));
-  Value worker = indexCast(i32, tid);
-  Value begin = divui(muli(nc, worker), ci(workers));
-  Value end = divui(muli(nc, addi(worker, ci(1))), ci(workers));
-  ifThen(cmpi(CmpIPredicate::ult, begin, end), [&] {
-    Value found = whileLoop(
-        {i32, i32}, {ci(0), shrui(total, ci(18))},
-        [&](ValueRange x) {
-          return std::make_pair(
-              cmpi(CmpIPredicate::ult, addi(x[0], ci(1)), x[1]), Values(x));
-        },
-        [&](ValueRange x) {
-          Value mid = shrui(addi(x[0], x[1]), ci(1));
-          Value h = load(records, {indexCast(index, mid), cx(0)});
-          Value valid = cmpi(CmpIPredicate::ule, shrui(h, ci(14)), begin);
-          return Values{select(valid, mid, x[0]), select(valid, x[1], mid)};
-        })[0];
-    auto read = [&](Value rec, int col) {
-      return load(records, {indexCast(index, rec), cx(col)});
-    };
-    Value header = read(found, 0), m = read(found, 1);
-    Value skip = subi(begin, shrui(header, ci(14)));
-    m = forLoop(cx(0), indexCast(index, skip), cx(1), {m},
-                [&](Value, ValueRange x) {
-                  return Values{andi(x[0], subi(x[0], ci(1)))};
-                })[0];
-    forLoop(
-        indexCast(index, begin), indexCast(index, end), cx(1),
-        {found, header, m}, [&](Value, ValueRange x) {
-          auto v = ifElse(
-              {i32, i32, i32}, cmpi(CmpIPredicate::eq, x[2], ci(0)),
-              [&] {
-                Value next = addi(x[0], ci(1));
-                return Values{next, read(next, 0), read(next, 1)};
-              },
-              [&] { return Values(x); });
-          Value t = addi(cx(panel), indexCast(index, andi(v[1], ci(1023))));
-          Value s = indexCast(
-              index, addi(shli(andi(shrui(v[1], ci(10)), ci(15)), ci(5)),
-                          math::CountTrailingZerosOp::create(b, loc, v[2])));
-          pair(load(pos, {t}), load(pos, {s}), indexCast(index, load(id, {t})),
-               indexCast(index, load(id, {s})), [&](int a, Value w) {
-                 addWord(accum, t, cx(a), w);
-                 addWord(accum, s, cx(a), subi(cl(0), w));
-               });
-          return Values{v[0], v[1], andi(v[2], subi(v[2], ci(1)))};
-        });
+    barrier();
+    mark(4);
+    Value nc = andi(total, ci(0x3ffff));
+    Value worker = indexCast(i32, tid);
+    Value begin = divui(muli(nc, worker), ci(workers));
+    Value end = divui(muli(nc, addi(worker, ci(1))), ci(workers));
+    ifThen(cmpi(CmpIPredicate::ult, begin, end), [&] {
+      Value found = whileLoop(
+          {i32, i32}, {ci(0), shrui(total, ci(18))},
+          [&](ValueRange x) {
+            return std::make_pair(
+                cmpi(CmpIPredicate::ult, addi(x[0], ci(1)), x[1]), Values(x));
+          },
+          [&](ValueRange x) {
+            Value mid = shrui(addi(x[0], x[1]), ci(1));
+            Value h = recordWord(mid, 0);
+            Value valid = cmpi(CmpIPredicate::ule, shrui(h, ci(14)), begin);
+            return Values{select(valid, mid, x[0]), select(valid, x[1], mid)};
+          })[0];
+      auto read = [&](Value rec, int col) { return recordWord(rec, col); };
+      Value header = read(found, 0), m = read(found, 1);
+      Value skip = subi(begin, shrui(header, ci(14)));
+      m = forLoop(cx(0), indexCast(index, skip), cx(1), {m},
+                  [&](Value, ValueRange x) {
+                    return Values{andi(x[0], subi(x[0], ci(1)))};
+                  })[0];
+      auto targetSlot = [&](Value h) {
+        return addi(cx(panel), indexCast(index, andi(h, ci(1023))));
+      };
+      auto targetValues = [&](Value slot) {
+        Values v{load(pos, {slot})};
+        for (Value p : tileParameters)
+          v.push_back(load(p, {slot}));
+        return v;
+      };
+      Values initial{found, header, m,     ci(0), ci(0),
+                     ci(0), ci(0),  ci(0), ci(0)};
+      Values cached = targetValues(targetSlot(header));
+      initial.append(cached);
+      auto endState = forLoop(
+          indexCast(index, begin), indexCast(index, end), cx(1), initial,
+          [&](Value, ValueRange x) {
+            auto v = ifElse(
+                {i32, i32, i32}, cmpi(CmpIPredicate::eq, x[2], ci(0)),
+                [&] {
+                  Value next = addi(x[0], ci(1));
+                  return Values{next, read(next, 0), read(next, 1)};
+                },
+                [&] { return Values{x[0], x[1], x[2]}; });
+            Value prev = targetSlot(x[1]), t = targetSlot(v[1]),
+                  changed = cmpi(CmpIPredicate::ne, prev, t);
+            ifThen(changed, [&] {
+              for (int a = 0; a < 3; ++a) {
+                addWord(accum, prev, cx(a), x[3 + a]);
+                addWord(coarse, prev, cx(a), x[6 + a]);
+              }
+            });
+            Value s = indexCast(
+                index, addi(shli(andi(shrui(v[1], ci(10)), ci(15)), ci(5)),
+                            math::CountTrailingZerosOp::create(b, loc, v[2])));
+            auto targetData = ifElse(
+                TypeRange(cached), changed, [&] { return targetValues(t); },
+                [&] { return Values(x.drop_front(9)); });
+            Values f = pair(targetData[0], load(pos, {s}), t, s,
+                            targetData.drop_front());
+            Values next{v[0], v[1], andi(v[2], subi(v[2], ci(1)))};
+            // Separate the rounded quotient at a power of two. At most
+            // max(panel,stripe) half-unit residuals reach either endpoint.
+            int shift = std::max(panel, stripe) <= 512 ? 22 : 21;
+            Values quotients;
+            Value any = ci(0);
+            for (int a = 0; a < 3; ++a) {
+              Value q = shrsi(addi(shrsi(f[a], ci(shift - 1)), ci(1)), ci(1));
+              quotients.push_back(q);
+              any = ori(any, q);
+              addWord(accum, s, cx(a), subi(ci(0), f[a]));
+              next.push_back(addi(select(changed, ci(0), x[3 + a]), f[a]));
+            }
+            ifThen(cmpi(CmpIPredicate::ne, any, ci(0)), [&] {
+              for (int a = 0; a < 3; ++a)
+                addWord(coarse, s, cx(a), subi(ci(0), quotients[a]));
+            });
+            for (int a = 0; a < 3; ++a)
+              next.push_back(
+                  addi(select(changed, ci(0), x[6 + a]), quotients[a]));
+            next.append(targetData.begin(), targetData.end());
+            return next;
+          });
+      for (int a = 0; a < 3; ++a) {
+        addWord(accum, targetSlot(endState[1]), cx(a), endState[3 + a]);
+        addWord(coarse, targetSlot(endState[1]), cx(a), endState[6 + a]);
+      }
+    });
+    barrier();
+    mark(5);
+    forLoop(tid, cx(panel + stripe), cx(workers), {}, [&](Value i, ValueRange) {
+      ifThen(ori(cmpi(CmpIPredicate::ult, i, sc),
+                 andi(cmpi(CmpIPredicate::uge, i, cx(panel)),
+                      cmpi(CmpIPredicate::ult, i, addi(cx(panel), tc)))),
+             [&] {
+               Value atom = indexCast(index, load(id, {i}));
+               for (int a = 0; a < 3; ++a) {
+                 int shift = std::max(panel, stripe) <= 512 ? 22 : 21;
+                 Value q = load(coarse, {cx(a), i});
+                 Value residual =
+                     subi(load(accum, {cx(a), i}), shli(q, ci(shift)));
+                 Value w = addi(
+                     shli(arith::ExtSIOp::create(b, loc, i64, q), cl(shift)),
+                     arith::ExtSIOp::create(b, loc, i64, residual));
+                 ifThen(cmpi(CmpIPredicate::ne, w, cl(0)),
+                        [&] { addWord(words, atom, cx(a), w); });
+               }
+             });
+      return Values{};
+    });
+    mark(6);
   });
-  barrier();
-  mark(5);
-  forLoop(tid, cx(panel + stripe), cx(workers), {}, [&](Value i, ValueRange) {
-    ifThen(ori(cmpi(CmpIPredicate::ult, i, sc),
-               andi(cmpi(CmpIPredicate::uge, i, cx(panel)),
-                    cmpi(CmpIPredicate::ult, i, addi(cx(panel), tc)))),
-           [&] {
-             Value atom = indexCast(index, load(id, {i}));
-             for (int a = 0; a < 3; ++a)
-               addWord(words, atom, cx(a), load(accum, {i, cx(a)}));
-           });
-    return Values{};
-  });
-  barrier();
-  mark(6);
+  ifThen(notNarrow(andi(lastTile, fits)), barrier);
+  return fits;
 }
 
 void Force::traversal(Value owner) {
@@ -445,21 +622,23 @@ void Force::traversal(Value owner) {
   for (int i = columns; i < columns + 4; ++i)
     nt = addi(nt, counts[i]);
   forLoop(cx(0), ns, cx(panel), {}, [&](Value sb, ValueRange) {
-    Value sc = minui(cx(panel), subi(ns, sb)), first = cx(0);
-    for (int i = 0; i < columns; ++i) {
-      stage(first, counts[i], starts[i], cx(i), sb, sc, true);
-      first = addi(first, counts[i]);
-    }
-    forLoop(cx(0), nt, cx(stripe), {}, [&](Value tb, ValueRange) {
-      Value tc = minui(cx(stripe), subi(nt, tb)), begin = cx(0);
-      for (int k = 0; k < 5; ++k) {
-        int i = k ? columns + k - 1 : 0;
-        stage(begin, counts[i], starts[i], cx(i), tb, tc, false);
-        begin = addi(begin, counts[i]);
-      }
-      visitTile(sc, tc, sb, tb, counts[0], lower);
-      return Values{};
-    });
+    Value sc = minui(cx(panel), subi(ns, sb));
+    stage(starts, counts, sb, sc, true);
+    whileLoop(
+        {index, index}, {cx(0), cx(stripe)},
+        [&](ValueRange x) {
+          return std::make_pair(cmpi(CmpIPredicate::ult, x[0], nt), Values(x));
+        },
+        [&](ValueRange x) {
+          Value tb = x[0], tc = minui(x[1], subi(nt, tb));
+          stage(starts, counts, tb, tc, false);
+          Value last = andi(cmpi(CmpIPredicate::eq, addi(sb, sc), ns),
+                            cmpi(CmpIPredicate::eq, addi(tb, tc), nt));
+          Value fits = visitTile(sc, tc, sb, tb, counts[0], lower, last);
+          return Values{
+              select(fits, addi(tb, tc), tb),
+              select(fits, cx(stripe), divui(addi(tc, cx(1)), cx(2)))};
+        });
     return Values{};
   });
 }
@@ -485,7 +664,80 @@ void Force::bind(ValueRange args) {
   }
 }
 
+// Put the pair region's atom fields next to its positions. Small immutable
+// rectangular tables are read once per CTA. Other captured values retain
+// their original addresses and types.
+void Force::stageParameters(gpu::GPUFuncOp fn) {
+  int64_t fixed = (panel + stripe) * 52 + stripe * 8 + 16;
+  for (Value v : parameters) {
+    Type t = cast<MemRefType>(v.getType()).getElementType();
+    tileParameters.push_back(shared(fn, {panel + stripe}, t));
+    auto vec = dyn_cast<VectorType>(t);
+    fixed += (panel + stripe) * (vec ? vec.getNumElements() : 1) *
+             ((getElementTypeOrSelf(t).getIntOrFloatBitWidth() + 7) / 8);
+  }
+  for (Value v : captures) {
+    auto t = dyn_cast<MemRefType>(v.getType());
+    if (!t || !t.hasStaticShape() || t.getRank() != 2 || !t.getNumElements())
+      continue;
+    // Remapping is local to simple loads. A call or a view could require
+    // the original address space or memory layout.
+    if (!llvm::all_of(v.getUsers(), [&](Operation *op) {
+          return !term->isAncestor(op) || isa<memref::LoadOp>(op);
+        }))
+      continue;
+    auto element = t.getElementType();
+    auto vec = dyn_cast<VectorType>(element);
+    auto scalar = getElementTypeOrSelf(element);
+    if (!scalar.isIntOrFloat())
+      continue;
+    int64_t bytes = t.getNumElements() * (vec ? vec.getNumElements() : 1) *
+                    ((scalar.getIntOrFloatBitWidth() + 7) / 8);
+    if (bytes > 8192 || fixed + bytes > 48 * 1024)
+      continue;
+    fixed += bytes;
+    Value src = mapping.lookup(v), dst = shared(fn, t.getShape(), element);
+    forLoop(tid, cx(t.getNumElements()), cx(workers), {},
+            [&](Value i, ValueRange) {
+              Values at{divui(i, cx(t.getDimSize(1))),
+                        remui(i, cx(t.getDimSize(1)))};
+              store(load(src, at), dst, at);
+              return Values{};
+            });
+    mapping.map(v, dst);
+  }
+}
+
+void Force::withValidGeometry(function_ref<void()> body) {
+  double rc = term.getCutoff().convertToDouble();
+  Value valid = andi(cmpf(CmpFPredicate::OGT, wordScale, cf(0)),
+                     cmpf(CmpFPredicate::OLE, wordScale,
+                          cf(std::numeric_limits<float>::max())));
+  for (int a = 0; a < 3; ++a) {
+    Value width = load(geometry, {cx(a), cx(1)});
+    valid = andi(valid, cmpf(CmpFPredicate::OGE, width,
+                             cd(rc / (a == 2 ? g.reach : 1))));
+    valid = andi(valid,
+                 cmpf(CmpFPredicate::OLE, width,
+                      cd(std::numeric_limits<float>::max() / (g.reach + 1.0))));
+  }
+  ifThenElse(valid, body, [&] {
+    if (g.host)
+      store(ci(2), invalid, {cx(0)});
+    else
+      ifThen(andi(cmpi(CmpIPredicate::eq, owner, cx(0)),
+                  cmpi(CmpIPredicate::eq, tid, cx(0))),
+             [&] { store(ci(2), invalid, {cx(0)}); });
+  });
+}
+
 void Force::device() {
+  // An external unsized array denotes the launch's dynamic shared memory.
+  // A zero-element internal definition can alias the fixed tile buffers.
+  auto dyn = LLVM::GlobalOp::create(b, loc, LLVM::LLVMArrayType::get(i32, 0),
+                                    false, LLVM::Linkage::External,
+                                    "towers_records", Attribute(), 8, 3);
+
   auto fn = gpu::GPUFuncOp::create(b, loc, "towers_force",
                                    b.getFunctionType(types, {}));
   fn.setKernel(true);
@@ -495,12 +747,15 @@ void Force::device() {
   xy = shared(fn, {panel + stripe}, i32);
   zn = shared(fn, {panel + stripe}, i32);
   bias = shared(fn, {stripe}, f32);
-  records = shared(fn, {groups * stripe, 2}, i32);
-  totals = shared(fn, {1}, i32);
-  accum = shared(fn, {panel + stripe, 3}, i64);
+
+  totals = shared(fn, {2}, i32);
+  keptSlots = shared(fn, {stripe}, i32);
+  accum = shared(fn, {3, panel + stripe}, i32);
+  coarse = shared(fn, {3, panel + stripe}, i32);
   Block &entry = fn.getBody().front();
   b.setInsertionPointToStart(&entry);
   bind(entry.getArguments());
+  records = LLVM::AddressOfOp::create(b, loc, dyn);
   tid = gpu::ThreadIdOp::create(b, loc, gpu::Dimension::x);
   lane = andi(indexCast(i32, tid), ci(31));
   Value bound = cf(0);
@@ -512,6 +767,9 @@ void Force::device() {
   Value bits = bitcast(i32, bound);
   Value ceilPow = bitcast(f32, andi(addi(bits, ci(0x7fffff)), ci(0x7f800000)));
   scale = divf(cf(1024), ceilPow);
+  Value padded =
+      addf(cf(term.getCutoff().convertToDouble()), mulf(cf(0x1p-18), bound));
+  filterLimit = mulf(mulf(padded, padded), cf(1 + 0x1p-19));
   // One lattice unit per axis for the two endpoint roundings, plus the
   // staging error in the common Cartesian image. Round the shell outward.
   Value margin = addf(cf(1.733), mulf(mulf(cf(0x1p-18), bound), scale));
@@ -528,7 +786,10 @@ void Force::device() {
       store(NVVM::Clock64Op::create(b, loc, i64), trace, {owner, cx(9)});
     });
   }
-  traversal(owner);
+  withValidGeometry([&] {
+    stageParameters(fn);
+    traversal(owner);
+  });
   mark(7);
   if (probe)
     ifThen(cmpi(CmpIPredicate::eq, tid, cx(0)), [&] {
@@ -540,9 +801,19 @@ void Force::device() {
 }
 
 LogicalResult Force::emit() {
+  if (panel < 32 || panel > 512 || panel % 32 || workers < 32 ||
+      workers > 1024 || workers % 32 || stripe < 1 || stripe > workers ||
+      stripe * panel >= (1 << 18) || recordCap < groups ||
+      recordCap > groups * stripe)
+    return term.emitError(
+        "infeasible TOWERS panel, stripe, worker or record count");
+  double rc = term.getCutoff().convertToDouble();
+  if (!(rc > 0) || !std::isnormal(static_cast<float>(rc * rc)))
+    return term.emitError(
+        "TOWERS requires a positive cutoff with a normal binary32 square");
   Block &body = term.getKernel().front();
-  if (term.getCenters() || term.getOuts().size() != 1 ||
-      !term.getReduce().empty() ||
+  if (term.getCenters() || term.getImages() != md_exec::Images::Minimum ||
+      term.getOuts().size() != 1 || !term.getReduce().empty() ||
       term.getExchange(0) != md::Exchange::Antisymmetric ||
       body.getArgument(0).getType() != f32 ||
       body.getTerminator()->getOperand(0).getType() != v3)
@@ -559,10 +830,19 @@ LogicalResult Force::emit() {
            mem({g.atoms, 3}, i64),
            mem({1}, i32),
            f32};
+  int64_t fixedBytes = (panel + stripe) * 52 + stripe * 8 + 16;
   for (unsigned j = 0; j < term.getIns().size(); ++j) {
     Type t = body.getArgument(2 + 2 * j).getType();
+    auto scalar = getElementTypeOrSelf(t);
+    if (!scalar.isIntOrFloat())
+      return term.emitError("unsupported TOWERS particle input type");
+    auto vec = dyn_cast<VectorType>(t);
+    fixedBytes += (panel + stripe) * (vec ? vec.getNumElements() : 1) *
+                  ((scalar.getIntOrFloatBitWidth() + 7) / 8);
     types.push_back(mem({g.atoms}, t));
   }
+  if (!g.host && fixedBytes > 48 * 1024)
+    return term.emitError("TOWERS force tile exceeds static workgroup storage");
   getUsedValuesDefinedAbove(term.getKernel(), term.getKernel(), captures);
   for (Value v : captures)
     if (!matchPattern(v, m_Constant()))
@@ -578,7 +858,7 @@ LogicalResult Force::emit() {
     Block *entry = fn.addEntryBlock();
     b.setInsertionPointToStart(entry);
     bind(entry->getArguments());
-    host();
+    withValidGeometry([&] { host(); });
     func::ReturnOp::create(b, loc);
   } else
     device();
@@ -588,10 +868,11 @@ LogicalResult Force::emit() {
 
 LogicalResult mdir::kernels::emitTowersForce(ModuleOp module, TowersLayout g,
                                              md_exec::PairForOp term,
+                                             TowersForceShape shape,
                                              bool probe) {
   OpBuilder b = OpBuilder::atBlockEnd(module.getBody());
   if (!g.host)
     b.setInsertionPointToStart(
         module.lookupSymbol<gpu::GPUModuleOp>("towers").getBody());
-  return Force(b, g, term, probe).emit();
+  return Force(b, g, term, shape, probe).emit();
 }
