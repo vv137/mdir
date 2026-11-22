@@ -95,8 +95,13 @@ else:
 ''')
         result = subprocess.run([args.mdir, "run", str(control)], cwd=folder,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                check=True, text=True)
+                                text=True)
         (folder / "run.log").write_text(result.stdout + result.stderr)
+        # A failing run's own messages are shown, not dropped with the
+        # captured streams (#940); a sanitizer prints its reports itself.
+        if result.returncode != 0:
+            sys.exit(f"mdir run failed in {folder} with status "
+                     f"{result.returncode}:\n{result.stdout}{result.stderr}")
         force_text = subprocess.check_output(
             [args.mdir, "checkpoint", "--print=forces", str(folder / "state.h5")],
             text=True)
