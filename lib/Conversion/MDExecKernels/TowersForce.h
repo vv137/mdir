@@ -8,9 +8,11 @@ namespace mdir::kernels {
 struct TowersForceShape {
   int panel, stripe, workers, records, residency;
   bool packedChargeType, certified;
+  int exclusions, split;
 };
 
 mlir::LogicalResult emitTowersForce(mlir::ModuleOp module, TowersLayout layout,
                                     md_exec::PairForOp term,
-                                    TowersForceShape shape, bool probe);
+                                    TowersForceShape shape, bool probe,
+                                    md_exec::PairForOp correction);
 } // namespace mdir::kernels

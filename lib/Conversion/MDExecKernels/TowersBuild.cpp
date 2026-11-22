@@ -489,17 +489,21 @@ public:
     SmallVector<mdir::md_exec::PairForOp> terms;
     if (fn)
       fn.walk([&](mdir::md_exec::PairForOp term) { terms.push_back(term); });
-    if (terms.size() != 1) {
+    if (exclusions < 0 || (exclusions && !certifyForce) ||
+        terms.size() != (exclusions ? 2u : 1u)) {
       module.emitError(
-          "TOWERS force-body requires a function with one pair loop");
+          "TOWERS force-body requires one direct pair loop and, with "
+          "exclusions, certified force and one correction pair loop");
       signalPassFailure();
       return;
     }
     if (failed(mdir::kernels::emitTowersForce(
             module, layout, terms.front(),
             {forcePanel, forceStripe, forceWorkers, forceRecords,
-             forceResidency, packedChargeType, certifyForce},
-            probeForce)))
+             forceResidency, packedChargeType, certifyForce, exclusions,
+             forceSplit},
+            probeForce,
+            exclusions ? terms.back() : mdir::md_exec::PairForOp{})))
       signalPassFailure();
   }
 };

@@ -89,10 +89,12 @@ def check(directory, gpu, workers):
             shared=8,
         )
         e.run("certify", n, provisional, failed, state)
-        e.run("clear_wide", n, state, lo, hi)
+        single = gpu and workers == 64
+        if not single:
+            e.run("clear_wide", n, state, lo, hi)
         e.run(
-            "recover",
-            r.cells * (workers if gpu else 1),
+            "recover_once" if single else "recover",
+            workers if single else r.cells * (workers if gpu else 1),
             *prefix,
             lo,
             *common,
@@ -100,7 +102,8 @@ def check(directory, gpu, workers):
             block=workers,
             shared=8,
         )
-        e.run("check_wide", n, state, lo, hi)
+        if not single:
+            e.run("check_wide", n, state, lo, hi)
         e.run("publish", n, state, provisional, lo, output)
         e.sync()
         assert list(state) == [error, int(retry)], list(state)
