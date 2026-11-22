@@ -508,87 +508,14 @@ func.func private @mdrt.pme_real(%grid: memref<?xi64>, %real: memref<?x!pme_real
 // k1 x k2 x (k3 / 2 + 1) numbers, interleaved: the lines along z, then
 // along y, then along x, each pass a parallel loop over blocks of lines
 // (runtime/mdrt_fft.c).
-func.func private @mdrt.pme_fft_forward(%real: memref<?x!pme_real>, %complex: memref<?x!pme_real>,
-                                        %k1: index, %k2: index, %k3: index) {
-  %c0 = arith.constant 0 : index
-  %c1 = arith.constant 1 : index
-  %i0 = arith.constant 0 : i64
-  %i1 = arith.constant 1 : i64
-  %k1i = arith.index_cast %k1 : index to i64
-  %k2i = arith.index_cast %k2 : index to i64
-  %k3i = arith.index_cast %k3 : index to i64
-  func.call @mdrtFFTPrepare(%k1i, %k2i, %k3i) : (i64, i64, i64) -> ()
-  // The rows along z, a plane of x a block.
-  scf.parallel (%a) = (%c0) to (%k1) step (%c1) {
-    %ai = arith.index_cast %a : index to i64
-    %first = arith.muli %ai, %k2i : i64
-    %last = arith.addi %first, %k2i : i64
-    func.call @mdir.template.fft.RowsForward(%real, %complex, %k3i, %first, %last)
-        : (memref<?x!pme_real>, memref<?x!pme_real>, i64, i64, i64) -> ()
-    scf.reduce
-  }
-  %ny = func.call @mdrtFFTColumnBlocks(%k1i, %k3i) : (i64, i64) -> i64
-  %nyx = arith.index_cast %ny : i64 to index
-  scf.parallel (%u) = (%c0) to (%nyx) step (%c1) {
-    %ui = arith.index_cast %u : index to i64
-    %next = arith.addi %ui, %i1 : i64
-    func.call @mdir.template.fft.Columns(%complex, %k1i, %k2i, %k3i, %i1, %i1, %ui, %next)
-        : (memref<?x!pme_real>, i64, i64, i64, i64, i64, i64, i64) -> ()
-    scf.reduce
-  }
-  %nx = func.call @mdrtFFTColumnBlocks(%k2i, %k3i) : (i64, i64) -> i64
-  %nxx = arith.index_cast %nx : i64 to index
-  scf.parallel (%u) = (%c0) to (%nxx) step (%c1) {
-    %ui = arith.index_cast %u : index to i64
-    %next = arith.addi %ui, %i1 : i64
-    func.call @mdir.template.fft.Columns(%complex, %k1i, %k2i, %k3i, %i0, %i1, %ui, %next)
-        : (memref<?x!pme_real>, i64, i64, i64, i64, i64, i64, i64) -> ()
-    scf.reduce
-  }
-  return
-}
+func.func private @mdrt.pme_fft_forward(memref<?x!pme_real>, memref<?x!pme_real>,
+                                        index, index, index)
 
 // The backward transform, exp(+2π i k·m / K), not normalized, of the
 // half-complex grid `complex`, which it overwrites, into `real`: the lines
 // along y, then along x, then the rows along z.
-func.func private @mdrt.pme_fft_backward(%complex: memref<?x!pme_real>, %real: memref<?x!pme_real>,
-                                         %k1: index, %k2: index, %k3: index) {
-  %c0 = arith.constant 0 : index
-  %c1 = arith.constant 1 : index
-  %i0 = arith.constant 0 : i64
-  %i1 = arith.constant 1 : i64
-  %k1i = arith.index_cast %k1 : index to i64
-  %k2i = arith.index_cast %k2 : index to i64
-  %k3i = arith.index_cast %k3 : index to i64
-  func.call @mdrtFFTPrepare(%k1i, %k2i, %k3i) : (i64, i64, i64) -> ()
-  %ny = func.call @mdrtFFTColumnBlocks(%k1i, %k3i) : (i64, i64) -> i64
-  %nyx = arith.index_cast %ny : i64 to index
-  scf.parallel (%u) = (%c0) to (%nyx) step (%c1) {
-    %ui = arith.index_cast %u : index to i64
-    %next = arith.addi %ui, %i1 : i64
-    func.call @mdir.template.fft.Columns(%complex, %k1i, %k2i, %k3i, %i1, %i0, %ui, %next)
-        : (memref<?x!pme_real>, i64, i64, i64, i64, i64, i64, i64) -> ()
-    scf.reduce
-  }
-  %nx = func.call @mdrtFFTColumnBlocks(%k2i, %k3i) : (i64, i64) -> i64
-  %nxx = arith.index_cast %nx : i64 to index
-  scf.parallel (%u) = (%c0) to (%nxx) step (%c1) {
-    %ui = arith.index_cast %u : index to i64
-    %next = arith.addi %ui, %i1 : i64
-    func.call @mdir.template.fft.Columns(%complex, %k1i, %k2i, %k3i, %i0, %i0, %ui, %next)
-        : (memref<?x!pme_real>, i64, i64, i64, i64, i64, i64, i64) -> ()
-    scf.reduce
-  }
-  scf.parallel (%a) = (%c0) to (%k1) step (%c1) {
-    %ai = arith.index_cast %a : index to i64
-    %first = arith.muli %ai, %k2i : i64
-    %last = arith.addi %first, %k2i : i64
-    func.call @mdir.template.fft.RowsBackward(%complex, %real, %k3i, %first, %last)
-        : (memref<?x!pme_real>, memref<?x!pme_real>, i64, i64, i64) -> ()
-    scf.reduce
-  }
-  return
-}
+func.func private @mdrt.pme_fft_backward(memref<?x!pme_real>, memref<?x!pme_real>,
+                                         index, index, index)
 
 // The component of the wave vector of index `k` of `count` along an edge of
 // the length `length`: k / L, or (k − count) / L beyond count / 2.

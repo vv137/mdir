@@ -4,6 +4,7 @@
 // `memref`s, where the op is. See docs/ops.md, Section 10.
 
 #include "mdir/Conversion/Passes.h"
+#include "PMEFFTs.h"
 
 #include "mdir/Conversion/HostPairEmitter.h"
 #include "mdir/Conversion/MDExecKernels.h"
@@ -652,6 +653,7 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   if (!templates)
     return module.emitError()
            << "cannot parse the template of particle mesh Ewald";
+  emitHostPMEFFTs(*templates);
   if (failed(instantiatePMESymbols(*templates, position, charge, force,
                                    order)))
     return failure();
