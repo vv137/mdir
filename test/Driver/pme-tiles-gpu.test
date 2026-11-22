@@ -84,6 +84,9 @@
 # RUN: cd %t && %python -c "import json; assert json.loads(open('path.jsonl').readlines()[-1])['pme_force_path']=='current'"
 # RUN: cd %t && env MDRT_PME_FORCE_PATH=tiled mdir run path.toml | FileCheck %s --check-prefix=TILED
 # RUN: cd %t && %python -c "import json; assert json.loads(open('path.jsonl').readlines()[-1])['pme_force_path']=='tiled'"
+# RUN: cd %t && mdir check path.toml | FileCheck %s --check-prefix=RECORDED
+# RUN: cd %t && echo '# changed input' >> path.toml && mdir check path.toml --json | %python -c "import json,sys; assert json.load(sys.stdin)['run']['pme']['last_recorded_force_path'] is None"
+# RECORDED: last recorded path: tiled (matching inputs)
 # RUN: FileCheck %s --check-prefix=TILED < %t/det-b.log
 # POLICY: PME force path: current or tiled by whole-step timing
 # CURRENT: MDIR: PME force path: current

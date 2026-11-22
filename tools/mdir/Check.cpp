@@ -21,6 +21,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <fstream>
 #include <limits>
 #include <numeric>
 #include <vector>
@@ -309,6 +311,7 @@ struct Warning {
 };
 
 struct Preflight {
+  std::string recordedPMEPath;
   std::vector<OutputFile> outputs;
   std::vector<Warning> warnings;
   /// What the run will do that needs no change: the backups of outputs
@@ -597,8 +600,60 @@ static const char *pmeForcePath(const Control &control) {
       control.pmeOrder != 4 || control.pmeInfluence == PMEInfluence::P3M ||
       llvm::any_of(control.pmeGrid, [](int64_t n) { return n && n < 7; }))
     return "current";
-  return control.deterministic ? "tiled for eligible sums (deterministic)"
-       : "current or tiled by whole-step timing at setup for eligible sums";
+  if (control.deterministic)
+    return "tiled for eligible sums (deterministic)";
+  if (const char *forced = std::getenv("MDRT_PME_FORCE_PATH")) {
+    if (llvm::StringRef(forced) == "current")
+      return "current (forced)";
+    if (llvm::StringRef(forced) == "tiled")
+      return "tiled for eligible sums (forced)";
+  }
+  return "current or tiled by whole-step timing at setup for eligible sums";
+}
+
+// Preflight does not create a device context. If a completed run recorded
+// a selection, attribute it to that run and verify the complete input set.
+static std::string recordedPMEPath(const Control &control, llvm::StringRef file,
+                                   const System &system) {
+  if (!control.pme || control.manifestFile.empty() ||
+      !llvm::sys::fs::is_regular_file(control.manifestFile))
+    return {};
+  std::ifstream stream(control.manifestFile);
+  std::optional<llvm::json::Value> inputs;
+  std::optional<int64_t> invocation;
+  std::string path;
+  for (std::string line; std::getline(stream, line);) {
+    auto value = llvm::json::parse(line);
+    if (!value) {
+      llvm::consumeError(value.takeError());
+      return {};
+    }
+    auto *event = value->getAsObject();
+    if (!event)
+      return {};
+    if (event->getString("event") == "start") {
+      path.clear();
+      invocation = event->getInteger("invocation");
+      inputs.reset();
+      if (auto *given = event->get("inputs"))
+        inputs = std::move(*given);
+    } else if (invocation && invocation == event->getInteger("invocation") &&
+               event->getString("event") == "end" &&
+               event->getString("status") == "completed") {
+      auto choice = event->getString("pme_force_path");
+      if (choice == "current" || choice == "tiled")
+        path = choice->str();
+    }
+  }
+  if (path.empty() || !inputs || stream.bad())
+    return {};
+  auto expected = mdir::tool::hashManifestInputs(
+      mdir::tool::getManifestInputs(file, control, system));
+  if (!expected) {
+    llvm::consumeError(expected.takeError());
+    return {};
+  }
+  return llvm::json::Value(std::move(*expected)) == *inputs ? path : "";
 }
 
 static void describeRun(const Control &control, const System &system,
@@ -641,6 +696,8 @@ static void describeRun(const Control &control, const System &system,
   }
   if (control.pme) {
     std::printf("PME force path:     %s\n", pmeForcePath(control));
+    if (!report.recordedPMEPath.empty())
+      std::printf("last recorded path:  %s (matching inputs)\n", report.recordedPMEPath.c_str());
     if (control.pmeGrid[0] > 0)
       std::printf("PME grid:           %lld %lld %lld, order %lld\n",
                   static_cast<long long>(control.pmeGrid[0]),
@@ -848,6 +905,8 @@ static llvm::json::Object makeJSON(const Control &control, const System &system,
     run["pme"] = Object{
         {"grid_points", std::move(grid)}, {"order", control.pmeOrder},
         {"force_path", pmeForcePath(control)},
+        {"last_recorded_force_path", report.recordedPMEPath.empty() ? Value(nullptr)
+                                                                  : Value(report.recordedPMEPath)},
         {"max_spacing_angstrom", control.pmeMaxSpacing},
         {"beta_inverse_angstrom", control.pmeAlpha > 0 ? Value(control.pmeAlpha)
                                                        : Value(nullptr)},
@@ -903,6 +962,7 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
                getPreviousCheckpointPath(control->restartOutput)}))
     return fail(std::move(error), json);
   Preflight report = inspect(*control);
+  report.recordedPMEPath = recordedPMEPath(*control, controlFile, *system);
   // An entry of the cache of the skins that is refused is replaced by the
   // next search of its key (D401).
   if (!skins.refused.empty())
