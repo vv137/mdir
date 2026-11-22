@@ -30,7 +30,7 @@ public:
   Force(OpBuilder &b, TowersLayout g, md_exec::PairForOp term,
         TowersForceShape shape, bool probe, md_exec::PairForOp correction)
       : NeighborBuildCode(b, term.getLoc()), g(g), term(term),
-        correction(correction), output(shape.output),
+        correction(correction), output(shape.output), yieldIndex(shape.yieldIndex),
         exclusions(shape.exclusions), split(shape.split), panel(shape.panel),
         stripe(shape.stripe), workers(shape.workers), recordCap(shape.records),
         residency(shape.residency), groups(panel / 32),
@@ -43,6 +43,10 @@ private:
   TowersLayout g;
   md_exec::PairForOp term, correction;
   TowersOutput output;
+  unsigned yieldIndex;
+  bool virial() const {
+    return output == TowersOutput::Virial || output == TowersOutput::DiagonalVirial;
+  }
   bool observer() const { return output != TowersOutput::Force; }
   bool energy() const { return output == TowersOutput::Energy; }
   StringRef observerName() const {
@@ -226,7 +230,7 @@ Value Force::clonePair(Value t, Value s, Value ti, Value si, Value r2, Value d,
     } else
       b.clone(op, inside);
   }
-  return inside.lookup(body.getTerminator()->getOperand(0));
+  return inside.lookupOrDefault(body.getTerminator()->getOperand(physical ? 0 : yieldIndex));
 }
 
 Values Force::pair(Value t, Value s, Value ti, Value si,
@@ -234,7 +238,7 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
   Value d = displacement(t, s), r2 = squared(d);
   auto wt = g.host || (excluding && recovering) ? i64 : i32;
   Value take = physical ? cb(true) : cmpf(CmpFPredicate::OLT, r2, cutoff2);
-  if ((recovering || output == TowersOutput::Virial) && exclusions &&
+  if ((recovering || virial()) && exclusions &&
       !excluding) {
     auto atom = [&](Value i) {
       if (!g.host)
@@ -474,6 +478,10 @@ Values Force::closestImage(Value a, Value c) {
 }
 
 void Force::exclusion(Value row) {
+  // The simulation keeps its topology tuple loops. In that case this
+  // entry only cancels provisional direct words on excluded pairs.
+  if (!correction && (recovering || virial()))
+    return;
   excluding = true;
   Value a = indexCast(index, load(bonds, {row, cx(0)}));
   Value c = indexCast(index, load(bonds, {row, cx(1)}));
@@ -587,9 +595,13 @@ void Force::exclusion(Value row) {
   };
   // The common radial arithmetic of the unconditional correction dominates
   // the cutoff branch, allowing CSE with the cloned direct pair region.
-  Values corrected = eval(true);
+  Values corrected;
+  if (correction)
+    corrected = eval(true);
+  else if (!observer())
+    corrected.assign(3, g.host ? cl(0) : ci(0));
   Values direct;
-  if (!recovering && output != TowersOutput::Virial)
+  if (!recovering && !virial())
     direct = eval(false);
   if (observer()) {
     excluding = false;
@@ -663,6 +675,13 @@ void Force::startObservation() {
 }
 
 void Force::observe(Value value, Value d, bool physical) {
+  if (output == TowersOutput::DiagonalVirial) {
+    for (auto [a, j] : llvm::enumerate(std::array{0, 3, 5})) {
+      Value part = extract(value, a);
+      store(addf(load(localSum, {cx(j)}), part), localSum, {cx(j)});
+    }
+    return;
+  }
   if (!energy()) {
     int j = 0;
     for (int a = 0; a < 3; ++a)
@@ -1923,17 +1942,17 @@ LogicalResult Force::emit() {
         op.getKernel().front().getArgument(0).getType() != f32)
       return false;
     auto yield = op.getKernel().front().getTerminator();
-    if (yield->getNumOperands() != 1)
+    unsigned i = op == term ? yieldIndex : 0;
+    if (i >= yield->getNumOperands())
       return false;
-    if (energy())
-      return op.getOuts().empty() && op.getReduce().size() == 1 &&
-             op.getExchange(0) == md::Exchange::Symmetric && op.getWeights() &&
-             (*op.getWeights())[0] == 0.5 &&
-             (yield->getOperand(0).getType() == f32 ||
-              yield->getOperand(0).getType() == f64);
-    return op.getOuts().size() == 1 && op.getReduce().empty() &&
-           op.getExchange(0) == md::Exchange::Antisymmetric &&
-           yield->getOperand(0).getType() == v3;
+    Type t = yield->getOperand(i).getType();
+    if (energy() || output == TowersOutput::DiagonalVirial) {
+      if (i < op.getOuts().size() || op.getExchange(i) != md::Exchange::Symmetric ||
+          !op.getWeights() || (*op.getWeights())[i - op.getOuts().size()] != 0.5)
+        return false;
+      return energy() ? t == f32 || t == f64 : t == VectorType::get({3}, f64);
+    }
+    return i < op.getOuts().size() && op.getExchange(i) == md::Exchange::Antisymmetric && t == v3;
   };
   if (!supported(term) || (observer() && !certified))
     return term.emitError("TOWERS requires a mixed antisymmetric force or "
@@ -1970,10 +1989,10 @@ LogicalResult Force::emit() {
   if (exclusions) {
     types.append({mem({exclusions, 2}, i32), mem({g.inverseWords()}, i32),
                   mem({3, g.atoms}, f64), mem({g.boxSize()}, f64)});
-    if (!supported(correction) ||
+    if (correction && (!supported(correction) ||
         !llvm::equal(correction.getIns(), term.getIns()) ||
         correction.getKernel().front().getArgumentTypes() !=
-            body.getArgumentTypes())
+            body.getArgumentTypes()))
       return correction.emitError(
           "expected matching direct and exclusion force signatures");
   }

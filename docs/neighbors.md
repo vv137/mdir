@@ -59,8 +59,10 @@ Insertion groups particles by cell.
 Sort/pack orders each cell by quarter-cell coordinates and stable particle
 ID, writes positions relative to the cell center, charges, types and the two
 ID maps, and scatters each occupied span to its owners. Empty spans have
-count zero. After an overflow, the reported maximum occupancy sizes a new
-allocation for a retry on the same frame. The host reference and device
+count zero. The moving-step build keeps one reserve slot per atom. When a cell exceeds
+its primary allocation, insertion chains the excess particle keys on the
+device. Pack allocates a span of the required size and rebuilds its sorted
+contents from both sets of keys before publishing its descriptors. The host reference and device
 entries can also enumerate candidate multiplicities for validation.
 [Rectangular ownership](paper/04-neighbors.md#48-rectangular-tower-and-plate-ownership-dtowers)
 

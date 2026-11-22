@@ -28,6 +28,14 @@ struct TowersCell {
     }
   }
 
+  // Reserve one bin of contraction for a pressure-coupled box when the
+  // periodic ownership stencil still fits.
+  double bins(int axis, int reach, double cutoff, bool variableBox) const {
+    int radius = axis == 2 ? reach : 1;
+    double count = std::floor(heights[axis] * radius / cutoff);
+    return variableBox && count > 2 * radius + 1 ? count - 1 : count;
+  }
+
   // Rectangular entries take Cartesian positions and the triclinic entries
   // take fractional positions. Both retain the input image until insertion.
   std::array<double, 3> coordinates(const double *position) const {

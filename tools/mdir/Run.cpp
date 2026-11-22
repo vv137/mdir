@@ -192,6 +192,10 @@ public:
     if (pass->getArgument() != "convert-md-exec-to-gpu" &&
         pass->getArgument() != "convert-md-exec-to-loops")
       return;
+    if (operation->hasAttr("mdir.towers_grid")) {
+      kinds.insert("towers");
+      return;
+    }
     auto add = [&](md_exec::NeighborKind kind) {
       kinds.insert(kind == md_exec::NeighborKind::Groups ? "groups" : "matrix");
     };
@@ -539,7 +543,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (control->towersShapeGiven || usesTowers) {
     auto shape =
         checkTowersShape(*control, *system, /*setup=*/true,
-                         usesTowers ? previousTowersHeight : StringRef());
+                         usesTowers ? previousTowersHeight : StringRef(),
+                         usesTowers ? &control->towersSetup : nullptr);
     if (!shape)
       return fail(shape.takeError());
     if (usesTowers)

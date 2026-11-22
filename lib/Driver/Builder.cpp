@@ -24,8 +24,27 @@ std::vector<const Program::TupleSet *> Builder::getRigidGroups() const {
 llvm::Error Builder::build() {
   // Every front end resolves `AUTO` for its system first
   // (resolveNeighborStructure, D261).
-  if (control.neighborStructure == NeighborStructure::Towers)
-    return makeError("TOWERS driver dispatch is pending; the rectangular force is available through add-towers-build");
+  if (control.neighborStructure == NeighborStructure::Towers) {
+    const auto &setup = control.towersSetup;
+    if (!setup.capacity)
+      return makeError(
+          "TOWERS launch shape must be resolved on the selected GPU");
+    auto module = termIR.getModule();
+    mlir::Builder b(module.getContext());
+    module->setAttr(
+        "mdir.towers_grid",
+        b.getDenseI64ArrayAttr(
+            {int64_t(system.getNumParticles()), setup.bins[0], setup.bins[1],
+             setup.bins[2], setup.launch.cellHeight == "HALF" ? 2 : 1,
+             setup.capacity,
+             system.topology ? int64_t(system.topology->exclusions.size())
+                             : 0}));
+    module->setAttr(
+        "mdir.towers_launch",
+        b.getDenseI64ArrayAttr({setup.launch.threads, setup.launch.blocksPerSM,
+                                setup.launch.panel, setup.launch.stripe,
+                                setup.launch.records, setup.launch.split}));
+  }
   if (control.neighborStructure == NeighborStructure::Auto)
     return makeError("the neighbor structure 'AUTO' was not resolved; this "
                      "is a defect of mdir");
@@ -144,7 +163,8 @@ llvm::Error Builder::build() {
   // the tuples and build their incidence structures on the host at every
   // frame, which is most of what the start of an activation costs, and the
   // neighbor structures bin the particles themselves.
-  program.reorders = control.reorder && !control.minimize && !control.frames;
+  program.reorders = control.reorder && !control.minimize && !control.frames &&
+                     control.neighborStructure != NeighborStructure::Towers;
   program.orderWidth = 0.5 * control.pairlistDistance * units::length;
   program.neighborWidth = control.neighborWidth;
   if (program.neighborWidth == 0) {

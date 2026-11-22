@@ -49,8 +49,8 @@ void emitOwnedTowersSpans(
         body);
 
 /// Emit the serial functions or the device module. The device pack entry
-/// requires whole warps. An overflow reports the largest required capacity;
-/// grow the layout and repeat setup and insertion on the same coordinates.
+/// requires whole warps. A growing layout rebuilds dense spans on device.
+/// Fixed layouts report the largest required capacity to their caller.
 mlir::LogicalResult emitTowersBuild(mlir::ModuleOp module, TowersLayout layout,
                                     bool audit = false);
 } // namespace mdir::kernels

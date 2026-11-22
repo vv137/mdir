@@ -1,0 +1,3 @@
+# REQUIRES: cuda
+# RUN: rm -rf %t && mkdir %t
+# RUN: %python %S/Inputs/towers_moving_amber.py mdir %S/Inputs/dipeptide %t

@@ -338,8 +338,9 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
   // the loop over particles before it and the one after it (D110), so
   // the loop that closes one run is not fused with the one that opens the
   // next.
-  os << "md-exec-expose-validity,"
-     << "md-exec-fuse-loops"
+  if (control.neighborStructure != NeighborStructure::Towers)
+    os << "md-exec-expose-validity,";
+  os << "md-exec-fuse-loops"
      << (control.target == Target::GPU ? "{integration-runs=true}" : "")
      << ",md-exec-accumulate-destinations,"
      << "md-exec-narrow-sums,";

@@ -13,6 +13,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -222,6 +223,13 @@ struct TowersShape {
   std::string cellHeight;
 };
 
+/// Resolved once on the device, before compiling the simulation.
+struct TowersSetup {
+  TowersShape launch;
+  std::array<int, 3> bins{};
+  int capacity = 0;
+};
+
 /// What a control file says. Lengths are in Å, energies in kcal/mol, times
 /// in ps, masses in amu, and temperatures in K.
 struct Control {
@@ -427,6 +435,7 @@ struct Control {
   /// tested between builds and may miss pairs within the cutoff (D88).
   int64_t rebuildPeriod = 0;
   TowersShape towersShape;
+  TowersSetup towersSetup;
   bool towersShapeGiven = false, towersShapeTable = false;
   /// The neighbor structure of the loops over pairs on a device: a row a
   /// particle, or groups of 16 that share a list, each pair once, where the

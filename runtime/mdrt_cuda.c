@@ -470,6 +470,13 @@ CUfunction mgpuModuleGetFunction(CUmodule module, const char *name) {
   double start = begin();
   CUfunction function = NULL;
   check(cuModuleGetFunction(&function, module, name), "cuModuleGetFunction");
+  const char *dynamic = strncmp(name, "towers_", 7) == 0
+                            ? strstr(name, "_dynamic_")
+                            : NULL;
+  if (dynamic)
+    check(cuFuncSetAttribute(function,
+                             CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+                             atoi(dynamic + 9)), "cuFuncSetAttribute");
   if (getenv("MDRT_TRACE"))
     fprintf(stderr, "TRACE function %p module %p %s\n", (void *)function,
             (void *)module, name);

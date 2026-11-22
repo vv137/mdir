@@ -88,9 +88,9 @@ mdir::tool::prepareTowersSpecialization(const Control &control,
   TowersCell geometry(system);
   kernels::TowersLayout layout{
       int(system.getNumParticles()),
-      int(std::floor(geometry.heights[0] / rc)),
-      int(std::floor(geometry.heights[1] / rc)),
-      int(std::floor(geometry.heights[2] * reach / rc)),
+      int(geometry.bins(0, reach, rc, control.barostat)),
+      int(geometry.bins(1, reach, rc, control.barostat)),
+      int(geometry.bins(2, reach, rc, control.barostat)),
       reach,
       capacity,
       false,

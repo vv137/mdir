@@ -6,5 +6,6 @@
 namespace mdir::tool {
 llvm::Expected<llvm::json::Object>
 checkTowersShape(const driver::Control &control, const driver::System &system,
-                 bool setup, llvm::StringRef checkpointHeight = {});
+                 bool setup, llvm::StringRef checkpointHeight = {},
+                 driver::TowersSetup *resolved = nullptr);
 }

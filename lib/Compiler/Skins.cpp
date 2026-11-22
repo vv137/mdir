@@ -500,6 +500,10 @@ bool compiler::canSearchSkins(const Control &control, std::string &why) {
     why = "the deterministic mode";
     return false;
   }
+  if (control.neighborStructure == NeighborStructure::Towers) {
+    why = "TOWERS rebuilds at each direct evaluation";
+    return false;
+  }
   if (control.neighborStructure != NeighborStructure::Groups) {
     why = "the matrix, which is not searched";
     return false;

@@ -33,6 +33,7 @@ llvm::Error refusal(llvm::StringRef reason) {
                                  "towers_shape: %s", reason.str().c_str());
 }
 struct Limits {
+  bool supportsTowers = true;
   std::string uuid;
   int driver;
   int device, blockBytes, smBytes, reserved, threads, smThreads, blocks;
@@ -57,9 +58,11 @@ llvm::Expected<std::optional<Limits>> deviceLimits() {
           attr(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device) !=
               CUDA_SUCCESS)
         return refusal("could not query CUDA compute capability");
-      if (major < 7 || (major == 7 && minor < 5))
-        return refusal("TOWERS requires mma.sync m16n8k8 f16 (sm_75 or newer)");
       Limits l{};
+      if (major < 7 || (major == 7 && minor < 5)) {
+        l.supportsTowers = false;
+        return l;
+      }
       for (auto [field, key] :
            {std::pair{&l.blockBytes,
                       CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN},
@@ -153,12 +156,12 @@ struct FrameSpans {
 };
 
 llvm::Expected<FrameSpans> measureSpans(const System &system, double cutoff,
-                                        int reach) {
+                                        int reach, bool variableBox) {
   mdir::tool::TowersCell geometry(system);
   FrameSpans maximum;
   Cell dims;
   for (int i = 0; i < 3; ++i) {
-    double n = std::floor(geometry.heights[i] * (i == 2 ? reach : 1) / cutoff);
+    double n = geometry.bins(i, reach, cutoff, variableBox);
     if (!(n >= (i == 2 ? 2 * reach + 1 : 3) && n < INT32_MAX / 4))
       return refusal("cell height is unsupported for this box and cutoff");
     dims[i] = int(n);
@@ -348,7 +351,7 @@ timeCandidates(const Control &control, const System &system,
   int64_t cells = 1;
   for (int a = 0; a < 3; ++a)
     cells *= int64_t(
-        std::floor(geometry.heights[a] * (a == 2 ? reach : 1) / cutoff));
+        geometry.bins(a, reach, cutoff, control.barostat));
   // Include the compiled pair body, the device identity, the box and the
   // feasible proposals. Frames on the same grid can reuse the winning launch.
   std::string key = compiler::getCacheSalt();
@@ -460,7 +463,8 @@ timeCandidates(const Control &control, const System &system,
 
 llvm::Expected<Object>
 mdir::tool::checkTowersShape(const Control &control, const System &system,
-                             bool setup, llvm::StringRef checkpointHeight) {
+                             bool setup, llvm::StringRef checkpointHeight,
+                             TowersSetup *resolved) {
   if (!control.periodic)
     return refusal("cell height requires a periodic box");
   TowersCell geometry(system);
@@ -472,6 +476,13 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
                                   ? Value(fields(given, false))
                                   : Value("AUTO")},
                 {"source", fields(given, true)}};
+  if (*limits && !(**limits).supportsTowers) {
+    constexpr auto reason = "TOWERS requires mma.sync m16n8k8 f16 (sm_75 or newer)";
+    if (control.neighborStructure == NeighborStructure::Towers)
+      return refusal(reason);
+    result["selection"] = reason;
+    return result;
+  }
   if (!checkpointHeight.empty()) {
     if (checkpointHeight != "FULL" && checkpointHeight != "HALF")
       return refusal("checkpoint tower height must be FULL or HALF");
@@ -501,7 +512,7 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
     result["register_check"] = "register check runs at setup";
     return result;
   }
-  auto maximum = measureSpans(system, cutoff, reach);
+  auto maximum = measureSpans(system, cutoff, reach, control.barostat);
   if (!maximum)
     return maximum.takeError();
   auto candidates = launchCandidates(given, system, reach, *maximum, **limits);
@@ -545,6 +556,12 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
   if (!compiled)
     return compiled.takeError();
   result["register_check"] = std::move(*compiled);
+  if (resolved) {
+    resolved->launch = *shape;
+    resolved->capacity = maximum->capacity;
+    for (int a = 0; a < 3; ++a)
+      resolved->bins[a] = int(geometry.bins(a, reach, cutoff, control.barostat));
+  }
 #endif
   result["effective"] = fields(*shape, false);
   return result;

@@ -5,12 +5,13 @@
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 
 namespace mdir::kernels {
-enum class TowersOutput { Force, Energy, Virial };
+enum class TowersOutput { Force, Energy, Virial, DiagonalVirial };
 struct TowersForceShape {
   int panel, stripe, workers, records, residency;
   bool packedChargeType, certified;
   int exclusions, split;
   TowersOutput output = TowersOutput::Force;
+  unsigned yieldIndex = 0;
 };
 
 mlir::LogicalResult emitTowersForce(mlir::ModuleOp module, TowersLayout layout,
