@@ -57,6 +57,10 @@ private:
   Value pos, id, features, bias, records, totals, keptSlots, accum, coarse;
   Value tid, lane, scale, limit, cutoff2, filterLimit;
   void bind(ValueRange args);
+  Value width(int axis);
+  Value validWidths(Value raw);
+  void screenConstants(Value raw);
+  void prepareGeometry();
   void withValidGeometry(function_ref<void()> body);
   void host();
   void device();
@@ -98,8 +102,7 @@ Value Force::point(Value slot, Value field) {
   shift.push_back(sitofp(f32, indexCast(i32, dz)));
   Values coords;
   for (int a = 0; a < 3; ++a)
-    coords.push_back(addf(
-        extract(p, a), mulf(shift[a], truncf(load(geometry, {cx(a), cx(1)})))));
+    coords.push_back(addf(extract(p, a), mulf(shift[a], width(a))));
   coords.push_back(extract(p, 3));
   return vector::FromElementsOp::create(b, loc, v4, coords);
 }
@@ -446,7 +449,7 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
   Value p = load(pos, {addi(cx(panel), target)});
   Value gap2 = cf(0);
   for (int a = 0; a < 2; ++a) {
-    Value half = mulf(cf(0.5), truncf(load(geometry, {cx(a), cx(1)})));
+    Value half = mulf(cf(0.5), width(a));
     Value gap = maxnumf(cf(0), subf(absf(extract(p, a)), half));
     gap2 = addf(gap2, mulf(gap, gap));
   }
@@ -812,19 +815,75 @@ void Force::stageParameters(gpu::GPUFuncOp fn) {
   }
 }
 
-void Force::withValidGeometry(function_ref<void()> body) {
+Value Force::width(int axis) {
+  if (!g.host && packedChargeType)
+    return load(geometry, {cx(axis)});
+  return truncf(load(geometry, {cx(axis), cx(1)}));
+}
+
+Value Force::validWidths(Value raw) {
   double rc = term.getCutoff().convertToDouble();
-  Value valid = andi(cmpf(CmpFPredicate::OGT, wordScale, cf(0)),
-                     cmpf(CmpFPredicate::OLE, wordScale,
-                          cf(std::numeric_limits<float>::max())));
+  Value valid = cb(true);
   for (int a = 0; a < 3; ++a) {
-    Value width = load(geometry, {cx(a), cx(1)});
+    Value width = load(raw, {cx(a), cx(1)});
     valid = andi(valid, cmpf(CmpFPredicate::OGE, width,
                              cd(rc / (a == 2 ? g.reach : 1))));
     valid = andi(valid,
                  cmpf(CmpFPredicate::OLE, width,
                       cd(std::numeric_limits<float>::max() / (g.reach + 1.0))));
   }
+  return valid;
+}
+
+void Force::screenConstants(Value raw) {
+  Value bound = cf(0);
+  for (int a = 0; a < 3; ++a) {
+    Value width = truncf(load(raw, {cx(a), cx(1)}));
+    bound = maxnumf(bound, mulf(width, cf(a == 2 ? g.reach + 0.5 : 1.5)));
+  }
+  // Round the maximum coordinate magnitude up to a power of two.
+  Value bits = bitcast(i32, bound);
+  Value ceilPow = bitcast(f32, andi(addi(bits, ci(0x7fffff)), ci(0x7f800000)));
+  scale = divf(cf(1024), ceilPow);
+  Value padded =
+      addf(cf(term.getCutoff().convertToDouble()), mulf(cf(0x1p-18), bound));
+  filterLimit = mulf(mulf(padded, padded), cf(1 + 0x1p-19));
+  // One lattice unit per axis for the two endpoint roundings, plus the
+  // staging error in the common Cartesian image. Round the shell outward.
+  Value margin = addf(cf(1.733), mulf(mulf(cf(0x1p-18), bound), scale));
+  Value r = addf(mulf(cf(term.getCutoff().convertToDouble()), scale), margin);
+  limit = addf(math::CeilOp::create(b, loc, mulf(r, r)), cf(1));
+}
+
+void Force::prepareGeometry() {
+  OpBuilder::InsertionGuard guard(b);
+  auto raw = MemRefType::get({3, 3}, f64);
+  auto fn = gpu::GPUFuncOp::create(b, loc, "towers_prepare_force",
+                                   b.getFunctionType({raw, types[3]}, {}));
+  fn.setKernel(true);
+  Block &entry = fn.getBody().front();
+  b.setInsertionPointToStart(&entry);
+  Value thread = gpu::ThreadIdOp::create(b, loc, gpu::Dimension::x);
+  ifThen(cmpi(CmpIPredicate::eq, thread, cx(0)), [&] {
+    Value input = entry.getArgument(0), output = entry.getArgument(1);
+    screenConstants(input);
+    for (int a = 0; a < 3; ++a)
+      store(truncf(load(input, {cx(a), cx(1)})), output, {cx(a)});
+    store(scale, output, {cx(3)});
+    store(filterLimit, output, {cx(4)});
+    store(limit, output, {cx(5)});
+    store(select(validWidths(input), cf(1), cf(0)), output, {cx(6)});
+  });
+  gpu::ReturnOp::create(b, loc);
+}
+
+void Force::withValidGeometry(function_ref<void()> body) {
+  Value widths = !g.host && packedChargeType
+                     ? cmpf(CmpFPredicate::OEQ, load(geometry, {cx(6)}), cf(1))
+                     : validWidths(geometry);
+  Value valid = andi(widths, andi(cmpf(CmpFPredicate::OGT, wordScale, cf(0)),
+                                  cmpf(CmpFPredicate::OLE, wordScale,
+                                       cf(std::numeric_limits<float>::max()))));
   ifThenElse(valid, body, [&] {
     if (g.host)
       store(ci(2), invalid, {cx(0)});
@@ -836,6 +895,8 @@ void Force::withValidGeometry(function_ref<void()> body) {
 }
 
 void Force::device() {
+  if (packedChargeType)
+    prepareGeometry();
   // An external unsized array denotes the launch's dynamic shared memory.
   // A zero-element internal definition can alias the fixed tile buffers.
   auto dyn = LLVM::GlobalOp::create(b, loc, LLVM::LLVMArrayType::get(i32, 0),
@@ -876,23 +937,12 @@ void Force::device() {
   records = LLVM::AddressOfOp::create(b, loc, dyn);
   tid = gpu::ThreadIdOp::create(b, loc, gpu::Dimension::x);
   lane = andi(indexCast(i32, tid), ci(31));
-  Value bound = cf(0);
-  for (int a = 0; a < 3; ++a) {
-    Value width = truncf(load(geometry, {cx(a), cx(1)}));
-    bound = maxnumf(bound, mulf(width, cf(a == 2 ? g.reach + 0.5 : 1.5)));
-  }
-  // Round the maximum coordinate magnitude up to a power of two.
-  Value bits = bitcast(i32, bound);
-  Value ceilPow = bitcast(f32, andi(addi(bits, ci(0x7fffff)), ci(0x7f800000)));
-  scale = divf(cf(1024), ceilPow);
-  Value padded =
-      addf(cf(term.getCutoff().convertToDouble()), mulf(cf(0x1p-18), bound));
-  filterLimit = mulf(mulf(padded, padded), cf(1 + 0x1p-19));
-  // One lattice unit per axis for the two endpoint roundings, plus the
-  // staging error in the common Cartesian image. Round the shell outward.
-  Value margin = addf(cf(1.733), mulf(mulf(cf(0x1p-18), bound), scale));
-  Value r = addf(mulf(cf(term.getCutoff().convertToDouble()), scale), margin);
-  limit = addf(math::CeilOp::create(b, loc, mulf(r, r)), cf(1));
+  if (packedChargeType) {
+    scale = load(geometry, {cx(3)});
+    filterLimit = load(geometry, {cx(4)});
+    limit = load(geometry, {cx(5)});
+  } else
+    screenConstants(geometry);
   owner = gpu::BlockIdOp::create(b, loc, gpu::Dimension::x);
   if (probe) {
     trace = shared(fn, {11}, i64);
@@ -957,7 +1007,7 @@ LogicalResult Force::emit() {
   types = {mem({g.cells(), 5 + 2 * g.reach, 2}, i32),
            mem({slots}, v4),
            mem({slots}, i32),
-           mem({3, 3}, f64),
+           packedChargeType && !g.host ? mem({7}, f32) : mem({3, 3}, f64),
            mem({g.atoms, 3}, i64),
            mem({1}, i32),
            f32};

@@ -47,7 +47,14 @@ def check(directory, gpu, reach):
     r.types[:] = [i % 2 for i in range(n)]
     r.charge[:] = [1 if i % 3 else -1 for i in range(n)]
     fields = (r.packed_types,) if packed else (r.charge, r.types)
-    r.setup()
+    force_geometry = entries.array(rebuild.F, 7) if gpu and packed else r.geometry
+
+    def setup():
+        r.setup()
+        if gpu and packed:
+            entries.run("prepare_force", 1, r.geometry, force_geometry)
+
+    setup()
     words = entries.array(C.c_int64, 3 * n)
     status = entries.array(rebuild.I, 1)
     table = entries.array(rebuild.F, 4)
@@ -79,7 +86,7 @@ def check(directory, gpu, reach):
             r.spans,
             r.packed,
             r.ids,
-            r.geometry,
+            force_geometry,
             words,
             status,
             rebuild.F(2**18),
@@ -97,7 +104,7 @@ def check(directory, gpu, reach):
         r.spans,
         r.packed,
         r.ids,
-        r.geometry,
+        force_geometry,
         words,
         status,
         rebuild.F(2**18),
@@ -108,7 +115,7 @@ def check(directory, gpu, reach):
     entries.sync()
     assert status[0] == 1
     r.box[0] = 0.75 * dims[0]
-    r.setup()
+    setup()
     status[0] = 0
     entries.run(
         "force",
@@ -116,7 +123,7 @@ def check(directory, gpu, reach):
         r.spans,
         r.packed,
         r.ids,
-        r.geometry,
+        force_geometry,
         words,
         status,
         rebuild.F(2**18),

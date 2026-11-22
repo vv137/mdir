@@ -1333,6 +1333,9 @@ rounding. Each surviving record holds a source mask and a header identifying
 the target, source group and candidate prefix. Dividing the prefix range
 among workers assigns each set bit to one worker. The worker retests the
 distance in binary32 before evaluating the antisymmetric pair region.
+The prefix barrier ends all reads of the screening features and compacted
+target indices. The force planes occupy the same storage afterward. Streaming
+a further stripe regenerates the features before the next screen.
 A stripe that exceeds record capacity is split before any endpoint update.
 
 One nearest-even rounding of each scaled force component supplies both

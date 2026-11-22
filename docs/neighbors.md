@@ -68,7 +68,11 @@ and evaluates the original pair region for candidates inside its strict
 cutoff. When the two region inputs are the rebuild charge and type in that
 order, the internal `packed-charge-type` option takes charge from the fourth
 packed position lane and a single slot-indexed type array in place of both
-atom-indexed arrays. Screen features and the compacted target list share
+atom-indexed arrays. On the GPU, after each box setup, launch one block of
+`towers_prepare_force` with the geometry and a seven-float output. Pass this
+output as the packed force geometry until the box changes. It contains the
+three widths, quantization scale, lateral and matrix thresholds, and the
+validity flag computed from the binary64 widths. Screen features and the compacted target list share
 storage with the integer force planes across the prefix barrier.
 Small read-only coefficient tables can be staged with the tile.
 `force-panel`, `force-stripe`, `force-workers` and `force-records` specialize
