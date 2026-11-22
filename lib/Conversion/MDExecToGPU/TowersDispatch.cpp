@@ -165,8 +165,25 @@ struct Dispatch {
       }
     }
     auto cell = op.getCellMutable().get();
+    Value initialWords, initialState, initialFailed;
+    if (!op.getOuts().empty()) {
+      initialWords = buffer("force words", mem({g.atoms, 3}, wide));
+      initialState = buffer("certificate", mem({2}, narrow));
+      initialFailed = buffer("failed conversions", mem({1}, wide));
+    }
     rows(b, loc, idx(g.atoms), [&](OpBuilder &k, Value i) {
       auto axis = [&](int a) { return createIndex(k, loc, a); };
+      if (initialWords) {
+        for (int axisIndex = 0; axisIndex < 3; ++axisIndex)
+          memref::StoreOp::create(k, loc, createZero(k, loc, wide), initialWords, ValueRange{i, axis(axisIndex)});
+        scf::IfOp::create(k, loc, arith::CmpIOp::create(k, loc, arith::CmpIPredicate::eq, i, axis(0)), [&](OpBuilder &at, Location l) {
+          Value zero = createIndex(at, l, 0);
+          for (auto [dest, slot] : {std::pair{initialState, 0}, std::pair{initialState, 1}})
+            memref::StoreOp::create(at, l, createZero(at, l, narrow), dest, ValueRange{createIndex(at, l, slot)});
+          memref::StoreOp::create(at, l, createZero(at, l, wide), initialFailed, ValueRange{zero});
+          scf::YieldOp::create(at, l);
+        });
+      }
       SmallVector<Value> xyz, lattice;
       for (int a = 0; a < 3; ++a)
         xyz.push_back(
@@ -237,6 +254,7 @@ struct Dispatch {
 
 LogicalResult Dispatch::run(Value positions) {
   shape.packedDispatch = true;
+  shape.finishForce = true;
   allocate();
   if (failed(inputs(positions)))
     return failure();
@@ -316,15 +334,17 @@ LogicalResult Dispatch::run(Value positions) {
              {counts, keys, local, types, map, packed, packedTypes, ids,
               inverse, spans, status});
     }
-    fill(state, narrow);
-    fill(failedConversions, wide);
+    if (!force || i != 0) {
+      fill(state, narrow);
+      fill(failedConversions, wide);
+    }
     Value words = force    ? buffer("force words", forceType)
                   : energy ? buffer("energy limbs", limbs)
                            : buffer("virial", mem({tensor ? 9 : 6}, dbl));
     bool reusedVirial = int(i) == shape.virialYield;
     if (reusedVirial)
       words = fusedVirial;
-    else
+    else if (!force || i != 0)
       fill(words, force || energy ? wide : dbl);
     double scale = force ? 0x1p18 : energy ? 0x1p32 : 1.0;
     SmallVector<Value> args{spans,
@@ -358,14 +378,16 @@ LogicalResult Dispatch::run(Value positions) {
     if (force) {
       if (fusedVirial)
         args.pop_back();
-      launch("towers_certify", n, 128, {words, failedConversions, state});
       Value lo = buffer("wide force low", forceType);
-      Value hi = buffer("wide force high", forceType);
       args[4] = lo;
+      Value hi = buffer("wide force high", forceType);
       args.push_back(hi);
-      launch("towers_recover_once", shape.workers, shape.workers, args, shared);
-      finishedForce = buffer("published force", forceType);
-      launch("towers_publish", n, 128, {state, words, lo, finishedForce});
+      args.push_back(words);
+      if (op.getNumResults())
+        finishedForce = buffer("published force", forceType);
+      args.push_back(finishedForce ? finishedForce : op.getOuts().front());
+      launch("towers_recover_once", n, shape.workers, args, shared);
+      continue;
     } else if (energy) {
       launch("towers_certify_energy", 1, 1, {words, failedConversions, state});
       Value recovered = buffer("energy replay", limbs);

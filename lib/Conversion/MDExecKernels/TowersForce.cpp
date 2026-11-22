@@ -36,7 +36,7 @@ public:
         workers(shape.workers), recordCap(shape.records),
         residency(shape.residency), groups(panel / 32),
         packedChargeType(shape.packedChargeType), certified(shape.certified),
-        packedDispatch(shape.packedDispatch), probe(probe), indexedExclusions(shape.indexedExclusions),
+        packedDispatch(shape.packedDispatch), finishForce(shape.finishForce), probe(probe), indexedExclusions(shape.indexedExclusions),
         v3(VectorType::get({3}, f32)), v4(VectorType::get({4}, f32)) {}
   LogicalResult emit();
 
@@ -75,7 +75,7 @@ private:
   void exclusion(Value row);
 
   int panel, stripe, workers, recordCap, residency, groups;
-  bool packedChargeType, certified, packedDispatch, probe, indexedExclusions;
+  bool packedChargeType, certified, packedDispatch, finishForce, probe, indexedExclusions;
   bool recovering = false;
   Value failedConversions, highWords, localVotes;
   bool shortVote() const {
@@ -389,7 +389,11 @@ void Force::addWord(Value dst, Value i, Value axis, Value w) {
   } else if (dst == words) {
     Value linear = packedDispatch ? addi(muli(axis, cx(g.atoms)), i) : addi(muli(i, cx(3)), axis);
     Value offset = muli(indexCast(i64, linear), cl(8));
-    atomic(LLVM::AtomicBinOp::add, pointerTo(baseAddress(dst), offset), w);
+    Value old = atomic(LLVM::AtomicBinOp::add, pointerTo(baseAddress(dst), offset), w);
+    if (finishForce) {
+      Value total = addi(old, w);
+      ifThen(cmpi(CmpIPredicate::ne, total, arith::ExtSIOp::create(b, loc, i64, trunci(total))), [&] { flag(invalid, Replay, 1); });
+    }
   } else {
     sharedAdd(
         dst,
@@ -1856,9 +1860,44 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
     });
   };
   if (recovering) {
+    bool finish = finishForce && singleBlock && !observer();
     if (!observer())
-      highWords = entry.getArgument(entryTypes.size() - 1);
-    ifThen(cmpi(CmpIPredicate::ne, load(invalid, {cx(Replay)}), ci(0)), [&] {
+      highWords = entry.getArgument(entryTypes.size() - (finish ? 3 : 1));
+    Value replay = cmpi(CmpIPredicate::ne, load(invalid, {cx(Replay)}), ci(0));
+    Value provisional, destination, needsCheck;
+    auto planeWord = [&](Value atom, int axis) {
+      Value linear = addi(muli(cx(axis), cx(g.atoms)), atom);
+      return load(provisional, {divui(linear, cx(3)), remui(linear, cx(3))});
+    };
+    if (finish) {
+      provisional = entry.getArgument(entryTypes.size() - 2);
+      destination = entry.getArgument(entryTypes.size() - 1);
+      Value failed = cmpi(CmpIPredicate::ne, load(failedConversions, {cx(0)}), cl(0));
+      needsCheck = ori(replay, failed);
+      Value lead = cmpi(CmpIPredicate::eq, owner, cx(0));
+      // A transient excursion can cancel. Only the first CTA checks the
+      // final totals in that case. The fast path reads immutable flags.
+      ifThen(andi(lead, needsCheck), [&] {
+        ifThen(cmpi(CmpIPredicate::eq, tid, cx(0)), [&] {
+          store(select(failed, ci(1), ci(0)), totals, {cx(0)});
+        });
+        gpu::BarrierOp::create(b, loc);
+        forLoop(tid, cx(g.atoms), cx(workers), {}, [&](Value atom, ValueRange) {
+          Value bad = cb(false);
+          for (int a = 0; a < 3; ++a) {
+            Value w = planeWord(atom, a);
+            bad = ori(bad, cmpi(CmpIPredicate::ne, w, arith::ExtSIOp::create(b, loc, i64, trunci(w))));
+          }
+          ifThen(bad, [&] { sharedAdd(totals, cl(0), ci(1)); });
+          return Values{};
+        });
+        gpu::BarrierOp::create(b, loc);
+      });
+      replay = ifElse({i1}, andi(lead, needsCheck),
+                      [&] { return Values{cmpi(CmpIPredicate::ne, load(totals, {cx(0)}), ci(0))}; },
+                      [&] { return Values{cb(false)}; })[0];
+    }
+    ifThen(replay, [&] {
       if (!singleBlock) {
         evaluate();
         return;
@@ -1910,6 +1949,40 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
       } else
         atoms([&](Value i) { checkWide(invalid, words, highWords, i); });
     });
+    if (finish) {
+      gpu::BarrierOp::create(b, loc);
+      auto publish = [&](Value atom) {
+        bool realOutput = term.getNumResults() == 0;
+        for (int a = 0; a < 3; ++a) {
+          Value w = ifElse({i64}, replay, [&] { return Values{load(words, {atom, cx(a)})}; },
+                           [&] { return Values{planeWord(atom, a)}; })[0];
+          Value v = w;
+          if (realOutput) {
+            Type t = cast<MemRefType>(destination.getType()).getElementType();
+            v = mulf(sitofp(t, w), createReal(b, loc, t, 0x1p-18));
+            if (!term.overwrites(0))
+              v = addf(v, load(destination, {atom, cx(a)}));
+          }
+          store(v, destination, {atom, cx(a)});
+        }
+      };
+      ifThen(ori(notNarrow(needsCheck), cmpi(CmpIPredicate::eq, owner, cx(0))), [&] {
+        Value bad = cmpi(CmpIPredicate::ne, load(invalid, {cx(Fatal)}), ci(0));
+        ifThenElse(bad, [&] {
+          LLVM::InlineAsmOp::create(b, loc, TypeRange{}, ValueRange{}, "trap;", "", true, false, LLVM::TailCallKind::None, LLVM::AsmDialectAttr(), ArrayAttr());
+        }, [&] {
+          ifThenElse(needsCheck, [&] {
+            forLoop(tid, cx(g.atoms), cx(workers), {}, [&](Value atom, ValueRange) {
+              publish(atom);
+              return Values{};
+            });
+          }, [&] {
+            Value atom = addi(muli(owner, cx(workers)), tid);
+            ifThen(cmpi(CmpIPredicate::ult, atom, cx(g.atoms)), [&] { publish(atom); });
+          });
+        });
+      });
+    }
   } else
     withValidGeometry(evaluate);
   if (certified && !recovering) {
@@ -2118,6 +2191,10 @@ LogicalResult Force::emit() {
       replay.push_back(types[4]);
       recovering = true;
       device(recordsGlobal, replay);
+      if (finishForce) {
+        replay.push_back(types[4]);
+        replay.push_back(term.getNumResults() == 0 ? term.getOuts().front().getType() : types[4]);
+      }
       device(recordsGlobal, replay, true);
       recovering = false;
     }
