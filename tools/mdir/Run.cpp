@@ -531,15 +531,32 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   } else if (!system->givenVelocities || fromPositions) {
     assignVelocities(*control, *system);
   }
+  StringRef previousTowersHeight =
+      isRestart ? StringRef(checkpoint->towersCellHeight) : StringRef();
+  bool usesTowers = control->neighborStructure == NeighborStructure::Towers;
   std::string towersShapeReport;
   std::string towersCellHeight;
-  if (control->towersShapeGiven || control->neighborStructure == NeighborStructure::Towers) {
-    auto shape = checkTowersShape(*control, *system, /*setup=*/true);
+  if (control->towersShapeGiven || usesTowers) {
+    auto shape =
+        checkTowersShape(*control, *system, /*setup=*/true,
+                         usesTowers ? previousTowersHeight : StringRef());
     if (!shape)
       return fail(shape.takeError());
-    if (control->neighborStructure == NeighborStructure::Towers)
-      towersCellHeight = shape->getObject("effective")->getString("cell_height")->str();
-    towersShapeReport = llvm::formatv("{0}", llvm::json::Value(std::move(*shape))).str();
+    if (usesTowers)
+      towersCellHeight =
+          shape->getObject("effective")->getString("cell_height")->str();
+    towersShapeReport =
+        llvm::formatv("{0}", llvm::json::Value(std::move(*shape))).str();
+  }
+  // The stored forces use the writer's strict pair predicate. Rebuild
+  // them at the restored positions if the requested traversal or its
+  // cell origins have changed.
+  if (isRestart && previousTowersHeight != towersCellHeight) {
+    control->restartRecomputes = true;
+    forces.clear();
+    system->barostatState.clear();
+    notes.push_back("the tower geometry differs from the checkpoint; "
+                    "the run evaluates the forces again at its first step");
   }
   // The input of the build: a run that begins at the positions of a
   // checkpoint does not continue it.

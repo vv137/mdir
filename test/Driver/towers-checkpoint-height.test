@@ -1,0 +1,16 @@
+# REQUIRES: hdf5
+# A change of traversal at restart must discard the previous force. The
+# two checkpoints contain the same positions, velocities and FULL geometry.
+# In one the fixture deliberately zeroes the saved forces.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/../../examples/argon/argon.pdb %t/
+# RUN: sed -e '/^trajectory/d' -e '/^\[output\]/a checkpoint = "base.h5"\ncheckpoint_interval = 2' -e 's/^energy_interval.*/energy_interval = 2/' -e 's/^steps .*/steps = 2/' -e 's/^threads .*/threads = 1/' %S/../../examples/argon/argon.toml > %t/base.toml
+# RUN: mdir run %t/base.toml > %t/base.log
+# RUN: mdir-towers-height-test %t/base.h5 %t
+# RUN: sed -e 's/"base.h5"/"resumed-full.h5"/' -e '/^\[input\]/a checkpoint = "full.h5"' %t/base.toml > %t/full.toml
+# RUN: sed -e 's/"base.h5"/"resumed-zero.h5"/' -e '/^\[input\]/a checkpoint = "zero.h5"' %t/base.toml > %t/zero.toml
+# RUN: mdir run %t/full.toml | FileCheck %s --check-prefix=RESTART
+# RUN: mdir run %t/zero.toml | FileCheck %s --check-prefix=RESTART
+# RUN: mdir checkpoint %t/resumed-full.h5 %t/resumed-zero.h5 | FileCheck %s
+# RESTART: the tower geometry differs from the checkpoint
+# CHECK: the states are identical

@@ -76,6 +76,8 @@ llvm_update_compile_flags(mdir-kind-pairs-test)
 target_link_libraries(mdir-kind-pairs-test PRIVATE MDIRDriver MLIRParser)
 
 add_llvm_executable(mdir-towers-height-test Driver/TowersHeightTest.cpp)
+llvm_update_compile_flags(mdir-towers-height-test)
+target_link_libraries(mdir-towers-height-test PRIVATE MDIRDriver)
 target_include_directories(mdir-towers-height-test PRIVATE ${PROJECT_SOURCE_DIR}/tools/mdir)
 
 add_llvm_executable(mdir-device-policy-test Driver/DevicePolicyTest.cpp)

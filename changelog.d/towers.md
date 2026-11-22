@@ -9,4 +9,5 @@
   Setup chooses the height from the atom count, cell and cutoff, measures the
   unpinned launch fields at that height, and caches the winning launch.
   The compiler also supports fractional triclinic cells and closest-lattice
-  physical exclusions.
+  physical exclusions. Continuation preserves the saved height and recomputes
+  the initial forces when the traversal or height changes.

@@ -219,7 +219,11 @@ launch parameters. At different heights validation uses the physical force
 tolerance against binary64. The strict cutoff operates on a cell-relative
 binary32 displacement. At the cutoff rounding boundary a change of cell
 origin can change membership by one pair and hence by its entire force.
-The resolved height belongs in the run record and checkpoint.
+The run record and checkpoint carry the resolved height. When continuing
+a TOWERS checkpoint, AUTO uses the saved height. An explicit pin has
+precedence. Changing the height or switching between TOWERS and another
+traversal recomputes the force and barostat pressure state at the restored
+positions. A restart from positions alone resolves the new control normally.
 Preflight compiles the mixed pair specialization when the toolchain and
 device are available. Setup checks the compiled register count and occupancy
 before the first step. As in 4n, the production compiler budget targets up to

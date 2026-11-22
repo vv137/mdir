@@ -450,20 +450,28 @@ timeCandidates(const Control &control, const System &system,
 #endif
 } // namespace
 
-llvm::Expected<Object> mdir::tool::checkTowersShape(const Control &control,
-                                                    const System &system,
-                                                    bool setup) {
+llvm::Expected<Object>
+mdir::tool::checkTowersShape(const Control &control, const System &system,
+                             bool setup, llvm::StringRef checkpointHeight) {
   if (!control.periodic)
     return refusal("cell height requires a periodic box");
   TowersCell geometry(system);
   auto limits = deviceLimits();
   if (!limits)
     return limits.takeError();
-  const auto &given = control.towersShape;
+  auto given = control.towersShape;
   Object result{{"requested", control.towersShapeTable
                                   ? Value(fields(given, false))
                                   : Value("AUTO")},
                 {"source", fields(given, true)}};
+  if (!checkpointHeight.empty()) {
+    if (checkpointHeight != "FULL" && checkpointHeight != "HALF")
+      return refusal("checkpoint tower height must be FULL or HALF");
+    if (given.cellHeight.empty()) {
+      given.cellHeight = checkpointHeight.str();
+      (*result.getObject("source"))["cell_height"] = "checkpoint";
+    }
+  }
   double cutoff = control.cutoffDistance * units::length;
   int reach = given.cellHeight == "HALF" ? 2 : 1;
   if (given.cellHeight.empty()) {

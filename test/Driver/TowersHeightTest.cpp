@@ -1,8 +1,26 @@
 // Perpendicular heights of rectangular and triclinic frames, in nm.
 #include "TowersHeight.h"
+#include "mdir/Driver/Checkpoint.h"
+#include "llvm/Support/Error.h"
+#include <algorithm>
 #include <cstdio>
 
-int main() {
+// Two otherwise identical writer states isolate whether the new traversal
+// consumes a force computed under a different tower geometry.
+static int writeCheckpointVariants(const char *input, const std::string &dir) {
+  llvm::ExitOnError take;
+  auto state = take(mdir::driver::readCheckpoint(input));
+  state.towersCellHeight = "FULL";
+  take(mdir::driver::writeCheckpoint(dir + "/full.h5", state));
+  std::fill(state.forces.begin(), state.forces.end(), 0.0);
+  take(mdir::driver::writeCheckpoint(dir + "/zero.h5", state));
+  return 0;
+}
+
+int main(int argc, char **argv) {
+  if (argc == 3)
+    return writeCheckpointVariants(argv[1], argv[2]);
+
   struct Frame {
     const char *name;
     double heights[3], cutoff;
