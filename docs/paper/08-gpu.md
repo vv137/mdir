@@ -293,7 +293,7 @@ then read the counts again to write the offsets, in three launches. A
 single-pass scan reads each count once. Running blocks claim consecutive
 tile numbers and publish an aggregate of their counts; a block obtains the
 prefix of its tile by looking back over aggregates until it reaches a
-completed prefix [[MerrillGarland2016]](../references.md#merrillgarland2016).
+completed prefix [[MerrillGarland2016]](references.md#merrillgarland2016).
 The claim order prevents a block from waiting for an unscheduled
 predecessor. An initialization launch clears the state before the scan
 launch, so an opt-in compiler strategy makes the three group scans use
@@ -379,7 +379,7 @@ over steps are kept to its end: 28% of STMV's peak in use. Two of them
 could share one allocation if no point of the host's code needed both.
 An analysis of liveness over the host's code, with buffers in place of
 the variables of register allocation
-[[Chaitin1982]](../references.md#chaitin1982), finds where each is
+[[Chaitin1982]](references.md#chaitin1982), finds where each is
 needed. A buffer is live where a later read can reach its value without a
 whole overwrite in between, through views, the loop's carried buffers,
 branches, and the waits of asynchronous launches. Every buffer that the

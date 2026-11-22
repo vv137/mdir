@@ -102,6 +102,12 @@ G. Bussi, D. Donadio, M. Parrinello, "Canonical sampling through velocity
 rescaling," *J. Chem. Phys.* **126**, 014101 (2007).
 [doi:10.1063/1.2408420](https://doi.org/10.1063/1.2408420)
 
+### Chaitin1982
+
+G. J. Chaitin, "Register allocation & spilling via graph coloring,"
+*SIGPLAN Notices* **17**(6), 98–101 (1982).
+[doi:10.1145/872726.806984](https://doi.org/10.1145/872726.806984)
+
 ### Chodera2007
 
 J. D. Chodera, W. C. Swope, J. W. Pitera, C. Seok, K. A. Dill, "Use of the
@@ -449,6 +455,12 @@ reversible integrators for extended systems dynamics," *Mol. Phys.*
 **87**, 1117–1157 (1996).
 [doi:10.1080/00268979600100761](https://doi.org/10.1080/00268979600100761)
 
+### MerrillGarland2016
+
+D. Merrill and M. Garland, *Single-pass Parallel Prefix Scan with Decoupled
+Look-back*, NVIDIA Technical Report NVR-2016-002 (March 2016).
+[NVIDIA Research](https://research.nvidia.com/sites/default/files/pubs/2016-03_Single-pass-Parallel-Prefix/nvr-2016-002.pdf)
+
 ### Merz2018
 
 P. T. Merz, M. R. Shirts, "Testing for physical validity in molecular
@@ -591,8 +603,8 @@ Max-Planck-Society (2010–2019), under the 3-clause BSD license.
 ### Rinard1997
 
 M. C. Rinard, P. C. Diniz, "Commutativity analysis: a new analysis
-technique for parallelizing compilers," *ACM Trans. Program. Lang. Syst.*
-**19**(6), 942–991 (1997).
+technique for parallelizing compilers," *ACM Transactions on Programming
+Languages and Systems* **19**, 942–991 (1997).
 [doi:10.1145/267959.269969](https://doi.org/10.1145/267959.269969)
 
 ### Ryckaert1977
@@ -743,6 +755,10 @@ E. Tiesinga, P. J. Mohr, D. B. Newell, B. N. Taylor, "CODATA recommended
 values of the fundamental physical constants: 2018," *Rev. Mod. Phys.*
 **93**, 025010 (2021).
 [doi:10.1103/RevModPhys.93.025010](https://doi.org/10.1103/RevModPhys.93.025010)
+
+Historical source for values used before D394.
+The current defining constants are those of BIPM2019, with the CODATA
+2022 vacuum permittivity from Mohr2025.
 
 ### Tuckerman1999
 
