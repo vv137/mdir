@@ -11,6 +11,7 @@
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/Algebra.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MDExec/PMECellOrder.h"
 #include "mdir/Dialect/MDExec/StorageSet.h"
 #include "mdir/Dialect/MDExec/Transfers.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
@@ -1400,8 +1401,12 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   // an earlier sum of the function took if there is one of that shape,
   // else one allocated in the body of the function by `create`.
   auto share = [&](Type element, Formula formula, int64_t count, bool zeroed,
-                   llvm::function_ref<Value(MemRefType)> create) -> Value {
-    auto type = MemRefType::get({ShapedType::kDynamic}, element,
+                   llvm::function_ref<Value(MemRefType)> create,
+                   int components = 1) -> Value {
+    SmallVector<int64_t> shape{ShapedType::kDynamic};
+    if (components > 1)
+      shape.push_back(components);
+    auto type = MemRefType::get(shape, element,
                                 MemRefLayoutAttrInterface(), space);
     ScratchKey key{type, formula == Fixed ? Value() : size, count,
                    static_cast<unsigned>(formula),
@@ -1451,18 +1456,24 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   if (onDevice) {
     scratch.push_back(
         allocate(Float64Type::get(context), grid[0] * grid[1] * 10));
-    // The places of the particles, 6 values each (the first points and
-    // the fractions along the edges), from which the spreading of order 4
-    // adds the charges and the gathering takes them (lowerReciprocal,
-    // D109).
-    scratch.push_back(share(
-        gridType, PerParticle, 6, /*zeroed=*/false, [&](MemRefType type) {
-          return allocateLength(
-              type,
-              arith::MulIOp::create(
-                  root->builder, loc, size,
-                  arith::ConstantIndexOp::create(root->builder, loc, 6)));
-        }));
+    bool ordered = canUsePMECellOrder(op);
+    auto particleBuffer = [&](Type element, int components) {
+      return share(element, PerParticle, 1, false,
+                   [&](MemRefType type) { return allocateLength(type, size); },
+                   components);
+    };
+    if (ordered) {
+      scratch.push_back(particleBuffer(gridType, 4));
+    } else {
+      scratch.push_back(share(
+          gridType, PerParticle, 6, /*zeroed=*/false, [&](MemRefType type) {
+            return allocateLength(
+                type,
+                arith::MulIOp::create(
+                    root->builder, loc, size,
+                    arith::ConstantIndexOp::create(root->builder, loc, 6)));
+          }));
+    }
     // The factors of the influence function along the edges, three for
     // each point of each edge (D104), five with `p3m` (D304).
     // The prolate kernel keeps its coefficients after them: at most
@@ -1477,7 +1488,18 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
     bool usesBricks = !tiled && !fixedOrder && gridType.isF32() &&
                       (op.getProlate() ||
                        (op.getOrder() == 4 && !op.getPotential()));
-    if (usesBricks) {
+    if (ordered) {
+      int64_t cells = 1;
+      for (int64_t k : grid)
+        cells *= (k + 3) / 4;
+      Type word = IntegerType::get(context, 32);
+
+      // Ordered mesh records, padded forces, keys, and slot-to-atom IDs.
+      for (Type element : {gridType, gridType, word, word})
+        scratch.push_back(particleBuffer(element, element == word ? 1 : 4));
+      for (int64_t count : {cells, cells + 1, cells, (cells + 1023) / 1024})
+        scratch.push_back(allocate(word, count));
+    } else if (usesBricks) {
       int64_t bricks =
           (grid[0] + 3) / 4 * ((grid[1] + 3) / 4) * 16 * grid[2];
       scratch.push_back(share(
@@ -1508,7 +1530,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
     // the mean number of particles of a bin and 8 more, and n places for
     // those that overflow (bin_header of
     // PMEBin.cpp, which computes the same).
-    if (tiled) {
+    if (tiled && !ordered) {
       int64_t edge = scatter.getEdge();
       int64_t bins = 1;
       for (int64_t points : grid)

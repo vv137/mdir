@@ -25,7 +25,7 @@ public:
     b.setInsertionPointToEnd(module.getBody());
   }
   template <bool tilted>
-  void emitSplineStages(bool potential, bool listed, int64_t tiles);
+  void emitSplineStages(bool potential, bool listed, int64_t tiles, bool ordered);
   void emitProlate(bool listed, int64_t tiles);
 
 private:
@@ -36,6 +36,24 @@ private:
     return tilted ? "mdrt_gpu_pme_blocks_triclinic" : "mdrt_gpu_pme_blocks";
   }
   int64_t order, lanes;
+  static void forParticles(OpBuilder &b, Location loc, Value count, Value blocks,
+                           Value threads, Value one, function_ref<void(Value)> body);
+  Type recordType() { return VectorType::get({4}, realType); }
+  MemRefType records() { return globalMem({ShapedType::kDynamic, 4}, realType); }
+  Value readRecord(Value buffer, Value i) {
+    Value zero = arith::ConstantIndexOp::create(b, loc, 0);
+    return vector::LoadOp::create(b, loc, recordType(), buffer, ValueRange{i, zero},
+                                  false, llvm::Align(4 * realBytes));
+  }
+  void writeRecord(Value record, Value buffer, Value i) {
+    Value zero = arith::ConstantIndexOp::create(b, loc, 0);
+    vector::StoreOp::create(b, loc, record, buffer, ValueRange{i, zero},
+                            false, llvm::Align(4 * realBytes));
+  }
+  template <bool tilted> void emitCellOrder(StringRef symbol);
+  void emitPack(StringRef symbol, bool forceOutput);
+  Value meshCoordinate(Value fractional, Value size);
+  std::pair<Value, Value> splitMeshAxis(Value mesh, Value size, Value support);
   int64_t realBytes = realType.getIntOrFloatBitWidth() / 8;
   Type tokenType = gpu::AsyncTokenType::get(b.getContext());
   Type globalPointer = LLVM::LLVMPointerType::get(b.getContext(), 1);
@@ -138,9 +156,9 @@ private:
   template <Window window, Splitting splitting, bool tilted>
   void emitScale(StringRef symbol);
   template <bool tilted, bool useList, bool potentialOnly, bool cachedWeights>
-  void emitGather(StringRef symbol);
+  void emitGather(StringRef symbol, unsigned orderedLanes = 0);
   template <bool useList, int tileEdge> void emitBin(StringRef symbol);
-  template <Window window, int tileEdge> void emitSpreadTile(StringRef symbol);
+  template <Window window, int tileEdge, bool ordered = false> void emitSpreadTile(StringRef symbol);
   void emitCoefficients(StringRef symbol);
   template <bool tilted> void emitPlaces(StringRef symbol);
   template <bool useList, bool fixedGrid> void emitWarpSpread(StringRef symbol);

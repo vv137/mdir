@@ -5,6 +5,7 @@
 
 #include "mdir/Conversion/Passes.h"
 #include "DevicePME.h"
+#include "mdir/Dialect/MDExec/PMECellOrder.h"
 #include "mdir/Runtime/GroupsABI.h"
 
 #include "mdir/Conversion/MDExecKernels.h"
@@ -897,7 +898,7 @@ private:
   /// (D282).
   LogicalResult addPMEKernels(Type position, Type charge, Type force,
                                 int64_t order, bool tilted, bool potential,
-                                bool listed, int64_t tiles = 0);
+                                bool listed, int64_t tiles, bool ordered);
   /// Adds the kernels of the prolate kernel (D266) for these
   /// types and points of the window, and with `listed` those of a list of
   /// the particles, and with `tiles` E the spreading into tiles of bins
@@ -5224,13 +5225,13 @@ static void unrollSmallLoops(Operation *root, int64_t limit) {
 LogicalResult Lowering::addPMEKernels(Type position, Type charge,
                                         Type force, int64_t order,
                                         bool tilted, bool potential,
-                                        bool listed, int64_t tiles) {
+                                        bool listed, int64_t tiles, bool ordered) {
   // A triclinic cell takes the kernels of its own as well, which only it
   // emits (docs/triclinic.md); the spreading into
   // bricks, of its list too.
   if (tilted && failed(addPMEKernels(position, charge, force, order,
                                        /*tilted=*/false, /*potential=*/false,
-                                       listed, tiles)))
+                                       listed, tiles, ordered)))
     return failure();
   auto has = [&](StringRef name) {
     std::string full = tilted ? (name + "_triclinic").str() : name.str();
@@ -5253,6 +5254,7 @@ LogicalResult Lowering::addPMEKernels(Type position, Type charge,
            named("mdrt_gpu_pme_bin" + edge + (listed ? "_listed" : ""));
   };
   if (has("mdrt_gpu_pme_spread") &&
+      (!ordered || has("mdrt_gpu_pme_cell_order")) &&
       (!potential || has("mdrt_gpu_pme_potential")) &&
       (!listed || has("mdrt_gpu_pme_spread_listed")) && hasTiles())
     return success();
@@ -5261,9 +5263,9 @@ LogicalResult Lowering::addPMEKernels(Type position, Type charge,
   kernels::DevicePME emitter(pmeBuilder, *stages, position, charge, force, order,
                              launch.getGatherLanes(order));
   if (tilted)
-    emitter.emitSplineStages<true>(potential, listed, tiles);
+    emitter.emitSplineStages<true>(potential, listed, tiles, ordered);
   else
-    emitter.emitSplineStages<false>(potential, listed, tiles);
+    emitter.emitSplineStages<false>(potential, listed, tiles, ordered);
   if (failed(kernels::instantiatePMESymbols(*stages, position, charge,
                                             force, order)))
     return failure();
@@ -5373,6 +5375,13 @@ LogicalResult Lowering::addProlateKernels(Type position, Type charge,
   }
   return success();
 }
+
+/// A producer supplies all three buffers for the current frame. Offsets delimit
+/// consecutive 4x4x4 cells of wrapped stencil starts (z fastest). Slot i
+/// holds (mesh x, mesh y, mesh z, charge) and maps to atom permutation[i].
+struct PMECellOrder {
+  Value offsets, permutation, particles;
+};
 
 /// The bricks of the spreading (D108), the scratch after the factors of
 /// the influence function where the grid is in f32; the bins of the tiles
@@ -5580,7 +5589,27 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // (Scatter.h, D285); never where the spreading is `fixed_order` (the
   // deterministic mode), whose grid is in fixed point (D70, D84).
   int64_t tiles = getTileEdge(op);
-  Value bins = getBins(op);
+  auto scratch = op.getScratch();
+  bool ordered = scratch.size() > 4 &&
+                 cast<MemRefType>(scratch[4].getType()).getRank() == 2;
+  PMECellOrder cellOrder;
+  Value packedForces;
+  if (ordered) {
+    if (!md_exec::canUsePMECellOrder(op))
+      return op.emitOpError("cell-order storage requires a cubic Gaussian force sum with compatible scatter and grid");
+    auto record = MemRefType::get({ShapedType::kDynamic, 4}, force,
+                                 MemRefLayoutAttrInterface(),
+                                 cast<MemRefType>(forces.getType()).getMemorySpace());
+    auto word = MemRefType::get({ShapedType::kDynamic}, builder.getI32Type(),
+                                MemRefLayoutAttrInterface(), record.getMemorySpace());
+    if (scratch.size() != 14 || scratch[4].getType() != record ||
+        scratch[6].getType() != record || scratch[7].getType() != record ||
+        !llvm::all_of(scratch.drop_front(8), [&](Value v) { return v.getType() == word; }))
+      return op.emitOpError("cell-order storage requires three four-component mesh buffers and six i32 work buffers");
+    cellOrder = {scratch[11], scratch[9], scratch[6]};
+    packedForces = scratch[7];
+  }
+  Value bins = ordered ? Value() : getBins(op);
   if (tiles) {
     if (md_exec::scatter::Refusal refused =
             md_exec::scatter::checkTile(op, tiles, launch.blockMemoryBytes))
@@ -5588,18 +5617,20 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
              << "takes the strategy 'tile', whose precondition does not "
                 "hold: "
              << *refused;
-    if (!bins)
+    if (!bins && !ordered)
       return op->emitOpError() << "has tiles but no buffer of the bins";
   }
   if (failed(addPMEKernels(position, charge, force, op.getOrder(), tilted,
                              op.getPotential(), static_cast<bool>(listed),
-                             tiles)))
+                             tiles, ordered)))
     return failure();
   // The kernels that do not depend on the cell, which a triclinic cell
   // shares: the conversion from fixed point, the bricks, the binning and
   // the tiles.
   auto instance = [&](StringRef name) {
     bool own = tilted && name != "mdrt_gpu_pme_real" &&
+               name != "mdrt_gpu_pme_pack" && name != "mdrt_gpu_pme_force_xyz" &&
+               name != "mdrt_gpu_pme_spread_ordered" &&
                name != "mdrt_gpu_pme_spread_bricks" &&
                name != "mdrt_gpu_pme_spread_bricks_listed" &&
                !name.starts_with("mdrt_gpu_pme_bin") &&
@@ -5627,11 +5658,11 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // Splines of order 4 in f32 use the particle weights for gathering
   // whether their spreading takes tiles or bricks (D85, D108, D282).
   Value weights = op.getScratch().size() > 4 ? op.getScratch()[4] : Value();
-  Value bricks = getBricks(op);
+  Value bricks = ordered ? Value() : getBricks(op);
   // The potential at the particles (the fourth result of md.reciprocal)
   // has the kernel of its own, which takes no weights.
   bool narrowGrid = cast<MemRefType>(real.getType()).getElementType().isF32();
-  bool usesWeights = !fixedPoint && op.getOrder() == 4 && narrowGrid &&
+  bool usesWeights = !ordered && !fixedPoint && op.getOrder() == 4 && narrowGrid &&
                      !op.getPotential() && (tiles || bricks);
   if (usesWeights && !weights)
     return op->emitOpError()
@@ -5695,7 +5726,15 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // gathering of order 4 as well), the binning of the particles or of the
   // entries of the list, and the tiles.
   std::string edge = std::to_string(tiles);
-  if (tiles) {
+  if (ordered) {
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_cell_order"),
+        ValueRange{positions, charges, box, scratch[4], scratch[8], cellOrder.permutation,
+                   scratch[10], cellOrder.offsets, scratch[12], scratch[13], k1, k2, k3});
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_pack"),
+                         ValueRange{scratch[4], cellOrder.permutation, cellOrder.particles});
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread_ordered"),
+                         ValueRange{cellOrder.particles, cellOrder.offsets, real, k1, k2, k3});
+  } else if (tiles) {
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_weights"),
                          ValueRange{positions, box, weights, k1, k2, k3});
     SmallVector<Value> binned = {charges};
@@ -5802,7 +5841,17 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // their neighbors in a warp (D262).
   if (op.getGatherAll())
     listed = Value();
-  if (listed && usesWeights)
+  if (ordered) {
+    // The two measured meshes where two adjacent z slices were faster.
+    bool paired = grid == ArrayRef<int64_t>({144, 84, 80}) ||
+                  grid == ArrayRef<int64_t>({224, 224, 240});
+    func::CallOp::create(builder, loc, instance(paired ? "mdrt_gpu_pme_gather_ordered_z2"
+                                                       : "mdrt_gpu_pme_gather_ordered"),
+                         ValueRange{cellOrder.particles, cellOrder.permutation, real, box,
+                                    k1, k2, k3, packedForces});
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_force_xyz"),
+                         ValueRange{packedForces, forces});
+  } else if (listed && usesWeights)
     func::CallOp::create(builder, loc,
                          instance("mdrt_gpu_pme_gather_weights_listed"),
                          ValueRange{positions, charges, listed, real, box,

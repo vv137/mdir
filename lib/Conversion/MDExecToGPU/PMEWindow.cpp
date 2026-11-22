@@ -51,12 +51,20 @@ std::pair<Value, Value> DevicePME::placeAxis(Value coordinate,
                                              Value inverseLength, Value size,
                                              Value pointCount) {
   Value s = mulf(coordinate, inverseLength);
+  return splitMeshAxis(meshCoordinate(s, size), size, pointCount);
+}
+
+Value DevicePME::meshCoordinate(Value s, Value size) {
   Value fs = math::FloorOp::create(b, loc, s);
   Value frac = subf(s, fs);
   Value ki = indexCast(i32Type, size);
   Value kf = sitofp(realType, ki);
   Value fracr = convert(realType, frac);
-  Value u = mulf(fracr, kf);
+  return mulf(fracr, kf);
+}
+
+std::pair<Value, Value> DevicePME::splitMeshAxis(Value u, Value size,
+                                                  Value pointCount) {
   Value fu0 = math::FloorOp::create(b, loc, u);
   Value nil = arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 0.0));
   Value fu = maxnumf(fu0, nil);

@@ -6,16 +6,17 @@ using namespace mlir;
 using namespace mdir;
 using namespace mdir::kernels;
 
-template <Window window, int tileEdge>
+template <Window window, int tileEdge, bool ordered>
 void DevicePME::emitSpreadTile(StringRef symbol) {
   constexpr int tileThreads = tileEdge == 16 ? 512 : 128;
   OpBuilder::InsertionGuard functionGuard(b);
   SmallVector<Type> inputs;
-  inputs.push_back(globalMem({ShapedType::kDynamic}, chargeType));
+  inputs.push_back(ordered ? records() : globalMem({ShapedType::kDynamic}, chargeType));
   if constexpr (window == Window::Prolate) {
     inputs.push_back(globalMem({ShapedType::kDynamic}, realType));
   }
-  inputs.push_back(globalMem({ShapedType::kDynamic}, realType));
+  if constexpr (!ordered)
+    inputs.push_back(globalMem({ShapedType::kDynamic}, realType));
   inputs.push_back(globalMem({ShapedType::kDynamic}, i32Type));
   inputs.push_back(globalMem({ShapedType::kDynamic}, realType));
   inputs.append(3, idxType);
@@ -25,7 +26,7 @@ void DevicePME::emitSpreadTile(StringRef symbol) {
   b.setInsertionPointToStart(entry);
   unsigned arg = 0;
   Value q = entry->getArgument(arg++);
-  Value places = entry->getArgument(arg++);
+  Value places = ordered ? Value() : entry->getArgument(arg++);
   Value tables;
   if constexpr (window == Window::Prolate) {
     tables = entry->getArgument(arg++);
@@ -60,7 +61,14 @@ void DevicePME::emitSpreadTile(StringRef symbol) {
   Value lists = muli(nbins, capacity);
   Value of_overflow = addi(of_lists, lists);
   Value cthreads = arith::ConstantIndexOp::create(b, loc, tileThreads);
-  Value blocks_tiles = addi(nbins, c1);
+  if constexpr (ordered) {
+    Value zero = arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 0));
+    Value n = memref::DimOp::create(b, loc, realBuffer, c0);
+    Value blocks = arith::CeilDivUIOp::create(b, loc, n, cthreads);
+    forParticles(b, loc, n, blocks, cthreads, c1,
+                 [&](Value i) { store(zero, realBuffer, {i}); });
+  }
+  Value blocks_tiles = ordered ? nbins : addi(nbins, c1);
   {
     auto launch = gpu::LaunchOp::create(
         b, loc, blocks_tiles, c1, c1, cthreads, c1, c1, Value{}, Type{},
@@ -105,6 +113,10 @@ void DevicePME::emitSpreadTile(StringRef symbol) {
     Value run = muli(bin, capacity);
     Value run_at = addi(of_lists, run);
     Value list_at = select(overflows, of_overflow, run_at);
+    if (ordered) {
+      list_at = counted;
+      count = subi(indexCast(idxType, load(bins, {addi(bx, c1)})), list_at);
+    }
     Value some = cmpi(arith::CmpIPredicate::ugt, count, c0);
     auto someBranch = scf::IfOp::create(b, loc, TypeRange{}, some, true, false);
     {
@@ -166,29 +178,42 @@ void DevicePME::emitSpreadTile(StringRef symbol) {
               b.setInsertionPointToStart(stagesBranch.thenBlock());
               Value entry = addi(round, tx);
               Value entry_at = addi(list_at, entry);
-              Value particle = load(bins, {entry_at});
-              Value i = indexCast(idxType, particle);
-              Value qs = load(q, {i});
-              Value qi = convert(realType, qs);
-              store(qi, staged, {tx});
-              scf::ForOp::create(
-                  b, loc, c0, c3w, c1, ValueRange{},
-                  [&](OpBuilder &b, Location, Value ax, ValueRange carried) {
-                    Value at_n = muli(n_all, ax);
-                    Value at_s = addi(at_n, i);
-                    Value start_r = load(places, {at_s});
-                    Value start = fptosi(i32Type, start_r);
-                    Value fax = addi(ax, c3w);
-                    Value at_fn = muli(n_all, fax);
-                    Value at_f = addi(at_fn, i);
-                    Value frac_g = load(places, {at_f});
-                    Value slot0 = muli(ax, cthreads);
-                    Value slot = addi(slot0, tx);
-                    store(start, starts, {slot});
-                    Value fslot = addi(slot, cthreads);
-                    store(frac_g, staged, {fslot});
-                    scf::YieldOp::create(b, loc);
-                  });
+              if constexpr (ordered) {
+                Value record = readRecord(q, entry_at);
+                store(extract(record, 3), staged, {tx});
+                Value sizes[] = {k1, k2, k3};
+                for (int a = 0; a != 3; ++a) {
+                  auto [start, frac] = splitMeshAxis(extract(record, a), sizes[a], pidx);
+                  Value axis = arith::ConstantIndexOp::create(b, loc, a);
+                  Value slot = addi(muli(axis, cthreads), tx);
+                  store(indexCast(i32Type, start), starts, {slot});
+                  store(frac, staged, {addi(slot, cthreads)});
+                }
+              } else {
+                Value particle = load(bins, {entry_at});
+                Value i = indexCast(idxType, particle);
+                Value qs = load(q, {i});
+                Value qi = convert(realType, qs);
+                store(qi, staged, {tx});
+                scf::ForOp::create(
+                    b, loc, c0, c3w, c1, ValueRange{},
+                    [&](OpBuilder &b, Location, Value ax, ValueRange carried) {
+                      Value at_n = muli(n_all, ax);
+                      Value at_s = addi(at_n, i);
+                      Value start_r = load(places, {at_s});
+                      Value start = fptosi(i32Type, start_r);
+                      Value fax = addi(ax, c3w);
+                      Value at_fn = muli(n_all, fax);
+                      Value at_f = addi(at_fn, i);
+                      Value frac_g = load(places, {at_f});
+                      Value slot0 = muli(ax, cthreads);
+                      Value slot = addi(slot0, tx);
+                      store(start, starts, {slot});
+                      Value fslot = addi(slot, cthreads);
+                      store(frac_g, staged, {fslot});
+                      scf::YieldOp::create(b, loc);
+                    });
+              }
               scf::YieldOp::create(b, loc);
             }
             gpu::BarrierOp::create(b, loc);
@@ -414,3 +439,5 @@ template void DevicePME::emitSpreadTile<Window::Spline, 16>(StringRef);
 template void DevicePME::emitSpreadTile<Window::Prolate, 4>(StringRef);
 template void DevicePME::emitSpreadTile<Window::Prolate, 8>(StringRef);
 template void DevicePME::emitSpreadTile<Window::Prolate, 16>(StringRef);
+
+template void DevicePME::emitSpreadTile<Window::Spline, 4, true>(StringRef);

@@ -49,3 +49,16 @@ virial reductions on observation steps. Stage (a) uses explicit transforms.
 All these choices are internal. Benchmark each phase on the six equal-grid
 frames of #933 and investigate any time above 1.15 times its reference
 before proceeding.
+
+The device force path passes three buffers from the frame producer to
+the two mesh kernels. Cell offsets are i32 half-open ranges, with a final
+sentinel equal to the particle count. Each slot has an i32 original atom
+index and an aligned record of four mesh-precision values. Its first three
+values are periodic coordinates in mesh units and its fourth is the
+charge. The local producer groups the first wrapped stencil point on each
+axis in cells four grid points wide, with z varying fastest. The last
+cell along an axis may be shorter. A shared producer must use the same
+frame, box, mesh placement and cell numbering. The order within one cell
+is immaterial to the consumer. Gathering scatters an aligned force record
+by the slot's atom index. Conversion to the consumer's three Cartesian
+components is included in the gather time.
