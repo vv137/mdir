@@ -1377,3 +1377,13 @@ words with signed two-limb arithmetic. The tensor kernel visits physical
 pairs and accumulates the six independent components of the minimum-image
 displacement times the target force in binary64. A force-only evaluation
 requires neither additional traversal.
+
+The height fixes the cell origins used by the binary32 displacement. Setup
+therefore chooses the height from the box and cutoff before timing any
+launches. On the six rectangular calibration frames, the largest FULL
+grid favoring HALF contained 343 towers and the smallest favoring FULL
+contained 1,530. Their geometric midpoint gives a crossover of about
+724 towers. Within the resolved grid the trial varies the division of
+work among blocks and the storage for compact records. Each timing covers
+nine rebuilt certified force evaluations. Five shuffled rounds among the
+five fastest candidates determine the lowest median.

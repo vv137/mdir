@@ -12,6 +12,8 @@ add_llvm_executable(mdir
   mdir.cpp
   BugReport.cpp
   TowersSpecialization.cpp
+  TowersTrial.cpp
+  TowersTrialInputs.cpp
   TowersShape.cpp
   Check.cpp
   Checkpoint.cpp

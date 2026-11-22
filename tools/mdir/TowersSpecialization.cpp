@@ -12,17 +12,37 @@
 #include "mlir/Parser/Parser.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
+#include "mlir/Transforms/RegionUtils.h"
 #include <cmath>
 
 using namespace mlir;
 using namespace mdir;
 using namespace mdir::driver;
 
-llvm::Expected<std::string> mdir::tool::compileTowersSpecialization(
-    const Control &control, const System &system, const TowersShape &shape) {
+namespace {
+struct PairModule {
+  MLIRContext context{compiler::getRegistry(),
+                      MLIRContext::Threading::DISABLED};
+  OwningOpRef<ModuleOp> module;
+  Program program;
+};
+bool lower(ModuleOp module, StringRef pipeline) {
+  PassManager pm(module.getContext(), ModuleOp::getOperationName(),
+                 PassManager::Nesting::Implicit);
+  return succeeded(parsePassPipeline(pipeline, pm)) &&
+         succeeded(pm.run(module));
+}
+} // namespace
+
+llvm::Expected<mdir::tool::TowersEmitter>
+mdir::tool::prepareTowersSpecialization(const Control &control,
+                                        const System &system, int reach,
+                                        int capacity, int device) {
   // Construct the direct term through the normal force-field front end.
   // Its traversal is replaced after precision specialization.
   Control source = control;
+  // Setup sees the input atom order. Its private rebuild packs the atoms.
+  source.reorder = false;
   source.neighborStructure = NeighborStructure::Matrix;
   if (auto error = resolveRigidUnits(source, system))
     return std::move(error);
@@ -30,11 +50,11 @@ llvm::Expected<std::string> mdir::tool::compileTowersSpecialization(
   if (!program)
     return program.takeError();
   compiler::useCudaToolkit();
-  auto options = compiler::getGpuOptions(source, 0);
+  auto options = compiler::getGpuOptions(source, device);
   if (!options)
     return options.takeError();
-  MLIRContext context(compiler::getRegistry(),
-                      MLIRContext::Threading::DISABLED);
+  auto state = std::make_shared<PairModule>();
+  auto &context = state->context;
   compiler::shareThreadPool(context);
   context.loadAllAvailableDialects();
   std::string diagnostic;
@@ -46,11 +66,6 @@ llvm::Expected<std::string> mdir::tool::compileTowersSpecialization(
                                    diagnostic.c_str());
   };
   auto module = parseSourceString<ModuleOp>(program->module, &context);
-  auto lower = [&](ModuleOp m, StringRef pipeline) {
-    PassManager pm(&context, ModuleOp::getOperationName(),
-                   PassManager::Nesting::Implicit);
-    return succeeded(parsePassPipeline(pipeline, pm)) && succeeded(pm.run(m));
-  };
   if (!module ||
       !lower(
           *module,
@@ -68,15 +83,13 @@ llvm::Expected<std::string> mdir::tool::compileTowersSpecialization(
   });
   if (!term)
     return fail("no force-only direct pair region");
-  OwningOpRef<ModuleOp> image(ModuleOp::create(term.getLoc()));
-  int reach = shape.cellHeight == "HALF" ? 2 : 1;
   double rc = control.cutoffDistance * units::length;
   kernels::TowersLayout layout{int(system.getNumParticles()),
                                int(std::floor(system.box[0] / rc)),
                                int(std::floor(system.box[1] / rc)),
                                int(std::floor(system.box[2] * reach / rc)),
                                reach,
-                               256,
+                               capacity,
                                false,
                                true};
   // Give the compiled kernel its real table dimensions and bare-pointer
@@ -155,25 +168,54 @@ llvm::Expected<std::string> mdir::tool::compileTowersSpecialization(
     }
     md_exec::YieldOp::create(builder, term.getLoc(), ValueRange{force});
   }
-  // The 4n force specialization uses a two-block compiler launch bound.
-  // A higher control pin asks whether that compiled entry can reside there.
-  kernels::TowersForceShape launch{int(shape.panel),
-                                   int(shape.stripe),
-                                   int(shape.threads),
-                                   int(shape.records),
-                                   int(std::min<int64_t>(2, shape.blocksPerSM)),
-                                   false,
-                                   true,
-                                   exclusions,
-                                   int(shape.split)};
-  if (failed(kernels::emitTowersBuild(*image, layout)) ||
-      failed(kernels::emitTowersForce(*image, layout, term, launch, false,
-                                      correction)) ||
-      !lower(*image, "canonicalize,cse,mdir-gpu-lower-to-nvvm{" + *options +
-                         " kernel-bare-ptr-calling-convention=true}"))
-    return fail("could not compile direct pair specialization");
-  auto binary = image->lookupSymbol<gpu::BinaryOp>("towers");
-  if (!binary || binary.getObjects().empty())
-    return fail("missing compiled tower entry");
-  return cast<gpu::ObjectAttr>(binary.getObjects()[0]).getObject().str();
+  state->module = std::move(module);
+  state->program = std::move(*program);
+  return TowersEmitter([state, term, correction, layout, exclusions,
+                        options =
+                            std::move(*options)](const TowersShape &shape,
+                                                 TowersBuffers *trial) mutable
+                           -> llvm::Expected<std::string> {
+    std::string diagnostic;
+    ScopedDiagnosticHandler handler(
+        &state->context, [&](Diagnostic &d) { diagnostic += d.str() + "\n"; });
+    if (trial) {
+      llvm::SetVector<Value> captures;
+      getUsedValuesDefinedAbove(term->getRegion(0), term->getRegion(0),
+                                captures);
+      if (correction)
+        getUsedValuesDefinedAbove(correction->getRegion(0),
+                                  correction->getRegion(0), captures);
+      auto buffers = bindTowersTrialInputs(state->program, term.getIns(),
+                                           captures.getArrayRef());
+      if (!buffers)
+        return buffers.takeError();
+      *trial = std::move(*buffers);
+    }
+    OwningOpRef<ModuleOp> image(ModuleOp::create(term.getLoc()));
+    // The 4n force specialization uses a two-block compiler launch bound.
+    // A higher control pin asks whether that compiled entry can reside there.
+    kernels::TowersForceShape launch{
+        int(shape.panel),
+        int(shape.stripe),
+        int(shape.threads),
+        int(shape.records),
+        int(std::min<int64_t>(2, shape.blocksPerSM)),
+        false,
+        true,
+        exclusions,
+        int(shape.split)};
+    if (failed(kernels::emitTowersBuild(*image, layout)) ||
+        failed(kernels::emitTowersForce(*image, layout, term, launch, false,
+                                        correction)) ||
+        !lower(*image, "canonicalize,cse,mdir-gpu-lower-to-nvvm{" + options +
+                           " kernel-bare-ptr-calling-convention=true}"))
+      return llvm::createStringError(
+          "towers_shape: could not compile direct pair specialization: %s",
+          diagnostic.c_str());
+    auto binary = image->lookupSymbol<gpu::BinaryOp>("towers");
+    if (!binary || binary.getObjects().empty())
+      return llvm::createStringError(
+          "towers_shape: missing compiled tower entry");
+    return cast<gpu::ObjectAttr>(binary.getObjects()[0]).getObject().str();
+  });
 }

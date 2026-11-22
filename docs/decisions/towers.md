@@ -202,7 +202,14 @@ and FULL above that count. This threshold is the geometric midpoint
 between the largest HALF winner and smallest FULL winner in the initial
 4n rebuilt-force sweep. The six calibration frames have water-like
 density. The rule uses only geometry at setup.
-Stage (f) may time launch parameters only at the resolved height.
+At setup the driver enumerates the feasible launch fields at that height,
+including full and half target stripes and record budgets. It times nine
+rebuilt certified force calls on private copies of the starting frame and
+remeasures up to five finalists in five shuffled rounds. The lowest median
+wins. The compile cache stores the launch by grid, device, pair specialization
+and candidate set. A complete pin has a single candidate. Preflight lists
+the proposals and checks the derived launch. The run log records the
+selected launch and whether setup measured it or reused a cache entry.
 
 At fixed height the force and energy words must be identical across all six
 launch parameters. At different heights validation uses the physical force

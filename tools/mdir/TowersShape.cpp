@@ -2,15 +2,23 @@
 #include "Commands.h"
 #include "TowersHeight.h"
 #include "TowersSpecialization.h"
+#include "TowersTrial.h"
+#include "mdir/Compiler/CompileCache.h"
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/DynamicLibrary.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Format.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdlib>
 #include <map>
+#include <numeric>
+#include <random>
+#include <set>
 #if MDIR_HAS_CUDA
 #include <cuda.h>
 #endif
@@ -24,6 +32,8 @@ llvm::Error refusal(llvm::StringRef reason) {
                                  "towers_shape: %s", reason.str().c_str());
 }
 struct Limits {
+  std::string uuid;
+  int driver;
   int device, blockBytes, smBytes, reserved, threads, smThreads, blocks;
 };
 llvm::Expected<std::optional<Limits>> deviceLimits() {
@@ -53,6 +63,15 @@ llvm::Expected<std::optional<Limits>> deviceLimits() {
         if (attr(field, key, device) != CUDA_SUCCESS)
           return refusal("could not query CUDA launch limits");
       }
+      CUuuid uuid;
+      auto id = reinterpret_cast<decltype(&cuDeviceGetUuid)>(
+          lib.getAddressOfSymbol("cuDeviceGetUuid"));
+      auto version = reinterpret_cast<decltype(&cuDriverGetVersion)>(
+          lib.getAddressOfSymbol("cuDriverGetVersion"));
+      if (!id || !version || id(&uuid, device) != CUDA_SUCCESS ||
+          version(&l.driver) != CUDA_SUCCESS)
+        return refusal("could not query CUDA device identity");
+      l.uuid = llvm::toHex(llvm::StringRef(uuid.bytes, sizeof(uuid.bytes)));
       l.device = device;
       return l;
     }
@@ -62,8 +81,16 @@ llvm::Expected<std::optional<Limits>> deviceLimits() {
 }
 
 #if MDIR_HAS_CUDA
+llvm::Error occupancyRefusal(int registers, int blocks, int64_t resident) {
+  return llvm::createStringError(
+      llvm::inconvertibleErrorCode(),
+      "towers_shape: compiled pair uses %d registers per thread and admits "
+      "%d resident blocks, below blocks_per_sm=%lld",
+      registers, blocks, static_cast<long long>(resident));
+}
 llvm::Expected<Object> checkRegisters(int device, const TowersShape &shape,
-                                      const std::string &image) {
+                                      const std::string &image,
+                                      bool require = true) {
   auto lib = llvm::sys::DynamicLibrary::getPermanentLibrary("libcuda.so.1");
 #define LOAD(name, api, symbol)                                                \
   auto name = reinterpret_cast<decltype(&api)>(lib.getAddressOfSymbol(symbol))
@@ -103,22 +130,22 @@ llvm::Expected<Object> checkRegisters(int device, const TowersShape &shape,
           CUDA_SUCCESS)
     return refusal(
         "could not query compiled pair register count and occupancy");
-  if (blocks < shape.blocksPerSM)
-    return llvm::createStringError(
-        llvm::inconvertibleErrorCode(),
-        "towers_shape: compiled pair uses %d registers per thread and admits "
-        "%d resident blocks, below blocks_per_sm=%lld",
-        registers, blocks, static_cast<long long>(shape.blocksPerSM));
+  if (require && blocks < shape.blocksPerSM)
+    return occupancyRefusal(registers, blocks, shape.blocksPerSM);
   return Object{{"registers_per_thread", registers},
                 {"resident_blocks", blocks}};
 }
 #endif
 
 using Cell = std::array<int, 3>;
-llvm::Expected<TowersShape> derive(const TowersShape &given,
-                                   const System &system, double cutoff,
-                                   int reach, const Limits &limits) {
-  TowersShape s = given;
+struct FrameSpans {
+  int64_t column = 1, plate = 1;
+  int capacity = 256;
+};
+
+llvm::Expected<FrameSpans> measureSpans(const System &system, double cutoff,
+                                        int reach) {
+  FrameSpans maximum;
   Cell dims;
   for (int i = 0; i < 3; ++i) {
     double n = std::floor(system.box[i] * (i == 2 ? reach : 1) / cutoff);
@@ -126,6 +153,45 @@ llvm::Expected<TowersShape> derive(const TowersShape &given,
       return refusal("cell height is unsupported for this box and cutoff");
     dims[i] = int(n);
   }
+  // Only centers whose column or plate touches an occupied cell affect either
+  // maximum.
+  std::map<Cell, std::array<int64_t, 2>> spans;
+  std::map<Cell, int> counts;
+  for (size_t i = 0; i < system.getNumParticles(); ++i) {
+    Cell cell;
+    for (int a = 0; a < 3; ++a) {
+      double x = std::fmod(system.positions[3 * i + a], system.box[a]);
+      if (x < 0)
+        x += system.box[a];
+      cell[a] = std::min(dims[a] - 1, int(x / (system.box[a] / dims[a])));
+    }
+    maximum.capacity = std::max(maximum.capacity, ++counts[cell]);
+  }
+  for (const auto &[cell, count] : counts) {
+    auto add = [&](int x, int y, int z, int plane) {
+      Cell owner{(cell[0] + dims[0] + x) % dims[0],
+                 (cell[1] + dims[1] + y) % dims[1],
+                 (cell[2] + dims[2] + z) % dims[2]};
+      spans[owner][plane] += count;
+    };
+    for (int z = -reach; z <= reach; ++z)
+      add(0, 0, z, 0);
+    for (Cell offset : {Cell{0, 0, 0}, Cell{1, 0, 0}, Cell{1, 1, 0},
+                        Cell{0, 1, 0}, Cell{-1, 1, 0}})
+      add(offset[0], offset[1], 0, 1);
+  }
+  for (const auto &entry : spans) {
+    maximum.column = std::max(maximum.column, entry.second[0]);
+    maximum.plate = std::max(maximum.plate, entry.second[1]);
+  }
+  return maximum;
+}
+
+llvm::Expected<TowersShape>
+derive(const TowersShape &given, const System &system, int reach,
+       const FrameSpans &maximum, const Limits &limits, bool halfStripe = false,
+       bool halfRecords = false) {
+  TowersShape s = given;
   if (s.threads == 0)
     s.threads = 512;
   if (s.blocksPerSM == 0)
@@ -139,44 +205,14 @@ llvm::Expected<TowersShape> derive(const TowersShape &given,
     return refusal(
         "thread count or resident blocks exceeds the block or SM launch limit");
   if (!s.panel || !s.stripe) {
-    // Only centers whose column or plate touches an occupied cell affect either
-    // maximum.
-    std::map<Cell, std::array<int64_t, 2>> spans;
-    std::map<Cell, int> counts;
-    for (size_t i = 0; i < system.getNumParticles(); ++i) {
-      Cell cell;
-      for (int a = 0; a < 3; ++a) {
-        double x = std::fmod(system.positions[3 * i + a], system.box[a]);
-        if (x < 0)
-          x += system.box[a];
-        cell[a] = std::min(dims[a] - 1, int(x / (system.box[a] / dims[a])));
-      }
-      ++counts[cell];
-    }
-    for (const auto &[cell, count] : counts) {
-      auto add = [&](int x, int y, int z, int plane) {
-        Cell owner{(cell[0] + dims[0] + x) % dims[0],
-                   (cell[1] + dims[1] + y) % dims[1],
-                   (cell[2] + dims[2] + z) % dims[2]};
-        spans[owner][plane] += count;
-      };
-      for (int z = -reach; z <= reach; ++z)
-        add(0, 0, z, 0);
-      for (Cell offset : {Cell{0, 0, 0}, Cell{1, 0, 0}, Cell{1, 1, 0},
-                          Cell{0, 1, 0}, Cell{-1, 1, 0}})
-        add(offset[0], offset[1], 0, 1);
-    }
-    int64_t column = 1, plate = 1;
-    for (const auto &entry : spans) {
-      column = std::max(column, entry.second[0]);
-      plate = std::max(plate, entry.second[1]);
-    }
     auto roundWarp = [](int64_t n) { return (n + 31) / 32 * 32; };
     if (!s.panel)
-      s.panel = std::min({roundWarp((column + s.split - 1) / s.split),
+      s.panel = std::min({roundWarp((maximum.column + s.split - 1) / s.split),
                           int64_t(512), 2 * s.threads});
     if (!s.stripe)
-      s.stripe = std::min(roundWarp(plate), s.threads);
+      s.stripe = std::min(roundWarp(maximum.plate), s.threads);
+    if (!given.stripe && halfStripe)
+      s.stripe = roundWarp((s.stripe + 1) / 2);
   }
   if (s.panel > 2 * s.threads || s.stripe > s.threads)
     return refusal("panel or stripe exceeds the supported worker spans");
@@ -209,7 +245,8 @@ llvm::Expected<TowersShape> derive(const TowersShape &given,
   if (s.stripe * s.panel >= (1 << 18))
     return refusal("panel times stripe exceeds the record prefix");
   if (!s.records)
-    s.records = std::min((available() - 128) / 8, s.stripe * (s.panel / 32));
+    s.records = std::min((available() - 128) / 8,
+                         s.stripe * (s.panel / 32) / (halfRecords ? 2 : 1));
   int64_t bytes =
       fixed() + 8 * std::max(s.panel / 32, s.records) + limits.reserved;
   if (fixed() > 48 * 1024 || bytes > limits.blockBytes)
@@ -220,6 +257,42 @@ llvm::Expected<TowersShape> derive(const TowersShape &given,
   if (s.records < s.panel / 32 || s.records > s.stripe * (s.panel / 32))
     return refusal("record capacity is outside the panel and stripe limits");
   return s;
+}
+
+// Enumerate at one already resolved height. A supplied field stays fixed
+// throughout, including partial pins. Resource rounding can make distinct
+// proposals coincide, especially on small frames.
+std::vector<TowersShape> launchCandidates(const TowersShape &given,
+                                          const System &system, int reach,
+                                          const FrameSpans &maximum,
+                                          const Limits &limits) {
+  std::vector<TowersShape> candidates;
+  std::set<std::array<int64_t, 6>> seen;
+  for (int64_t threads : {128, 256, 512})
+    for (int64_t residency : {1, 2})
+      for (int64_t split : {1, 2}) {
+        TowersShape proposal = given;
+        if (!proposal.threads)
+          proposal.threads = threads;
+        if (!proposal.blocksPerSM)
+          proposal.blocksPerSM = residency;
+        if (!proposal.split)
+          proposal.split = split;
+        for (bool halfStripe : {false, true})
+          for (bool halfRecords : {false, true}) {
+            auto shape = derive(proposal, system, reach, maximum, limits,
+                                halfStripe, halfRecords);
+            if (!shape) {
+              llvm::consumeError(shape.takeError());
+              continue;
+            }
+            if (seen.insert({shape->threads, shape->blocksPerSM, shape->split,
+                             shape->panel, shape->stripe, shape->records})
+                    .second)
+              candidates.push_back(*shape);
+          }
+      }
+  return candidates;
 }
 
 Object fields(const TowersShape &s, bool provenance) {
@@ -238,6 +311,135 @@ Object fields(const TowersShape &s, bool provenance) {
                  : Value(s.cellHeight.empty() ? "AUTO" : s.cellHeight);
   return result;
 }
+#if MDIR_HAS_CUDA
+llvm::Expected<TowersShape>
+timeCandidates(const Control &control, const System &system,
+               const Limits &limits, int capacity,
+               const mdir::tool::TowersEmitter &emit,
+               const std::vector<TowersShape> &candidates, Object &report) {
+  using namespace mdir;
+  using namespace mdir::tool;
+  if (candidates.empty())
+    return refusal("no launch satisfies the supplied pins and device limits");
+  if (candidates.size() == 1) {
+    report["selection"] = "single candidate";
+    return candidates.front();
+  }
+  const auto &first = candidates.front();
+  TowersBuffers parameters;
+  auto firstImage = emit(first, &parameters);
+  if (!firstImage)
+    return firstImage.takeError();
+  double cutoff = control.cutoffDistance * units::length;
+  int reach = first.cellHeight == "HALF" ? 2 : 1;
+  int64_t cells = 1;
+  for (int a = 0; a < 3; ++a)
+    cells *= int64_t(std::floor(system.box[a] * (a == 2 ? reach : 1) / cutoff));
+  // Include the compiled pair body, the device identity, the box and the
+  // feasible proposals. Frames on the same grid can reuse the winning launch.
+  std::string key = compiler::getCacheSalt();
+  llvm::raw_string_ostream os(key);
+  os << "\ntowers-v1 " << limits.uuid << " " << limits.driver << " "
+     << compiler::getCacheEntryName(*firstImage, "") << " " << cells << " "
+     << llvm::format_hex(llvm::bit_cast<uint64_t>(cutoff), 18);
+  for (double length : system.box)
+    os << " " << llvm::format_hex(llvm::bit_cast<uint64_t>(length), 18);
+  for (const auto &s : candidates)
+    os << "\n" << Value(fields(s, false));
+  auto cache = compiler::CompileCacheConfig::fromEnvironment();
+  auto name = compiler::getCacheEntryName(key, ".shape");
+  if (cache && cache->opened) {
+    double seconds = 0;
+    bool rejected = false;
+    auto hit = compiler::readCacheEntry(*cache->opened, "gpu", name, key,
+                                        seconds, rejected);
+    unsigned index;
+    if (hit && !hit->getBuffer().getAsInteger(10, index) &&
+        index < candidates.size()) {
+      compiler::touchCacheEntry(*cache->opened, "gpu", name);
+      report["selection"] = "grid cache";
+      return candidates[index];
+    }
+  }
+
+  struct Candidate {
+    unsigned index;
+    std::string image;
+    float initial;
+    std::array<float, 5> repeat{};
+  };
+  std::vector<Candidate> trials;
+  std::string firstRefusal;
+  auto frame = createTowersTrial(limits.device, system, int(cells), reach,
+                                 capacity, parameters);
+  if (!frame)
+    return frame.takeError();
+  auto measure = [&](const Candidate &c, float &us) -> llvm::Error {
+    auto result = measureTowersTrial(**frame, c.image, candidates[c.index]);
+    if (!result)
+      return result.takeError();
+    us = *result;
+    return llvm::Error::success();
+  };
+  for (auto [idx, s] : llvm::enumerate(candidates)) {
+    auto image = idx == 0 ? std::move(firstImage) : emit(s, nullptr);
+    if (!image)
+      return image.takeError();
+    auto registers = checkRegisters(limits.device, s, *image, false);
+    if (!registers)
+      return registers.takeError();
+    int blocks = registers->getInteger("resident_blocks").value();
+    if (blocks < s.blocksPerSM) {
+      if (firstRefusal.empty())
+        firstRefusal = llvm::toString(occupancyRefusal(
+            registers->getInteger("registers_per_thread").value(), blocks,
+            s.blocksPerSM));
+      continue;
+    }
+    Candidate trial{unsigned(idx), std::move(*image), 0};
+    if (auto err = measure(trial, trial.initial))
+      return std::move(err);
+    trials.push_back(std::move(trial));
+  }
+  if (trials.empty())
+    return llvm::createStringError("%s", firstRefusal.c_str());
+  report["timed_candidates"] = int64_t(trials.size());
+  std::stable_sort(
+      trials.begin(), trials.end(),
+      [](const auto &a, const auto &b) { return a.initial < b.initial; });
+  trials.resize(std::min<size_t>(5, trials.size()));
+  std::vector<unsigned> order(trials.size());
+  std::iota(order.begin(), order.end(), 0);
+  std::mt19937 shuffle(0);
+  for (unsigned rep = 0; rep < 5; ++rep) {
+    std::shuffle(order.begin(), order.end(), shuffle);
+    for (unsigned i : order)
+      if (auto err = measure(trials[i], trials[i].repeat[rep]))
+        return std::move(err);
+  }
+  llvm::json::Array finalists;
+  for (auto &c : trials) {
+    llvm::sort(c.repeat);
+    finalists.push_back(Object{{"shape", fields(candidates[c.index], false)},
+                               {"median_us", double(c.repeat[2])}});
+  }
+  auto best = std::min_element(
+      trials.begin(), trials.end(),
+      [](const auto &a, const auto &b) { return a.repeat[2] < b.repeat[2]; });
+  report["finalists"] = std::move(finalists);
+  report["selection"] = "setup trial";
+  if (cache && cache->opened) {
+    uint64_t bytes = 0;
+    if (auto err =
+            compiler::writeCacheEntry(*cache->opened, "gpu", name, key,
+                                      std::to_string(best->index), 0, &bytes))
+      report["cache_error"] = llvm::toString(std::move(err));
+    else
+      compiler::noteCacheStores(*cache->opened, bytes, cache->maxBytes);
+  }
+  return candidates[best->index];
+}
+#endif
 } // namespace
 
 llvm::Expected<Object> mdir::tool::checkTowersShape(const Control &control,
@@ -275,7 +477,19 @@ llvm::Expected<Object> mdir::tool::checkTowersShape(const Control &control,
     result["register_check"] = "register check runs at setup";
     return result;
   }
-  auto shape = derive(given, system, cutoff, reach, **limits);
+  auto maximum = measureSpans(system, cutoff, reach);
+  if (!maximum)
+    return maximum.takeError();
+  auto candidates = launchCandidates(given, system, reach, *maximum, **limits);
+  llvm::json::Array proposals;
+  for (const auto &candidate : candidates)
+    proposals.push_back(fields(candidate, false));
+  result["launch_candidates"] = std::move(proposals);
+  auto shape = derive(given, system, reach, *maximum, **limits);
+  if (!shape && !candidates.empty()) {
+    llvm::consumeError(shape.takeError());
+    shape = candidates.front();
+  }
   if (!shape)
     return shape.takeError();
 #if MDIR_HAS_CUDA
@@ -287,7 +501,20 @@ llvm::Expected<Object> mdir::tool::checkTowersShape(const Control &control,
     result["register_check"] = "register check runs at setup";
     return result;
   }
-  auto image = compileTowersSpecialization(control, system, *shape);
+  auto emit = prepareTowersSpecialization(control, system, reach,
+                                          maximum->capacity, (*limits)->device);
+  if (!emit)
+    return emit.takeError();
+  if (setup) {
+    shape = timeCandidates(control, system, **limits, maximum->capacity, *emit,
+                           candidates, result);
+    if (!shape)
+      return shape.takeError();
+  } else {
+    result["selection"] =
+        candidates.size() == 1 ? "single candidate" : "setup trial pending";
+  }
+  auto image = (*emit)(*shape, nullptr);
   if (!image)
     return image.takeError();
   auto compiled = checkRegisters((*limits)->device, *shape, *image);

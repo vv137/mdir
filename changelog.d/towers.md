@@ -6,4 +6,5 @@
   the antisymmetric pair region from compact candidate records. A checked sequence
   validates narrow words and recovers exact two-limb sums before publication.
   The rectangular entry replays excluded pairs and their physical corrections.
-  Manual launch fields are available for device preflight.
+  Setup chooses a rectangular height from the cell and cutoff, measures the
+  unpinned launch fields at that height, and caches the winning launch.
