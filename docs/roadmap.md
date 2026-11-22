@@ -19,6 +19,9 @@ follows are in [principles.md](principles.md).
 
 The size sweeps of M3 take boxes of more than 99,999 waters (D339, #550).
 Features of classical MD (Section 5) continue between milestones.
+TOWERS (#931, D[towers]) has a rectangular rebuild and an ownership oracle
+in the compiler. The next stage lowers the screen, mask records and force
+loop from the pair region. Double precision is tracked in #937.
 
 Physical constants (#805): D394 centralizes C/C++
 definitions and derives native and expression coefficients from the exact

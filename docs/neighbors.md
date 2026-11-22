@@ -49,6 +49,18 @@ new with every build.
 
 ## 2. The build
 
+The rectangular TOWERS emitter in `TowersBuild.cpp` rebuilds at each
+evaluation. Its direct compiler entry, `add-towers-build`, specializes
+the number of particles, grid dimensions, axial reach and capacity. Setup
+computes the inverse periodic stencil. Insertion groups particles by cell.
+Sort/pack orders each cell by quarter-cell coordinates and stable particle
+ID, writes positions relative to the cell center, charges, types and the two
+ID maps, and scatters each occupied span to its owners. Empty spans have
+count zero. After an overflow, the reported maximum occupancy sizes a new
+allocation for a retry on the same frame. The host reference and device
+entries can also enumerate candidate multiplicities for validation.
+[Rectangular ownership](paper/04-neighbors.md#48-rectangular-tower-and-plate-ownership-dtowers)
+
 ### 2.1 Steps
 
 The host build is the IR template `lib/Runtime/Templates/NeighborsMatrix.mlir`.

@@ -1,5 +1,10 @@
 # Appendix A. The control file
 
+D[towers] stage (a) exposes the rectangular rebuild through a compiler
+pass. The planned explicit mixed-precision traversal and its
+`[execution] towers_unchecked = false` policy enter the control interface
+when the pair evaluator is qualified.
+
 D380 reserves internal configuration for the separate
 frame product program. No control-file key sets it, and no default, file
 format, checkpoint or overwrite behavior changes.

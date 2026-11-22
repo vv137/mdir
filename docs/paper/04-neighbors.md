@@ -1292,9 +1292,17 @@ home box and a half plate through the other's. The interaction box can
 contain neither atom. The outer tower extends the box by the cutoff in
 both axial directions. The outer plate has the thickness of the box and
 extends halfway around it, with edges rounded into quarter-cylinders of
-cutoff radius. This rounding defines the imported volume. Shaw varies
-the lateral-to-axial aspect ratio to minimize that volume and exports
-opposite forces to the two home boxes (pp. 1321–1325). [[Shaw2005]](references.md#shaw2005)
+cutoff radius. Shaw chooses the tower atom by smaller lateral base
+coordinate, first in $x$, then in $y$. For equal lateral bases the smaller
+$z$ supplies the plate. Either assignment works inside one home box.
+After evaluation the box exports opposite forces to both home boxes.
+
+For a square lateral base the two tower extensions contribute
+$2r_c b_{xy}^2$. The plate contributes two lateral face strips and
+rounded edges totaling a half disk times the layer height. Thus Shaw's
+import volume is $V_i = 2r_c b_{xy}^2 + 2r_c b_{xy} b_z + \pi r_c^2 b_z/2$.
+Minimizing it at fixed box volume favors shorter, wider boxes as the
+processor count rises (Eq. 1, pp. 1321–1325). [[Shaw2005]](references.md#shaw2005)
 
 For a rectangular cell at least as wide as the cutoff, a pair strictly
 inside the cutoff differs by at most one lateral bin on each axis after
