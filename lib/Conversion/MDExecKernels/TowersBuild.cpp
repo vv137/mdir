@@ -621,6 +621,12 @@ public:
                              exclusions ? regions.back()
                                         : mdir::md_exec::PairForOp{});
     };
+    if (!layout.host && directVirial && !exclusions && terms.front().getNumResults() == 1) {
+      auto tensor = dyn_cast<VectorType>(terms.front().getResult(0).getType());
+      if (tensor && tensor.getElementType().isF64() &&
+          (tensor.getNumElements() == 3 || tensor.getNumElements() == 9))
+        shape.virialYield = 1;
+    }
     if (failed(emit(terms, TowersOutput::Force)) ||
         (directVirial && failed(emit(terms, TowersOutput::Virial)))) {
       signalPassFailure();

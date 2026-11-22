@@ -31,7 +31,7 @@ public:
         TowersForceShape shape, bool probe, md_exec::PairForOp correction)
       : NeighborBuildCode(b, term.getLoc()), g(g), term(term),
         correction(correction), output(shape.output),
-        yieldIndex(shape.yieldIndex), exclusions(shape.exclusions),
+        yieldIndex(shape.yieldIndex), virialYield(shape.virialYield), exclusions(shape.exclusions),
         split(shape.split), panel(shape.panel), stripe(shape.stripe),
         workers(shape.workers), recordCap(shape.records),
         residency(shape.residency), groups(panel / 32),
@@ -45,10 +45,14 @@ private:
   md_exec::PairForOp term, correction;
   TowersOutput output;
   unsigned yieldIndex;
+  int virialYield;
+  Value fusedSum;
+  bool fused() const { return virialYield >= 0 && !observer() && !recovering; }
   bool virial() const {
     return output != TowersOutput::Force && output != TowersOutput::Energy;
   }
-  int virialComponents() const { return output == TowersOutput::TensorVirial ? 9 : 6; }
+  int virialComponents() { return (output == TowersOutput::TensorVirial ||
+    (fused() && cast<VectorType>(term.getKernel().front().getTerminator()->getOperand(virialYield).getType()).getNumElements() == 9)) ? 9 : 6; }
   bool observer() const { return output != TowersOutput::Force; }
   bool energy() const { return output == TowersOutput::Energy; }
   StringRef observerName() const {
@@ -232,6 +236,20 @@ Value Force::clonePair(Value t, Value s, Value ti, Value si, Value r2, Value d,
       inside.map(div.getResult(), r);
     } else
       b.clone(op, inside);
+  }
+  if (fused() && !excluding) {
+    auto accumulate = [&] {
+      Value v = inside.lookupOrDefault(body.getTerminator()->getOperand(virialYield));
+      int size = cast<VectorType>(v.getType()).getNumElements();
+      for (int a = 0; a < size; ++a) {
+        int j = size == 3 ? std::array{0, 3, 5}[a] : a;
+        store(addf(load(localSum, {cx(j)}), extract(v, a)), localSum, {cx(j)});
+      }
+    };
+    if (exclusions)
+      ifThen(notNarrow(isExcluded(load(id, {ti}), load(id, {si}))), accumulate);
+    else
+      accumulate();
   }
   return inside.lookupOrDefault(body.getTerminator()->getOperand(physical ? 0 : yieldIndex));
 }
@@ -696,7 +714,7 @@ void Force::ownedPairs(Value owner) {
 // Each lane accumulates one exact signed Q32 energy in two limbs. With fewer
 // than 2^26 atoms even the sum of all signed i64 pair words fits in 128 bits.
 void Force::startObservation() {
-  localSum = memref::AllocaOp::create(b, loc, cast<MemRefType>(types[4]));
+  localSum = memref::AllocaOp::create(b, loc, cast<MemRefType>(fused() ? fusedSum.getType() : types[4]));
   for (int j = 0; j < (energy() ? 2 : virialComponents()); ++j)
     store(energy() ? cl(0) : cd(0), localSum, {cx(j)});
 }
@@ -788,7 +806,7 @@ void Force::flushObservation() {
         }
         ifThen(cmpi(CmpIPredicate::eq, lane, ci(0)), [&] {
           atomic(LLVM::AtomicBinOp::fadd,
-                 pointerTo(baseAddress(words), cl(8 * j)), part);
+                 pointerTo(baseAddress(fused() ? fusedSum : words), cl(8 * j)), part);
         });
       }
     }
@@ -1743,7 +1761,7 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
                                   : observerName())
       : singleBlock ? "towers_recover_once"
       : recovering  ? "towers_recover"
-                    : "towers_force";
+                    : fused() ? "towers_force_virial" : "towers_force";
   auto fn = gpu::GPUFuncOp::create(b, loc, entryName,
                                    b.getFunctionType(entryTypes, {}));
   fn.setKernel(true);
@@ -1804,7 +1822,9 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
         b, loc, MemRefType::get({}, shortVote() ? i32 : i64));
     store(shortVote() ? ci(0) : cl(0), localVotes, {});
   }
-  if (observer())
+  if (fused())
+    fusedSum = entry.getArgument(types.size());
+  if (observer() || fused())
     startObservation();
   auto evaluate = [&] {
     auto tower = [&] {
@@ -1898,7 +1918,7 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
              pointerTo(baseAddress(failedConversions), cl(0)), count);
     });
   }
-  if (observer() && !singleBlock)
+  if ((observer() || fused()) && !singleBlock)
     flushObservation();
   mark(7);
   if (probe && !recovering)
@@ -2062,7 +2082,12 @@ LogicalResult Force::emit() {
       recordsGlobal = LLVM::GlobalOp::create(
           b, loc, LLVM::LLVMArrayType::get(i32, 0), false,
           LLVM::Linkage::External, "towers_records", Attribute(), 8, 3);
-    device(recordsGlobal, types);
+    if (fused()) {
+      auto fusedTypes = types;
+      fusedTypes.push_back(mem({virialComponents()}, f64));
+      device(recordsGlobal, fusedTypes);
+    } else
+      device(recordsGlobal, types);
     if (energy()) {
       recovering = true;
       auto replay = types;

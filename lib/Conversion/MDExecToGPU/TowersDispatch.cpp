@@ -274,6 +274,12 @@ LogicalResult Dispatch::run(Value positions) {
     host = memref::AllocaOp::create(
         top, loc, mem({int64_t(stride * op.getNumResults())}, dbl));
   }
+  Value fusedVirial;
+  for (auto [j, type] : llvm::enumerate(op.getResultTypes())) {
+    if (op.getOuts().size() == 1 && isa<VectorType>(type) &&
+        (components(type) == 3 || components(type) == 9))
+      shape.virialYield = 1 + j;
+  }
   Value observed;
   if (host)
     observed = buffer("observer", cast<MemRefType>(host.getType()));
@@ -305,7 +311,11 @@ LogicalResult Dispatch::run(Value positions) {
     Value words = force    ? buffer("force words", forceType)
                   : energy ? buffer("energy limbs", limbs)
                            : buffer("virial", mem({tensor ? 9 : 6}, dbl));
-    fill(words, force || energy ? wide : dbl);
+    bool reusedVirial = int(i) == shape.virialYield;
+    if (reusedVirial)
+      words = fusedVirial;
+    else
+      fill(words, force || energy ? wide : dbl);
     double scale = force ? 0x1p18 : energy ? 0x1p32 : 1.0;
     SmallVector<Value> args{spans,
                             packed,
@@ -322,12 +332,21 @@ LogicalResult Dispatch::run(Value positions) {
     int64_t blocks = int64_t(g.cells()) * shape.split +
                      llvm::divideCeil(shape.exclusions, shape.workers);
     int shared = 8 * shape.records;
-    launch(force    ? "towers_force"
+    if (force && shape.virialYield >= 0) {
+      bool full = components(op.getResult(shape.virialYield - 1).getType()) == 9;
+      fusedVirial = buffer("fused virial", mem({full ? 9 : 6}, dbl));
+      fill(fusedVirial, dbl);
+      args.push_back(fusedVirial);
+    }
+    if (!reusedVirial)
+      launch(force    ? (fusedVirial ? "towers_force_virial" : "towers_force")
            : energy ? "towers_energy"
                     : "towers_virial",
            blocks * shape.workers, shape.workers, args, shared);
     Value result;
     if (force) {
+      if (fusedVirial)
+        args.pop_back();
       launch("towers_certify", n, 128, {words, failedConversions, state});
       Value lo = buffer("wide force low", forceType);
       Value hi = buffer("wide force high", forceType);
