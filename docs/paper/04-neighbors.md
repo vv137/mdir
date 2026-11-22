@@ -1325,3 +1325,19 @@ become opposite integer words, with a certificate on the final sums and
 exact recovery. Blind evaluation and exact cancellation handle exclusions.
 The triclinic extension uses perpendicular face heights. Setup measures
 the launch shape and cell height on the device.
+
+The rectangular force entry realizes the screen in the owning box's image.
+It rounds the scaled positions to a lattice and rounds the encoded source
+squared norm downward. A padded distance threshold accounts for the endpoint
+rounding. Each surviving record holds a source mask and a header identifying
+the target, source group and candidate prefix. Dividing the prefix range
+among workers assigns each set bit to one worker. The worker retests the
+distance in binary32 before evaluating the antisymmetric pair region.
+A stripe that exceeds record capacity is split before any endpoint update.
+
+One nearest-even rounding of each scaled force component supplies both
+endpoints with opposite integer contributions. A tile accumulates the low
+and high parts separately in block memory. A component outside the fast
+signed 32-bit range takes the signed 64-bit global path for both endpoints.
+The resulting blind force still requires exclusion corrections and a bound
+on the final sums before it can serve as a certified molecular force.

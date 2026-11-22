@@ -61,6 +61,22 @@ allocation for a retry on the same frame. The host reference and device
 entries can also enumerate candidate multiplicities for validation.
 [Rectangular ownership](paper/04-neighbors.md#48-rectangular-tower-and-plate-ownership-dtowers)
 
+The optional `force-body` pass argument names a function containing a mixed
+`md_exec.pair_for` with one antisymmetric vector force. The rectangular
+GPU entry imports per-atom fields by particle ID, screens the staged tile,
+and evaluates the original pair region for candidates inside its strict
+cutoff. Small read-only coefficient tables can be staged with the tile.
+`force-panel`, `force-stripe`, `force-workers` and `force-records` specialize
+the test entry. Launch one block per tower with the selected worker count
+and eight bytes of dynamic shared memory per record. The optional
+`force-residency` launch bound targets one or two resident blocks per SM. A caller supplies
+zeroed signed 64-bit force words and a zeroed status word. Status bit 0
+reports an unrepresentable pair component and bit 1 rejects the geometry or
+scale. The caller discards the result on either error. These words precede
+exclusion corrections and certification. The optional GPU `probe-force`
+entry additionally writes eight phase durations in cycles per tower, wall
+time in nanoseconds, the final cycle timestamp and the number of tile attempts.
+
 ### 2.1 Steps
 
 The host build is the IR template `lib/Runtime/Templates/NeighborsMatrix.mlir`.

@@ -157,3 +157,10 @@ arithmetic and validation of the accumulation scale. Deterministic mode
 remains ineligible until every requested output passes bitwise comparisons
 across both launch shapes and restarts. Once qualified, it always uses
 certified steps.
+
+The direct compiler entry now emits the rectangular blind force stage from
+one antisymmetric pair region. Its CPU implementation enumerates owned spans.
+Its GPU implementation uses a conservative screen and distributes the set
+bits of its mask records across the block. A record-capacity retry divides
+the target stripe before any force is committed for that tile. Exclusions,
+certification, recovery and driver integration are subsequent stages.
