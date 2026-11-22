@@ -19,10 +19,13 @@ follows are in [principles.md](principles.md).
 
 The size sweeps of M3 take boxes of more than 99,999 waters (D339, #550).
 Features of classical MD (Section 5) continue between milestones.
-TOWERS (#931, D[towers]) has a rectangular rebuild and a mixed-precision force entry
-in the compiler. It screens rectangular tiles, builds mask records and evaluates
-the force pair region. The checked force certifies narrow sums and replays failed
-evaluations into two limbs before publication. The rectangular force cancels excluded direct words and votes and applies the physical corrections. Rectangular preflight selects a system-only height and checks compiled occupancy. Optional mixed energy and direct virial entries reuse the rectangular packing. Setup times the rectangular launch candidates at the selected height and caches the winner. Driver dispatch follows. Double precision is tracked in #937.
+TOWERS (#931, D[towers]) rebuilds rectangular and fractional triclinic
+grids and evaluates mixed-precision force, energy and direct virial
+through compiler entries. The certified path checks narrow sums and
+recovers into two limbs before publication. Exclusion replay uses the
+closest periodic image. Setup chooses the height from the system, times
+launches at that height and caches the winner. Moving-step dispatch and
+its whole-step comparison remain open. Double precision is tracked in #937.
 
 Physical constants (#805): D394 centralizes C/C++
 definitions and derives native and expression coefficients from the exact

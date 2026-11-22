@@ -1,7 +1,7 @@
 # Appendix A. The control file
 
-D[towers] exposes the rectangular rebuild, checked direct force and wide recovery
-through a compiler pass. The planned explicit mixed-precision traversal and its
+D[towers] exposes periodic rebuild, checked direct force, energy, virial
+and wide recovery through compiler entries for rectangular and triclinic grids. The planned explicit mixed-precision traversal and its
 `[execution] towers_unchecked = false` policy enter the control interface
 when the pair evaluator is qualified.
 
