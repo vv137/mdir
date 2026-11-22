@@ -39,18 +39,18 @@ void DevicePME::emitScale(StringRef symbol) {
   Value c1 = arith::ConstantIndexOp::create(b, loc, 1);
   Value pe;
   if constexpr (splitting == Splitting::Radial) {
-    Value pk12 = arith::AddIOp::create(b, loc, k1, k2);
-    Value pk123 = arith::AddIOp::create(b, loc, pk12, k3);
+    Value pk12 = addi(k1, k2);
+    Value pk123 = addi(pk12, k3);
     Value pc3 = arith::ConstantIndexOp::create(b, loc, 3);
-    pe = arith::MulIOp::create(b, loc, pk123, pc3);
+    pe = muli(pk123, pc3);
   }
   Value c2 = arith::ConstantIndexOp::create(b, loc, 2);
   Value c128 = arith::ConstantIndexOp::create(b, loc, 128);
   Value pi2 = arith::ConstantOp::create(
       b, loc, b.getFloatAttr(f64Type, 9.869604401089358));
-  Value lx = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{0});
-  Value ly = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{1});
-  Value lz = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{2});
+  Value lx = extract(box, 0);
+  Value ly = extract(box, 1);
+  Value lz = extract(box, 2);
   Value h00r;
   Value h10r;
   Value h11r;
@@ -58,26 +58,7 @@ void DevicePME::emitScale(StringRef symbol) {
   Value h21r;
   Value h22r;
   if constexpr (tilted) {
-    Value tbx = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{3});
-    Value tcx = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{4});
-    Value tcy = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{5});
-    Value hunit =
-        arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 1.0));
-    Value h00 = arith::DivFOp::create(b, loc, hunit, lx);
-    Value h11 = arith::DivFOp::create(b, loc, hunit, ly);
-    Value h22 = arith::DivFOp::create(b, loc, hunit, lz);
-    Value h10a = arith::MulFOp::create(b, loc, tbx, h00);
-    Value h10b = arith::MulFOp::create(b, loc, h10a, h11);
-    Value h10 = arith::NegFOp::create(b, loc, h10b);
-    Value h21a = arith::MulFOp::create(b, loc, tcy, h11);
-    Value h21b = arith::MulFOp::create(b, loc, h21a, h22);
-    Value h21 = arith::NegFOp::create(b, loc, h21b);
-    Value h20a = arith::MulFOp::create(b, loc, tbx, tcy);
-    Value h20b = arith::MulFOp::create(b, loc, ly, tcx);
-    Value h20c = arith::SubFOp::create(b, loc, h20a, h20b);
-    Value h20d = arith::MulFOp::create(b, loc, h20c, h00);
-    Value h20e = arith::MulFOp::create(b, loc, h20d, h11);
-    Value h20 = arith::MulFOp::create(b, loc, h20e, h22);
+    auto [h00, h10, h11, h20, h21, h22] = inverseCell(box, lx, ly, lz);
     h00r = convert(realType, h00);
     h10r = convert(realType, h10);
     h11r = convert(realType, h11);
@@ -85,16 +66,16 @@ void DevicePME::emitScale(StringRef symbol) {
     h21r = convert(realType, h21);
     h22r = convert(realType, h22);
   }
-  Value beta2 = arith::MulFOp::create(b, loc, beta, beta);
-  Value gauss = arith::DivFOp::create(b, loc, pi2, beta2);
+  Value beta2 = mulf(beta, beta);
+  Value gauss = divf(pi2, beta2);
   Value pi = arith::ConstantOp::create(
       b, loc, b.getFloatAttr(f64Type, 3.141592653589793));
-  Value lxy = arith::MulFOp::create(b, loc, lx, ly);
-  Value volume = arith::MulFOp::create(b, loc, lxy, lz);
-  Value piv = arith::MulFOp::create(b, loc, pi, volume);
+  Value lxy = mulf(lx, ly);
+  Value volume = mulf(lxy, lz);
+  Value piv = mulf(pi, volume);
   Value prefactor;
   if constexpr (splitting == Splitting::Gaussian) {
-    prefactor = arith::DivFOp::create(b, loc, coulomb, piv);
+    prefactor = divf(coulomb, piv);
   }
   Value pibr;
   Value sqrtpir;
@@ -103,39 +84,39 @@ void DevicePME::emitScale(StringRef symbol) {
                 splitting == Splitting::Dispersion) {
     Value pi32 = arith::ConstantOp::create(
         b, loc, b.getFloatAttr(f64Type, 5.568327996831708));
-    Value beta3 = arith::MulFOp::create(b, loc, beta2, beta);
-    Value pb3 = arith::MulFOp::create(b, loc, pi32, beta3);
+    Value beta3 = mulf(beta2, beta);
+    Value pb3 = mulf(pi32, beta3);
     Value three =
         arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 3.0));
-    Value v3 = arith::MulFOp::create(b, loc, three, volume);
-    Value pd0 = arith::DivFOp::create(b, loc, pb3, v3);
-    Value pdc = arith::MulFOp::create(b, loc, pd0, coulomb);
+    Value v3 = mulf(three, volume);
+    Value pd0 = divf(pb3, v3);
+    Value pdc = mulf(pd0, coulomb);
     prefactor = arith::NegFOp::create(b, loc, pdc);
-    Value pib = arith::DivFOp::create(b, loc, pi, beta);
+    Value pib = divf(pi, beta);
     pibr = convert(realType, pib);
     Value sqrtpi = arith::ConstantOp::create(
         b, loc, b.getFloatAttr(f64Type, 1.7724538509055159));
     sqrtpir = convert(realType, sqrtpi);
     Value six = arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 6.0));
-    Value sixgauss = arith::MulFOp::create(b, loc, six, gauss);
+    Value sixgauss = mulf(six, gauss);
     sixgaussr = convert(realType, sixgauss);
   }
   Value gaussr = convert(realType, gauss);
   convert(realType, prefactor);
-  Value rows = arith::MulIOp::create(b, loc, k1, k2);
+  Value rows = muli(k1, k2);
   Value c3t = arith::ConstantIndexOp::create(b, loc, 3);
-  Value ty0 = arith::MulIOp::create(b, loc, k1, c3t);
-  Value k2_3 = arith::MulIOp::create(b, loc, k2, c3t);
-  Value tz0 = arith::AddIOp::create(b, loc, ty0, k2_3);
-  Value half = arith::DivUIOp::create(b, loc, k3, c2);
-  Value depth = arith::AddIOp::create(b, loc, half, c1);
-  Value points = arith::MulIOp::create(b, loc, rows, depth);
-  Value depth32 = arith::IndexCastOp::create(b, loc, i32Type, depth);
-  Value k2_32 = arith::IndexCastOp::create(b, loc, i32Type, k2);
+  Value ty0 = muli(k1, c3t);
+  Value k2_3 = muli(k2, c3t);
+  Value tz0 = addi(ty0, k2_3);
+  Value half = divui(k3, c2);
+  Value depth = addi(half, c1);
+  Value points = muli(rows, depth);
+  Value depth32 = indexCast(i32Type, depth);
+  Value k2_32 = indexCast(i32Type, k2);
   Value unit = arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 1.0));
-  Value ilx = arith::DivFOp::create(b, loc, unit, lx);
-  Value ily = arith::DivFOp::create(b, loc, unit, ly);
-  Value ilz = arith::DivFOp::create(b, loc, unit, lz);
+  Value ilx = divf(unit, lx);
+  Value ily = divf(unit, ly);
+  Value ilz = divf(unit, lz);
   convert(realType, ilx);
   convert(realType, ily);
   convert(realType, ilz);
@@ -150,10 +131,9 @@ void DevicePME::emitScale(StringRef symbol) {
     b.setInsertionPointToStart(&launch.getBody().front());
     Value bx = launch.getBlockIds().x;
     Value tx = launch.getThreadIds().x;
-    Value base = arith::MulIOp::create(b, loc, bx, c128);
-    Value item = arith::AddIOp::create(b, loc, base, tx);
-    Value inside =
-        arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, item, points);
+    Value base = muli(bx, c128);
+    Value item = addi(base, tx);
+    Value inside = cmpi(arith::CmpIPredicate::ult, item, points);
     auto insideBranch =
         scf::IfOp::create(b, loc, TypeRange{}, inside, true, false);
     {
@@ -164,14 +144,14 @@ void DevicePME::emitScale(StringRef symbol) {
       Value cc2 = arith::ConstantIndexOp::create(b, loc, 2);
       arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 0.0));
       arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 1.0));
-      Value item32 = arith::IndexCastOp::create(b, loc, i32Type, item);
-      Value row32 = arith::DivUIOp::create(b, loc, item32, depth32);
-      Value z32 = arith::RemUIOp::create(b, loc, item32, depth32);
-      Value a32 = arith::DivUIOp::create(b, loc, row32, k2_32);
-      Value b32 = arith::RemUIOp::create(b, loc, row32, k2_32);
-      Value z = arith::IndexCastOp::create(b, loc, idxType, z32);
-      Value a = arith::IndexCastOp::create(b, loc, idxType, a32);
-      Value accB = arith::IndexCastOp::create(b, loc, idxType, b32);
+      Value item32 = indexCast(i32Type, item);
+      Value row32 = divui(item32, depth32);
+      Value z32 = remui(item32, depth32);
+      Value a32 = divui(row32, k2_32);
+      Value b32 = remui(row32, k2_32);
+      Value z = indexCast(idxType, z32);
+      Value a = indexCast(idxType, a32);
+      Value accB = indexCast(idxType, b32);
       Value rzero =
           arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 0.0));
       Value rone =
@@ -179,22 +159,22 @@ void DevicePME::emitScale(StringRef symbol) {
       Value m1s;
       Value t1;
       if constexpr (!tilted) {
-        Value tbx1 = arith::AddIOp::create(b, loc, a, k1);
-        Value tbx2 = arith::AddIOp::create(b, loc, tbx1, k1);
+        Value tbx1 = addi(a, k1);
+        Value tbx2 = addi(tbx1, k1);
         load(tables, {a});
         m1s = load(tables, {tbx1});
         t1 = load(tables, {tbx2});
       }
       Value n1;
       if constexpr (tilted) {
-        Value tbx2 = arith::AddIOp::create(b, loc, a, k1);
-        Value tbx2b = arith::AddIOp::create(b, loc, tbx2, k1);
+        Value tbx2 = addi(a, k1);
+        Value tbx2b = addi(tbx2, k1);
         n1 = load(tables, {a});
         t1 = load(tables, {tbx2b});
       }
-      Value tby0 = arith::AddIOp::create(b, loc, ty0, accB);
-      Value tby1 = arith::AddIOp::create(b, loc, tby0, k2);
-      Value tby2 = arith::AddIOp::create(b, loc, tby1, k2);
+      Value tby0 = addi(ty0, accB);
+      Value tby1 = addi(tby0, k2);
+      Value tby2 = addi(tby1, k2);
       Value m2s;
       if constexpr (!tilted) {
         load(tables, {tby0});
@@ -205,9 +185,9 @@ void DevicePME::emitScale(StringRef symbol) {
         n2 = load(tables, {tby0});
       }
       Value t2 = load(tables, {tby2});
-      Value tbz0 = arith::AddIOp::create(b, loc, tz0, z);
-      Value tbz1 = arith::AddIOp::create(b, loc, tbz0, k3);
-      Value tbz2 = arith::AddIOp::create(b, loc, tbz1, k3);
+      Value tbz0 = addi(tz0, z);
+      Value tbz1 = addi(tbz0, k3);
+      Value tbz2 = addi(tbz1, k3);
       Value m3s;
       if constexpr (!tilted) {
         load(tables, {tbz0});
@@ -219,21 +199,21 @@ void DevicePME::emitScale(StringRef symbol) {
       }
       Value t3 = load(tables, {tbz2});
       if constexpr (tilted) {
-        Value m1 = arith::MulFOp::create(b, loc, h00r, n1);
-        Value m2a = arith::MulFOp::create(b, loc, h10r, n1);
-        Value m2b = arith::MulFOp::create(b, loc, h11r, n2);
-        Value m2 = arith::AddFOp::create(b, loc, m2a, m2b);
-        Value m3a = arith::MulFOp::create(b, loc, h20r, n1);
-        Value m3b = arith::MulFOp::create(b, loc, h21r, n2);
-        Value m3c = arith::MulFOp::create(b, loc, h22r, n3);
-        Value m3ab = arith::AddFOp::create(b, loc, m3a, m3b);
-        Value m3 = arith::AddFOp::create(b, loc, m3ab, m3c);
-        m1s = arith::MulFOp::create(b, loc, m1, m1);
-        m2s = arith::MulFOp::create(b, loc, m2, m2);
-        m3s = arith::MulFOp::create(b, loc, m3, m3);
+        Value m1 = mulf(h00r, n1);
+        Value m2a = mulf(h10r, n1);
+        Value m2b = mulf(h11r, n2);
+        Value m2 = addf(m2a, m2b);
+        Value m3a = mulf(h20r, n1);
+        Value m3b = mulf(h21r, n2);
+        Value m3c = mulf(h22r, n3);
+        Value m3ab = addf(m3a, m3b);
+        Value m3 = addf(m3ab, m3c);
+        m1s = mulf(m1, m1);
+        m2s = mulf(m2, m2);
+        m3s = mulf(m3, m3);
       }
-      Value m12 = arith::AddFOp::create(b, loc, m1s, m2s);
-      Value msqr = arith::AddFOp::create(b, loc, m12, m3s);
+      Value m12 = addf(m1s, m2s);
+      Value msqr = addf(m12, m3s);
       Influence influence;
       if constexpr (splitting == Splitting::Gaussian && !tilted) {
         influence = gaussianInfluence(msqr, rzero, rone, t1, t2, t3);
@@ -250,12 +230,12 @@ void DevicePME::emitScale(StringRef symbol) {
         influence = radialInfluence(tables, pe, cc1, msqr, rone, t1, t2, t3);
       }
       Value bc = influence.factor;
-      Value re_at = arith::MulIOp::create(b, loc, item, cc2);
-      Value im_at = arith::AddIOp::create(b, loc, re_at, cc1);
+      Value re_at = muli(item, cc2);
+      Value im_at = addi(re_at, cc1);
       Value re = load(c, {re_at});
       Value im = load(c, {im_at});
-      Value reb = arith::MulFOp::create(b, loc, re, bc);
-      Value imb = arith::MulFOp::create(b, loc, im, bc);
+      Value reb = mulf(re, bc);
+      Value imb = mulf(im, bc);
       store(reb, c, {re_at});
       store(imb, c, {im_at});
       scf::YieldOp::create(b, loc);

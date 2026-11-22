@@ -26,9 +26,9 @@ void DevicePME::emitCoefficients(StringRef symbol) {
   Value c1 = arith::ConstantIndexOp::create(b, loc, 1);
   Value c256 = arith::ConstantIndexOp::create(b, loc, 256);
   Value c3 = arith::ConstantIndexOp::create(b, loc, 3);
-  Value k12 = arith::AddIOp::create(b, loc, k1, k2);
-  Value k123 = arith::AddIOp::create(b, loc, k12, k3);
-  Value pe = arith::MulIOp::create(b, loc, k123, c3);
+  Value k12 = addi(k1, k2);
+  Value k123 = addi(k12, k3);
+  Value pe = muli(k123, c3);
   {
     auto launch = gpu::LaunchOp::create(b, loc, c1, c1, c1, c256, c1, c1);
     OpBuilder::InsertionGuard guard(b);
@@ -45,33 +45,29 @@ void DevicePME::emitCoefficients(StringRef symbol) {
     Value df = load(moduli, {i4, i0});
     Value nf = load(moduli, {i4, i2});
     Value scale = load(moduli, {i4, i3});
-    Value di = arith::FPToSIOp::create(b, loc, i64Type, df);
-    Value d = arith::IndexCastOp::create(b, loc, idxType, di);
-    Value ni = arith::FPToSIOp::create(b, loc, i64Type, nf);
-    Value n = arith::IndexCastOp::create(b, loc, idxType, ni);
-    Value n2 = arith::AddIOp::create(b, loc, n, n);
-    Value pd = arith::MulIOp::create(b, loc, points, d);
-    Value pd2 = arith::AddIOp::create(b, loc, pd, pd);
-    Value series = arith::AddIOp::create(b, loc, i3, n2);
-    Value count = arith::AddIOp::create(b, loc, series, pd2);
+    Value di = fptosi(i64Type, df);
+    Value d = indexCast(idxType, di);
+    Value ni = fptosi(i64Type, nf);
+    Value n = indexCast(idxType, ni);
+    Value n2 = addi(n, n);
+    Value pd = muli(points, d);
+    Value pd2 = addi(pd, pd);
+    Value series = addi(i3, n2);
+    Value count = addi(series, pd2);
     scf::ForOp::create(
         b, loc, tx, count, i256, ValueRange{},
         [&](OpBuilder &b, Location, Value t, ValueRange carried) {
-          Value meta =
-              arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, t, i3);
-          Value influence = arith::CmpIOp::create(
-              b, loc, arith::CmpIPredicate::ult, t, series);
+          Value meta = cmpi(arith::CmpIPredicate::ult, t, i3);
+          Value influence = cmpi(arith::CmpIPredicate::ult, t, series);
           auto valueOp =
               scf::IfOp::create(b, loc, TypeRange{f64Type}, meta, true, true);
           {
             OpBuilder::InsertionGuard guard(b);
             b.setInsertionPointToStart(valueOp.thenBlock());
-            Value is_n =
-                arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq, t, i0);
-            Value is_scale =
-                arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq, t, i1);
-            Value v0 = arith::SelectOp::create(b, loc, is_scale, scale, df);
-            Value v = arith::SelectOp::create(b, loc, is_n, nf, v0);
+            Value is_n = cmpi(arith::CmpIPredicate::eq, t, i0);
+            Value is_scale = cmpi(arith::CmpIPredicate::eq, t, i1);
+            Value v0 = select(is_scale, scale, df);
+            Value v = select(is_n, nf, v0);
             scf::YieldOp::create(b, loc, ValueRange{v});
           }
           {
@@ -82,23 +78,23 @@ void DevicePME::emitCoefficients(StringRef symbol) {
             {
               OpBuilder::InsertionGuard guard(b);
               b.setInsertionPointToStart(vOp.thenBlock());
-              Value u = arith::SubIOp::create(b, loc, t, i3);
-              Value col = arith::AddIOp::create(b, loc, u, i4);
+              Value u = subi(t, i3);
+              Value col = addi(u, i4);
               Value a = load(moduli, {i4, col});
               scf::YieldOp::create(b, loc, ValueRange{a});
             }
             {
               OpBuilder::InsertionGuard guard(b);
               b.setInsertionPointToStart(vOp.elseBlock());
-              Value u0 = arith::SubIOp::create(b, loc, t, series);
-              Value which = arith::DivUIOp::create(b, loc, u0, pd);
-              Value r = arith::RemUIOp::create(b, loc, u0, pd);
-              Value k = arith::DivUIOp::create(b, loc, r, points);
-              Value j = arith::RemUIOp::create(b, loc, r, points);
-              Value w0 = arith::MulIOp::create(b, loc, which, pd);
-              Value j0 = arith::MulIOp::create(b, loc, j, d);
-              Value w1 = arith::AddIOp::create(b, loc, w0, j0);
-              Value col = arith::AddIOp::create(b, loc, w1, k);
+              Value u0 = subi(t, series);
+              Value which = divui(u0, pd);
+              Value r = remui(u0, pd);
+              Value k = divui(r, points);
+              Value j = remui(r, points);
+              Value w0 = muli(which, pd);
+              Value j0 = muli(j, d);
+              Value w1 = addi(w0, j0);
+              Value col = addi(w1, k);
               Value a = load(moduli, {i3, col});
               scf::YieldOp::create(b, loc, ValueRange{a});
             }
@@ -107,7 +103,7 @@ void DevicePME::emitCoefficients(StringRef symbol) {
           }
           Value value = valueOp.getResult(0);
           Value vr = convert(realType, value);
-          Value at = arith::AddIOp::create(b, loc, pe, t);
+          Value at = addi(pe, t);
           store(vr, tables, {at});
           scf::YieldOp::create(b, loc);
         });

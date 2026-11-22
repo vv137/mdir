@@ -1,6 +1,7 @@
 // Typed builders of the reciprocal sum on a device [Essmann1995, Liang2026].
 #pragma once
 #include "../MDExecKernels/PMECode.h"
+#include "../MDExecKernels/ShuffleLane.h"
 #include "mdir/Dialect/MDAlg/MDAlgOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -46,6 +47,9 @@ private:
     return n * n * n;
   }
   MemRefType tileType(int edge) { return shared(tilePoints(edge), realType); }
+  Value laneValue(gpu::ShuffleMode mode, Value v, Value offset, Value width) {
+    return detail::shuffleLane(b, loc, mode, v, offset, width).first;
+  }
   Value sumBlock(Value value) {
     auto add = gpu::AllReduceOperationAttr::get(b.getContext(),
                                                 gpu::AllReduceOperation::ADD);
@@ -68,14 +72,21 @@ private:
   void addShared(Value tile, Value at, Value value) {
     Value base = memref::ExtractAlignedPointerAsIndexOp::create(b, loc, tile);
     Value size = arith::ConstantIndexOp::create(b, loc, realBytes);
-    Value offset = arith::MulIOp::create(b, loc, at, size);
-    Value address = arith::AddIOp::create(b, loc, base, offset);
-    Value integer = arith::IndexCastOp::create(b, loc, i64Type, address);
+    Value offset = muli(at, size);
+    Value address = addi(base, offset);
+    Value integer = indexCast(i64Type, address);
     Value pointer = LLVM::IntToPtrOp::create(
         b, loc, LLVM::LLVMPointerType::get(b.getContext(), 3), integer);
     LLVM::AtomicRMWOp::create(b, loc, LLVM::AtomicBinOp::fadd, pointer, value,
                               LLVM::AtomicOrdering::monotonic, "block");
   }
+  struct LaneWindow {
+    Value weight, slope, axis, zero, one;
+  };
+  LaneWindow laneWindow(Value lane, Value i, Value places, Value tables,
+                        Value n_all, Value pe, Value c0w, Value two_i,
+                        Value three_i, bool slopes);
+  Value placementStart(Value places, Value n, Value i, int axis);
   void splineWeights(Value fraction, Value pointCount, Value weights,
                      Value slopes = {});
   std::pair<Value, Value> placeAxis(Value coordinate, Value inverseLength,

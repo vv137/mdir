@@ -33,10 +33,9 @@ void DevicePME::emitReal(StringRef symbol) {
     b.setInsertionPointToStart(&launch.getBody().front());
     Value bx = launch.getBlockIds().x;
     Value tx = launch.getThreadIds().x;
-    Value base = arith::MulIOp::create(b, loc, bx, c128);
-    Value item = arith::AddIOp::create(b, loc, base, tx);
-    Value inside =
-        arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, item, points);
+    Value base = muli(bx, c128);
+    Value item = addi(base, tx);
+    Value inside = cmpi(arith::CmpIPredicate::ult, item, points);
     auto insideBranch =
         scf::IfOp::create(b, loc, TypeRange{}, inside, true, false);
     {
@@ -45,8 +44,8 @@ void DevicePME::emitReal(StringRef symbol) {
       Value inverse = arith::ConstantOp::create(
           b, loc, b.getFloatAttr(realType, 9.094947017729282e-13));
       Value fixed = load(grid, {item});
-      Value value = arith::SIToFPOp::create(b, loc, realType, fixed);
-      Value scaled = arith::MulFOp::create(b, loc, value, inverse);
+      Value value = sitofp(realType, fixed);
+      Value scaled = mulf(value, inverse);
       store(scaled, realBuffer, {item});
       scf::YieldOp::create(b, loc);
     }

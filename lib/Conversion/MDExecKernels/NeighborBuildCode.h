@@ -1,7 +1,8 @@
 // Shared MLIR builders for GPU neighbor searches.
 #pragma once
 
-#include "MemoryAccess.h"
+#include "KernelCode.h"
+#include "ShuffleLane.h"
 #include "mdir/Dialect/MDAlg/MDAlgOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -23,10 +24,10 @@ using arith::CmpIPredicate;
 /// Every op is created by a statement of its own: the order of the
 /// arguments of a call in C++ is not fixed, and the order of the ops is
 /// that of the code.
-class NeighborBuildCode : public MemoryAccess {
+class NeighborBuildCode : public KernelCode {
 public:
   NeighborBuildCode(OpBuilder &b, Location loc)
-      : MemoryAccess(b, loc), context(b.getContext()), i1(b.getI1Type()),
+      : KernelCode(b, loc), context(b.getContext()), i1(b.getI1Type()),
         i32(b.getI32Type()), i64(b.getI64Type()), index(b.getIndexType()),
         f32(b.getF32Type()), f64(b.getF64Type()) {
     Attribute global = b.getI64IntegerAttr(1);
@@ -77,35 +78,6 @@ public:
     return arith::ConstantOp::create(b, loc, f64, b.getFloatAttr(f64, v));
   }
 
-  // Arithmetic.
-#define MDIR_BINARY(name, Op)                                                  \
-  Value name(Value x, Value y) { return arith::Op::create(b, loc, x, y); }
-  MDIR_BINARY(addi, AddIOp)
-  MDIR_BINARY(subi, SubIOp)
-  MDIR_BINARY(muli, MulIOp)
-  MDIR_BINARY(divui, DivUIOp)
-  MDIR_BINARY(divsi, DivSIOp)
-  MDIR_BINARY(remui, RemUIOp)
-  MDIR_BINARY(remsi, RemSIOp)
-  MDIR_BINARY(andi, AndIOp)
-  MDIR_BINARY(ori, OrIOp)
-  MDIR_BINARY(xori, XOrIOp)
-  MDIR_BINARY(shli, ShLIOp)
-  MDIR_BINARY(shrui, ShRUIOp)
-  MDIR_BINARY(shrsi, ShRSIOp)
-  MDIR_BINARY(minsi, MinSIOp)
-  MDIR_BINARY(maxsi, MaxSIOp)
-  MDIR_BINARY(minui, MinUIOp)
-  MDIR_BINARY(maxui, MaxUIOp)
-  MDIR_BINARY(addf, AddFOp)
-  MDIR_BINARY(subf, SubFOp)
-  MDIR_BINARY(mulf, MulFOp)
-  MDIR_BINARY(divf, DivFOp)
-  MDIR_BINARY(maximumf, MaximumFOp)
-  MDIR_BINARY(minimumf, MinimumFOp)
-  MDIR_BINARY(maxnumf, MaxNumFOp)
-  MDIR_BINARY(minnumf, MinNumFOp)
-#undef MDIR_BINARY
   /// The gap along an axis between the slab of the cells `row` (signed, in
   /// cells of `cell`) and the box of center `center` and half width
   /// `half`: zero where they overlap.
@@ -145,24 +117,6 @@ public:
     Value up = addi(q, one);
     return select(positive, up, q);
   }
-  Value cmpi(CmpIPredicate p, Value x, Value y) {
-    return arith::CmpIOp::create(b, loc, p, x, y);
-  }
-  Value cmpf(CmpFPredicate p, Value x, Value y) {
-    return arith::CmpFOp::create(b, loc, p, x, y);
-  }
-  Value select(Value c, Value x, Value y) {
-    return arith::SelectOp::create(b, loc, c, x, y);
-  }
-  Value indexCast(Type type, Value v) {
-    return arith::IndexCastOp::create(b, loc, type, v);
-  }
-  Value sitofp(Type type, Value v) {
-    return arith::SIToFPOp::create(b, loc, type, v);
-  }
-  Value fptosi(Type type, Value v) {
-    return arith::FPToSIOp::create(b, loc, type, v);
-  }
   Value truncf(Value v) { return arith::TruncFOp::create(b, loc, f32, v); }
   Value trunci(Value v) { return arith::TruncIOp::create(b, loc, i32, v); }
   Value extui(Value v) { return arith::ExtUIOp::create(b, loc, i32, v); }
@@ -190,15 +144,10 @@ public:
     Value cast = memref::MemorySpaceCastOp::create(b, loc, plain, memref);
     gpu::DeallocOp::create(b, loc, /*asyncToken=*/Type(), ValueRange{}, cast);
   }
-  Value extract(Value vector, int64_t at) {
-    return vector::ExtractOp::create(b, loc, vector, ArrayRef<int64_t>{at});
-  }
-
   // The device.
   std::pair<Value, Value> shuffle(gpu::ShuffleMode mode, Value v, Value offset,
                                   Value width) {
-    auto op = gpu::ShuffleOp::create(b, loc, v, offset, width, mode);
-    return {op.getShuffleResult(), op.getValid()};
+    return shuffleLane(b, loc, mode, v, offset, width);
   }
   void warpSync(Value mask) { NVVM::SyncWarpOp::create(b, loc, mask); }
   /// The address of `memref` plus `offset` bytes (an i64 already made),

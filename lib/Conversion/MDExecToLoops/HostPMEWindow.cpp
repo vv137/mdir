@@ -147,25 +147,10 @@ void HostPME::emitClenshaw() {
   Value c0 = arith::ConstantIndexOp::create(b, loc, 0);
   Value c1 = arith::ConstantIndexOp::create(b, loc, 1);
   Value zero = arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 0.0));
-  auto b1Op = scf::ForOp::create(
-      b, loc, c1, count, c1, ValueRange{zero, zero},
-      [&](OpBuilder &b, Location, Value i, ValueRange carried) {
-        Value p1 = carried[0];
-        Value p2 = carried[1];
-        Value k = arith::SubIOp::create(b, loc, count, i);
-        Value ak = arith::AddIOp::create(b, loc, at, k);
-        Value a = load(moduli, {row, ak});
-        Value m = arith::MulFOp::create(b, loc, t2, p1);
-        Value s = arith::SubFOp::create(b, loc, m, p2);
-        Value accB = arith::AddFOp::create(b, loc, s, a);
-        scf::YieldOp::create(b, loc, ValueRange{accB, p1});
-      });
-  Value b1 = b1Op.getResult(0);
-  Value b2 = b1Op.getResult(1);
-  Value a0 = load(moduli, {row, at});
-  Value m0 = arith::MulFOp::create(b, loc, t, b1);
-  Value s0 = arith::SubFOp::create(b, loc, m0, b2);
-  Value v = arith::AddFOp::create(b, loc, s0, a0);
+  Value v = evaluateSeries(count, c1, t, t2, zero, [&](Value k) {
+    Value column = k ? arith::AddIOp::create(b, loc, at, k).getResult() : at;
+    return load(moduli, {row, column});
+  });
   func::ReturnOp::create(b, loc, ValueRange{v});
 }
 
@@ -184,42 +169,11 @@ void HostPME::emitSpline() {
   Value n = entry->getArgument(1);
   Value values = entry->getArgument(2);
   Value slopes = entry->getArgument(3);
-  Value c0 = arith::ConstantIndexOp::create(b, loc, 0);
-  Value c1 = arith::ConstantIndexOp::create(b, loc, 1);
-  Value c3 = arith::ConstantIndexOp::create(b, loc, 3);
-  Value c8 = arith::ConstantIndexOp::create(b, loc, 8);
-  Value zero = arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 0.0));
-  Value one = arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 1.0));
-  scf::ForOp::create(b, loc, c0, c8, c1, ValueRange{},
-                     [&](OpBuilder &b, Location, Value j, ValueRange carried) {
-                       store(zero, values, {j});
-                       scf::YieldOp::create(b, loc);
-                     });
-  Value omw = arith::SubFOp::create(b, loc, one, w);
-  store(omw, values, {c0});
-  store(w, values, {c1});
-  scf::ForOp::create(b, loc, c3, n, c1, ValueRange{},
-                     [&](OpBuilder &b, Location, Value k, ValueRange carried) {
-                       func::CallOp::create(b, loc, "mdrt.pme_raise",
-                                            TypeRange{},
-                                            ValueRange{w, k, values});
-                       scf::YieldOp::create(b, loc);
-                     });
-  Value v0 = load(values, {c0});
-  Value s0 = arith::NegFOp::create(b, loc, v0);
-  store(s0, slopes, {c0});
-  scf::ForOp::create(b, loc, c1, n, c1, ValueRange{},
-                     [&](OpBuilder &b, Location, Value j, ValueRange carried) {
-                       Value jm1 = arith::SubIOp::create(b, loc, j, c1);
-                       Value before = load(values, {jm1});
-                       Value here = load(values, {j});
-                       Value slope =
-                           arith::SubFOp::create(b, loc, before, here);
-                       store(slope, slopes, {j});
-                       scf::YieldOp::create(b, loc);
-                     });
-  func::CallOp::create(b, loc, "mdrt.pme_raise", TypeRange{},
-                       ValueRange{w, n, values});
+  splineWindow<false>(
+      w, n, values, slopes, [&](Value k, Value, Value, Value, Value) {
+        func::CallOp::create(b, loc, "mdrt.pme_raise", TypeRange{},
+                             ValueRange{w, k, values});
+      });
   func::ReturnOp::create(b, loc);
 }
 
@@ -299,24 +253,6 @@ void HostPME::emitInverseCell() {
   Value lx = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{0});
   Value ly = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{1});
   Value lz = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{2});
-  Value tbx = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{3});
-  Value tcx = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{4});
-  Value tcy = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{5});
-  Value unit = arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 1.0));
-  Value h00 = arith::DivFOp::create(b, loc, unit, lx);
-  Value h11 = arith::DivFOp::create(b, loc, unit, ly);
-  Value h22 = arith::DivFOp::create(b, loc, unit, lz);
-  Value bx_h00 = arith::MulFOp::create(b, loc, tbx, h00);
-  Value bx_h00_h11 = arith::MulFOp::create(b, loc, bx_h00, h11);
-  Value h10 = arith::NegFOp::create(b, loc, bx_h00_h11);
-  Value cy_h11 = arith::MulFOp::create(b, loc, tcy, h11);
-  Value cy_h11_h22 = arith::MulFOp::create(b, loc, cy_h11, h22);
-  Value h21 = arith::NegFOp::create(b, loc, cy_h11_h22);
-  Value bxcy = arith::MulFOp::create(b, loc, tbx, tcy);
-  Value bycx = arith::MulFOp::create(b, loc, ly, tcx);
-  Value h20n = arith::SubFOp::create(b, loc, bxcy, bycx);
-  Value h20a = arith::MulFOp::create(b, loc, h20n, h00);
-  Value h20b = arith::MulFOp::create(b, loc, h20a, h11);
-  Value h20 = arith::MulFOp::create(b, loc, h20b, h22);
+  auto [h00, h10, h11, h20, h21, h22] = inverseCell(box, lx, ly, lz);
   func::ReturnOp::create(b, loc, ValueRange{h00, h10, h11, h20, h21, h22});
 }

@@ -37,16 +37,16 @@ template <bool tilted> void DevicePME::emitWeights(StringRef symbol) {
   arith::ConstantIndexOp::create(b, loc, 32);
   Value c128 = arith::ConstantIndexOp::create(b, loc, 128);
   Value n_all = memref::DimOp::create(b, loc, x, c0);
-  Value k1u = arith::AddIOp::create(b, loc, k1, c3);
-  Value b1 = arith::DivUIOp::create(b, loc, k1u, c4);
-  Value k2u = arith::AddIOp::create(b, loc, k2, c3);
-  Value b2 = arith::DivUIOp::create(b, loc, k2u, c4);
-  Value b12 = arith::MulIOp::create(b, loc, b1, b2);
-  Value b123 = arith::MulIOp::create(b, loc, b12, k3);
-  arith::MulIOp::create(b, loc, b123, c16);
-  Value lx = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{0});
-  Value ly = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{1});
-  Value lz = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{2});
+  Value k1u = addi(k1, c3);
+  Value b1 = divui(k1u, c4);
+  Value k2u = addi(k2, c3);
+  Value b2 = divui(k2u, c4);
+  Value b12 = muli(b1, b2);
+  Value b123 = muli(b12, k3);
+  muli(b123, c16);
+  Value lx = extract(box, 0);
+  Value ly = extract(box, 1);
+  Value lz = extract(box, 2);
   Value h00;
   Value h11;
   Value h22;
@@ -54,26 +54,7 @@ template <bool tilted> void DevicePME::emitWeights(StringRef symbol) {
   Value h21;
   Value h20;
   if constexpr (tilted) {
-    Value tbx = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{3});
-    Value tcx = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{4});
-    Value tcy = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{5});
-    Value hunit =
-        arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 1.0));
-    h00 = arith::DivFOp::create(b, loc, hunit, lx);
-    h11 = arith::DivFOp::create(b, loc, hunit, ly);
-    h22 = arith::DivFOp::create(b, loc, hunit, lz);
-    Value h10a = arith::MulFOp::create(b, loc, tbx, h00);
-    Value h10b = arith::MulFOp::create(b, loc, h10a, h11);
-    h10 = arith::NegFOp::create(b, loc, h10b);
-    Value h21a = arith::MulFOp::create(b, loc, tcy, h11);
-    Value h21b = arith::MulFOp::create(b, loc, h21a, h22);
-    h21 = arith::NegFOp::create(b, loc, h21b);
-    Value h20a = arith::MulFOp::create(b, loc, tbx, tcy);
-    Value h20b = arith::MulFOp::create(b, loc, ly, tcx);
-    Value h20c = arith::SubFOp::create(b, loc, h20a, h20b);
-    Value h20d = arith::MulFOp::create(b, loc, h20c, h00);
-    Value h20e = arith::MulFOp::create(b, loc, h20d, h11);
-    h20 = arith::MulFOp::create(b, loc, h20e, h22);
+    std::tie(h00, h10, h11, h20, h21, h22) = inverseCell(box, lx, ly, lz);
     convert(realType, h00);
     convert(realType, h10);
     convert(realType, h11);
@@ -82,9 +63,9 @@ template <bool tilted> void DevicePME::emitWeights(StringRef symbol) {
     convert(realType, h22);
   }
   Value unit = arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 1.0));
-  Value ilx = arith::DivFOp::create(b, loc, unit, lx);
-  Value ily = arith::DivFOp::create(b, loc, unit, ly);
-  Value ilz = arith::DivFOp::create(b, loc, unit, lz);
+  Value ilx = divf(unit, lx);
+  Value ily = divf(unit, ly);
+  Value ilz = divf(unit, lz);
   Value blocks_n_all =
       func::CallOp::create(b, loc, blockFunction, TypeRange{idxType},
                            ValueRange{n_all})
@@ -96,16 +77,15 @@ template <bool tilted> void DevicePME::emitWeights(StringRef symbol) {
     b.setInsertionPointToStart(&launch.getBody().front());
     Value bx = launch.getBlockIds().x;
     Value tx = launch.getThreadIds().x;
-    Value base = arith::MulIOp::create(b, loc, bx, c128);
-    Value item = arith::AddIOp::create(b, loc, base, tx);
-    Value inside =
-        arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, item, n_all);
+    Value base = muli(bx, c128);
+    Value item = addi(base, tx);
+    Value inside = cmpi(arith::CmpIPredicate::ult, item, n_all);
     auto insideBranch =
         scf::IfOp::create(b, loc, TypeRange{}, inside, true, false);
     {
       OpBuilder::InsertionGuard guard(b);
       b.setInsertionPointToStart(insideBranch.thenBlock());
-      Value i = arith::AddIOp::create(b, loc, item, c0);
+      Value i = addi(item, c0);
       arith::ConstantIndexOp::create(b, loc, 0);
       arith::ConstantIndexOp::create(b, loc, 1);
       arith::ConstantIndexOp::create(b, loc, 2);
@@ -132,27 +112,27 @@ template <bool tilted> void DevicePME::emitWeights(StringRef symbol) {
         Value zp = convert(f64Type, zs);
         fr_one =
             arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 1.0));
-        fr_z = arith::MulFOp::create(b, loc, zp, h22);
-        Value fr_y1 = arith::MulFOp::create(b, loc, yp, h11);
-        Value fr_y2 = arith::MulFOp::create(b, loc, zp, h21);
-        fr_y = arith::AddFOp::create(b, loc, fr_y1, fr_y2);
-        Value fr_x1 = arith::MulFOp::create(b, loc, xp, h00);
-        Value fr_x2 = arith::MulFOp::create(b, loc, yp, h10);
-        Value fr_x3 = arith::MulFOp::create(b, loc, zp, h20);
-        Value fr_x12 = arith::AddFOp::create(b, loc, fr_x1, fr_x2);
-        Value fr_x = arith::AddFOp::create(b, loc, fr_x12, fr_x3);
+        fr_z = mulf(zp, h22);
+        Value fr_y1 = mulf(yp, h11);
+        Value fr_y2 = mulf(zp, h21);
+        fr_y = addf(fr_y1, fr_y2);
+        Value fr_x1 = mulf(xp, h00);
+        Value fr_x2 = mulf(yp, h10);
+        Value fr_x3 = mulf(zp, h20);
+        Value fr_x12 = addf(fr_x1, fr_x2);
+        Value fr_x = addf(fr_x12, fr_x3);
         xPlacement = placeAxis(fr_x, fr_one, k1, pointCount);
       }
       Value px_start = xPlacement.first;
       Value px_w = xPlacement.second;
       Value xfc = arith::ConstantIndexOp::create(b, loc, 3);
-      Value xfn = arith::MulIOp::create(b, loc, n_all, xfc);
-      Value xfat = arith::AddIOp::create(b, loc, xfn, i);
+      Value xfn = muli(n_all, xfc);
+      Value xfat = addi(xfn, i);
       store(px_w, weights, {xfat});
-      Value xstart_i = arith::IndexCastOp::create(b, loc, i32Type, px_start);
-      Value xstart_r = arith::SIToFPOp::create(b, loc, realType, xstart_i);
-      Value xsn = arith::MulIOp::create(b, loc, n_all, xc);
-      Value xsat = arith::AddIOp::create(b, loc, xsn, i);
+      Value xstart_i = indexCast(i32Type, px_start);
+      Value xstart_r = sitofp(realType, xstart_i);
+      Value xsn = muli(n_all, xc);
+      Value xsat = addi(xsn, i);
       store(xstart_r, weights, {xsat});
       std::pair<Value, Value> yPlacement;
       if constexpr (!tilted) {
@@ -166,13 +146,13 @@ template <bool tilted> void DevicePME::emitWeights(StringRef symbol) {
       Value py_start = yPlacement.first;
       Value py_w = yPlacement.second;
       Value yfc = arith::ConstantIndexOp::create(b, loc, 4);
-      Value yfn = arith::MulIOp::create(b, loc, n_all, yfc);
-      Value yfat = arith::AddIOp::create(b, loc, yfn, i);
+      Value yfn = muli(n_all, yfc);
+      Value yfat = addi(yfn, i);
       store(py_w, weights, {yfat});
-      Value ystart_i = arith::IndexCastOp::create(b, loc, i32Type, py_start);
-      Value ystart_r = arith::SIToFPOp::create(b, loc, realType, ystart_i);
-      Value ysn = arith::MulIOp::create(b, loc, n_all, yc);
-      Value ysat = arith::AddIOp::create(b, loc, ysn, i);
+      Value ystart_i = indexCast(i32Type, py_start);
+      Value ystart_r = sitofp(realType, ystart_i);
+      Value ysn = muli(n_all, yc);
+      Value ysat = addi(ysn, i);
       store(ystart_r, weights, {ysat});
       std::pair<Value, Value> zPlacement;
       if constexpr (!tilted) {
@@ -186,13 +166,13 @@ template <bool tilted> void DevicePME::emitWeights(StringRef symbol) {
       Value pz_start = zPlacement.first;
       Value pz_w = zPlacement.second;
       Value zfc = arith::ConstantIndexOp::create(b, loc, 5);
-      Value zfn = arith::MulIOp::create(b, loc, n_all, zfc);
-      Value zfat = arith::AddIOp::create(b, loc, zfn, i);
+      Value zfn = muli(n_all, zfc);
+      Value zfat = addi(zfn, i);
       store(pz_w, weights, {zfat});
-      Value zstart_i = arith::IndexCastOp::create(b, loc, i32Type, pz_start);
-      Value zstart_r = arith::SIToFPOp::create(b, loc, realType, zstart_i);
-      Value zsn = arith::MulIOp::create(b, loc, n_all, zc);
-      Value zsat = arith::AddIOp::create(b, loc, zsn, i);
+      Value zstart_i = indexCast(i32Type, pz_start);
+      Value zstart_r = sitofp(realType, zstart_i);
+      Value zsn = muli(n_all, zc);
+      Value zsat = addi(zsn, i);
       store(zstart_r, weights, {zsat});
       scf::YieldOp::create(b, loc);
     }

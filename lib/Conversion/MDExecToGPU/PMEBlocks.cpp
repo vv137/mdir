@@ -18,7 +18,7 @@ void DevicePME::emitBlocks(StringRef symbol) {
   Value count = entry->getArgument(arg++);
   Value c127 = arith::ConstantIndexOp::create(b, loc, 127);
   Value c128 = arith::ConstantIndexOp::create(b, loc, 128);
-  Value padded = arith::AddIOp::create(b, loc, count, c127);
-  Value result = arith::DivUIOp::create(b, loc, padded, c128);
+  Value padded = addi(count, c127);
+  Value result = divui(padded, c128);
   func::ReturnOp::create(b, loc, ValueRange{result});
 }

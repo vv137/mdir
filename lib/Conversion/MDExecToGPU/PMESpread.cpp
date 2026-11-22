@@ -47,9 +47,9 @@ void DevicePME::emitSpread(StringRef symbol) {
   Value c0 = arith::ConstantIndexOp::create(b, loc, 0);
   Value c1 = arith::ConstantIndexOp::create(b, loc, 1);
   Value c128 = arith::ConstantIndexOp::create(b, loc, 128);
-  Value lx = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{0});
-  Value ly = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{1});
-  Value lz = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{2});
+  Value lx = extract(box, 0);
+  Value ly = extract(box, 1);
+  Value lz = extract(box, 2);
   Value h00;
   Value h11;
   Value h22;
@@ -57,26 +57,7 @@ void DevicePME::emitSpread(StringRef symbol) {
   Value h21;
   Value h20;
   if constexpr (tilted) {
-    Value tbx = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{3});
-    Value tcx = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{4});
-    Value tcy = vector::ExtractOp::create(b, loc, box, ArrayRef<int64_t>{5});
-    Value hunit =
-        arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 1.0));
-    h00 = arith::DivFOp::create(b, loc, hunit, lx);
-    h11 = arith::DivFOp::create(b, loc, hunit, ly);
-    h22 = arith::DivFOp::create(b, loc, hunit, lz);
-    Value h10a = arith::MulFOp::create(b, loc, tbx, h00);
-    Value h10b = arith::MulFOp::create(b, loc, h10a, h11);
-    h10 = arith::NegFOp::create(b, loc, h10b);
-    Value h21a = arith::MulFOp::create(b, loc, tcy, h11);
-    Value h21b = arith::MulFOp::create(b, loc, h21a, h22);
-    h21 = arith::NegFOp::create(b, loc, h21b);
-    Value h20a = arith::MulFOp::create(b, loc, tbx, tcy);
-    Value h20b = arith::MulFOp::create(b, loc, ly, tcx);
-    Value h20c = arith::SubFOp::create(b, loc, h20a, h20b);
-    Value h20d = arith::MulFOp::create(b, loc, h20c, h00);
-    Value h20e = arith::MulFOp::create(b, loc, h20d, h11);
-    h20 = arith::MulFOp::create(b, loc, h20e, h22);
+    std::tie(h00, h10, h11, h20, h21, h22) = inverseCell(box, lx, ly, lz);
     convert(realType, h00);
     convert(realType, h10);
     convert(realType, h11);
@@ -85,14 +66,14 @@ void DevicePME::emitSpread(StringRef symbol) {
     convert(realType, h22);
   }
   Value unit = arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 1.0));
-  Value ilx = arith::DivFOp::create(b, loc, unit, lx);
-  Value ily = arith::DivFOp::create(b, loc, unit, ly);
-  Value ilz = arith::DivFOp::create(b, loc, unit, lz);
+  Value ilx = divf(unit, lx);
+  Value ily = divf(unit, ly);
+  Value ilz = divf(unit, lz);
   Value points = memref::DimOp::create(b, loc, grid, c0);
   Value count = memref::DimOp::create(b, loc, x, c0);
   Value spread_lanes =
       arith::ConstantOp::create(b, loc, b.getIntegerAttr(idxType, order));
-  Value spread = arith::MulIOp::create(b, loc, count, spread_lanes);
+  Value spread = muli(count, spread_lanes);
   Value blocks_points =
       func::CallOp::create(b, loc, blockFunction, TypeRange{idxType},
                            ValueRange{points})
@@ -106,10 +87,9 @@ void DevicePME::emitSpread(StringRef symbol) {
 
     Value tx = launch.getThreadIds().x;
 
-    Value base = arith::MulIOp::create(b, loc, bx, c128);
-    Value item = arith::AddIOp::create(b, loc, base, tx);
-    Value inside =
-        arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, item, points);
+    Value base = muli(bx, c128);
+    Value item = addi(base, tx);
+    Value inside = cmpi(arith::CmpIPredicate::ult, item, points);
     auto insideBranch =
         scf::IfOp::create(b, loc, TypeRange{}, inside, true, false);
     {
@@ -137,10 +117,9 @@ void DevicePME::emitSpread(StringRef symbol) {
     b.setInsertionPointToStart(&launch.getBody().front());
     Value bx = launch.getBlockIds().x;
     Value tx = launch.getThreadIds().x;
-    Value base = arith::MulIOp::create(b, loc, bx, c128);
-    Value item = arith::AddIOp::create(b, loc, base, tx);
-    Value inside =
-        arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, item, spread);
+    Value base = muli(bx, c128);
+    Value item = addi(base, tx);
+    Value inside = cmpi(arith::CmpIPredicate::ult, item, spread);
     auto insideBranch2 =
         scf::IfOp::create(b, loc, TypeRange{}, inside, true, false);
     {
@@ -150,24 +129,23 @@ void DevicePME::emitSpread(StringRef symbol) {
           arith::ConstantOp::create(b, loc, b.getIntegerAttr(idxType, order));
       Value i;
       if constexpr (!useList) {
-        i = arith::DivUIOp::create(b, loc, item, laneCount);
+        i = divui(item, laneCount);
       }
       Value slot;
       if constexpr (useList) {
-        slot = arith::DivUIOp::create(b, loc, item, laneCount);
+        slot = divui(item, laneCount);
       }
-      Value j3 = arith::RemUIOp::create(b, loc, item, laneCount);
+      Value j3 = remui(item, laneCount);
       scf::IfOp is_listedBranch;
       if constexpr (useList) {
         Value listed = load(list, {slot});
         Value listed_none =
             arith::ConstantOp::create(b, loc, b.getIntegerAttr(i32Type, 0));
-        Value is_listed = arith::CmpIOp::create(
-            b, loc, arith::CmpIPredicate::sge, listed, listed_none);
+        Value is_listed = cmpi(arith::CmpIPredicate::sge, listed, listed_none);
         is_listedBranch =
             scf::IfOp::create(b, loc, TypeRange{}, is_listed, true, false);
         b.setInsertionPointToStart(is_listedBranch.thenBlock());
-        i = arith::IndexCastOp::create(b, loc, idxType, listed);
+        i = indexCast(idxType, listed);
       }
       Value i0 = arith::ConstantIndexOp::create(b, loc, 0);
       Value i1 = arith::ConstantIndexOp::create(b, loc, 1);
@@ -198,15 +176,15 @@ void DevicePME::emitSpread(StringRef symbol) {
       if constexpr (tilted) {
         fr_one =
             arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 1.0));
-        fr_z = arith::MulFOp::create(b, loc, zi, h22);
-        Value fr_y1 = arith::MulFOp::create(b, loc, yi, h11);
-        Value fr_y2 = arith::MulFOp::create(b, loc, zi, h21);
-        fr_y = arith::AddFOp::create(b, loc, fr_y1, fr_y2);
-        Value fr_x1 = arith::MulFOp::create(b, loc, xi, h00);
-        Value fr_x2 = arith::MulFOp::create(b, loc, yi, h10);
-        Value fr_x3 = arith::MulFOp::create(b, loc, zi, h20);
-        Value fr_x12 = arith::AddFOp::create(b, loc, fr_x1, fr_x2);
-        Value fr_x = arith::AddFOp::create(b, loc, fr_x12, fr_x3);
+        fr_z = mulf(zi, h22);
+        Value fr_y1 = mulf(yi, h11);
+        Value fr_y2 = mulf(zi, h21);
+        fr_y = addf(fr_y1, fr_y2);
+        Value fr_x1 = mulf(xi, h00);
+        Value fr_x2 = mulf(yi, h10);
+        Value fr_x3 = mulf(zi, h20);
+        Value fr_x12 = addf(fr_x1, fr_x2);
+        Value fr_x = addf(fr_x12, fr_x3);
         xPlacement = placeAxis(fr_x, fr_one, k1, pointCount);
       }
       Value px_start = xPlacement.first;
@@ -239,7 +217,7 @@ void DevicePME::emitSpread(StringRef symbol) {
         scale =
             arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 1.0));
       }
-      Value qscaled = arith::MulFOp::create(b, loc, qi, scale);
+      Value qscaled = mulf(qi, scale);
       Value eight;
       if constexpr (fixedGrid) {
         eight = arith::ConstantOp::create(b, loc, b.getIntegerAttr(i64Type, 8));
@@ -249,48 +227,44 @@ void DevicePME::emitSpread(StringRef symbol) {
       }
       Value gridindex =
           memref::ExtractAlignedPointerAsIndexOp::create(b, loc, grid);
-      Value gridbase = arith::IndexCastOp::create(b, loc, i64Type, gridindex);
+      Value gridbase = indexCast(i64Type, gridindex);
       Value j0 = arith::ConstantIndexOp::create(b, loc, 0);
       Value j1c = arith::ConstantIndexOp::create(b, loc, 1);
-      Value g3s = arith::AddIOp::create(b, loc, pz_start, j3);
-      Value g3w = arith::SubIOp::create(b, loc, g3s, k3);
-      Value g3over =
-          arith::CmpIOp::create(b, loc, arith::CmpIPredicate::uge, g3s, k3);
-      Value g3 = arith::SelectOp::create(b, loc, g3over, g3w, g3s);
-      Value q3 = arith::MulFOp::create(b, loc, qscaled, w3p_value);
+      Value g3s = addi(pz_start, j3);
+      Value g3w = subi(g3s, k3);
+      Value g3over = cmpi(arith::CmpIPredicate::uge, g3s, k3);
+      Value g3 = select(g3over, g3w, g3s);
+      Value q3 = mulf(qscaled, w3p_value);
       scf::ForOp::create(
           b, loc, j0, pointCount, j1c, ValueRange{},
           [&](OpBuilder &b, Location, Value j1, ValueRange carried) {
-            Value g1s = arith::AddIOp::create(b, loc, px_start, j1);
-            Value g1w = arith::SubIOp::create(b, loc, g1s, k1);
-            Value g1over = arith::CmpIOp::create(
-                b, loc, arith::CmpIPredicate::uge, g1s, k1);
-            Value g1 = arith::SelectOp::create(b, loc, g1over, g1w, g1s);
+            Value g1s = addi(px_start, j1);
+            Value g1w = subi(g1s, k1);
+            Value g1over = cmpi(arith::CmpIPredicate::uge, g1s, k1);
+            Value g1 = select(g1over, g1w, g1s);
             Value w1 = load(wx, {j1});
-            Value q13 = arith::MulFOp::create(b, loc, q3, w1);
+            Value q13 = mulf(q3, w1);
             scf::ForOp::create(
                 b, loc, j0, pointCount, j1c, ValueRange{},
                 [&](OpBuilder &b, Location, Value j2, ValueRange carried) {
-                  Value g2s = arith::AddIOp::create(b, loc, py_start, j2);
-                  Value g2w = arith::SubIOp::create(b, loc, g2s, k2);
-                  Value g2over = arith::CmpIOp::create(
-                      b, loc, arith::CmpIPredicate::uge, g2s, k2);
-                  Value g2 = arith::SelectOp::create(b, loc, g2over, g2w, g2s);
+                  Value g2s = addi(py_start, j2);
+                  Value g2w = subi(g2s, k2);
+                  Value g2over = cmpi(arith::CmpIPredicate::uge, g2s, k2);
+                  Value g2 = select(g2over, g2w, g2s);
                   Value w2 = load(wy, {j2});
-                  Value value = arith::MulFOp::create(b, loc, q13, w2);
-                  Value row1 = arith::MulIOp::create(b, loc, g1, k2);
-                  Value row = arith::AddIOp::create(b, loc, row1, g2);
-                  Value gbase = arith::MulIOp::create(b, loc, row, k3);
+                  Value value = mulf(q13, w2);
+                  Value row1 = muli(g1, k2);
+                  Value row = addi(row1, g2);
+                  Value gbase = muli(row, k3);
                   Value fixed;
                   if constexpr (fixedGrid) {
                     Value rounded = math::RoundEvenOp::create(b, loc, value);
-                    fixed = arith::FPToSIOp::create(b, loc, i64Type, rounded);
+                    fixed = fptosi(i64Type, rounded);
                   }
-                  Value at = arith::AddIOp::create(b, loc, gbase, g3);
-                  Value ati = arith::IndexCastOp::create(b, loc, i64Type, at);
-                  Value offset = arith::MulIOp::create(b, loc, ati, eight);
-                  Value address =
-                      arith::AddIOp::create(b, loc, gridbase, offset);
+                  Value at = addi(gbase, g3);
+                  Value ati = indexCast(i64Type, at);
+                  Value offset = muli(ati, eight);
+                  Value address = addi(gridbase, offset);
                   Value pointer =
                       LLVM::IntToPtrOp::create(b, loc, globalPointer, address);
                   if constexpr (fixedGrid) {

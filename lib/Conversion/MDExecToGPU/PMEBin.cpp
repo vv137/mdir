@@ -42,23 +42,23 @@ void DevicePME::emitBin(StringRef symbol) {
   Value edge32 =
       arith::ConstantOp::create(b, loc, b.getIntegerAttr(i32Type, tileEdge));
   Value edge_m1 = arith::ConstantIndexOp::create(b, loc, tileEdge - 1);
-  Value k1e = arith::AddIOp::create(b, loc, k1, edge_m1);
-  Value nb1 = arith::DivUIOp::create(b, loc, k1e, edge);
-  Value k2e = arith::AddIOp::create(b, loc, k2, edge_m1);
-  Value nb2 = arith::DivUIOp::create(b, loc, k2e, edge);
-  Value k3e = arith::AddIOp::create(b, loc, k3, edge_m1);
-  Value nb3 = arith::DivUIOp::create(b, loc, k3e, edge);
-  Value nb12 = arith::MulIOp::create(b, loc, nb1, nb2);
-  Value nbins = arith::MulIOp::create(b, loc, nb12, nb3);
-  Value nbins_m1 = arith::SubIOp::create(b, loc, nbins, c1);
-  Value mean_u = arith::AddIOp::create(b, loc, n_all, nbins_m1);
-  Value mean = arith::DivUIOp::create(b, loc, mean_u, nbins);
-  Value mean2 = arith::AddIOp::create(b, loc, mean, mean);
+  Value k1e = addi(k1, edge_m1);
+  Value nb1 = divui(k1e, edge);
+  Value k2e = addi(k2, edge_m1);
+  Value nb2 = divui(k2e, edge);
+  Value k3e = addi(k3, edge_m1);
+  Value nb3 = divui(k3e, edge);
+  Value nb12 = muli(nb1, nb2);
+  Value nbins = muli(nb12, nb3);
+  Value nbins_m1 = subi(nbins, c1);
+  Value mean_u = addi(n_all, nbins_m1);
+  Value mean = divui(mean_u, nbins);
+  Value mean2 = addi(mean, mean);
   Value slack = arith::ConstantIndexOp::create(b, loc, 8);
-  Value capacity = arith::AddIOp::create(b, loc, mean2, slack);
-  Value of_lists = arith::AddIOp::create(b, loc, nbins, c1);
-  Value lists = arith::MulIOp::create(b, loc, nbins, capacity);
-  Value of_overflow = arith::AddIOp::create(b, loc, of_lists, lists);
+  Value capacity = addi(mean2, slack);
+  Value of_lists = addi(nbins, c1);
+  Value lists = muli(nbins, capacity);
+  Value of_overflow = addi(of_lists, lists);
   Value points = memref::DimOp::create(b, loc, realBuffer, c0);
   Value blocks_points =
       func::CallOp::create(b, loc, blockFunction, TypeRange{idxType},
@@ -73,10 +73,9 @@ void DevicePME::emitBin(StringRef symbol) {
 
     Value tx = launch.getThreadIds().x;
 
-    Value base = arith::MulIOp::create(b, loc, bx, c128);
-    Value item = arith::AddIOp::create(b, loc, base, tx);
-    Value inside =
-        arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, item, points);
+    Value base = muli(bx, c128);
+    Value item = addi(base, tx);
+    Value inside = cmpi(arith::CmpIPredicate::ult, item, points);
     auto insideBranch =
         scf::IfOp::create(b, loc, TypeRange{}, inside, true, false);
     {
@@ -85,9 +84,8 @@ void DevicePME::emitBin(StringRef symbol) {
       Value none =
           arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 0.0));
       store(none, realBuffer, {item});
-      Value counts_end = arith::AddIOp::create(b, loc, nbins, c1);
-      Value a_count = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult,
-                                            item, counts_end);
+      Value counts_end = addi(nbins, c1);
+      Value a_count = cmpi(arith::CmpIPredicate::ult, item, counts_end);
       auto a_countBranch =
           scf::IfOp::create(b, loc, TypeRange{}, a_count, true, false);
       {
@@ -113,59 +111,57 @@ void DevicePME::emitBin(StringRef symbol) {
     b.setInsertionPointToStart(&launch.getBody().front());
     Value bx = launch.getBlockIds().x;
     Value tx = launch.getThreadIds().x;
-    Value base = arith::MulIOp::create(b, loc, bx, c128);
-    Value item = arith::AddIOp::create(b, loc, base, tx);
-    Value inside =
-        arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, item, n_all);
+    Value base = muli(bx, c128);
+    Value item = addi(base, tx);
+    Value inside = cmpi(arith::CmpIPredicate::ult, item, n_all);
     Value no = arith::ConstantOp::create(b, loc, b.getBoolAttr(false));
-    Value n_last = arith::SubIOp::create(b, loc, n_all, c1);
-    Value at_item = arith::MinUIOp::create(b, loc, item, n_last);
-    Value item32 = arith::IndexCastOp::create(b, loc, i32Type, item);
+    Value n_last = subi(n_all, c1);
+    Value at_item = minui(item, n_last);
+    Value item32 = indexCast(i32Type, item);
     Value t32 =
         arith::ConstantOp::create(b, loc, b.getIntegerAttr(i32Type, 32));
     Value valid;
     Value i;
     if constexpr (!useList) {
-      valid = arith::OrIOp::create(b, loc, inside, no);
-      i = arith::AddIOp::create(b, loc, at_item, c0);
+      valid = ori(inside, no);
+      i = addi(at_item, c0);
     } else {
       Value listed_raw = load(list, {at_item});
       Value listed_none =
           arith::ConstantOp::create(b, loc, b.getIntegerAttr(i32Type, 0));
-      Value is_listed = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::sge,
-                                              listed_raw, listed_none);
-      valid = arith::AndIOp::create(b, loc, inside, is_listed);
-      Value listed_0 =
-          arith::SelectOp::create(b, loc, is_listed, listed_raw, listed_none);
-      i = arith::IndexCastOp::create(b, loc, idxType, listed_0);
+      Value is_listed =
+          cmpi(arith::CmpIPredicate::sge, listed_raw, listed_none);
+      valid = andi(inside, is_listed);
+      Value listed_0 = select(is_listed, listed_raw, listed_none);
+      i = indexCast(idxType, listed_0);
     }
     Value xc = arith::ConstantIndexOp::create(b, loc, 0);
-    Value xn = arith::MulIOp::create(b, loc, n_all, xc);
-    Value xat = arith::AddIOp::create(b, loc, xn, i);
+    Value xn = muli(n_all, xc);
+    Value xat = addi(xn, i);
     Value xstart_r = load(places, {xat});
-    Value xstart = arith::FPToSIOp::create(b, loc, i32Type, xstart_r);
-    Value xbin = arith::DivUIOp::create(b, loc, xstart, edge32);
+    Value xstart = fptosi(i32Type, xstart_r);
+    Value xbin = divui(xstart, edge32);
     Value yc = arith::ConstantIndexOp::create(b, loc, 1);
-    Value yn = arith::MulIOp::create(b, loc, n_all, yc);
-    Value yat = arith::AddIOp::create(b, loc, yn, i);
+    Value yn = muli(n_all, yc);
+    Value yat = addi(yn, i);
     Value ystart_r = load(places, {yat});
-    Value ystart = arith::FPToSIOp::create(b, loc, i32Type, ystart_r);
-    Value ybin = arith::DivUIOp::create(b, loc, ystart, edge32);
+    Value ystart = fptosi(i32Type, ystart_r);
+    Value ybin = divui(ystart, edge32);
     Value zc = arith::ConstantIndexOp::create(b, loc, 2);
-    Value zn = arith::MulIOp::create(b, loc, n_all, zc);
-    Value zat = arith::AddIOp::create(b, loc, zn, i);
+    Value zn = muli(n_all, zc);
+    Value zat = addi(zn, i);
     Value zstart_r = load(places, {zat});
-    Value zstart = arith::FPToSIOp::create(b, loc, i32Type, zstart_r);
-    Value zbin = arith::DivUIOp::create(b, loc, zstart, edge32);
-    Value nb2t = arith::IndexCastOp::create(b, loc, i32Type, nb2);
-    Value nb3t = arith::IndexCastOp::create(b, loc, i32Type, nb3);
-    Value bxy = arith::MulIOp::create(b, loc, xbin, nb2t);
-    Value bxy2 = arith::AddIOp::create(b, loc, bxy, ybin);
-    Value bxyz = arith::MulIOp::create(b, loc, bxy2, nb3t);
-    Value bin_of = arith::AddIOp::create(b, loc, bxyz, zbin);
+    Value zstart = fptosi(i32Type, zstart_r);
+    Value zbin = divui(zstart, edge32);
+    Value nb2t = indexCast(i32Type, nb2);
+    Value nb3t = indexCast(i32Type, nb3);
+    Value bxy = muli(xbin, nb2t);
+    Value bxy2 = addi(bxy, ybin);
+    Value bxyz = muli(bxy2, nb3t);
+    Value bin_of = addi(bxyz, zbin);
     Value no_bin =
         arith::ConstantOp::create(b, loc, b.getIntegerAttr(i32Type, -1));
-    Value bin = arith::SelectOp::create(b, loc, valid, bin_of, no_bin);
+    Value bin = select(valid, bin_of, no_bin);
     Value same =
         LLVM::InlineAsmOp::create(b, loc, TypeRange{i32Type}, ValueRange{bin},
                                   "match.any.sync.b32 $0, $1, -1;", "=r,r",
@@ -173,20 +169,19 @@ void DevicePME::emitBin(StringRef symbol) {
                                   LLVM::AsmDialectAttr{}, ArrayAttr{})
             .getResult(0);
     Value leader = math::CountTrailingZerosOp::create(b, loc, same);
-    Value lane = arith::RemUIOp::create(b, loc, item32, t32);
+    Value lane = remui(item32, t32);
     Value one32 =
         arith::ConstantOp::create(b, loc, b.getIntegerAttr(i32Type, 1));
-    Value below_bit = arith::ShLIOp::create(b, loc, one32, lane);
-    Value below = arith::SubIOp::create(b, loc, below_bit, one32);
-    Value same_below = arith::AndIOp::create(b, loc, same, below);
+    Value below_bit = shli(one32, lane);
+    Value below = subi(below_bit, one32);
+    Value same_below = andi(same, below);
     Value offset = math::CtPopOp::create(b, loc, same_below);
     Value together = math::CtPopOp::create(b, loc, same);
-    Value leads =
-        arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq, lane, leader);
-    Value counts = arith::AndIOp::create(b, loc, leads, valid);
+    Value leads = cmpi(arith::CmpIPredicate::eq, lane, leader);
+    Value counts = andi(leads, valid);
     Value bins_index =
         memref::ExtractAlignedPointerAsIndexOp::create(b, loc, bins);
-    Value bins_base = arith::IndexCastOp::create(b, loc, i64Type, bins_index);
+    Value bins_base = indexCast(i64Type, bins_index);
     Value four64 =
         arith::ConstantOp::create(b, loc, b.getIntegerAttr(i64Type, 4));
     Value zero32 =
@@ -197,8 +192,8 @@ void DevicePME::emitBin(StringRef symbol) {
       OpBuilder::InsertionGuard guard(b);
       b.setInsertionPointToStart(first_rankOp.thenBlock());
       Value bin64 = arith::ExtUIOp::create(b, loc, i64Type, bin);
-      Value bin_offset = arith::MulIOp::create(b, loc, bin64, four64);
-      Value bin_address = arith::AddIOp::create(b, loc, bins_base, bin_offset);
+      Value bin_offset = muli(bin64, four64);
+      Value bin_address = addi(bins_base, bin_offset);
       Value bin_pointer =
           LLVM::IntToPtrOp::create(b, loc, globalPointer, bin_address);
       Value old = LLVM::AtomicRMWOp::create(
@@ -214,15 +209,13 @@ void DevicePME::emitBin(StringRef symbol) {
     Value first_rank = first_rankOp.getResult(0);
     Value width =
         arith::ConstantOp::create(b, loc, b.getIntegerAttr(i32Type, 32));
-    auto base_rankShuffle = gpu::ShuffleOp::create(
-        b, loc, first_rank, leader, width, gpu::ShuffleMode::IDX);
-    Value base_rank = base_rankShuffle.getShuffleResult();
+    Value base_rank =
+        laneValue(gpu::ShuffleMode::IDX, first_rank, leader, width);
 
-    Value rank = arith::AddIOp::create(b, loc, base_rank, offset);
-    Value capacity32 = arith::IndexCastOp::create(b, loc, i32Type, capacity);
-    Value fits = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::slt, rank,
-                                       capacity32);
-    Value particle = arith::IndexCastOp::create(b, loc, i32Type, i);
+    Value rank = addi(base_rank, offset);
+    Value capacity32 = indexCast(i32Type, capacity);
+    Value fits = cmpi(arith::CmpIPredicate::slt, rank, capacity32);
+    Value particle = indexCast(i32Type, i);
     auto validBranch =
         scf::IfOp::create(b, loc, TypeRange{}, valid, true, false);
     {
@@ -233,28 +226,27 @@ void DevicePME::emitBin(StringRef symbol) {
       {
         OpBuilder::InsertionGuard guard(b);
         b.setInsertionPointToStart(fitsBranch.thenBlock());
-        Value bin_i = arith::IndexCastOp::create(b, loc, idxType, bin);
-        Value run = arith::MulIOp::create(b, loc, bin_i, capacity);
-        Value run_at = arith::AddIOp::create(b, loc, of_lists, run);
-        Value rank_i = arith::IndexCastOp::create(b, loc, idxType, rank);
-        Value place = arith::AddIOp::create(b, loc, run_at, rank_i);
+        Value bin_i = indexCast(idxType, bin);
+        Value run = muli(bin_i, capacity);
+        Value run_at = addi(of_lists, run);
+        Value rank_i = indexCast(idxType, rank);
+        Value place = addi(run_at, rank_i);
         store(particle, bins, {place});
         scf::YieldOp::create(b, loc);
       }
       {
         OpBuilder::InsertionGuard guard(b);
         b.setInsertionPointToStart(fitsBranch.elseBlock());
-        Value over_offset = arith::IndexCastOp::create(b, loc, i64Type, nbins);
-        Value over_bytes = arith::MulIOp::create(b, loc, over_offset, four64);
-        Value over_address =
-            arith::AddIOp::create(b, loc, bins_base, over_bytes);
+        Value over_offset = indexCast(i64Type, nbins);
+        Value over_bytes = muli(over_offset, four64);
+        Value over_address = addi(bins_base, over_bytes);
         Value over_pointer =
             LLVM::IntToPtrOp::create(b, loc, globalPointer, over_address);
         Value over = LLVM::AtomicRMWOp::create(
             b, loc, LLVM::AtomicBinOp::add, over_pointer, one32,
             LLVM::AtomicOrdering::monotonic, "device");
-        Value over_i = arith::IndexCastOp::create(b, loc, idxType, over);
-        Value over_at = arith::AddIOp::create(b, loc, of_overflow, over_i);
+        Value over_i = indexCast(idxType, over);
+        Value over_at = addi(of_overflow, over_i);
         store(particle, bins, {over_at});
         scf::YieldOp::create(b, loc);
       }
