@@ -10,12 +10,10 @@
 # names: the lowerings test no part of the name of a template function.
 #
 # RUN: not grep -n 'PME_' %S/../../lib/Runtime/Templates/NeighborsMatrix.mlir \
-# RUN:     %S/../../lib/Runtime/Templates/PME.mlir \
 # RUN:     %S/../../lib/Runtime/Templates/PMEGPU.mlir \
 # RUN:     %S/../../lib/Runtime/Templates/PMEGPUTriclinic.mlir \
 # RUN:     %S/../../lib/Runtime/Templates/PMEGPUProlate.mlir
-# RUN: not grep -n '^!pme_' %S/../../lib/Runtime/Templates/PME.mlir \
-# RUN:     %S/../../lib/Runtime/Templates/PMEGPU.mlir \
+# RUN: not grep -n '^!pme_' %S/../../lib/Runtime/Templates/PMEGPU.mlir \
 # RUN:     %S/../../lib/Runtime/Templates/PMEGPUTriclinic.mlir \
 # RUN:     %S/../../lib/Runtime/Templates/PMEGPUProlate.mlir
 # RUN: not grep -rnE 'instantiatePMETemplates|std::string instantiateTemplates|std::string kernels::instantiate' \
@@ -23,14 +21,12 @@
 # RUN: not grep -nE 'getSymName\(\)\.(contains|starts_with|ends_with)' \
 # RUN:     %S/../../lib/Conversion/MDExecToLoops/MDExecToLoops.cpp \
 # RUN:     %S/../../lib/Conversion/MDExecToGPU/MDExecToGPU.cpp
-# RUN: grep -c 'attributes {mdir.template' %S/../../lib/Runtime/Templates/PME.mlir \
-# RUN:     %S/../../lib/Runtime/Templates/PMEGPU.mlir \
+# RUN: grep -c 'attributes {mdir.template' %S/../../lib/Runtime/Templates/PMEGPU.mlir \
 # RUN:     %S/../../lib/Runtime/Templates/PMEGPUTriclinic.mlir \
 # RUN:     %S/../../lib/Runtime/Templates/PMEGPUProlate.mlir | FileCheck %s
 # The functions of the potential and of a list on the host; of the
 # potential, of a list, and of the tiles of each edge and their binning on
 # a device.
-# CHECK: PME.mlir:10
 # CHECK: PMEGPU.mlir:15
 # CHECK: PMEGPUTriclinic.mlir:5
 # CHECK: PMEGPUProlate.mlir:7

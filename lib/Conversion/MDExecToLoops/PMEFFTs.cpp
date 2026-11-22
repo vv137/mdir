@@ -8,8 +8,7 @@
 using namespace mlir;
 
 namespace {
-template <bool forward>
-void emitTransform(ModuleOp module) {
+template <bool forward> void emitTransform(ModuleOp module) {
   auto fn = module.lookupSymbol<func::FuncOp>(
       forward ? "mdrt.pme_fft_forward" : "mdrt.pme_fft_backward");
   OpBuilder b(module.getContext());
@@ -30,25 +29,31 @@ void emitTransform(ModuleOp module) {
   func::CallOp::create(b, loc, "mdrtFFTPrepare", TypeRange{},
                        ValueRange{nx, ny, nz});
   auto rows = [&] {
-    scf::ParallelOp::create(b, loc, ValueRange{begin}, ValueRange{planes},
-        ValueRange{step}, [&](OpBuilder &body, Location, ValueRange iv) {
+    scf::ParallelOp::create(
+        b, loc, ValueRange{begin}, ValueRange{planes}, ValueRange{step},
+        [&](OpBuilder &body, Location, ValueRange iv) {
           Value plane = arith::IndexCastOp::create(body, loc, i64, iv[0]);
           Value first = arith::MulIOp::create(body, loc, plane, ny);
           Value last = arith::AddIOp::create(body, loc, first, ny);
-          func::CallOp::create(body, loc, forward ? "mdir.template.fft.RowsForward"
-                                                  : "mdir.template.fft.RowsBackward",
-                               TypeRange{}, ValueRange{src, dst, nz, first, last});
+          func::CallOp::create(body, loc,
+                               forward ? "mdir.template.fft.RowsForward"
+                                       : "mdir.template.fft.RowsBackward",
+                               TypeRange{},
+                               ValueRange{src, dst, nz, first, last});
         });
   };
   auto columns = [&](Value outer, Value axis) {
     Value blocks = func::CallOp::create(b, loc, "mdrtFFTColumnBlocks",
-                       TypeRange{i64}, ValueRange{outer, nz}).getResult(0);
+                                        TypeRange{i64}, ValueRange{outer, nz})
+                       .getResult(0);
     Value count = arith::IndexCastOp::create(b, loc, b.getIndexType(), blocks);
-    scf::ParallelOp::create(b, loc, ValueRange{begin}, ValueRange{count},
-        ValueRange{step}, [&](OpBuilder &body, Location, ValueRange iv) {
+    scf::ParallelOp::create(
+        b, loc, ValueRange{begin}, ValueRange{count}, ValueRange{step},
+        [&](OpBuilder &body, Location, ValueRange iv) {
           Value first = arith::IndexCastOp::create(body, loc, i64, iv[0]);
           Value last = arith::AddIOp::create(body, loc, first, one);
-          func::CallOp::create(body, loc, "mdir.template.fft.Columns", TypeRange{},
+          func::CallOp::create(body, loc, "mdir.template.fft.Columns",
+                               TypeRange{},
                                ValueRange{spectrum, nx, ny, nz, axis,
                                           forward ? one : zero, first, last});
         });

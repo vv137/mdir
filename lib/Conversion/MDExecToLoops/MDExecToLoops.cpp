@@ -4,7 +4,7 @@
 // `memref`s, where the op is. See docs/ops.md, Section 10.
 
 #include "mdir/Conversion/Passes.h"
-#include "PMEFFTs.h"
+#include "HostPME.h"
 
 #include "mdir/Conversion/HostPairEmitter.h"
 #include "mdir/Conversion/MDExecKernels.h"
@@ -38,7 +38,6 @@ using namespace mdir::kernels;
 namespace mdir {
 /// The text of the template that builds a neighbor matrix.
 extern const char *const neighborsMatrixTemplate;
-extern const char *const pmeTemplate;
 } // namespace mdir
 
 static const char *const spatialOrderName = "mdrt.spatial_order";
@@ -642,24 +641,10 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   if (has("mdrt.pme_spread") && (!potential || has("mdrt.pme_potential")) &&
       (!listed || has("mdrt.pme_spread_listed")))
     return success();
-  ParserConfig config(context);
-  // The template takes the aliases of the types of the instance from a
-  // header above its text, and its names in IR (D374,
-  // #739).
-  OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
-      getPMETemplateHeader(position, charge, force, order, /*tiles=*/false) +
-          pmeTemplate,
-      config);
-  if (!templates)
-    return module.emitError()
-           << "cannot parse the template of particle mesh Ewald";
-  emitHostPMEFFTs(*templates);
+  OwningOpRef<ModuleOp> templates = ModuleOp::create(module.getLoc());
+  HostPME(*templates, position, charge, force).emit(potential, listed);
   if (failed(instantiatePMESymbols(*templates, position, charge, force,
                                    order)))
-    return failure();
-  // The conversions between the types of the instance and f64
-  // (D370, #739).
-  if (failed(resolveTemplateConversions(*templates)))
     return failure();
   // On one thread the spreading adds to the fixed-point grid without
   // atomics: an integer sum is the same in any order, and a locked addition
@@ -685,10 +670,7 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   // others, for a sum of the same types that was lowered before.
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     auto function = dyn_cast<func::FuncOp>(&op);
-    // By the attributes of the function (D377).
-    bool wanted = keepTemplateFunction(&op, potential, listed, /*tiles=*/0);
-    if (!wanted ||
-        (function && SymbolTable::lookupSymbolIn(module, function.getSymName()))) {
+    if (function && SymbolTable::lookupSymbolIn(module, function.getSymName())) {
       op.erase();
       continue;
     }
