@@ -339,7 +339,27 @@ static void enter(void) {
 static void releaseDeviceConstants(void *owner, int all, int gone);
 static void releaseBlas(int gone);
 
+/* A grid with one block per SM fits whenever a single block fits. */
+static int cooperativeSMs = -1;
+
+intptr_t mdrtCooperativeGridSize(intptr_t requested) {
+  if (cooperativeSMs < 0) {
+    enter();
+    CUdevice device;
+    int supported;
+    check(cuCtxGetDevice(&device), "cuCtxGetDevice");
+    check(cuDeviceGetAttribute(&supported, CU_DEVICE_ATTRIBUTE_COOPERATIVE_LAUNCH,
+                               device), "cuDeviceGetAttribute");
+    cooperativeSMs = 1;
+    if (supported)
+      check(cuDeviceGetAttribute(&cooperativeSMs, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT,
+                                 device), "cuDeviceGetAttribute");
+  }
+  return requested < cooperativeSMs ? requested : cooperativeSMs;
+}
+
 void mgpuSetDefaultDevice(int32_t device) {
+  cooperativeSMs = -1;
   defaultDevice = device;
   if (context) {
     /* The handle and the copies belong to the context that is released. */
@@ -488,11 +508,10 @@ CUfunction mgpuModuleGetFunction(CUmodule module, const char *name) {
 static void finish(void);
 static void endKernel(void);
 
-void mgpuLaunchKernel(CUfunction function, intptr_t gridX, intptr_t gridY,
+static void launchKernel(CUfunction function, intptr_t gridX, intptr_t gridY,
                       intptr_t gridZ, intptr_t blockX, intptr_t blockY,
                       intptr_t blockZ, int32_t sharedMemory, CUstream stream,
-                      void **parameters, void **extra, size_t count) {
-  (void)count;
+                      void **parameters, void **extra, CUlaunchConfig *config) {
   enter();
   /* A launch over no particles is no launch. The driver rejects it. */
   if (gridX <= 0 || gridY <= 0 || gridZ <= 0)
@@ -509,6 +528,9 @@ void mgpuLaunchKernel(CUfunction function, intptr_t gridX, intptr_t gridY,
     if (launching >= 0 && !kernels[launching].launched)
       before = getDeviceUsed();
   }
+  if (config)
+    check(cuLaunchKernelEx(config, function, parameters, extra), "cuLaunchKernelEx");
+  else
   check(cuLaunchKernel(function, (unsigned)gridX, (unsigned)gridY,
                        (unsigned)gridZ, (unsigned)blockX, (unsigned)blockY,
                        (unsigned)blockZ, (unsigned)sharedMemory, stream,
@@ -536,6 +558,38 @@ void mgpuLaunchKernel(CUfunction function, intptr_t gridX, intptr_t gridY,
     finish();
     endKernel();
   }
+}
+
+void mgpuLaunchKernel(CUfunction function, intptr_t gridX, intptr_t gridY,
+                      intptr_t gridZ, intptr_t blockX, intptr_t blockY,
+                      intptr_t blockZ, int32_t sharedMemory, CUstream stream,
+                      void **parameters, void **extra, size_t count) {
+  (void)count;
+  launchKernel(function, gridX, gridY, gridZ, blockX, blockY, blockZ, sharedMemory,
+               stream, parameters, extra, NULL);
+}
+
+void mgpuLaunchKernelCooperative(CUfunction function, intptr_t gridX, intptr_t gridY,
+                      intptr_t gridZ, intptr_t clusterX, intptr_t clusterY, intptr_t clusterZ,
+                      intptr_t blockX, intptr_t blockY, intptr_t blockZ, int32_t sharedMemory,
+                      CUstream stream, void **parameters, void **extra) {
+  CUlaunchConfig config = {.gridDimX=gridX, .gridDimY=gridY, .gridDimZ=gridZ,
+    .blockDimX=blockX, .blockDimY=blockY, .blockDimZ=blockZ,
+    .sharedMemBytes=sharedMemory, .hStream=stream};
+  CUlaunchAttribute attrs[2] = {0};
+  if (gridX != 1 || gridY != 1 || gridZ != 1) {
+    attrs[config.numAttrs].id = CU_LAUNCH_ATTRIBUTE_COOPERATIVE;
+    attrs[config.numAttrs++].value.cooperative = 1;
+  }
+  if (clusterX > 0 && clusterY > 0 && clusterZ > 0) {
+    attrs[config.numAttrs].id = CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION;
+    attrs[config.numAttrs].value.clusterDim.x = clusterX;
+    attrs[config.numAttrs].value.clusterDim.y = clusterY;
+    attrs[config.numAttrs++].value.clusterDim.z = clusterZ;
+  }
+  config.attrs = attrs;
+  launchKernel(function, gridX, gridY, gridZ, blockX, blockY, blockZ, sharedMemory,
+               stream, parameters, extra, &config);
 }
 
 /*===----------------------------------------------------------------------===

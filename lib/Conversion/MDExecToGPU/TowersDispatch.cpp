@@ -66,10 +66,21 @@ struct Dispatch {
     Value dynamic =
         shared ? Value(arith::ConstantIntOp::create(b, loc, shared, 32))
                : Value{};
-    gpu::LaunchFuncOp::create(
+    Value blocks = idx(llvm::divideCeil(items, int64_t(block)));
+    bool cooperative = name == "towers_recover_once";
+    if (cooperative) {
+      StringRef query = "mdrtCooperativeGridSize";
+      if (!module.lookupSymbol(query)) {
+        OpBuilder top = OpBuilder::atBlockBegin(module.getBody());
+        func::FuncOp::create(top, loc, query, top.getFunctionType({b.getIndexType()}, {b.getIndexType()})).setPrivate();
+      }
+      blocks = func::CallOp::create(b, loc, query, TypeRange{b.getIndexType()}, ValueRange{blocks}).getResult(0);
+    }
+    auto call = gpu::LaunchFuncOp::create(
         b, loc, kernel,
-        gpu::KernelDim3{idx(llvm::divideCeil(items, int64_t(block))), one, one},
+        gpu::KernelDim3{blocks, one, one},
         gpu::KernelDim3{idx(block), one, one}, dynamic, args);
+    call.setCooperative(cooperative);
   }
   void fill(Value dest, Type element) {
     auto type = cast<MemRefType>(dest.getType());
@@ -175,8 +186,9 @@ struct Dispatch {
       counts.getDefiningOp()->setAttr("mdir.initialized",init.getUnitAttr());
     }
     auto cell = op.getCellMutable().get();
-    Value initialWords, initialState, initialFailed;
+    Value initialWords, initialState, initialFailed, arrivals;
     if (!op.getOuts().empty()) {
+      arrivals = buffer("certificate arrivals", mem({1}, narrow));
       initialWords = buffer("force words", mem({g.atoms, 3}, wide));
       initialState = buffer("certificate", mem({2}, narrow));
       initialFailed = buffer("failed conversions", mem({1}, wide));
@@ -188,7 +200,7 @@ struct Dispatch {
           memref::StoreOp::create(k, loc, createZero(k, loc, wide), initialWords, ValueRange{i, axis(axisIndex)});
         scf::IfOp::create(k, loc, arith::CmpIOp::create(k, loc, arith::CmpIPredicate::eq, i, axis(0)), [&](OpBuilder &at, Location l) {
           Value zero = createIndex(at, l, 0);
-          for (auto [dest, slot] : {std::pair{initialState, 0}, std::pair{initialState, 1}})
+          for (auto [dest, slot] : {std::pair{initialState, 0}, std::pair{initialState, 1}, std::pair{arrivals, 0}})
             memref::StoreOp::create(at, l, createZero(at, l, narrow), dest, ValueRange{createIndex(at, l, slot)});
           memref::StoreOp::create(at, l, createZero(at, l, wide), initialFailed, ValueRange{zero});
           scf::YieldOp::create(at, l);
@@ -402,6 +414,9 @@ LogicalResult Dispatch::run(Value positions) {
       Value hi = buffer("wide force high", forceType);
       args.push_back(hi);
       args.push_back(words);
+      Value arrivals = buffer("certificate arrivals", mem({1}, narrow));
+      if (i != 0) fill(arrivals, narrow);
+      args.push_back(arrivals);
       if (op.getNumResults())
         finishedForce = buffer("published force", forceType);
       args.push_back(finishedForce ? finishedForce : op.getOuts().front());

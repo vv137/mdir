@@ -389,11 +389,7 @@ void Force::addWord(Value dst, Value i, Value axis, Value w) {
   } else if (dst == words) {
     Value linear = packedDispatch ? addi(muli(axis, cx(g.atoms)), i) : addi(muli(i, cx(3)), axis);
     Value offset = muli(indexCast(i64, linear), cl(8));
-    Value old = atomic(LLVM::AtomicBinOp::add, pointerTo(baseAddress(dst), offset), w);
-    if (finishForce) {
-      Value total = addi(old, w);
-      ifThen(cmpi(CmpIPredicate::ne, total, arith::ExtSIOp::create(b, loc, i64, trunci(total))), [&] { flag(invalid, Replay, 1); });
-    }
+    atomic(LLVM::AtomicBinOp::add, pointerTo(baseAddress(dst), offset), w);
   } else {
     sharedAdd(
         dst,
@@ -1862,40 +1858,50 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
   if (recovering) {
     bool finish = finishForce && singleBlock && !observer();
     if (!observer())
-      highWords = entry.getArgument(entryTypes.size() - (finish ? 3 : 1));
+      highWords = entry.getArgument(entryTypes.size() - (finish ? 4 : 1));
     Value replay = cmpi(CmpIPredicate::ne, load(invalid, {cx(Replay)}), ci(0));
     Value provisional, destination, needsCheck;
     auto planeWord = [&](Value atom, int axis) {
       Value linear = addi(muli(cx(axis), cx(g.atoms)), atom);
       return load(provisional, {divui(linear, cx(3)), remui(linear, cx(3))});
     };
+    Value gridStride;
     if (finish) {
-      provisional = entry.getArgument(entryTypes.size() - 2);
+      provisional = entry.getArgument(entryTypes.size() - 3);
+      Value arrivals = entry.getArgument(entryTypes.size() - 2);
       destination = entry.getArgument(entryTypes.size() - 1);
-      Value failed = cmpi(CmpIPredicate::ne, load(failedConversions, {cx(0)}), cl(0));
-      needsCheck = ori(replay, failed);
-      Value lead = cmpi(CmpIPredicate::eq, owner, cx(0));
-      // A transient excursion can cancel. Only the first CTA checks the
-      // final totals in that case. The fast path reads immutable flags.
-      ifThen(andi(lead, needsCheck), [&] {
-        ifThen(cmpi(CmpIPredicate::eq, tid, cx(0)), [&] {
-          store(select(failed, ci(1), ci(0)), totals, {cx(0)});
-        });
-        gpu::BarrierOp::create(b, loc);
-        forLoop(tid, cx(g.atoms), cx(workers), {}, [&](Value atom, ValueRange) {
-          Value bad = cb(false);
-          for (int a = 0; a < 3; ++a) {
-            Value w = planeWord(atom, a);
-            bad = ori(bad, cmpi(CmpIPredicate::ne, w, arith::ExtSIOp::create(b, loc, i64, trunci(w))));
-          }
-          ifThen(bad, [&] { sharedAdd(totals, cl(0), ci(1)); });
-          return Values{};
-        });
-        gpu::BarrierOp::create(b, loc);
+      Value grid = gpu::GridDimOp::create(b, loc, gpu::Dimension::x);
+      gridStride = muli(grid, cx(workers));
+      Value first = addi(muli(owner, cx(workers)), tid);
+      forLoop(first, cx(g.atoms), gridStride, {}, [&](Value atom, ValueRange) {
+        Value bad = cb(false);
+        for (int a = 0; a < 3; ++a) {
+          Value w = planeWord(atom, a);
+          bad = ori(bad, cmpi(CmpIPredicate::ne, w, arith::ExtSIOp::create(b, loc, i64, trunci(w))));
+        }
+        ifThen(bad, [&] { flag(invalid, Replay, 1); });
+        return Values{};
       });
-      replay = ifElse({i1}, andi(lead, needsCheck),
-                      [&] { return Values{cmpi(CmpIPredicate::ne, load(totals, {cx(0)}), ci(0))}; },
-                      [&] { return Values{cb(false)}; })[0];
+      gpu::BarrierOp::create(b, loc);
+      ifThen(cmpi(CmpIPredicate::eq, tid, cx(0)), [&] {
+        // All blocks are resident. Release this block's votes, then acquire
+        // the final arrival before reading the frame-wide replay decision.
+        Value ptr = pointerTo(baseAddress(arrivals), cl(0));
+        LLVM::AtomicRMWOp::create(b, loc, LLVM::AtomicBinOp::add, ptr, ci(1),
+                                 LLVM::AtomicOrdering::acq_rel, "device");
+        whileLoop({}, {}, [&](ValueRange) {
+          auto arrived = LLVM::LoadOp::create(b, loc, i32, ptr, 4, true);
+          arrived.setOrdering(LLVM::AtomicOrdering::acquire);
+          arrived.setSyncscopeAttr(b.getStringAttr("device"));
+          return std::make_pair(cmpi(CmpIPredicate::ult, arrived, indexCast(i32, grid)), Values{});
+        }, [&](ValueRange) { return Values{}; });
+        Value failed = cmpi(CmpIPredicate::ne, load(failedConversions, {cx(0)}), cl(0));
+        Value retry = cmpi(CmpIPredicate::ne, load(invalid, {cx(Replay)}), ci(0));
+        store(select(ori(failed, retry), ci(1), ci(0)), totals, {cx(0)});
+      });
+      gpu::BarrierOp::create(b, loc);
+      needsCheck = cmpi(CmpIPredicate::ne, load(totals, {cx(0)}), ci(0));
+      replay = andi(needsCheck, cmpi(CmpIPredicate::eq, owner, cx(0)));
     }
     ifThen(replay, [&] {
       if (!singleBlock) {
@@ -1978,7 +1984,7 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
             });
           }, [&] {
             Value atom = addi(muli(owner, cx(workers)), tid);
-            ifThen(cmpi(CmpIPredicate::ult, atom, cx(g.atoms)), [&] { publish(atom); });
+            forLoop(atom, cx(g.atoms), gridStride, {}, [&](Value i, ValueRange) { publish(i); return Values{}; });
           });
         });
       });
@@ -2193,6 +2199,7 @@ LogicalResult Force::emit() {
       device(recordsGlobal, replay);
       if (finishForce) {
         replay.push_back(types[4]);
+        replay.push_back(mem({1}, i32));
         replay.push_back(term.getNumResults() == 0 ? term.getOuts().front().getType() : types[4]);
       }
       device(recordsGlobal, replay, true);
