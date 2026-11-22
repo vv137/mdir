@@ -373,8 +373,9 @@ Value Force::mask(ValueRange operands, Value group, Value sc) {
   auto resultTy =
       LLVM::LLVMStructType::getLiteral(context, {f32, f32, f32, f32});
   for (int q = 0; q < 4; ++q) {
-    Value src = minui(subi(sc, cx(1)),
-                      addi(group, addi(cx(q * 8), indexCast(index, row))));
+    Value src = indexCast(
+        index, minui(subi(indexCast(i32, sc), ci(1)),
+                     addi(indexCast(i32, group), addi(ci(q * 8), row))));
     Value pair = load(features, {src});
     Value srcOp = screenOperand(extract(pair, 0), extract(pair, 1));
     for (int h = 0; h < 2; ++h) {
@@ -388,12 +389,22 @@ Value Force::mask(ValueRange operands, Value group, Value sc) {
               "=f,=f,=f,=f,r,r,r,f,f", false, false, LLVM::TailCallKind::None,
               LLVM::AsmDialectAttr(), ArrayAttr())
               .getResult(0);
-      for (int j = 0; j < 4; ++j) {
-        Value v =
-            LLVM::ExtractValueOp::create(b, loc, mma, ArrayRef<int64_t>{j});
-        bits = ori(bits,
-                   shli(shrui(bitcast(i32, v), ci(31)), ci(8 * q + 4 * h + j)));
-      }
+      Values result;
+      for (int j = 0; j < 4; ++j)
+        result.push_back(
+            LLVM::ExtractValueOp::create(b, loc, mma, ArrayRef<int64_t>{j}));
+      // Select and sign-extend the high byte of each residual, then sum
+      // four disjoint bit weights to form this fragment's nibble.
+      Value nibble = LLVM::InlineAsmOp::create(
+                         b, loc, TypeRange{i32}, result,
+                         "{ .reg .b32 a,b,c; prmt.b32 a,$1,$2,0xfb; prmt.b32 "
+                         "b,$3,$4,0xfb; "
+                         "prmt.b32 c,a,b,0x5410; and.b32 c,c,0x08040201; "
+                         "dp4a.u32.u32 $0,c,0x01010101,0; }",
+                         "=r,f,f,f,f", false, false, LLVM::TailCallKind::None,
+                         LLVM::AsmDialectAttr(), ArrayAttr())
+                         .getResult(0);
+      bits = ori(bits, shli(nibble, ci(8 * q + 4 * h)));
     }
   }
   for (int d : {1, 2}) {
@@ -497,9 +508,21 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
                   math::CtPopOp::create(b, loc, m)));
   }
   mark(2);
-  Value inclusive = emitWarpScan(b, loc, counts, lane, ci(0), ci(32), 32, true);
+  Value inclusive = counts;
+  for (int offset : {1, 2, 4, 8, 16}) {
+    inclusive = LLVM::InlineAsmOp::create(
+                    b, loc, TypeRange{i32}, ValueRange{inclusive, ci(offset)},
+                    "{ .reg .pred p; .reg .b32 up; shfl.sync.up.b32 "
+                    "up|p,$1,$2,0,0xffffffff; "
+                    "mov.b32 $0,$1; @p add.u32 $0,up,$1; }",
+                    "=r,r,r", false, false, LLVM::TailCallKind::None,
+                    LLVM::AsmDialectAttr(), ArrayAttr())
+                    .getResult(0);
+  }
   Value base = ifElse(
-      {i32}, cmpi(CmpIPredicate::eq, lane, ci(31)),
+      {i32},
+      andi(cmpi(CmpIPredicate::eq, lane, ci(31)),
+           cmpi(CmpIPredicate::ne, inclusive, ci(0))),
       [&] { return Values{sharedAdd(totals, cl(0), inclusive)}; },
       [&] { return Values{ci(0)}; })[0];
   base = addi(indexed(base, ci(31)), subi(inclusive, counts));
