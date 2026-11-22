@@ -266,7 +266,7 @@ void mdrtCudaPMERelease(intptr_t handle) {
 /* The current path can use a particle list, and the rebuild cost grows with
    the particle count even at a fixed mesh. Include both in the policy key. */
 struct PMEPath {
-  int64_t key[10];
+  int64_t key[11];
   int winner;
   CUevent start, stop;
   float samples[2][3];
@@ -280,10 +280,10 @@ int mdrtCudaPMESelectedPath(void) { return lastPMEPath; }
 
 intptr_t mdrtCudaPMEPathPrepare(int64_t x, int64_t y, int64_t z, int64_t n,
                                 int64_t listed, int64_t single, int64_t tilted,
-                                int64_t tile) {
+                                int64_t tile, int64_t radial) {
   if (!pmePathVersion)
     cufftGetVersion(&pmePathVersion);
-  int64_t key[] = {x,y,z,n,listed,single,tilted,tile,defaultDevice,pmePathVersion};
+  int64_t key[] = {x,y,z,n,listed,single,tilted,tile,radial,defaultDevice,pmePathVersion};
   for (struct PMEPath *p = pmePaths; p; p = p->next)
     if (!memcmp(p->key, key, sizeof key))
       return (intptr_t)p;

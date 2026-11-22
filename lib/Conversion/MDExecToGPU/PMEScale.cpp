@@ -1,12 +1,13 @@
 // Apply the same influence when the sum needs only the potential grid.
 #include "DevicePME.h"
+#include "mdir/Driver/ProlateC2.h"
 
 using namespace mlir;
 using namespace mdir;
 using namespace mdir::kernels;
 
 template <Window window, Splitting splitting, bool tilted>
-void DevicePME::emitScale(StringRef symbol, bool storeFactors) {
+void DevicePME::emitScale(StringRef symbol, bool storeFactors, bool loadFactors) {
   StringRef blockFunction = blockSymbol<window, tilted>();
   OpBuilder::InsertionGuard functionGuard(b);
   SmallVector<Type> inputs;
@@ -224,11 +225,18 @@ void DevicePME::emitScale(StringRef symbol, bool storeFactors) {
             gaussianInfluenceTriclinic(msqr, rzero, rone, t1, t2, t3, gaussr);
       }
       if constexpr (splitting == Splitting::Radial) {
-        influence = radialInfluence(tables, pe, cc1, msqr, rone, t1, t2, t3);
+        if (loadFactors) {
+          Value offset = arith::ConstantIndexOp::create(b, loc, prolate::C2DeviceTableWords);
+          influence.factor = load(tables, {addi(addi(pe, offset), item)});
+        } else {
+          influence = radialInfluence(tables, pe, cc1, msqr, rone, t1, t2, t3);
+        }
       }
       Value bc = influence.factor;
       if (storeFactors) {
         Value axes = muli(addi(addi(k1, k2), k3), c3t);
+        if constexpr (splitting == Splitting::Radial)
+          axes = addi(axes, arith::ConstantIndexOp::create(b, loc, prolate::C2DeviceTableWords));
         store(bc, tables, {addi(axes, item)});
       } else {
         Value re_at = muli(item, cc2);
@@ -248,15 +256,15 @@ void DevicePME::emitScale(StringRef symbol, bool storeFactors) {
 }
 
 template void
-    DevicePME::emitScale<Window::Spline, Splitting::Gaussian, false>(StringRef, bool);
+    DevicePME::emitScale<Window::Spline, Splitting::Gaussian, false>(StringRef, bool, bool);
 template void
     DevicePME::emitScale<Window::Spline, Splitting::Dispersion, false>(
-        StringRef, bool);
+        StringRef, bool, bool);
 template void
-    DevicePME::emitScale<Window::Spline, Splitting::Gaussian, true>(StringRef, bool);
+    DevicePME::emitScale<Window::Spline, Splitting::Gaussian, true>(StringRef, bool, bool);
 template void DevicePME::emitScale<Window::Spline, Splitting::Dispersion, true>(
-    StringRef, bool);
+    StringRef, bool, bool);
 template void
-    DevicePME::emitScale<Window::Prolate, Splitting::Radial, false>(StringRef, bool);
+    DevicePME::emitScale<Window::Prolate, Splitting::Radial, false>(StringRef, bool, bool);
 template void
-    DevicePME::emitScale<Window::Prolate, Splitting::Radial, true>(StringRef, bool);
+    DevicePME::emitScale<Window::Prolate, Splitting::Radial, true>(StringRef, bool, bool);

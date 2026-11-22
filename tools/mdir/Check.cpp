@@ -593,7 +593,7 @@ static void checkCutoffJump(const Control &control, const System &system,
 }
 
 static const char *pmeForcePath(const Control &control) {
-  if (control.target == Target::CPU || control.pmeKernel != PMEKernel::Gaussian ||
+  if (control.target == Target::CPU || control.pmeKernel == PMEKernel::Prolate ||
       control.pmeOrder != 4 || control.pmeInfluence == PMEInfluence::P3M ||
       llvm::any_of(control.pmeGrid, [](int64_t n) { return n && n < 7; }))
     return "current";

@@ -6,6 +6,7 @@
 #include "mdir/Conversion/Passes.h"
 #include "DevicePME.h"
 #include "mdir/Dialect/MDExec/PMECellOrder.h"
+#include "mdir/Driver/ProlateC2.h"
 #include "mdir/Runtime/GroupsABI.h"
 
 #include "mdir/Conversion/MDExecKernels.h"
@@ -5587,7 +5588,7 @@ LogicalResult Lowering::selectReciprocal(md_exec::ReciprocalOp op, Value cachedC
       {word(grid[0]), word(grid[1]), word(grid[2]), n,
        op.getListed() ? count(op.getListed()) : word(-1),
        word(cast<MemRefType>(scratch[1].getType()).getElementType().isF32()),
-       word(isTriclinic(op.getCellMutable().get())), word(getTileEdge(op))},
+       word(isTriclinic(op.getCellMutable().get())), word(getTileEdge(op)), word(op.getProlate())},
       true).getResult(0);
   Value trials = call("mdrtCudaPMEPathTrials", {state}, true).getResult(0);
   auto dispatch = [&](Value path, bool observe) -> LogicalResult {
@@ -5695,8 +5696,9 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op, Value cachedCe
   PMECellOrder cellOrder;
   if (ordered && !fixedPoint && scratch.size() >= 16)
     return selectReciprocal(op, cachedCell);
+  bool cubicRadial = op.getProlate() && op.getOrder() == 4 && cachedCell;
   if (ordered) {
-    if (!md_exec::canUsePMECellOrder(op))
+    if (!md_exec::canUsePMECellOrder(op) || (op.getProlate() && !cubicRadial))
       return op.emitOpError("cell-order storage requires a cubic Gaussian force sum with compatible scatter and grid");
     auto record = MemRefType::get({ShapedType::kDynamic, 4}, force,
                                  MemRefLayoutAttrInterface(),
@@ -5733,6 +5735,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op, Value cachedCe
   // the tiles.
   auto instance = [&](StringRef name) {
     bool own = tilted && name != "mdrt_gpu_pme_real" &&
+               name != "mdrt_gpu_pme_prolate_coefficients" &&
                name != "mdrt_gpu_pme_pack" &&
                name != "mdrt_gpu_pme_patch_real" &&
                name != "mdrt_gpu_pme_spread_ordered" &&
@@ -5790,6 +5793,8 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op, Value cachedCe
     if (failed(addProlateKernels(position, charge, force, op.getOrder(),
                                    static_cast<bool>(listed), tiles)))
       return failure();
+  }
+  if (op.getProlate() && !cubicRadial) {
     // A triclinic cell takes its own places, gathering, and influence;
     // the coefficients and the spreading do not depend on the cell.
     auto prolateInstance = [&](StringRef name) {
@@ -5933,7 +5938,8 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op, Value cachedCe
   std::string tabled = op.getP3m() ? "_p3m" : kind;
   bool observe = !op.getEnergy().use_empty() || !op.getVirial().use_empty();
   bool calibrate = ordered && !fixedPoint;
-  bool flat = cachedCell && calibrate && md_exec::usePMEInfluenceMesh(grid);
+  bool flat = cubicRadial || (cachedCell && calibrate && md_exec::usePMEInfluenceMesh(grid));
+  StringRef prefix = cubicRadial ? "mdrt_gpu_pme_prolate_" : "mdrt_gpu_pme_";
   SmallVector<Value> tableArgs{op.getModuli(), tables, box, beta,
                                coulomb,        k1,     k2,  k3};
   auto makeTables = [&] {
@@ -5964,14 +5970,16 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op, Value cachedCe
                                 createIndex(builder, loc, i));
       memref::StoreOp::create(builder, loc, need, cachedCell, index);
     }
+    if (cubicRadial)
+      func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_prolate_coefficients"),
+                           ValueRange{op.getModuli(), tables, k1, k2, k3});
     if (calibrate)
       tableArgs.append({fixed, scratch[11], scratch[14]});
     func::CallOp::create(builder, loc,
-                         instance(calibrate ? "mdrt_gpu_pme_tables_ordered"
-                                            : "mdrt_gpu_pme_tables" + tabled),
+                         instance((prefix + (calibrate ? "tables_ordered" : "tables" + tabled)).str()),
                          tableArgs);
     if (flat)
-      func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_influence"),
+      func::CallOp::create(builder, loc, instance((prefix + "influence").str()),
                            ValueRange{complex, tables, box, beta, coulomb, k1, k2, k3});
   };
   auto toReal = [&] {
@@ -5987,7 +5995,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op, Value cachedCe
   };
   auto scale = [&] {
     func::CallOp::create(
-        builder, loc, instance("mdrt_gpu_pme_scale" + kind),
+        builder, loc, instance(cubicRadial ? "mdrt_gpu_pme_prolate_cached_scale" : "mdrt_gpu_pme_scale" + kind),
         ValueRange{complex, tables, box, beta, coulomb, k1, k2, k3});
   };
   if (calibrate) {
@@ -6010,7 +6018,8 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op, Value cachedCe
     SmallVector<Value> prepareArgs{sizes[0], sizes[1], sizes[2], word(narrow),
                                    word(tilted), pointer(scratch[14])};
     if (flat) {
-      int64_t bytes = 3 * (grid[0] + grid[1] + grid[2]) * (narrow ? 4 : 8);
+      int64_t bytes = (3 * (grid[0] + grid[1] + grid[2]) +
+                       (cubicRadial ? prolate::C2DeviceTableWords : 0)) * (narrow ? 4 : 8);
       prepareArgs.push_back(arith::AddIOp::create(builder, loc, pointer(tables), word(bytes)));
     }
     Value state = runtime(flat ? "mdrtCudaPMEPrepareFlat" : "mdrtCudaPMEPrepare",
@@ -6058,7 +6067,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op, Value cachedCe
       makeTables();
     if (observe)
       convolve = func::CallOp::create(
-          builder, loc, instance("mdrt_gpu_pme_convolve" + tabled),
+          builder, loc, instance((prefix + "convolve" + tabled).str()),
           ValueRange{complex, tables, rows, box, beta, coulomb, k1, k2, k3});
     else
       scale();
