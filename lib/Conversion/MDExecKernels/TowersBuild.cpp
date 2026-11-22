@@ -35,6 +35,7 @@ public:
   }
 
   void emit(bool audit);
+  void setup(Value cell, ValueRange a);
 
 private:
   using Offset = std::array<int, 3>;
@@ -198,6 +199,56 @@ void TowersBuild::sortWarp(Value keys, Value base, Value lane, Value count,
   }
 }
 
+void TowersBuild::setup(Value cell, ValueRange a) {
+  store(ci(0), a[1], {cell});
+  if (g.growCells)
+    store(ci(-1), a[1], {addi(cx(g.cells()), cell)});
+  ifThen(cmpi(CmpIPredicate::eq, cell, cx(0)), [&] {
+    store(ci(0), a[2], {cx(0)});
+    for (auto [axis, bins] :
+         llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
+      Value length = g.triclinic ? cd(1) : load(a[3], {cx(axis)});
+      if (g.triclinic) {
+        auto basis = [&](int row, int col) {
+          return load(a[3], {cx(3 * row + col)});
+        };
+        // The cross product of the other two rows is normal to the
+        // face. Its dot product with this row gives the slab height.
+        Values cross;
+        Value norm2 = cd(0);
+        int next = (axis + 1) % 3, last = (axis + 2) % 3;
+        for (int k = 0; k < 3; ++k) {
+          int u = (k + 1) % 3, v = (k + 2) % 3;
+          Value c = subf(mulf(basis(next, u), basis(last, v)),
+                         mulf(basis(next, v), basis(last, u)));
+          cross.push_back(c);
+          norm2 = addf(norm2, mulf(c, c));
+        }
+        Value norm = sqrt(norm2), height = cd(0);
+        for (int k = 0; k < 3; ++k) {
+          Value h = basis(axis, k), normal = divf(cross[k], norm);
+          height = addf(height, mulf(h, normal));
+          store(h, a[4], {cx(axis), cx(TowersLayout::lattice + k)});
+          store(divf(h, cd(bins)), a[4],
+                {cx(axis), cx(TowersLayout::step + k)});
+          store(normal, a[4], {cx(axis), cx(TowersLayout::normal + k)});
+        }
+        store(divf(height, cd(bins)), a[4],
+              {cx(axis), cx(TowersLayout::slab)});
+      }
+      Value width = divf(length, cd(bins));
+      store(length, a[4], {cx(axis), cx(0)});
+      store(width, a[4], {cx(axis), cx(1)});
+      store(divf(cd(4), width), a[4], {cx(axis), cx(2)});
+    }
+  });
+  for (auto [field, delta] : llvm::enumerate(offsets)) {
+    Offset back{-delta[0], -delta[1], -delta[2]};
+    store(indexCast(i32, neighbor(cell, back)), a[0],
+          {cell, cx(field)});
+  }
+}
+
 void TowersBuild::emit(bool audit) {
   if (!g.host)
     LLVM::LLVMFuncOp::create(b, loc, "__nv_fmod",
@@ -216,53 +267,7 @@ void TowersBuild::emit(bool audit) {
 
   phase("towers_setup", {inverse, counts, status, box, geometry}, cells,
         [&](Value cell, ValueRange a) {
-          store(ci(0), a[1], {cell});
-          if (g.growCells)
-            store(ci(-1), a[1], {addi(cx(cells), cell)});
-          ifThen(cmpi(CmpIPredicate::eq, cell, cx(0)), [&] {
-            store(ci(0), a[2], {cx(0)});
-            for (auto [axis, bins] :
-                 llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
-              Value length = g.triclinic ? cd(1) : load(a[3], {cx(axis)});
-              if (g.triclinic) {
-                auto basis = [&](int row, int col) {
-                  return load(a[3], {cx(3 * row + col)});
-                };
-                // The cross product of the other two rows is normal to the
-                // face. Its dot product with this row gives the slab height.
-                Values cross;
-                Value norm2 = cd(0);
-                int next = (axis + 1) % 3, last = (axis + 2) % 3;
-                for (int k = 0; k < 3; ++k) {
-                  int u = (k + 1) % 3, v = (k + 2) % 3;
-                  Value c = subf(mulf(basis(next, u), basis(last, v)),
-                                 mulf(basis(next, v), basis(last, u)));
-                  cross.push_back(c);
-                  norm2 = addf(norm2, mulf(c, c));
-                }
-                Value norm = sqrt(norm2), height = cd(0);
-                for (int k = 0; k < 3; ++k) {
-                  Value h = basis(axis, k), normal = divf(cross[k], norm);
-                  height = addf(height, mulf(h, normal));
-                  store(h, a[4], {cx(axis), cx(TowersLayout::lattice + k)});
-                  store(divf(h, cd(bins)), a[4],
-                        {cx(axis), cx(TowersLayout::step + k)});
-                  store(normal, a[4], {cx(axis), cx(TowersLayout::normal + k)});
-                }
-                store(divf(height, cd(bins)), a[4],
-                      {cx(axis), cx(TowersLayout::slab)});
-              }
-              Value width = divf(length, cd(bins));
-              store(length, a[4], {cx(axis), cx(0)});
-              store(width, a[4], {cx(axis), cx(1)});
-              store(divf(cd(4), width), a[4], {cx(axis), cx(2)});
-            }
-          });
-          for (auto [field, delta] : llvm::enumerate(offsets)) {
-            Offset back{-delta[0], -delta[1], -delta[2]};
-            store(indexCast(i32, neighbor(cell, back)), a[0],
-                  {cell, cx(field)});
-          }
+          setup(cell, a);
         });
   if (!g.compact)
     phase("towers_clear", {counts}, cells,
@@ -501,6 +506,10 @@ void TowersBuild::emitOwnership(MemRefType spans, MemRefType ids) {
       });
 }
 } // namespace
+
+void mdir::kernels::emitTowersSetupRow(OpBuilder &b, Location loc, TowersLayout g, Value cell, ValueRange args) {
+  TowersBuild(b, loc, g).setup(cell, args);
+}
 
 void mdir::kernels::emitTowersEntry(
     OpBuilder &b, Location loc, bool host, StringRef name, TypeRange types,

@@ -195,6 +195,13 @@ struct Dispatch {
                                   ValueRange{createIndex(at, l, j)});
         scf::YieldOp::create(at, l);
       });
+      if (g.cells() <= g.atoms) {
+        Value cellRow = arith::CmpIOp::create(k, loc, arith::CmpIPredicate::ult, i, axis(g.cells()));
+        scf::IfOp::create(k, loc, cellRow, [&](OpBuilder &at, Location l) {
+          emitTowersSetupRow(at, l, g, i, {map, counts, status, box, geometry});
+          scf::YieldOp::create(at, l);
+        });
+      }
       for (int a = 0; a < 3; ++a)
         memref::StoreOp::create(k, loc, xyz[a], raw, ValueRange{axis(a), i});
       // The direct pair takes its actual input fields by atom ID. The
@@ -297,7 +304,8 @@ LogicalResult Dispatch::run(Value positions) {
     if (failed(compile(i)))
       return failure();
     if (i == 0) {
-      launch("towers_setup", g.cells(), 128,
+      if (g.cells() > g.atoms)
+        launch("towers_setup", g.cells(), 128,
              {map, counts, status, box, geometry});
       Value forward = arith::ConstantIntOp::create(b, loc, 0, 32);
       launch("towers_insert", n, 128,

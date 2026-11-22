@@ -29,6 +29,9 @@ struct TowersLayout {
   int cells() const { return nx * ny * nz; }
 };
 
+void emitTowersSetupRow(mlir::OpBuilder &builder, mlir::Location loc, TowersLayout layout,
+                        mlir::Value cell, mlir::ValueRange args);
+
 /// Emit a serial loop or one GPU work item per element of a TOWERS phase.
 void emitTowersEntry(
     mlir::OpBuilder &builder, mlir::Location loc, bool host,
