@@ -338,7 +338,11 @@ void Force::stage(ArrayRef<Value> starts, ArrayRef<Value> counts, Value begin,
           features, {slot});
   };
   for (int offset = 0; offset < (source ? panel : stripe); offset += workers) {
-    Value slot = addi(tid, cx(offset));
+    // Start the target import on the warps following the source panel.
+    Value thread =
+        source ? tid
+               : remui(addi(tid, cx(workers - panel % workers)), cx(workers));
+    Value slot = addi(thread, cx(offset));
     ifThen(cmpi(CmpIPredicate::ult, slot, size), [&] { import(slot); });
   }
 }
@@ -646,20 +650,32 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
 void Force::traversal(Value owner) {
   int columns = 1 + 2 * g.reach;
   Values starts, counts;
-  for (int field = 0; field < columns + 4; ++field) {
-    starts.push_back(
-        indexCast(index, load(descriptors, {owner, cx(field), cx(0)})));
-    counts.push_back(
-        indexCast(index, load(descriptors, {owner, cx(field), cx(1)})));
-  }
-  Value ns = cx(0), nt = counts[0], lower;
-  for (int i = 0; i < columns; ++i) {
-    ns = addi(ns, counts[i]);
-    if (i == g.reach)
-      lower = ns;
-  }
-  for (int i = columns; i < columns + 4; ++i)
-    nt = addi(nt, counts[i]);
+  Value ns, nt, lower;
+  auto readStencil = [&](bool streaming) {
+    starts.clear();
+    counts.clear();
+    for (int field = 0; field < columns + 4; ++field) {
+      Value at = addi(muli(owner, cx(columns + 4)), cx(field));
+      Value ptr =
+          pointerTo(baseAddress(descriptors), muli(indexCast(i64, at), cl(8)));
+      auto type = VectorType::get({2}, i32);
+      // On a rare retry reread the stencil so the fast tile need not keep
+      // descriptor addresses and counts live across all of its barriers.
+      auto span = LLVM::LoadOp::create(b, loc, type, ptr, 4, streaming);
+      starts.push_back(indexCast(index, extract(span, 0)));
+      counts.push_back(indexCast(index, extract(span, 1)));
+    }
+    ns = cx(0);
+    nt = counts[0];
+    for (int i = 0; i < columns; ++i) {
+      ns = addi(ns, counts[i]);
+      if (i == g.reach)
+        lower = ns;
+    }
+    for (int i = columns; i < columns + 4; ++i)
+      nt = addi(nt, counts[i]);
+  };
+  readStencil(false);
   // A tower that fits in one panel and stripe needs no live loop state.
   // On record overflow visitTile has written no forces and synchronized the
   // block, so the streaming path may restart the entire tower.
@@ -682,6 +698,7 @@ void Force::traversal(Value owner) {
       },
       [&] { return Values{cb(false)}; })[0];
   ifThen(notNarrow(complete), [&] {
+    readStencil(true);
     forLoop(cx(0), ns, cx(panel), {}, [&](Value sb, ValueRange) {
       Value sc = minui(cx(panel), subi(ns, sb));
       whileLoop(
