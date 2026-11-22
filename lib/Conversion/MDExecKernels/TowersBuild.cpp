@@ -46,6 +46,10 @@ private:
              function_ref<void(Value, ValueRange)> body);
   Value neighbor(Value cell, Offset shift);
   void increment(Value mem, Value at);
+  void sortWarp(Value keys, Value base, Value lane, Value count, int batches,
+                function_ref<void(Value, Value)> place);
+  Value wrap(Value position, Value length);
+  Value quarterCell(Value v, Value width, Value reciprocal);
   void emitOwnership(MemRefType spans, MemRefType ids);
 };
 
@@ -95,21 +99,116 @@ void TowersBuild::increment(Value mem, Value at) {
                               ValueRange{at});
 }
 
+Value TowersBuild::wrap(Value x, Value length) {
+  Value negative = cmpf(CmpFPredicate::OLT, x, cd(0));
+  Value above = cmpf(CmpFPredicate::OGE, x, length);
+  Value single =
+      select(negative, addf(x, length), select(above, subf(x, length), x));
+  Value multiple = ori(cmpf(CmpFPredicate::OLT, x, subf(cd(0), length)),
+                       cmpf(CmpFPredicate::OGE, x, addf(length, length)));
+  return ifElse(
+      {f64}, multiple,
+      [&] {
+        // The general remainder also covers windings too large to represent
+        // the integer quotient in binary64.
+        Value rem;
+        if (g.host)
+          rem = arith::RemFOp::create(b, loc, x, length);
+        else
+          rem = LLVM::CallOp::create(b, loc, TypeRange{f64}, "__nv_fmod",
+                                     ValueRange{x, length})
+                    .getResult();
+        return Values{select(cmpf(CmpFPredicate::OLT, rem, cd(0)),
+                             addf(rem, length), rem)};
+      },
+      [&] { return Values{single}; })[0];
+}
+
+Value TowersBuild::quarterCell(Value v, Value width, Value reciprocal) {
+  // An FMA resolves points on either side of a rounded reciprocal product.
+  Value estimate = fptosi(i32, mulf(v, reciprocal));
+  Value residual = math::FmaOp::create(
+      b, loc, subf(cd(0), sitofp(f64, estimate)), width, mulf(v, cd(4)));
+  return select(cmpf(CmpFPredicate::OLT, residual, cd(0)),
+                subi(estimate, ci(1)),
+                select(cmpf(CmpFPredicate::OGE, residual, width),
+                       addi(estimate, ci(1)), estimate));
+}
+
+void TowersBuild::sortWarp(Value keys, Value base, Value lane, Value count,
+                           int batches,
+                           function_ref<void(Value, Value)> place) {
+  // A bitonic network sorts one, two or four registers per lane. The
+  // sentinel compares after every legal compound key.
+  SmallVector<Value> values(batches);
+  for (int j = 0; j < batches; ++j) {
+    Value slot = addi(lane, cx(32 * j));
+    values[j] = ifElse(
+        {i32}, cmpi(CmpIPredicate::ult, slot, count),
+        [&] { return Values{load(keys, {addi(base, slot)})}; },
+        [&] { return Values{ci(-1)}; })[0];
+  }
+  for (int width = 2; width <= 32 * batches; width *= 2) {
+    for (int stride = width / 2; stride; stride /= 2) {
+      for (int j = 0; j < batches; ++j) {
+        if (stride >= 32) {
+          int partner = j ^ (stride / 32);
+          if (partner < j)
+            continue;
+          Value lo = minui(values[j], values[partner]),
+                hi = maxui(values[j], values[partner]);
+          bool ascending = (32 * j & width) == 0;
+          values[j] = ascending ? lo : hi;
+          values[partner] = ascending ? hi : lo;
+        } else {
+          Value slot = addi(lane, cx(32 * j));
+          Value flip = andi(
+              xori(divui(slot, cx(width)), divui(slot, cx(stride))), cx(1));
+          Value other =
+              shuffle(gpu::ShuffleMode::XOR, values[j], ci(stride), ci(32))
+                  .first;
+          values[j] = select(cmpi(CmpIPredicate::eq, flip, cx(0)),
+                             minui(values[j], other), maxui(values[j], other));
+        }
+      }
+    }
+  }
+  for (int j = 0; j < batches; ++j) {
+    Value slot = addi(lane, cx(32 * j));
+    ifThen(cmpi(CmpIPredicate::ult, slot, count),
+           [&] { place(values[j], slot); });
+  }
+}
+
 void TowersBuild::emit(bool audit) {
+  if (!g.host)
+    LLVM::LLVMFuncOp::create(b, loc, "__nv_fmod",
+                             LLVM::LLVMFunctionType::get(f64, {f64, f64}));
   int cells = g.cells(), fields = offsets.size(), n = g.atoms;
   int slots = g.capacity * cells;
   auto counts = mem({cells}, i32), keys = mem({slots}, i32);
   auto status = mem({1}, i32), inverse = mem({cells, fields}, i32);
   auto spans = mem({cells, fields, 2}, i32);
-  auto raw = mem({3, n}, f64), local = mem({n, 4}, f32);
-  auto packed = mem({slots, 4}, f32), types = mem({n}, i32);
-  auto charges = mem({n}, f32), box = mem({3}, f64);
+  auto xyzw = VectorType::get({4}, f32);
+  auto raw = mem({3, n}, f64), local = mem({n}, xyzw);
+  auto packed = mem({slots}, xyzw), types = mem({n}, i32);
+  auto charges = mem({n}, f32), box = mem({3}, f64),
+       geometry = mem({3, 3}, f64);
 
-  phase("towers_setup", {inverse, counts, status}, cells,
+  phase("towers_setup", {inverse, counts, status, box, geometry}, cells,
         [&](Value cell, ValueRange a) {
           store(ci(0), a[1], {cell});
-          ifThen(cmpi(CmpIPredicate::eq, cell, cx(0)),
-                 [&] { store(ci(0), a[2], {cx(0)}); });
+          ifThen(cmpi(CmpIPredicate::eq, cell, cx(0)), [&] {
+            store(ci(0), a[2], {cx(0)});
+            for (auto [axis, bins] :
+                 llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
+              Value length = load(a[3], {cx(axis)});
+              Value width = divf(length, cd(bins));
+              store(length, a[4], {cx(axis), cx(0)});
+              store(width, a[4], {cx(axis), cx(1)});
+              store(divf(cd(4), width), a[4], {cx(axis), cx(2)});
+            }
+          });
           for (auto [field, delta] : llvm::enumerate(offsets)) {
             Offset back{-delta[0], -delta[1], -delta[2]};
             store(indexCast(i32, neighbor(cell, back)), a[0],
@@ -121,36 +220,57 @@ void TowersBuild::emit(bool audit) {
           [&](Value c, ValueRange a) { store(ci(0), a[0], {c}); });
 
   // Keys are unique even when all atoms lie on the same quarter-cell tie.
-  phase("towers_insert", {raw, charges, box, counts, keys, local, i32}, n,
+  phase("towers_insert", {raw, charges, geometry, counts, keys, local, i32}, n,
         [&](Value item, ValueRange a) {
           Value atom = select(cmpi(CmpIPredicate::ne, a[6], ci(0)),
                               subi(cx(n - 1), item), item);
           Value cell = cx(0), sub = ci(0);
+          Values coordinates;
           for (auto [axis, bins] :
                llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
-            Value length = load(a[2], {cx(axis)});
+            Value length = load(a[2], {cx(axis), cx(0)});
             Value x = load(a[0], {cx(axis), atom});
-            Value outside = ori(cmpf(CmpFPredicate::OLT, x, cd(0)),
-                                cmpf(CmpFPredicate::OGE, x, length));
-            Value v = ifElse(
-                {f64}, outside,
-                [&] {
-                  return Values{subf(x, mulf(floor(divf(x, length)), length))};
-                },
-                [&] { return Values{x}; })[0];
-            Value width = divf(length, cd(bins));
-            Value quarter = fptosi(i32, mulf(cd(4), divf(v, width)));
+            Value v = wrap(x, length);
+            Value width = load(a[2], {cx(axis), cx(1)});
+            Value reciprocal = load(a[2], {cx(axis), cx(2)});
+            Value quarter = quarterCell(v, width, reciprocal);
             quarter = minsi(maxsi(quarter, ci(0)), ci(4 * bins - 1));
             Value bin = shrui(quarter, ci(2));
             cell = addi(muli(cell, cx(bins)), indexCast(index, bin));
             sub = addi(shli(sub, ci(2)), andi(quarter, ci(3)));
             Value center = mulf(addf(sitofp(f64, bin), cd(0.5)), width);
-            store(truncf(subf(v, center)), a[5], {atom, cx(axis)});
+            coordinates.push_back(truncf(subf(v, center)));
           }
-          store(load(a[1], {atom}), a[5], {atom, cx(3)});
-          Value rank =
-              memref::AtomicRMWOp::create(b, loc, arith::AtomicRMWKind::addi,
-                                          ci(1), a[3], ValueRange{cell});
+          coordinates.push_back(load(a[1], {atom}));
+          store(vector::FromElementsOp::create(b, loc, xyzw, coordinates), a[5],
+                {atom});
+          Value rank;
+          if (g.host) {
+            rank = load(a[3], {cell});
+            store(addi(rank, ci(1)), a[3], {cell});
+          } else {
+            // The mask excludes inactive lanes in the last particle warp.
+            Value lane = indexCast(i32, remui(item, cx(32)));
+            Value left = subi(ci(n), subi(indexCast(i32, item), lane));
+            Value active = shrui(ci(-1), subi(ci(32), minui(left, ci(32))));
+            Value group = NVVM::MatchSyncOp::create(b, loc, i32, active,
+                                                    indexCast(i32, cell),
+                                                    NVVM::MatchSyncKind::any);
+            Value first = math::CountTrailingZerosOp::create(b, loc, group);
+            Value base = ifElse(
+                {i32}, cmpi(CmpIPredicate::eq, lane, first),
+                [&] {
+                  Value ptr = pointerTo(baseAddress(a[3]),
+                                        muli(indexCast(i64, cell), cl(4)));
+                  Value members = math::CtPopOp::create(b, loc, group);
+                  return Values{atomic(LLVM::AtomicBinOp::add, ptr, members)};
+                },
+                [&] { return Values{ci(0)}; })[0];
+            base = NVVM::ShflOp::create(b, loc, i32, group, base, first, ci(31),
+                                        NVVM::ShflKind::idx, nullptr);
+            Value preceding = andi(group, subi(shli(ci(1), lane), ci(1)));
+            rank = addi(base, math::CtPopOp::create(b, loc, preceding));
+          }
           ifThen(cmpi(CmpIPredicate::ult, rank, ci(g.capacity)), [&] {
             Value key = ori(shli(sub, ci(26)), indexCast(i32, atom));
             store(key, a[4],
@@ -172,8 +292,7 @@ void TowersBuild::emit(bool audit) {
           auto place = [&](Value key, Value rank) {
             Value atom = indexCast(index, andi(key, ci(0x3ffffff)));
             Value dest = addi(base, rank);
-            for (int k = 0; k < 4; ++k)
-              store(load(a[2], {atom, cx(k)}), a[5], {dest, cx(k)});
+            store(load(a[2], {atom}), a[5], {dest});
             store(load(a[3], {atom}), a[6], {dest});
             store(indexCast(i32, atom), a[7], {dest});
             store(indexCast(i32, dest), a[8], {atom});
@@ -195,48 +314,20 @@ void TowersBuild::emit(bool audit) {
           if (g.host)
             rankSort();
           else {
-            // Most cells fit two registers per lane. Sort 64 keys in a warp;
-            // absent keys compare last (the atom count excludes the sentinel).
+            auto sort = [&](int batches) {
+              sortWarp(a[1], base, lane, count, batches, place);
+            };
             ifThenElse(
-                cmpi(CmpIPredicate::ule, size, ci(64)),
+                cmpi(CmpIPredicate::ule, count, cx(32)), [&] { sort(1); },
                 [&] {
-                  Value key[2];
-                  for (int j = 0; j < 2; ++j) {
-                    Value slot = addi(lane, cx(32 * j));
-                    key[j] = ifElse(
-                        {i32}, cmpi(CmpIPredicate::ult, slot, count),
-                        [&] { return Values{load(a[1], {addi(base, slot)})}; },
-                        [&] { return Values{ci(-1)}; })[0];
-                  }
-                  for (int width = 2; width <= 64; width *= 2)
-                    for (int stride = width / 2; stride; stride /= 2) {
-                      if (stride == 32) {
-                        Value lo = minui(key[0], key[1]),
-                              hi = maxui(key[0], key[1]);
-                        key[0] = lo;
-                        key[1] = hi;
-                        continue;
-                      }
-                      for (int j = 0; j < 2; ++j) {
-                        Value slot = addi(lane, cx(32 * j));
-                        Value flip = andi(xori(divui(slot, cx(width)),
-                                               divui(slot, cx(stride))),
-                                          cx(1));
-                        Value other = shuffle(gpu::ShuffleMode::XOR, key[j],
-                                              ci(stride), ci(32))
-                                          .first;
-                        key[j] =
-                            select(cmpi(CmpIPredicate::eq, flip, cx(0)),
-                                   minui(key[j], other), maxui(key[j], other));
-                      }
-                    }
-                  for (int j = 0; j < 2; ++j) {
-                    Value slot = addi(lane, cx(32 * j));
-                    ifThen(cmpi(CmpIPredicate::ult, slot, count),
-                           [&] { place(key[j], slot); });
-                  }
-                },
-                rankSort);
+                  ifThenElse(
+                      cmpi(CmpIPredicate::ule, count, cx(64)), [&] { sort(2); },
+                      [&] {
+                        ifThenElse(
+                            cmpi(CmpIPredicate::ule, count, cx(128)),
+                            [&] { sort(4); }, rankSort);
+                      });
+                });
           }
           forLoop(lane, cx(fields), cx(lanes), {},
                   [&](Value field, ValueRange) {
@@ -264,43 +355,57 @@ void TowersBuild::emit(bool audit) {
 // physical cutoff independently. No dense pair table is used in a rebuild.
 void TowersBuild::emitOwnership(MemRefType spans, MemRefType ids) {
   auto pairs = mem({int64_t(g.atoms) * g.atoms}, i32);
-  phase("towers_ownership", {spans, ids, pairs}, g.cells(),
-        [&](Value owner, ValueRange a) {
-          int column = 2 * g.reach + 1;
-          auto span = [&](Value field, int word) {
-            return indexCast(index, load(a[0], {owner, field, cx(word)}));
-          };
-          forLoop(cx(0), cx(column), cx(1), {}, [&](Value s, ValueRange) {
-            Value first = span(s, 0), n = span(s, 1);
-            forLoop(cx(0), cx(5), cx(1), {}, [&](Value t, ValueRange) {
-              Value self = cmpi(CmpIPredicate::eq, t, cx(0));
-              Value field = select(self, cx(0), addi(t, cx(column - 1)));
-              Value valid = ori(notNarrow(self),
-                                cmpi(CmpIPredicate::ule, s, cx(g.reach)));
-              ifThen(valid, [&] {
-                Value target = span(field, 0), nt = span(field, 1);
-                forLoop(cx(0), n, cx(1), {}, [&](Value i, ValueRange) {
-                  Value same = andi(self, cmpi(CmpIPredicate::eq, s, cx(0)));
-                  Value source = indexCast(index, load(a[1], {addi(first, i)}));
-                  forLoop(cx(0), select(same, i, nt), cx(1), {},
-                          [&](Value j, ValueRange) {
-                            Value other =
-                                indexCast(index, load(a[1], {addi(target, j)}));
-                            increment(a[2], addi(muli(minui(source, other),
-                                                      cx(g.atoms)),
-                                                 maxui(source, other)));
-                            return Values{};
-                          });
+  phase(
+      "towers_ownership", {spans, ids, pairs}, g.cells(),
+      [&](Value owner, ValueRange a) {
+        mdir::kernels::emitOwnedTowersSpans(
+            b, loc, g.reach, owner, a[0],
+            [&](auto source, auto target, Value triangular) {
+              forLoop(cx(0), source.count, cx(1), {}, [&](Value i, ValueRange) {
+                Value id =
+                    indexCast(index, load(a[1], {addi(source.first, i)}));
+                Value end = select(triangular, i, target.count);
+                forLoop(cx(0), end, cx(1), {}, [&](Value j, ValueRange) {
+                  Value other =
+                      indexCast(index, load(a[1], {addi(target.first, j)}));
+                  increment(a[2], addi(muli(minui(id, other), cx(g.atoms)),
+                                       maxui(id, other)));
                   return Values{};
                 });
+                return Values{};
               });
-              return Values{};
             });
-            return Values{};
-          });
-        });
+      });
 }
 } // namespace
+
+void mdir::kernels::emitOwnedTowersSpans(
+    OpBuilder &builder, Location loc, int reach, Value owner, Value descriptors,
+    llvm::function_ref<void(TowersSpan, TowersSpan, Value)> visit) {
+  NeighborBuildCode ir(builder, loc);
+  Value zero = ir.cx(0), one = ir.cx(1);
+  auto span = [&](Value field) {
+    return TowersSpan{
+        field,
+        ir.indexCast(ir.index, ir.load(descriptors, {owner, field, zero})),
+        ir.indexCast(ir.index, ir.load(descriptors, {owner, field, one}))};
+  };
+  int columns = 2 * reach + 1;
+  ir.forLoop(zero, ir.cx(columns), one, {}, [&](Value s, ValueRange) {
+    TowersSpan source = span(s);
+    // Home targets take the preceding layers and the upper triangle of home.
+    ir.ifThen(ir.cmpi(CmpIPredicate::ule, s, ir.cx(reach)), [&] {
+      visit(source, span(zero), ir.cmpi(CmpIPredicate::eq, s, zero));
+    });
+    // Each lateral half-plate target takes the entire axial column.
+    ir.forLoop(ir.cx(columns), ir.cx(columns + 4), one, {},
+               [&](Value t, ValueRange) {
+                 visit(source, span(t), ir.cb(false));
+                 return Values{};
+               });
+    return Values{};
+  });
+}
 
 LogicalResult mdir::kernels::emitTowersBuild(ModuleOp module, TowersLayout g,
                                              bool audit) {

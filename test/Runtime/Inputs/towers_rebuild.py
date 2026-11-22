@@ -1,4 +1,5 @@
 """Run the emitted rebuild entries and compare stable IDs with a periodic oracle."""
+
 import ctypes as C
 import itertools
 import math
@@ -15,30 +16,55 @@ P = C.c_void_p
 
 def compile_entries(directory, dims, reach, n, capacity, compact, gpu, audit=True):
     options = dict(zip(("nx", "ny", "nz"), dims))
-    options.update(reach=reach, atoms=n, capacity=capacity, compact=int(compact),
-                   host=int(not gpu), audit=int(audit))
+    options.update(
+        reach=reach,
+        atoms=n,
+        capacity=capacity,
+        compact=int(compact),
+        host=int(not gpu),
+        audit=int(audit),
+    )
     flags = " ".join(f"{k}={v}" for k, v in options.items())
-    ir = subprocess.check_output([MDIR_OPT, f"--add-towers-build={flags}"],
-                                 input=b"module {}")
+    ir = subprocess.check_output(
+        [MDIR_OPT, f"--add-towers-build={flags}"], input=b"module {}"
+    )
     opts = ["mlir-opt", "--canonicalize", "--cse"]
     if gpu:
-        ir = subprocess.check_output(opts + [
-            "--gpu-lower-to-nvvm-pipeline=cubin-format=isa cubin-chip=sm_80 "
-            "kernel-bare-ptr-calling-convention=true"], input=ir)
+        ir = subprocess.check_output(
+            opts
+            + [
+                "--gpu-lower-to-nvvm-pipeline=cubin-format=isa cubin-chip=sm_80 "
+                "kernel-bare-ptr-calling-convention=true"
+            ],
+            input=ir,
+        )
         match = re.search(rb'"(//[^"]*?\.entry[^"]*)"', ir)
         if not match:
             raise ValueError("missing PTX object")
-        return re.sub(rb'\\([0-9A-Fa-f]{2})',
-                      lambda m: bytes([int(m[1], 16)]), match[1])
-    ir = subprocess.check_output(opts + [
-        "--convert-scf-to-cf", "--convert-math-to-llvm", "--finalize-memref-to-llvm",
-        "--convert-func-to-llvm=use-bare-ptr-memref-call-conv",
-        "--convert-arith-to-llvm", "--convert-cf-to-llvm",
-        "--reconcile-unrealized-casts"], input=ir)
+        return re.sub(
+            rb"\\([0-9A-Fa-f]{2})", lambda m: bytes([int(m[1], 16)]), match[1]
+        )
+    ir = subprocess.check_output(
+        opts
+        + [
+            "--convert-vector-to-llvm",
+            "--convert-scf-to-cf",
+            "--convert-math-to-llvm",
+            "--finalize-memref-to-llvm",
+            "--convert-func-to-llvm=use-bare-ptr-memref-call-conv",
+            "--convert-arith-to-llvm",
+            "--convert-cf-to-llvm",
+            "--reconcile-unrealized-casts",
+        ],
+        input=ir,
+    )
     llvm = subprocess.check_output(["mlir-translate", "--mlir-to-llvmir"], input=ir)
     obj = directory / "host.o"
-    subprocess.run(["llc", "-O2", "-filetype=obj", "-relocation-model=pic",
-                    "-o", obj], input=llvm, check=True)
+    subprocess.run(
+        ["llc", "-O2", "-filetype=obj", "-relocation-model=pic", "-o", obj],
+        input=llvm,
+        check=True,
+    )
     lib = directory / ("host-" + "-".join(str(v) for v in options.values()) + ".so")
     subprocess.run(["cc", "-shared", obj, "-o", lib, "-lm"], check=True)
     return lib
@@ -46,6 +72,7 @@ def compile_entries(directory, dims, reach, n, capacity, compact, gpu, audit=Tru
 
 class Entries:
     """Both targets use the static-shape bare-pointer memref calling convention."""
+
     def __init__(self, image, gpu):
         self.gpu = gpu
         self.allocations = []
@@ -70,7 +97,7 @@ class Entries:
         if not self.gpu:
             return (kind * n)()
         ptr = P()
-        self.cuda("cuMemAllocManaged", C.byref(ptr), C.c_size_t(n*C.sizeof(kind)), 1)
+        self.cuda("cuMemAllocManaged", C.byref(ptr), C.c_size_t(n * C.sizeof(kind)), 1)
         self.allocations.append(ptr)
         return (kind * n).from_address(ptr.value)
 
@@ -85,8 +112,20 @@ class Entries:
             self.functions[name] = fn
         values = [P(C.addressof(x)) if isinstance(x, C.Array) else x for x in args]
         argv = (P * len(args))(*(C.addressof(x) for x in values))
-        self.cuda("cuLaunchKernel", self.functions[name], (items+127)//128, 1, 1,
-                  128, 1, 1, 0, None, argv, None)
+        self.cuda(
+            "cuLaunchKernel",
+            self.functions[name],
+            (items + 127) // 128,
+            1,
+            1,
+            128,
+            1,
+            1,
+            0,
+            None,
+            argv,
+            None,
+        )
 
     def sync(self):
         if self.gpu:
@@ -104,89 +143,168 @@ class Rebuild:
     def __init__(self, entries, dims, reach, n, capacity, compact):
         self.entries, self.n, self.compact = entries, n, compact
         self.cells = math.prod(dims)
-        self.fields = 5 + 2*reach
-        slots = capacity*self.cells
+        self.fields = 5 + 2 * reach
+        slots = capacity * self.cells
         alloc = entries.array
-        self.map = alloc(I, self.cells*self.fields)
+        self.map = alloc(I, self.cells * self.fields)
         self.count = alloc(I, self.cells)
         self.status = alloc(I, 1)
-        self.raw, self.box = alloc(D, 3*n), alloc(D, 3)
+        self.raw, self.box = alloc(D, 3 * n), alloc(D, 3)
         self.charge, self.types = alloc(F, n), alloc(I, n)
-        self.keys, self.local = alloc(I, slots), alloc(F, 4*n)
-        self.packed, self.packed_types = alloc(F, 4*slots), alloc(I, slots)
+        self.keys, self.local = alloc(I, slots), alloc(F, 4 * n)
+        self.packed, self.packed_types = alloc(F, 4 * slots), alloc(I, slots)
         self.ids, self.inverse = alloc(I, slots), alloc(I, n)
-        self.spans = alloc(I, 2*self.cells*self.fields)
-        entries.run("setup", self.cells, self.map, self.count, self.status)
-        entries.sync()
+        self.spans = alloc(I, 2 * self.cells * self.fields)
+        self.geometry = alloc(D, 9)
+
+    def setup(self):
+        self.entries.run(
+            "setup",
+            self.cells,
+            self.map,
+            self.count,
+            self.status,
+            self.box,
+            self.geometry,
+        )
+        self.entries.sync()
 
     def step(self, reverse=False):
         run = self.entries.run
         if not self.compact:
             run("clear", self.cells, self.count)
-        run("insert", self.n, self.raw, self.charge, self.box, self.count,
-            self.keys, self.local, I(reverse))
-        run("pack", self.cells*32, self.count, self.keys, self.local,
-            self.types, self.map, self.packed, self.packed_types, self.ids,
-            self.inverse, self.spans, self.status)
+        run(
+            "insert",
+            self.n,
+            self.raw,
+            self.charge,
+            self.geometry,
+            self.count,
+            self.keys,
+            self.local,
+            I(reverse),
+        )
+        run(
+            "pack",
+            self.cells * 32,
+            self.count,
+            self.keys,
+            self.local,
+            self.types,
+            self.map,
+            self.packed,
+            self.packed_types,
+            self.ids,
+            self.inverse,
+            self.spans,
+            self.status,
+        )
 
 
 def check(directory, gpu, reach, compact):
-    dims = (3, 4, 2*reach+1)
-    lengths = (6, 8, dims[2]*2/reach)
+    dims = (3, 3, 2 * reach + 1) if compact else (5, 4, 2 * reach + 3)
+    lengths = (2 * dims[0], 2 * dims[1], dims[2] * 2 / reach)
     # Many tied subcell keys exercise both warp sort and the dense-cell path.
-    coords = [(0.25, 0.25, 0.25)]*68
-    coords += [(x, 2., 2.) for x in (0., 6., -12., 2., math.nextafter(2., 0.))]
+    coords = [(0.25, 0.25, 0.25)] * 132 + [(3.5, 3.5, 1.0)] * 71
+    coords += [(x, 2.0, 2.0) for x in (0.0, 6.0, -12.0, 2.0, math.nextafter(2.0, 0.0))]
+    coords += [(2.0**70, -(2.0**70), 0.0), (2.0, 2.0, 0.0)]
     rng = random.Random(194)
-    coords += [tuple(rng.uniform(-l, 2*l) for l in lengths) for _ in range(48)]
+    coords += [tuple(rng.uniform(-l, 2 * l) for l in lengths) for _ in range(48)]
     n = len(coords)
     tested = 0
-    for capacity in (32, n):
-        entries = Entries(compile_entries(directory, dims, reach, n, capacity,
-                                          compact, gpu), gpu)
+    capacity = 32
+    for attempt in range(2):
+        entries = Entries(
+            compile_entries(directory, dims, reach, n, capacity, compact, gpu), gpu
+        )
         r = Rebuild(entries, dims, reach, n, capacity, compact)
         r.box[:] = lengths
+        r.setup()
         r.types[:] = [i % 17 for i in range(n)]
-        r.charge[:] = [i/8 for i in range(n)]
-        pairs = entries.array(I, n*n)
+        r.charge[:] = [i / 8 for i in range(n)]
+        pairs = entries.array(I, n * n)
         for frame, reverse in itertools.product(range(2), (False, True)):
-            xyz = [tuple(x + frame*(i % 7-3)*(axis+1)*.7
-                         for axis, x in enumerate(p)) for i, p in enumerate(coords)]
+            xyz = [
+                tuple(
+                    x + frame * (i % 7 - 3) * (axis + 1) * 0.7
+                    for axis, x in enumerate(p)
+                )
+                for i, p in enumerate(coords)
+            ]
             r.raw[:] = [p[axis] for axis in range(3) for p in xyz]
             r.step(reverse)
             entries.sync()
             bins = [[] for _ in range(r.cells)]
+            locations = []
             for i, p in enumerate(xyz):
-                quarters = [min(4*b-1, int(4*((x % l)/(l/b))))
-                            for x, l, b in zip(p, lengths, dims)]
-                cell = (quarters[0]//4*dims[1] + quarters[1]//4)*dims[2] + quarters[2]//4
+                quarters = [
+                    min(4 * b - 1, int(4 * ((x % l) / (l / b))))
+                    for x, l, b in zip(p, lengths, dims)
+                ]
+                ix, iy, iz = (q // 4 for q in quarters)
+                locations.append((ix, iy, iz))
+                cell = (ix * dims[1] + iy) * dims[2] + iz
                 bins[cell].append((tuple(q % 4 for q in quarters), i))
             required = max(map(len, bins))
             if capacity < required:
-                assert r.status[0] == required
+                assert attempt == 0 and r.status[0] == required
+                capacity = r.status[0]
                 break
             assert r.status[0] == 0
+            # Read each descriptor from its owner, independently of the
+            # scatter used by sort/pack. This also checks empty remote spans.
+            axial = [(0, 0, dz) for dz in range(-1, -reach - 1, -1)]
+            axial += [(0, 0, dz) for dz in range(1, reach + 1)]
+            offsets = [
+                (0, 0, 0),
+                *axial,
+                (-1, 0, 0),
+                (-1, -1, 0),
+                (0, -1, 0),
+                (1, -1, 0),
+            ]
+            for owner, coord in enumerate(itertools.product(*map(range, dims))):
+                for field, offset in enumerate(offsets):
+                    ix, iy, iz = ((x + d) % b for x, d, b in zip(coord, offset, dims))
+                    cell = (ix * dims[1] + iy) * dims[2] + iz
+                    k = 2 * (owner * r.fields + field)
+                    assert r.spans[k : k + 2] == [cell * capacity, len(bins[cell])]
             for cell, members in enumerate(bins):
-                offset = 2*cell*r.fields
-                start, count = r.spans[offset:offset+2]
-                assert r.ids[start:start+count] == [i for _, i in sorted(members)]
-                for slot in range(start, start+count):
+                offset = 2 * cell * r.fields
+                start, count = r.spans[offset : offset + 2]
+                assert r.ids[start : start + count] == [i for _, i in sorted(members)]
+                for slot in range(start, start + count):
                     atom = r.ids[slot]
                     assert r.inverse[atom] == slot
                     assert r.packed_types[slot] == atom % 17
-                    assert r.packed[4*slot+3] == atom/8
+                    assert r.packed[4 * slot + 3] == atom / 8
                     for axis, (x, l, b) in enumerate(zip(xyz[atom], lengths, dims)):
                         v = x % l
-                        bin_id = min(b-1, int(v/(l/b)))
-                        assert r.packed[4*slot+axis] == F(v-(bin_id+.5)*(l/b)).value
+                        bin_id = min(b - 1, int(v / (l / b)))
+                        assert (
+                            r.packed[4 * slot + axis]
+                            == F(v - (bin_id + 0.5) * (l / b)).value
+                        )
             C.memset(C.addressof(pairs), 0, C.sizeof(pairs))
             entries.run("ownership", r.cells, r.spans, r.ids, pairs)
             entries.sync()
             assert max(pairs) <= 1
-            assert all(pairs[i*n+j] == 0 for i in range(n) for j in range(i+1))
+            assert all(pairs[i * n + j] == 0 for i in range(n) for j in range(i + 1))
             for i, j in itertools.combinations(range(n), 2):
-                delta = [math.remainder(a-b,l) for a,b,l in zip(xyz[i],xyz[j],lengths)]
-                if sum(d*d for d in delta) < 4:
-                    assert pairs[i*n+j] == 1, (frame, reverse, i, j)
+                # Cell-distance enumeration tests every candidate, including
+                # the extra pairs outside the spherical physical cutoff.
+                gaps = [
+                    min(abs(a - b), dim - abs(a - b))
+                    for a, b, dim in zip(locations[i], locations[j], dims)
+                ]
+                eligible = gaps[0] <= 1 and gaps[1] <= 1 and gaps[2] <= reach
+                assert pairs[i * n + j] == int(eligible)
+                delta = [
+                    math.remainder((a % l) - (b % l), l)
+                    for a, b, l in zip(xyz[i], xyz[j], lengths)
+                ]
+                if sum(d * d for d in delta) < 4:
+                    assert pairs[i * n + j] == 1, (frame, reverse, i, j)
                     tested += 1
         entries.close()
     return tested
@@ -196,6 +314,9 @@ if __name__ == "__main__":
     MDIR_OPT = sys.argv[3]
     directory = Path(sys.argv[1])
     directory.mkdir(parents=True, exist_ok=True)
-    total = sum(check(directory, sys.argv[2] == "gpu", reach, compact)
-                for reach in (1, 2) for compact in (False, True))
+    total = sum(
+        check(directory, sys.argv[2] == "gpu", reach, compact)
+        for reach in (1, 2)
+        for compact in (False, True)
+    )
     print(f"{total} in-cutoff pair visits matched")

@@ -629,7 +629,8 @@ def AddTowersBuild : Pass<"add-towers-build", "::mlir::ModuleOp"> {
   let dependentDialects = ["::mlir::LLVM::LLVMDialect", "::mlir::NVVM::NVVMDialect",
                            "::mlir::arith::ArithDialect", "::mlir::func::FuncDialect",
                            "::mlir::gpu::GPUDialect", "::mlir::math::MathDialect",
-                           "::mlir::memref::MemRefDialect", "::mlir::scf::SCFDialect"];
+                           "::mlir::memref::MemRefDialect", "::mlir::scf::SCFDialect",
+                           "::mlir::vector::VectorDialect"];
 }
 
 def AddMatrixBuild : Pass<"add-matrix-build", "::mlir::ModuleOp"> {
