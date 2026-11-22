@@ -16,6 +16,9 @@
 
 namespace llvm {
 class TargetMachine;
+namespace cl {
+class Option;
+}
 }
 
 namespace mdir::compiler {
@@ -247,6 +250,30 @@ std::string getSkinSalt();
 /// (`-pre-RA-sched`) in force now: "default", "fast", or the one of the
 /// command line. A key of generated code takes it when it is taken.
 std::string getSchedulerInForce();
+/// Selects LLVM's fast list scheduler (`-pre-RA-sched=fast`) for the host
+/// code while it lives (D150) and then restores the option as it found it,
+/// its value and its count of occurrences: a simulation compiled before
+/// the run's own host code (a skin search) left the option counted as set,
+/// and `mdir run` took that for a scheduler of the command line (#829).
+/// With `keepCommandLine`, a scheduler that the command line set is left
+/// alone. Does nothing where the option is not registered.
+class FastHostScheduler {
+public:
+  explicit FastHostScheduler(bool keepCommandLine);
+  ~FastHostScheduler() { restore(); }
+  FastHostScheduler(const FastHostScheduler &) = delete;
+  FastHostScheduler &operator=(const FastHostScheduler &) = delete;
+  /// Whether the fast scheduler is in force through this object.
+  bool selected() const { return option != nullptr; }
+  /// Restores the option now; the destructor then does nothing.
+  void restore();
+
+private:
+  llvm::cl::Option *option = nullptr;
+  void (*priorValue)() = nullptr;
+  std::string priorName;
+  int priorOccurrences = 0;
+};
 /// Records the arguments of the command line that name registered LLVM
 /// options, for getCacheSalt, after `@file` arguments are expanded as
 /// cl::ParseCommandLineOptions expands them. Called by `mdir` and

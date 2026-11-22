@@ -228,25 +228,63 @@ std::vector<std::string> mdir::compiler::getUnrecordedOptions() {
   return findSetOptions().unrecorded;
 }
 
-std::string mdir::compiler::getSchedulerInForce() {
+namespace {
+// The option of SelectionDAGISel.cpp, of this type in LLVM 23.1.2; an
+// Option has no accessor of its value, so it is read through its type.
+using Scheduler = RegisterScheduler::FunctionPassCtor;
+using SchedulerOption =
+    cl::opt<Scheduler, false, RegisterPassParser<RegisterScheduler>>;
+
+SchedulerOption *findSchedulerOption() {
   auto &options = cl::getRegisteredOptions();
   auto found = options.find("pre-RA-sched");
   if (found == options.end())
-    return "none";
-  // The option of SelectionDAGISel.cpp, of this type in LLVM 23.1.2; an
-  // Option has no accessor of its value, so it is read through its type.
-  using Scheduler = RegisterScheduler::FunctionPassCtor;
-  using SchedulerOption =
-      cl::opt<Scheduler, false, RegisterPassParser<RegisterScheduler>>;
-  auto *option = static_cast<SchedulerOption *>(found->second);
-  Scheduler value = option->getValue();
-  auto &parser = option->getParser();
+    return nullptr;
+  return static_cast<SchedulerOption *>(found->second);
+}
+
+/// The name under which `option` registers its value, or "unknown".
+std::string getSchedulerName(SchedulerOption &option) {
+  Scheduler value = option.getValue();
+  auto &parser = option.getParser();
   for (unsigned i = 0, e = parser.getNumOptions(); i < e; ++i)
     if (static_cast<const cl::OptionValue<Scheduler> &>(
             parser.getOptionValue(i))
             .getValue() == value)
       return parser.getOption(i).str();
   return "unknown";
+}
+} // namespace
+
+std::string mdir::compiler::getSchedulerInForce() {
+  SchedulerOption *option = findSchedulerOption();
+  return option ? getSchedulerName(*option) : "none";
+}
+
+mdir::compiler::FastHostScheduler::FastHostScheduler(bool keepCommandLine) {
+  SchedulerOption *scheduler = findSchedulerOption();
+  if (!scheduler || (keepCommandLine && scheduler->getNumOccurrences() != 0))
+    return;
+  option = scheduler;
+  priorValue = reinterpret_cast<void (*)()>(scheduler->getValue());
+  priorName = getSchedulerName(*scheduler);
+  priorOccurrences = scheduler->getNumOccurrences();
+  (void)scheduler->addOccurrence(0, "pre-RA-sched", "fast");
+}
+
+void mdir::compiler::FastHostScheduler::restore() {
+  if (!option)
+    return;
+  auto *scheduler = static_cast<SchedulerOption *>(option);
+  option = nullptr;
+  // The count of occurrences goes back to zero only through reset, which
+  // also sets the default value; the occurrences of before are then added
+  // again and the value of before is set over them.
+  scheduler->reset();
+  if (priorName != "unknown")
+    for (int i = 0; i < priorOccurrences; ++i)
+      (void)scheduler->addOccurrence(0, "pre-RA-sched", priorName);
+  scheduler->setValue(reinterpret_cast<Scheduler>(priorValue));
 }
 
 std::string mdir::compiler::getCacheSalt() {

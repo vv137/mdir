@@ -735,15 +735,10 @@ compileEngine(const Control &control, const System &system,
     if (!llvm::sys::fs::exists(path))
       return unsupported("cannot find '" + path + "'");
 
-  if (scheduler)
-    (void)scheduler->addOccurrence(0, "pre-RA-sched", "fast");
-  struct ResetScheduler {
-    llvm::cl::Option *option;
-    ~ResetScheduler() {
-      if (option)
-        (void)option->addOccurrence(0, "pre-RA-sched", "default");
-    }
-  } resetScheduler{scheduler};
+  // The fast scheduler for the host code, and the option as it was once
+  // the code is generated, so that a run that compiles after a skin search
+  // still finds the scheduler of its command line, or none (#829).
+  compiler::FastHostScheduler fastScheduler(/*keepCommandLine=*/false);
   double jitStart = seconds();
   auto created = compiler::JITEngine::create(
       kept ? mlir::ModuleOp() : *engine->module, std::move(*targetMachine),

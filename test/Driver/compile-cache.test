@@ -6,7 +6,8 @@
 # lists the directory; after an eviction at the bound, which goes down to
 # 90% of it, the 31 stores that fit under the bound list nothing (#675).
 # An entry that is a symbolic link is rejected, and an LLVM option set but
-# not recorded turns the cache off (D397).
+# not recorded turns the cache off (D397). The scheduler of the host code
+# is restored after a simulation selects the fast one (D150, #829).
 # RUN: rm -rf %t
 # RUN: mdir-compile-cache-test %t | FileCheck %s
 # CHECK: size file: 300 stores, listings 1
@@ -19,4 +20,14 @@
 # CHECK: ok: another LLVM changes the skin salt
 # CHECK: ok: two images of a build of state 'yes' differ in the skin salt
 # CHECK: ok: two images of a build of state 'unknown' differ in the skin salt
+# CHECK: ok: the scheduler option is registered
+# CHECK: ok: no scheduler is set at first
+# CHECK: ok: a simulation selects the fast scheduler
+# CHECK: ok: a simulation restores an unset scheduler
+# CHECK: ok: a run after a simulation selects the fast scheduler
+# CHECK: ok: a run restores an unset scheduler
+# CHECK: ok: a simulation selects the fast scheduler over the command line
+# CHECK: ok: a simulation restores the scheduler of the command line
+# CHECK: ok: a run keeps the scheduler of the command line
+# CHECK: ok: the scheduler of the command line stays after a run
 # CHECK: compile cache checks passed

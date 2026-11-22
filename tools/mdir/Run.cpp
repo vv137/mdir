@@ -64,16 +64,6 @@ using llvm::SmallVectorImpl;
 using llvm::StringRef;
 
 /// The passes that compile the program of a run.
-/// The option of LLVM that chooses the instruction scheduler before
-/// register allocation, `-pre-RA-sched`, if the command line did not.
-static llvm::cl::Option *getSchedulerOption() {
-  auto &options = llvm::cl::getRegisteredOptions();
-  auto option = options.find("pre-RA-sched");
-  if (option == options.end() || option->second->getNumOccurrences() != 0)
-    return nullptr;
-  return option->second;
-}
-
 /// A buffer of the host, in the type that the program takes, and its
 /// descriptor.
 template <unsigned Rank>
@@ -877,10 +867,10 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // of a dihedral on JAC, a block of 95 calls among 1,400 stores of the
   // arguments of kernels, did not compile in ten minutes; the fast one
   // compiles it in 2.6 s (D150). The kernels were compiled in the pass
-  // pipeline, with the default; it is set back once the host code is.
-  llvm::cl::Option *scheduler = getSchedulerOption();
-  if (scheduler)
-    (void)scheduler->addOccurrence(0, "pre-RA-sched", "fast");
+  // pipeline, with the default; it is set back once the host code is. A
+  // scheduler of the command line is kept. A skin search before restored
+  // the option as it found it (#829).
+  compiler::FastHostScheduler scheduler(/*keepCommandLine=*/true);
   mlir::ExecutionEngineOptions engineOptions;
   SmallVector<StringRef> sharedLibraries(paths.begin(), paths.end());
   engineOptions.sharedLibPaths = sharedLibraries;
@@ -953,8 +943,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   (*engine)->initialize();
 
   auto function = (*engine)->lookupPacked(program->entry);
-  if (scheduler)
-    (void)scheduler->addOccurrence(0, "pre-RA-sched", "default");
+  scheduler.restore();
   if (!function)
     return fail(function.takeError());
   // The learned potentials (D270): the plugin beside the

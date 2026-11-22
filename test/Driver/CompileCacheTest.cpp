@@ -593,6 +593,54 @@ int main(int argc, char **argv) {
     }
   }
 
+  // The scheduler of the host code (D150, #829): a simulation selects the
+  // fast one and then restores the option's value and count of
+  // occurrences, so that `mdir run`, which keeps a scheduler of the command
+  // line, still selects the fast one after a skin search, and a scheduler
+  // of the command line survives the search.
+  {
+    auto found = cl::getRegisteredOptions().find("pre-RA-sched");
+    check(found != cl::getRegisteredOptions().end(),
+          "the scheduler option is registered");
+    if (found != cl::getRegisteredOptions().end()) {
+      cl::Option *option = found->second;
+      auto state = [&] {
+        return getSchedulerInForce() + " x" +
+               std::to_string(option->getNumOccurrences());
+      };
+      check(state() == "default x0", "no scheduler is set at first");
+      {
+        FastHostScheduler simulation(/*keepCommandLine=*/false);
+        check(simulation.selected() && getSchedulerInForce() == "fast",
+              "a simulation selects the fast scheduler");
+      }
+      check(state() == "default x0",
+            "a simulation restores an unset scheduler");
+      {
+        FastHostScheduler run(/*keepCommandLine=*/true);
+        check(run.selected() && getSchedulerInForce() == "fast",
+              "a run after a simulation selects the fast scheduler");
+        run.restore();
+        check(state() == "default x0", "a run restores an unset scheduler");
+      }
+      (void)option->addOccurrence(0, "pre-RA-sched", "list-ilp");
+      {
+        FastHostScheduler simulation(/*keepCommandLine=*/false);
+        check(getSchedulerInForce() == "fast",
+              "a simulation selects the fast scheduler over the command line");
+      }
+      check(state() == "list-ilp x1",
+            "a simulation restores the scheduler of the command line");
+      {
+        FastHostScheduler run(/*keepCommandLine=*/true);
+        check(!run.selected() && state() == "list-ilp x1",
+              "a run keeps the scheduler of the command line");
+      }
+      check(state() == "list-ilp x1",
+            "the scheduler of the command line stays after a run");
+    }
+  }
+
   outs() << (failures ? "compile cache checks FAILED\n"
                       : "compile cache checks passed\n");
   return failures ? 1 : 0;
