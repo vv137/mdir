@@ -642,7 +642,8 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
       (!listed || has("mdrt.pme_spread_listed")))
     return success();
   OwningOpRef<ModuleOp> templates = ModuleOp::create(module.getLoc());
-  HostPME(*templates, position, charge, force).emit(potential, listed);
+  OpBuilder pmeBuilder(templates->getContext());
+  HostPME(pmeBuilder, *templates, position, charge, force).emit(potential, listed);
   if (failed(instantiatePMESymbols(*templates, position, charge, force,
                                    order)))
     return failure();

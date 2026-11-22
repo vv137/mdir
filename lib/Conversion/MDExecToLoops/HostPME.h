@@ -1,6 +1,7 @@
 // Builders for the serial PME stages [Essmann1995, Liang2026].
 #pragma once
 
+#include "../MDExecKernels/PMECode.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -10,45 +11,22 @@
 
 namespace mdir::kernels {
 using namespace mlir;
-class HostPME {
+class HostPME : public detail::PMECode {
 public:
-  HostPME(ModuleOp module, Type position, Type charge, Type force)
-      : module(module), b(module.getContext()), loc(b.getUnknownLoc()),
-        positionType(position), chargeType(charge), realType(force) {
+  HostPME(OpBuilder &builder, ModuleOp module, Type position, Type charge,
+          Type force)
+      : PMECode(builder, position, charge, force), module(module) {
     b.setInsertionPointToEnd(module.getBody());
   }
   void emit(bool potential, bool listed);
 
 private:
   ModuleOp module;
-  OpBuilder b;
-  Location loc;
-  Type positionType, chargeType, realType;
-  Type idxType = b.getIndexType(), i32Type = b.getI32Type(),
-       i64Type = b.getI64Type(), boolType = b.getI1Type(),
-       f64Type = b.getF64Type();
-
+  Type boolType = b.getI1Type();
   func::FuncOp declare(StringRef name, FunctionType type) {
     auto fn = func::FuncOp::create(b, loc, name, type);
     fn.setPrivate();
     return fn;
-  }
-  Value convert(Type type, Value input) {
-    if (type == input.getType())
-      return arith::BitcastOp::create(b, loc, type, input);
-    auto width = [](Type t) {
-      return getElementTypeOrSelf(t).getIntOrFloatBitWidth();
-    };
-    if (width(type) > width(input.getType()))
-      return arith::ExtFOp::create(b, loc, type, input);
-    return arith::TruncFOp::create(b, loc, type, input);
-  }
-  Value load(Value mem, ValueRange at) {
-    return memref::LoadOp::create(b, loc, mem, at, BoolAttr(), IntegerAttr(),
-                                  BoolAttr());
-  }
-  void store(Value value, Value mem, ValueRange at) {
-    memref::StoreOp::create(b, loc, value, mem, at, BoolAttr(), IntegerAttr());
   }
   DenseElementsAttr dense(VectorType type, ArrayRef<double> values) {
     SmallVector<Attribute> elements;
@@ -67,6 +45,10 @@ private:
       scf::ReduceReturnOp::create(b, loc, sum);
     }
   }
+  enum class Cell { Orthorhombic, Triclinic };
+  enum class ParticleStage { Spread, Gather, Potential };
+  template <ParticleStage stage>
+  void emitParticles(Cell cell, bool listed = false);
   void emitRaise();
   void emitBspline();
   void emitWindow();
@@ -78,8 +60,6 @@ private:
   void emitSpreadPoint();
   void emitSpreadOne();
   void emitSpreadOneTriclinic();
-  void emitSpread();
-  void emitSpreadTriclinic();
   void emitReal();
   void emitWave();
   void emitTables();
@@ -95,18 +75,10 @@ private:
   void emitGatherSums();
   void emitPotentialSum();
   void emitGatherOne();
-  void emitGather();
   void emitPotentialOne();
-  void emitPotential();
   void emitSplinesTriclinic();
   void emitGatherOneTriclinic();
-  void emitGatherTriclinic();
   void emitPotentialOneTriclinic();
-  void emitPotentialTriclinic();
   void emitCountListed();
-  void emitSpreadListed();
-  void emitGatherListed();
-  void emitSpreadListedTriclinic();
-  void emitGatherListedTriclinic();
 };
 } // namespace mdir::kernels

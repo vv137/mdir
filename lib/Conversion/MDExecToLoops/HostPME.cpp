@@ -3,6 +3,80 @@
 
 using namespace mdir::kernels;
 
+// Lift a per-particle function over all particles or over the D262 list.
+// Cell and window arithmetic belong to the selected particle function.
+template <HostPME::ParticleStage stage>
+void HostPME::emitParticles(Cell cell, bool listed) {
+  constexpr bool spread = stage == ParticleStage::Spread;
+  StringRef stageName = spread                           ? "spread"
+                        : stage == ParticleStage::Gather ? "gather"
+                                                         : "potential";
+  StringRef suffix = cell == Cell::Triclinic ? "_triclinic" : "";
+  std::string prefix = ("mdrt.pme_" + stageName).str();
+  auto particle =
+      module.lookupSymbol<func::FuncOp>(prefix + "_one" + suffix.str());
+  SmallVector<Type> inputs(particle.getArgumentTypes());
+  // Spread takes the particle index last. Gathering takes the moduli last.
+  unsigned particleIndex = inputs.size() - (spread ? 1 : 2);
+  inputs.erase(inputs.begin() + particleIndex);
+  constexpr unsigned listPosition = 2;
+  if (listed)
+    inputs.insert(inputs.begin() + listPosition,
+                  MemRefType::get({ShapedType::kDynamic}, i32Type));
+  OpBuilder::InsertionGuard guard(b);
+  auto fn = declare(prefix + (listed ? "_listed" : "") + suffix.str(),
+                    b.getFunctionType(inputs, {}));
+  Block *entry = fn.addEntryBlock();
+  b.setInsertionPointToStart(entry);
+  SmallVector<Value> args(entry->getArguments());
+  Value list;
+  if (listed) {
+    list = args[listPosition];
+    args.erase(args.begin() + listPosition);
+  }
+  Value zero = arith::ConstantIndexOp::create(b, loc, 0);
+  Value one = arith::ConstantIndexOp::create(b, loc, 1);
+  Value count;
+  if constexpr (spread) {
+    func::CallOp::create(b, loc, "mdrt.pme_zero", TypeRange{},
+                         ValueRange{args[3]});
+  } else if (listed) {
+    Value axes = arith::ConstantIndexOp::create(b, loc, 3);
+    count = memref::DimOp::create(b, loc, args.front(), zero);
+    Value wide =
+        arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 0.0));
+    Value none = convert(realType, wide);
+    scf::ParallelOp::create(
+        b, loc, ValueRange{zero}, ValueRange{count}, ValueRange{one},
+        [&](OpBuilder &b, Location, ValueRange iv) {
+          scf::ForOp::create(
+              b, loc, zero, axes, one, ValueRange{},
+              [&](OpBuilder &b, Location, Value axis, ValueRange) {
+                store(none, args[8], {iv.front(), axis});
+                scf::YieldOp::create(b, loc);
+              });
+        });
+  }
+  if (listed)
+    count = func::CallOp::create(b, loc, "mdrt.pme_count_listed",
+                                 TypeRange{idxType}, ValueRange{list})
+                .getResult(0);
+  else
+    count = memref::DimOp::create(b, loc, args.front(), zero);
+  scf::ParallelOp::create(
+      b, loc, ValueRange{zero}, ValueRange{count}, ValueRange{one},
+      [&](OpBuilder &b, Location, ValueRange iv) {
+        Value index = iv.front();
+        if (listed) {
+          Value position = load(list, {index});
+          index = arith::IndexCastOp::create(b, loc, idxType, position);
+        }
+        args.insert(args.begin() + particleIndex, index);
+        func::CallOp::create(b, loc, particle, args);
+      });
+  func::ReturnOp::create(b, loc);
+}
+
 void HostPME::emit(bool potential, bool listed) {
   declare("mdrtFFTPrepare", b.getFunctionType({i64Type, i64Type, i64Type}, {}));
   declare("mdrtFFTColumnBlocks",
@@ -36,8 +110,8 @@ void HostPME::emit(bool potential, bool listed) {
   emitSpreadPoint();
   emitSpreadOne();
   emitSpreadOneTriclinic();
-  emitSpread();
-  emitSpreadTriclinic();
+  emitParticles<ParticleStage::Spread>(Cell::Orthorhombic);
+  emitParticles<ParticleStage::Spread>(Cell::Triclinic);
   emitReal();
   declare("mdrt.pme_fft_forward",
           b.getFunctionType({MemRefType::get({ShapedType::kDynamic}, realType),
@@ -64,27 +138,27 @@ void HostPME::emit(bool potential, bool listed) {
   if (potential)
     emitPotentialSum();
   emitGatherOne();
-  emitGather();
+  emitParticles<ParticleStage::Gather>(Cell::Orthorhombic);
   if (potential)
     emitPotentialOne();
   if (potential)
-    emitPotential();
+    emitParticles<ParticleStage::Potential>(Cell::Orthorhombic);
   emitSplinesTriclinic();
   emitGatherOneTriclinic();
-  emitGatherTriclinic();
+  emitParticles<ParticleStage::Gather>(Cell::Triclinic);
   if (potential)
     emitPotentialOneTriclinic();
   if (potential)
-    emitPotentialTriclinic();
+    emitParticles<ParticleStage::Potential>(Cell::Triclinic);
   if (listed)
     emitCountListed();
   if (listed)
-    emitSpreadListed();
+    emitParticles<ParticleStage::Spread>(Cell::Orthorhombic, true);
   if (listed)
-    emitGatherListed();
+    emitParticles<ParticleStage::Gather>(Cell::Orthorhombic, true);
   if (listed)
-    emitSpreadListedTriclinic();
+    emitParticles<ParticleStage::Spread>(Cell::Triclinic, true);
   if (listed)
-    emitGatherListedTriclinic();
+    emitParticles<ParticleStage::Gather>(Cell::Triclinic, true);
   emitHostPMEFFTs(module);
 }

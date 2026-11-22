@@ -19,43 +19,7 @@ void HostPME::emitRaise() {
   Value c1 = arith::ConstantIndexOp::create(b, loc, 1);
   Value c2 = arith::ConstantIndexOp::create(b, loc, 2);
   Value one = arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 1.0));
-  Value km1 = arith::SubIOp::create(b, loc, k, c1);
-  Value km2 = arith::SubIOp::create(b, loc, k, c2);
-  Value km1i = arith::IndexCastOp::create(b, loc, i64Type, km1);
-  Value km1f = arith::SIToFPOp::create(b, loc, realType, km1i);
-  Value inverse = arith::DivFOp::create(b, loc, one, km1f);
-  Value ki = arith::IndexCastOp::create(b, loc, i64Type, k);
-  Value kf = arith::SIToFPOp::create(b, loc, realType, ki);
-  Value last = load(a, {km2});
-  Value dw = arith::MulFOp::create(b, loc, inverse, w);
-  Value top = arith::MulFOp::create(b, loc, dw, last);
-  store(top, a, {km1});
-  scf::ForOp::create(b, loc, c1, km1, c1, ValueRange{},
-                     [&](OpBuilder &b, Location, Value j, ValueRange carried) {
-                       Value ji =
-                           arith::IndexCastOp::create(b, loc, i64Type, j);
-                       Value jf = arith::SIToFPOp::create(b, loc, realType, ji);
-                       Value at = arith::SubIOp::create(b, loc, km1, j);
-                       Value below = arith::SubIOp::create(b, loc, at, c1);
-                       Value lo = load(a, {below});
-                       Value hi = load(a, {at});
-                       Value wj = arith::AddFOp::create(b, loc, w, jf);
-                       Value kj = arith::SubFOp::create(b, loc, kf, jf);
-                       Value kjw = arith::SubFOp::create(b, loc, kj, w);
-                       Value t1 = arith::MulFOp::create(b, loc, wj, lo);
-                       Value t2 = arith::MulFOp::create(b, loc, kjw, hi);
-                       Value sum = arith::AddFOp::create(b, loc, t1, t2);
-                       Value value =
-                           arith::MulFOp::create(b, loc, inverse, sum);
-                       store(value, a, {at});
-                       scf::YieldOp::create(b, loc);
-                     });
-  Value c0 = arith::ConstantIndexOp::create(b, loc, 0);
-  Value first = load(a, {c0});
-  Value omw = arith::SubFOp::create(b, loc, one, w);
-  Value d0 = arith::MulFOp::create(b, loc, inverse, omw);
-  Value bottom = arith::MulFOp::create(b, loc, d0, first);
-  store(bottom, a, {c0});
+  raiseSpline(w, k, a, {}, c1, c2, one);
   func::ReturnOp::create(b, loc);
 }
 

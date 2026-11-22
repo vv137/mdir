@@ -1,6 +1,7 @@
 // Shared MLIR builders for GPU neighbor searches.
 #pragma once
 
+#include "MemoryAccess.h"
 #include "mdir/Dialect/MDAlg/MDAlgOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -22,10 +23,10 @@ using arith::CmpIPredicate;
 /// Every op is created by a statement of its own: the order of the
 /// arguments of a call in C++ is not fixed, and the order of the ops is
 /// that of the code.
-class NeighborBuildCode {
+class NeighborBuildCode : public MemoryAccess {
 public:
   NeighborBuildCode(OpBuilder &b, Location loc)
-      : b(b), loc(loc), context(b.getContext()), i1(b.getI1Type()),
+      : MemoryAccess(b, loc), context(b.getContext()), i1(b.getI1Type()),
         i32(b.getI32Type()), i64(b.getI64Type()), index(b.getIndexType()),
         f32(b.getF32Type()), f64(b.getF64Type()) {
     Attribute global = b.getI64IntegerAttr(1);
@@ -52,8 +53,6 @@ public:
     pointer = LLVM::LLVMPointerType::get(context, 1);
   }
 
-  OpBuilder &b;
-  Location loc;
   MLIRContext *context;
   Type i1, i32, i64, index, f32, f64;
   MemRefType buffer, wideBuffer, sizesType, positions, wrappedType, placesType,
@@ -175,18 +174,6 @@ public:
   Value absf(Value v) { return math::AbsFOp::create(b, loc, v); }
   Value powf(Value x, Value y) { return math::PowFOp::create(b, loc, x, y); }
 
-  // Memory, with no attributes (the parser of a template sets none).
-  Value load(Value memref, ValueRange indices) {
-    return memref::LoadOp::create(b, loc, memref, indices,
-                                  /*nontemporal=*/BoolAttr(),
-                                  /*alignment=*/IntegerAttr(),
-                                  /*invariant=*/BoolAttr());
-  }
-  void store(Value v, Value memref, ValueRange indices) {
-    memref::StoreOp::create(b, loc, v, memref, indices,
-                            /*nontemporal=*/BoolAttr(),
-                            /*alignment=*/IntegerAttr());
-  }
   Value dim(Value memref, Value i) {
     return memref::DimOp::create(b, loc, memref, i);
   }
