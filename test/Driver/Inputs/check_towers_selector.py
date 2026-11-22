@@ -12,7 +12,7 @@ example = Path(example).resolve()
 template = (example / "argon.toml").read_text()
 template = template.replace('"argon.pdb"', json.dumps(str(example / "argon.pdb")))
 template = template.replace('"CPU"', '"GPU"').replace('"DOUBLE"', '"MIXED"')
-template = template.replace("= 2000", "= 2")
+template = template.replace("= 2000", "= 100")
 environment = {**os.environ, "MDIR_COMPILE_CACHE_DIR": str(work / "cache"),
                "MDIR_COMPILE_CACHE": "on"}
 pins = "threads=128, blocks_per_sm=1, panel=32, stripe=32, split=1"
