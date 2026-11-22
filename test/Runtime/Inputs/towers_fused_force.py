@@ -1,6 +1,8 @@
 """Compare integer force words on moving, periodically rebuilt pressure frames."""
 
 import ctypes
+import itertools
+import math
 import sys
 from pathlib import Path
 
@@ -28,16 +30,20 @@ def frames(directory, fused):
     frame.charge[:] = [1 if i % 3 else -1 for i in range(n)]
     frame.types[:] = [i % 2 for i in range(n)]
     table = entries.array(rebuild.F, 4)
-    table[:] = [1.5, -0.75, -0.75, 2]
+    table[:] = [1.531, -0.753, -0.753, 2.039]
     force = entries.array(ctypes.c_int64, n * 3)
     flag = entries.array(rebuild.I, 2)
     failures = entries.array(ctypes.c_int64, 1)
     virial = entries.array(rebuild.D, 6)
     result = []
     for step in range(4):
-        frame.box[:] = [6 + step / 16] * 3
-        frame.raw[:] = [((i * (axis + 3) + step * (i % 7 - 3)) % 80) / 64
-                        for axis in range(3) for i in range(n)]
+        frame.box[:] = [6 + 3 * step / 16] * 3
+        xyz = [
+            tuple(((i * (a + 3) + step * (i % 7 - 3)) % 80) / 64
+                  for a in range(3))
+            for i in range(n)
+        ]
+        frame.raw[:] = [p[a] for a in range(3) for p in xyz]
         frame.setup()
         frame.step(step % 2)
         force[:] = [0] * (n * 3)
@@ -52,7 +58,17 @@ def frames(directory, fused):
         assert frame.status[0] == flag[0] == failures[0] == 0
         assert any(force[:])
         if fused:
-            assert any(virial[:])
+            reference = [0.0] * 3
+            for i, j in itertools.combinations(range(n), 2):
+                delta = [a - b for a, b in zip(xyz[i], xyz[j])]
+                if sum(d * d for d in delta) < 1:
+                    k = table[2 * frame.types[i] + frame.types[j]]
+                    k *= frame.charge[i] * frame.charge[j]
+                    for a, d in enumerate(delta):
+                        reference[a] += d * rebuild.F(k * d).value
+            result_diag = [virial[j] for j in (0, 3, 5)]
+            assert all(math.isclose(x, y, abs_tol=1e-9)
+                       for x, y in zip(reference, result_diag)), (reference, result_diag)
         result.append(force[:])
     entries.close()
     return result
