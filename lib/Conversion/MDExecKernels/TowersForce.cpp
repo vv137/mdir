@@ -50,6 +50,8 @@ private:
   IRMapping mapping;
   Value descriptors, packed, atomIds, geometry, words, invalid, wordScale;
   Values parameters, tileParameters;
+  int positionParameter = -1;
+  int64_t fixedBytes = 0;
   void stageParameters(gpu::GPUFuncOp fn);
   Value pos, id, xy, zn, bias, records, totals, keptSlots, accum, coarse;
   Value tid, lane, scale, limit, cutoff2, filterLimit;
@@ -125,10 +127,12 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
         inside.map(body.getArgument(1), d);
         for (auto [i, param] :
              llvm::enumerate(g.host ? parameters : tileParameters)) {
-          inside.map(body.getArgument(2 + 2 * i), targetParameters.empty()
-                                                      ? load(param, {ti})
-                                                      : targetParameters[i]);
-          inside.map(body.getArgument(3 + 2 * i), load(param, {si}));
+          inside.map(body.getArgument(2 + 2 * i),
+                     targetParameters.empty()
+                         ? (param ? load(param, {ti}) : extract(t, 3))
+                         : targetParameters[i]);
+          inside.map(body.getArgument(3 + 2 * i),
+                     param ? load(param, {si}) : extract(s, 3));
         }
         for (auto &op : body.without_terminator())
           b.clone(op, inside);
@@ -277,11 +281,16 @@ void Force::stage(ArrayRef<Value> starts, ArrayRef<Value> counts, Value begin,
     }
     Value slot = addi(cx(source ? 0 : panel), laneSlot);
     Value p = point(addr, field);
-    store(p, pos, {slot});
     Value atom = load(atomIds, {addr});
     store(atom, id, {slot});
-    for (auto [src, dst] : llvm::zip(parameters, tileParameters))
-      store(load(src, {indexCast(index, atom)}), dst, {slot});
+    for (auto [src, dst] : llvm::zip(parameters, tileParameters)) {
+      Value value = load(src, {indexCast(index, atom)});
+      if (dst)
+        store(value, dst, {slot});
+      else
+        p = vector::InsertOp::create(b, loc, value, p, 3);
+    }
+    store(p, pos, {slot});
     Values q;
     for (int a = 0; a < 3; ++a)
       q.push_back(roundeven(mulf(extract(p, a), scale)));
@@ -517,7 +526,7 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
       auto targetValues = [&](Value slot) {
         Values v{load(pos, {slot})};
         for (Value p : tileParameters)
-          v.push_back(load(p, {slot}));
+          v.push_back(p ? load(p, {slot}) : extract(v[0], 3));
         return v;
       };
       Values initial{found, header, m,     ci(0), ci(0),
@@ -647,7 +656,6 @@ void Force::traversal(Value owner) {
   ifThen(notNarrow(complete), [&] {
     forLoop(cx(0), ns, cx(panel), {}, [&](Value sb, ValueRange) {
       Value sc = minui(cx(panel), subi(ns, sb));
-      stage(starts, counts, sb, sc, true);
       whileLoop(
           {index, index}, {cx(0), cx(stripe)},
           [&](ValueRange x) {
@@ -656,6 +664,9 @@ void Force::traversal(Value owner) {
           },
           [&](ValueRange x) {
             Value tb = x[0], tc = minui(x[1], subi(nt, tb));
+            // The preceding stripe may have reused the source features for
+            // sums.
+            stage(starts, counts, sb, sc, true);
             stage(starts, counts, tb, tc, false);
             Value last = andi(cmpi(CmpIPredicate::eq, addi(sb, sc), ns),
                               cmpi(CmpIPredicate::eq, addi(tb, tc), nt));
@@ -694,13 +705,12 @@ void Force::bind(ValueRange args) {
 // rectangular tables are read once per CTA. Other captured values retain
 // their original addresses and types.
 void Force::stageParameters(gpu::GPUFuncOp fn) {
-  int64_t fixed = (panel + stripe) * 52 + stripe * 8 + 16;
-  for (Value v : parameters) {
+  int64_t fixed = fixedBytes;
+  for (auto [i, v] : llvm::enumerate(parameters)) {
     Type t = cast<MemRefType>(v.getType()).getElementType();
-    tileParameters.push_back(shared(fn, {panel + stripe}, t));
-    auto vec = dyn_cast<VectorType>(t);
-    fixed += (panel + stripe) * (vec ? vec.getNumElements() : 1) *
-             ((getElementTypeOrSelf(t).getIntOrFloatBitWidth() + 7) / 8);
+    tileParameters.push_back(static_cast<int>(i) == positionParameter
+                                 ? Value()
+                                 : shared(fn, {panel + stripe}, t));
   }
   for (Value v : captures) {
     auto t = dyn_cast<MemRefType>(v.getType());
@@ -773,16 +783,28 @@ void Force::device() {
                 b.getI32IntegerAttr(residency));
   pos = shared(fn, {panel + stripe}, v4);
   id = shared(fn, {panel + stripe}, i32);
-  xy = shared(fn, {panel + stripe}, i32);
-  zn = shared(fn, {panel + stripe}, i32);
-  bias = shared(fn, {stripe}, f32);
-
   totals = shared(fn, {2}, i32);
-  keptSlots = shared(fn, {stripe}, i32);
-  accum = shared(fn, {3, panel + stripe}, i32);
-  coarse = shared(fn, {3, panel + stripe}, i32);
+  int slots = panel + stripe;
+  // Screen features and the compacted target list die at the prefix barrier.
+  // Six force planes cover all four arrays, even when the stripe dominates.
+  Value scratch = shared(fn, {6 * slots * 4}, b.getI8Type());
+  fn.setWorkgroupAttributionAttr(fn.getNumWorkgroupAttributions() - 1,
+                                 "llvm.align", b.getI64IntegerAttr(16));
   Block &entry = fn.getBody().front();
   b.setInsertionPointToStart(&entry);
+  auto view = [&](int word, ArrayRef<int64_t> shape, Type element) {
+    auto type =
+        MemRefType::get(shape, element, MemRefLayoutAttrInterface(),
+                        cast<MemRefType>(scratch.getType()).getMemorySpace());
+    return memref::ViewOp::create(b, loc, type, scratch, cx(4 * word),
+                                  ValueRange{});
+  };
+  xy = view(0, {slots}, i32);
+  zn = view(slots, {slots}, i32);
+  bias = view(2 * slots, {stripe}, f32);
+  keptSlots = view(2 * slots + stripe, {stripe}, i32);
+  accum = view(0, {3, slots}, i32);
+  coarse = view(3 * slots, {3, slots}, i32);
   bind(entry.getArguments());
   records = LLVM::AddressOfOp::create(b, loc, dyn);
   tid = gpu::ThreadIdOp::create(b, loc, gpu::Dimension::x);
@@ -868,15 +890,18 @@ LogicalResult Force::emit() {
            mem({g.atoms, 3}, i64),
            mem({1}, i32),
            f32};
-  int64_t fixedBytes = (panel + stripe) * 52 + stripe * 8 + 16;
+  fixedBytes = (panel + stripe) * 44 + 16;
   for (unsigned j = 0; j < term.getIns().size(); ++j) {
     Type t = body.getArgument(2 + 2 * j).getType();
     auto scalar = getElementTypeOrSelf(t);
     if (!scalar.isIntOrFloat())
       return term.emitError("unsupported TOWERS particle input type");
     auto vec = dyn_cast<VectorType>(t);
-    fixedBytes += (panel + stripe) * (vec ? vec.getNumElements() : 1) *
-                  ((scalar.getIntOrFloatBitWidth() + 7) / 8);
+    if (positionParameter < 0 && t == f32)
+      positionParameter = j;
+    else
+      fixedBytes += (panel + stripe) * (vec ? vec.getNumElements() : 1) *
+                    ((scalar.getIntOrFloatBitWidth() + 7) / 8);
     types.push_back(mem({g.atoms}, t));
   }
   if (!g.host && fixedBytes > 48 * 1024)
