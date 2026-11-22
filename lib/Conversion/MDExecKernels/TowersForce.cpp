@@ -880,7 +880,7 @@ LogicalResult Force::emit() {
   if (panel < 32 || panel > 512 || panel % 32 || workers < 32 ||
       workers > 1024 || workers % 32 || stripe < 1 || stripe > workers ||
       stripe * panel >= (1 << 18) || recordCap < groups ||
-      recordCap > groups * stripe || residency < 1 || residency > 2)
+      recordCap > groups * stripe || residency < 1 || residency > 4 || workers * residency > 2048)
     return term.emitError("infeasible TOWERS panel, stripe, worker count, "
                           "record count or residency");
   double rc = term.getCutoff().convertToDouble();

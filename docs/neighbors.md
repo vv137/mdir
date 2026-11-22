@@ -74,7 +74,7 @@ Small read-only coefficient tables can be staged with the tile.
 `force-panel`, `force-stripe`, `force-workers` and `force-records` specialize
 the test entry. Launch one block per tower with the selected worker count
 and eight bytes of dynamic shared memory per record. The optional
-`force-residency` launch bound targets one or two resident blocks per SM. A caller supplies
+`force-residency` launch bound targets up to four resident blocks per SM. A caller supplies
 zeroed signed 64-bit force words and a zeroed status word. Status bit 0
 reports an unrepresentable pair component and bit 1 rejects the geometry or
 scale. The caller discards the result on either error. These words precede
