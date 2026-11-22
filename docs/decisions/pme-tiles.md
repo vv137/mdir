@@ -37,9 +37,7 @@ extra bit allows for evaluation of the bound in double precision. A
 nonfinite charge or failed wide certificate stops the calculation before
 the transform.
 
-For cubic gathering, four neighboring lanes each contract one z slice,
-or two lanes each contract a pair of adjacent slices on the measured
-Factor IX mesh. Both mappings add the same pairs first.
+For cubic gathering, four neighboring lanes each contract one z slice.
 Reduce the derivatives in a fixed shuffle tree. The producing lane
 writes the three Cartesian components directly to the driver's force
 array at the slot's original atom index. Compare integer grids bitwise

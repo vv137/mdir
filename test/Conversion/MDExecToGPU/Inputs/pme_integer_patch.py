@@ -55,7 +55,6 @@ def program(precision, case, source, opt):
         return match[1]
     spread = kernel("mdrt_gpu_pme_spread_ordered")
     gather = kernel("mdrt_gpu_pme_gather_ordered")
-    pairs = kernel("mdrt_gpu_pme_gather_ordered_pairs")
     print("func.func private @printI64(i64)\nfunc.func private @printNewline()")
     print("func.func @main() {")
     for i in sorted({0, 1, 2, 3, 4, 6, 7, 8, 9, 11, 64, 128, 256, len(particles),
@@ -114,7 +113,7 @@ def program(precision, case, source, opt):
             print("%signed = arith.extsi %word : i32 to i64")
         print(f"func.call @printI64(%{'signed' if narrow else 'word'}) : (i64) -> ()")
         print("func.call @printNewline() : () -> ()\n}")
-        print(f"func.call @{pairs if run == 1 else gather}(%p,%ids,%out,%box,%i9,%i9,%i7,%xyz,%i{threads}) : "
+        print(f"func.call @{gather}(%p,%ids,%out,%box,%i9,%i9,%i7,%xyz,%i{threads}) : "
               f"({types['p']},{types['ids']},{types['out']},vector<3xf64>,index,index,index,"
               f"{types['xyz']},index) -> ()")
         copy("xyz", False)

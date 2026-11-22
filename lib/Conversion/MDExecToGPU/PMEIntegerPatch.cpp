@@ -99,7 +99,7 @@ void DevicePME::emitIntegerPatch(StringRef symbol) {
     if (mixed) {
       Value base[3];
       for (int axis = 0; axis < 3; ++axis)
-        base[axis] = splitMeshAxis(extract(p, axis), dims[axis], four).first;
+        base[axis] = splitMeshAxis(extract(p, axis), dims[axis], four, true).first;
       Value prior = atomic(LLVM::AtomicBinOp::add, one32, grid,
                            linear(base[0], base[1], base[2]));
       // 15 * (8.01 * 2^23 * 2 + 64) < 2^31. A failure switches the
@@ -159,7 +159,7 @@ void DevicePME::emitIntegerPatch(StringRef symbol) {
         Value fits = arith::ConstantOp::create(b, loc, b.getBoolAttr(true));
         for (int axis = 0; axis < 3; ++axis) {
           Value fraction;
-          std::tie(start[axis], fraction) = splitMeshAxis(extract(p, axis), dims[axis], four);
+          std::tie(start[axis], fraction) = splitMeshAxis(extract(p, axis), dims[axis], four, true);
           weights[axis] = cubicWeights(fraction);
           local[axis] = subi(start[axis], origin[axis]);
           Value extent = axis == 0 ? patchX : patchSide;

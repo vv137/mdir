@@ -89,7 +89,7 @@ template <bool tilted> void DevicePME::emitCellOrder(StringRef symbol) {
     Value cell = zero, subcell = zero;
     for (int axis = 0; axis < 3; ++axis) {
       Value k = a[10 + axis];
-      Value start = splitMeshAxis(components[axis], k, four).first;
+      Value start = splitMeshAxis(components[axis], k, four, true).first;
       cell = addi(muli(cell, blocks(k, edge)), divui(start, edge));
       subcell = addi(muli(subcell, ix(2)), divui(remui(start, edge), four));
     }

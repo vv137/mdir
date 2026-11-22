@@ -64,12 +64,22 @@ Value DevicePME::meshCoordinate(Value s, Value size) {
 }
 
 std::pair<Value, Value> DevicePME::splitMeshAxis(Value u, Value size,
-                                                  Value pointCount) {
+                                                  Value pointCount, bool cubic) {
   Value fu0 = math::FloorOp::create(b, loc, u);
   Value nil = arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 0.0));
   Value fu = maxnumf(fu0, nil);
   Value w = subf(u, fu);
   Value bi32 = fptosi(i32Type, fu);
+  if (cubic) {
+    // The packed mesh coordinate lies in [0, K], including a point that
+    // rounded up to K. Center the four-point stencil using i32 arithmetic.
+    Value three = arith::ConstantIntOp::create(b, loc, 3, 32);
+    Value n = indexCast(i32Type, size);
+    Value raw = subi(bi32, three);
+    Value upper = select(cmpi(arith::CmpIPredicate::sge, raw, n), subi(raw, n), raw);
+    Value start = select(cmpi(arith::CmpIPredicate::slt, bi32, three), addi(raw, n), upper);
+    return {indexCast(idxType, start), w};
+  }
   Value bi = arith::ExtSIOp::create(b, loc, i64Type, bi32);
   Value accB = indexCast(idxType, bi);
   Value bk = addi(accB, size);

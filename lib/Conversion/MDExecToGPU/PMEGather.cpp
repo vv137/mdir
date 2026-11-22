@@ -7,9 +7,8 @@ using namespace mdir;
 using namespace mdir::kernels;
 
 template <bool tilted, bool useList, bool potentialOnly, bool cachedWeights>
-void DevicePME::emitGather(StringRef symbol, unsigned orderedLanes) {
-  const bool ordered = orderedLanes != 0;
-  const int gatherLanes = ordered ? orderedLanes : lanes;
+void DevicePME::emitGather(StringRef symbol, bool ordered) {
+  const int gatherLanes = ordered ? 4 : lanes;
   StringRef blockFunction =
       tilted ? "mdrt_gpu_pme_blocks_triclinic" : "mdrt_gpu_pme_blocks";
   OpBuilder::InsertionGuard functionGuard(b);
@@ -163,8 +162,6 @@ void DevicePME::emitGather(StringRef symbol, unsigned orderedLanes) {
       slot = divui(item, laneCount);
     }
     Value j3 = remui(item, laneCount);
-    if (orderedLanes == 2)
-      j3 = addi(j3, j3);
     Value listed;
     Value is_listed;
     scf::IfOp warp_activeBranch;
@@ -285,7 +282,7 @@ void DevicePME::emitGather(StringRef symbol, unsigned orderedLanes) {
       auto axis = [&](int a, Value size, auto &w, auto &dw, Value ws, Value ds) {
         Value start, fraction;
         if (ordered) {
-          std::tie(start, fraction) = splitMeshAxis(extract(packed, a), size, pointCount);
+          std::tie(start, fraction) = splitMeshAxis(extract(packed, a), size, pointCount, true);
           start = indexCast(i32Type, start);
         } else {
           start = placementStart(weights, count, i, a);
@@ -355,14 +352,6 @@ void DevicePME::emitGather(StringRef symbol, unsigned orderedLanes) {
                                     mulf(plane, dw)};
       };
       auto force = contract(g3, w3p_value, d3p_value);
-      if (orderedLanes == 2) {
-        // Match the first pair of the four-lane shuffle tree locally.
-        Value next = addi(j3, c1);
-        auto adjacent = contract(wrapped(g3, 1, nz), cubicLane(cubicZ, next),
-                                 cubicLane(slopeZ, next));
-        for (int axis = 0; axis < 3; ++axis)
-          force[axis] = addf(force[axis], adjacent[axis]);
-      }
       sumx = force[0];
       sumy = force[1];
       sumz = force[2];
@@ -560,13 +549,13 @@ void DevicePME::emitGather(StringRef symbol, unsigned orderedLanes) {
   func::ReturnOp::create(b, loc);
 }
 
-template void DevicePME::emitGather<false, false, false, false>(StringRef, unsigned);
-template void DevicePME::emitGather<false, false, false, true>(StringRef, unsigned);
-template void DevicePME::emitGather<false, false, true, false>(StringRef, unsigned);
-template void DevicePME::emitGather<false, true, false, false>(StringRef, unsigned);
-template void DevicePME::emitGather<false, true, false, true>(StringRef, unsigned);
-template void DevicePME::emitGather<true, false, false, false>(StringRef, unsigned);
-template void DevicePME::emitGather<true, false, false, true>(StringRef, unsigned);
-template void DevicePME::emitGather<true, false, true, false>(StringRef, unsigned);
-template void DevicePME::emitGather<true, true, false, false>(StringRef, unsigned);
-template void DevicePME::emitGather<true, true, false, true>(StringRef, unsigned);
+template void DevicePME::emitGather<false, false, false, false>(StringRef, bool);
+template void DevicePME::emitGather<false, false, false, true>(StringRef, bool);
+template void DevicePME::emitGather<false, false, true, false>(StringRef, bool);
+template void DevicePME::emitGather<false, true, false, false>(StringRef, bool);
+template void DevicePME::emitGather<false, true, false, true>(StringRef, bool);
+template void DevicePME::emitGather<true, false, false, false>(StringRef, bool);
+template void DevicePME::emitGather<true, false, false, true>(StringRef, bool);
+template void DevicePME::emitGather<true, false, true, false>(StringRef, bool);
+template void DevicePME::emitGather<true, true, false, false>(StringRef, bool);
+template void DevicePME::emitGather<true, true, false, true>(StringRef, bool);

@@ -5843,9 +5843,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   if (op.getGatherAll())
     listed = Value();
   if (ordered) {
-    bool paired = grid == ArrayRef<int64_t>({144, 84, 80});
-    func::CallOp::create(builder, loc, instance(paired ? "mdrt_gpu_pme_gather_ordered_pairs"
-                                                       : "mdrt_gpu_pme_gather_ordered"),
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_gather_ordered"),
                          ValueRange{cellOrder.particles, cellOrder.permutation, real, box,
                                     k1, k2, k3, forces, createIndex(builder, loc, launch.blockSize)});
   } else if (listed && usesWeights)

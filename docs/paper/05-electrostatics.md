@@ -300,7 +300,7 @@ For the ordered cubic Gaussian path, round each scaled contribution
 $q_i S M_x M_y M_z$ to nearest even before adding it to a patch.
 An escape deposits the same words at the periodic global nodes. The
 absolute-sum certificate bounds all intermediate sums, so that changing
-the partition among blocks preserves the integer mesh. Two or four lanes per
+the partition among blocks preserves the integer mesh. Four lanes per
 particle contract the potential with the spline gradients and place the
 three force components at the original atom index (D[pme-tiles]).
 
