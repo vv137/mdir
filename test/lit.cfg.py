@@ -66,6 +66,7 @@ tools = [
     "mdir-rigid-groups-test",
     "mdir-kind-pairs-test",
     "mdir-device-policy-test",
+    "mdir-towers-height-test",
     "mdir-compile-test",
     "mdir-jit-memory-test",
     "mdir-compile-cache-test",
