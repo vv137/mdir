@@ -54,7 +54,7 @@ private:
   int positionParameter = -1;
   int64_t fixedBytes = 0;
   void stageParameters(gpu::GPUFuncOp fn);
-  Value pos, id, xy, zn, bias, records, totals, keptSlots, accum, coarse;
+  Value pos, id, features, bias, records, totals, keptSlots, accum, coarse;
   Value tid, lane, scale, limit, cutoff2, filterLimit;
   void bind(ValueRange args);
   void withValidGeometry(function_ref<void()> body);
@@ -326,15 +326,16 @@ void Force::stage(ArrayRef<Value> starts, ArrayRef<Value> counts, Value begin,
     } else
       store(norm, bias, {subi(slot, cx(panel))});
     auto halfPair = [&](Value a, Value c) {
-      auto ht = b.getF16Type();
-      Value x = arith::TruncFOp::create(b, loc, ht, a),
-            y = arith::TruncFOp::create(b, loc, ht, c);
-      Value v = vector::FromElementsOp::create(b, loc, VectorType::get({2}, ht),
-                                               ValueRange{x, y});
-      return LLVM::BitcastOp::create(b, loc, i32, v).getResult();
+      return LLVM::InlineAsmOp::create(b, loc, TypeRange{i32}, ValueRange{a, c},
+                                       "cvt.rn.f16x2.f32 $0, $2, $1;", "=r,f,f",
+                                       false, false, LLVM::TailCallKind::None,
+                                       LLVM::AsmDialectAttr(), ArrayAttr())
+          .getResult(0);
     };
-    store(halfPair(q[0], q[1]), xy, {slot});
-    store(halfPair(q[2], fourth), zn, {slot});
+    Value words[] = {halfPair(q[0], q[1]), halfPair(q[2], fourth)};
+    store(vector::FromElementsOp::create(b, loc, VectorType::get({2}, i32),
+                                         words),
+          features, {slot});
   };
   for (int offset = 0; offset < (source ? panel : stripe); offset += workers) {
     Value slot = addi(tid, cx(offset));
@@ -351,8 +352,8 @@ Value Force::screenOperand(Value x, Value z) {
 }
 
 Values Force::targetOperands(Value target) {
-  Value tx = load(xy, {addi(cx(panel), target)}),
-        tz = load(zn, {addi(cx(panel), target)});
+  Value pair = load(features, {addi(cx(panel), target)});
+  Value tx = extract(pair, 0), tz = extract(pair, 1);
   Value c = subf(load(bias, {target}), limit);
   Values operands;
   for (int j = 0; j < 4; ++j) {
@@ -370,7 +371,8 @@ Value Force::mask(ValueRange operands, Value group, Value sc) {
   for (int q = 0; q < 4; ++q) {
     Value src = minui(subi(sc, cx(1)),
                       addi(group, addi(cx(q * 8), indexCast(index, row))));
-    Value srcOp = screenOperand(load(xy, {src}), load(zn, {src}));
+    Value pair = load(features, {src});
+    Value srcOp = screenOperand(extract(pair, 0), extract(pair, 1));
     for (int h = 0; h < 2; ++h) {
       auto op = operands.slice(4 * h, 4);
       auto mma =
@@ -468,18 +470,22 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
   Values masks;
   Value counts = ci(0);
   for (int j = 0; j < groups; ++j) {
-    Value first = addi(sb, cx(32 * j));
-    Value l = indexCast(i32, minui(cx(32), subi(maxui(first, low), first)));
-    Value h = indexCast(i32, minui(cx(32), subi(maxui(first, high), first)));
-    Value active = cmpi(CmpIPredicate::ult, l, h);
+    Value first = addi(indexCast(i32, sb), ci(32 * j));
+    Value left = maxsi(ci(0), subi(indexCast(i32, low), first));
+    Value right = maxsi(ci(0), subi(addi(first, ci(32)), indexCast(i32, high)));
     Value m = ifElse(
         {i32}, andi(warpActive, cmpi(CmpIPredicate::ult, cx(32 * j), sc)),
         [&] { return Values{mask(operands, cx(32 * j), sc)}; },
         [&] { return Values{ci(0)}; })[0];
-    // Mask the shift amounts too: an empty interval may begin or end at 32.
-    Value range = andi(shli(ci(-1), andi(l, ci(31))),
-                       shrui(ci(-1), andi(subi(ci(32), h), ci(31))));
-    m = select(andi(keep, active), andi(m, range), ci(0));
+    // PTX shifts by the word width or more return zero for an empty interval.
+    Value range = LLVM::InlineAsmOp::create(
+                      b, loc, TypeRange{i32}, ValueRange{left, right},
+                      "{ .reg .b32 l,r; shl.b32 l, -1, $1; shr.u32 r, -1, $2; "
+                      "and.b32 $0,l,r; }",
+                      "=r,r,r", false, false, LLVM::TailCallKind::None,
+                      LLVM::AsmDialectAttr(), ArrayAttr())
+                      .getResult(0);
+    m = select(keep, andi(m, range), ci(0));
     masks.push_back(m);
     counts =
         addi(counts,
@@ -821,8 +827,7 @@ void Force::device() {
     return memref::ViewOp::create(b, loc, type, scratch, cx(4 * word),
                                   ValueRange{});
   };
-  xy = view(0, {slots}, i32);
-  zn = view(slots, {slots}, i32);
+  features = view(0, {slots}, VectorType::get({2}, i32));
   bias = view(2 * slots, {stripe}, f32);
   keptSlots = view(2 * slots + stripe, {stripe}, i32);
   accum = view(0, {3, slots}, i32);
@@ -880,7 +885,8 @@ LogicalResult Force::emit() {
   if (panel < 32 || panel > 512 || panel % 32 || workers < 32 ||
       workers > 1024 || workers % 32 || stripe < 1 || stripe > workers ||
       stripe * panel >= (1 << 18) || recordCap < groups ||
-      recordCap > groups * stripe || residency < 1 || residency > 4 || workers * residency > 2048)
+      recordCap > groups * stripe || residency < 1 || residency > 4 ||
+      workers * residency > 2048)
     return term.emitError("infeasible TOWERS panel, stripe, worker count, "
                           "record count or residency");
   double rc = term.getCutoff().convertToDouble();
