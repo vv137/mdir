@@ -1,8 +1,8 @@
 // Primary, excluded, reciprocal, and within-selection nonbonded terms (#683).
-#include "mdir/Driver/ProlateC2.h"
 #include "BuilderImpl.h"
 #include "KindPairsIR.h"
 #include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Driver/ProlateC2.h"
 #include "mdir/Driver/RigidGroups.h"
 #include "mdir/Driver/RigidUnits.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -366,11 +366,13 @@ static mlir::Value buildDirectCoulomb(mlir::OpBuilder &builder,
     Value xr = mul(rq, inverse);
     if (config.c2) {
       Value one = constant(1);
-      Value far = buildProlateSplitting(builder, values.back(), mul(xr,xr),
+      Value far = buildProlateSplitting(builder, values.back(), mul(xr, xr),
                                         prolate::C2PairCells, 4);
-      Value direct = sub(div(one,rq), mul(far,inverse));
-      Value inside = arith::CmpFOp::create(builder,loc,arith::CmpFPredicate::OLT,xr,one);
-      return mul(fqq,arith::SelectOp::create(builder,loc,inside,direct,constant(0)));
+      Value direct = sub(div(one, rq), mul(far, inverse));
+      Value inside = arith::CmpFOp::create(builder, loc,
+                                           arith::CmpFPredicate::OLT, xr, one);
+      return mul(fqq, arith::SelectOp::create(builder, loc, inside, direct,
+                                              constant(0)));
     }
     Value far;
     if (prolateSeries) {
@@ -787,8 +789,10 @@ llvm::Error NonbondedWork::collectProlate() {
   int64_t points = control.pmeOrder;
   bool c2 = control.pmeKernel == PMEKernel::ProlateC2;
   prolate::Function psi(c, c2);
-  prolate::Window window = c2 ? prolate::getCubicWindow() : prolate::getWindow(c1, points);
-  prolate::Influence influence = c2 ? prolate::getC2Influence(psi) : prolate::getInfluence(psi);
+  prolate::Window window =
+      c2 ? prolate::getCubicWindow() : prolate::getWindow(c1, points);
+  prolate::Influence influence =
+      c2 ? prolate::getC2Influence(psi) : prolate::getInfluence(psi);
 
   // The edges along which the grid is spaced, as collectMesh takes them.
   double edges[3];
@@ -889,11 +893,12 @@ llvm::Error NonbondedWork::collectProlate() {
   for (int k = 0; k != 3; ++k)
     for (int64_t i = 0; i != grid[k]; ++i) {
       int64_t m = i <= grid[k] / 2 ? i : i - grid[k];
-      double hat = window.transform(2.0 * M_PI * static_cast<double>(m) /
-                                    static_cast<double>(grid[k]));
+      double x = M_PI * static_cast<double>(m) / static_cast<double>(grid[k]);
+      double hat;
       if (c2) {
-        double x = M_PI * m / grid[k];
-        hat = m == 0 ? 1 : std::pow(std::sin(x)/x, 4);
+        hat = m == 0 ? 1 : std::pow(std::sin(x) / x, 4);
+      } else {
+        hat = window.transform(2.0 * x);
       }
       table.values[k * columns + i] = 1.0 / (hat * hat);
     }
@@ -928,7 +933,8 @@ llvm::Error NonbondedWork::collectProlate() {
     program.tables.push_back(std::move(split));
   }
 
-  program.pmeFarSeries = prolate::getFarSeries(psi);
+  if (!c2)
+    program.pmeFarSeries = prolate::getFarSeries(psi);
   program.pmeProlate = true;
   program.pmeBandwidth = c;
   program.pmeWindowBandwidth = c1;
@@ -2066,7 +2072,8 @@ public:
         spec.pme = program.pme;
         spec.prolate = program.pmeProlate;
         spec.c2 = control.pmeKernel == PMEKernel::ProlateC2;
-        spec.prolateSeries = !spec.c2 && takesProlateSeries(control) && !scalesCoulomb;
+        spec.prolateSeries =
+            !spec.c2 && takesProlateSeries(control) && !scalesCoulomb;
         spec.farSeries = program.pmeFarSeries;
         spec.beta = program.pmeBeta;
         spec.shift = control.pmeShift || shiftsAtCutoff;

@@ -329,7 +329,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.pmeKernel = s.pmeKernel;
   c.pmeBandwidth = s.pmeBandwidth;
   c.pmeWindowBandwidth = s.pmeWindowBandwidth;
-  if (prolate && !s.pmeSpacingGiven) c.pmeMaxSpacing = 0.0;
+  if ((prolate || c2) && !s.pmeSpacingGiven) c.pmeMaxSpacing = 0.0;
   c.pmeInfluence = s.pmeInfluence == PMEInfluence::Optimal ? driver::PMEInfluence::Optimal
                    : s.pmeInfluence == PMEInfluence::P3M   ? driver::PMEInfluence::P3M
                                                            : driver::PMEInfluence::SPME;

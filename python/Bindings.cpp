@@ -951,6 +951,10 @@ PYBIND11_MODULE(_core, m) {
     // race version capture. GIL release belongs to persistent execution.
     // The prolate kernel's own defaults of the order and the spacing, where
     // they were not set (D266).
+    if (system->value.pmeKernel == driver::PMEKernel::ProlateC2)
+      for (const char *field : {"pme_alpha", "pme_influence", "pme_window_bandwidth"})
+        if (system->given.count(field))
+          throw InputError(std::string(field) + " conflicts with PROLATE_C2");
     system->value.pmeOrderGiven = system->given.count("pme_order") != 0;
     system->value.pmeSpacingGiven = system->given.count("pme_spacing") != 0;
     auto prepared = unwrap(model::prepare(system->value, state->value, integrator->value,
