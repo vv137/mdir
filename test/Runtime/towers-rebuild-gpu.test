@@ -1,0 +1,2 @@
+# REQUIRES: cuda
+# RUN: %python %S/Inputs/towers_rebuild.py %t gpu mdir-opt
