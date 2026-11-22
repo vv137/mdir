@@ -1379,11 +1379,12 @@ displacement times the target force in binary64. A force-only evaluation
 requires neither additional traversal.
 
 The height fixes the cell origins used by the binary32 displacement. Setup
-therefore chooses the height from the box and cutoff before timing any
-launches. On the six rectangular calibration frames, the largest FULL
-grid favoring HALF contained 343 towers and the smallest favoring FULL
-contained 1,530. Their geometric midpoint gives a crossover of about
-724 towers. Within the resolved grid the trial varies the division of
+therefore chooses it from the atom count, box and cutoff before timing
+launches. For $M$ towers on the FULL grid and mean population $p=N/M$,
+the selector takes HALF through $M/p^2=1/4$. The rectangular sweep
+brackets the crossover between 0.073 and 0.433. A count-only crossover
+at 724 towers also selected each rectangular winner, but missed HALF
+on a 311,971-atom truncated octahedron with 2,744 FULL towers. Within the resolved grid the trial varies the division of
 work among blocks and the storage for compact records. Each timing covers
 nine rebuilt certified force evaluations. Five shuffled rounds among the
 five fastest candidates determine the lowest median.

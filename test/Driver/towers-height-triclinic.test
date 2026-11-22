@@ -1,0 +1,2 @@
+# RUN: mdir-towers-height-test | FileCheck %s
+# CHECK: ubiquitin-octahedron HALF

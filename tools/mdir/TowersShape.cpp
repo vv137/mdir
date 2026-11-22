@@ -467,7 +467,8 @@ llvm::Expected<Object> mdir::tool::checkTowersShape(const Control &control,
   double cutoff = control.cutoffDistance * units::length;
   int reach = given.cellHeight == "HALF" ? 2 : 1;
   if (given.cellHeight.empty()) {
-    reach = selectTowersReach(geometry.heights.data(), cutoff);
+    reach = selectTowersReach(geometry.heights.data(), cutoff,
+                              system.getNumParticles());
   }
   if (!*limits) {
     if (setup)

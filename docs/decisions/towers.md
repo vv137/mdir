@@ -135,7 +135,7 @@ mode still requires its separate output and restart qualification.
 
 ## Setup and diagnostics
 
-Select FULL or HALF from the three perpendicular cell heights and the cutoff in every mode. For a rectangular box the heights are the box lengths.
+Select FULL or HALF from the atom count, the three perpendicular cell heights and the cutoff in every mode. For a rectangular box the heights are the box lengths.
 Measure maximum source column and raw plate size at the selected height.
 Try 4, 8 and 16 warps, one or two resident blocks and one or two disjoint
 source ranges. Round panel and stripe sizes to warp multiples, cap the
@@ -197,11 +197,14 @@ and `cell_height`. Preflight derives omitted tile dimensions for a given
 height. It reports the control and AUTO fields and checks device memory
 limits. AUTO counts the towers at FULL by multiplying the three bin counts,
 each the floor of the corresponding perpendicular face height divided by the cutoff.
-When both grids are supported it selects HALF through 724 FULL towers
-and FULL above that count. This threshold is the geometric midpoint
-between the largest HALF winner and smallest FULL winner in the initial
-4n rebuilt-force sweep. The six calibration frames have water-like
-density. The rule uses only geometry at setup.
+Let $M$ be that count and $p=N/M$ the mean number of particles
+per FULL tower. When both grids are supported, AUTO chooses HALF for
+$M \le p^2/4$ and FULL otherwise. The number of independent towers
+favors FULL, while more candidate pairs per tower favor HALF. The
+largest value of $M/p^2$ favoring HALF and the smallest favoring FULL
+on the rectangular calibration frames were 0.073 and 0.433. Their
+arithmetic midpoint rounds to one quarter. On the minimized
+311,971-atom octahedron the ratio was 0.212 and HALF was faster.
 At setup the driver enumerates the feasible launch fields at that height,
 including full and half target stripes and record budgets. It times nine
 rebuilt certified force calls on private copies of the starting frame and
