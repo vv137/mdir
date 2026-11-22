@@ -1,8 +1,7 @@
 # RUN: mdir-towers-height-test | FileCheck %s
-# The last three rows differ from the timed 4n choice (FULL).
 # CHECK: t10 HALF
 # CHECK-NEXT: t20 HALF
 # CHECK-NEXT: jac HALF
-# CHECK-NEXT: factorix HALF
-# CHECK-NEXT: cellulose HALF
-# CHECK-NEXT: stmv HALF
+# CHECK-NEXT: factorix FULL
+# CHECK-NEXT: cellulose FULL
+# CHECK-NEXT: stmv FULL

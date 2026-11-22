@@ -135,7 +135,7 @@ mode still requires its separate output and restart qualification.
 
 ## Setup and diagnostics
 
-Select FULL or HALF from the atom count, rectangular cell and cutoff in every mode.
+Select FULL or HALF from the rectangular cell and cutoff in every mode.
 Measure maximum source column and raw plate size at the selected height.
 Try 4, 8 and 16 warps, one or two resident blocks and one or two disjoint
 source ranges. Round panel and stripe sizes to warp multiples, cap the
@@ -195,10 +195,13 @@ the physical correction and skips the excluded direct terms on wide replay.
 supply `threads`, `blocks_per_sm`, `stripe`, `panel`, `records`, `split`
 and `cell_height`. Preflight derives omitted tile dimensions for a given
 height. It reports the control and AUTO fields and checks device memory
-limits. AUTO compares the two grids with the geometry-dependent terms of the
-stage 4i log-time model, using uniform-density estimates of the mean column
-and plate lengths, work per tower, and wave occupancy. The coefficients were
-fit on the six 4i frames. No timing or coordinate sample enters this choice.
+limits. AUTO counts the towers at FULL by multiplying the three bin counts,
+each the floor of the corresponding box length divided by the cutoff.
+When both grids are supported it selects HALF through 724 FULL towers
+and FULL above that count. This threshold is the geometric midpoint
+between the largest HALF winner and smallest FULL winner in the initial
+4n rebuilt-force sweep. The six calibration frames have water-like
+density. The rule uses only geometry at setup.
 Stage (f) may time launch parameters only at the resolved height.
 
 At fixed height the force and energy words must be identical across all six
