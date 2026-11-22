@@ -722,6 +722,7 @@ specification follow those made with it.
 | [D424](decisions/D424.md) | Slice S4b of D417. The driver takes the pair term over the segments of the rigid kinds of D403 by the key `[performance] rigid_units = "AUTO" | "ON" | "OFF"` (D417, Section 9, ruling 7), with no alias. `ON` takes the most numerous eligible kinds, at most two (D405), and refuses, naming the reason, a program where the route cannot apply. `OFF` is `main`'s general route. `AUTO` takes the general route until its rule is measured. One resolution before the build, next to that of `neighbor_structure` (D261), decides the route and records it: `mdir check`, the log, the manifest, and the fingerprint's execution part state, for each kind, whether it is taken and why. The covering radius of a taken kind is measured again at the positions that the run begins with and widened to them where the input lies beyond it (#795, ruling 5), so that the first evaluation, before any constraint, misses no pair. The test route `MDIR_RIGID_UNITS_TEST` is removed. | 2026-11-18 |
 | [D425](decisions/D425.md) | At the end of a GROUPS round, the lane holding a real entry tests its accumulated receipts in the destination precision. | 2026-11-19 |
 | [D426](decisions/D426.md) | Emit the GPU neighbor-matrix build with MLIR builders in the style of the GROUPS build. | 2026-11-21 |
+| [D427](decisions/D427.md) | Build the particle mesh Ewald stages with typed MLIR builders. | 2026-11-22 |
 <!-- end decisions-table -->
 
 

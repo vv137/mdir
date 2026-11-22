@@ -315,7 +315,7 @@ Represents a floating-point conversion in textual template IR (D370).
 Both types are floats or identically shaped vectors of floats.
 A wider result requires `arith.extf`, a narrower result requires
 `arith.truncf`, and equal types use `arith.bitcast`. The PME emitters
-construct those concrete operations directly (D[pme-emitters]).
+construct those concrete operations directly (D427).
 
 Traits: `AlwaysSpeculatableImplTrait`
 

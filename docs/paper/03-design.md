@@ -758,7 +758,7 @@ libdevice, and embeds PTX in the module.
 The host neighbor matrix uses an MLIR template. On the device, typed
 emitters build the neighbor groups (D404) and matrix (D426). For PME the
 host and device stage emitters share the window arithmetic and cell
-mapping (D[pme-emitters]). They build the functions in the module being
+mapping (D427). They build the functions in the module being
 lowered, so the grid, order and precision are available to optimization.
 
 ## 3.6 Compilation at run time, and the runtime

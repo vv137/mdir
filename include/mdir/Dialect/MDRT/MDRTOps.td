@@ -257,7 +257,7 @@ def MDRT_TemplateConvertOp : MDRT_Op<"template_convert", [Pure]> {
     Both types are floats or identically shaped vectors of floats.
     A wider result requires `arith.extf`, a narrower result requires
     `arith.truncf`, and equal types use `arith.bitcast`. The PME emitters
-    construct those concrete operations directly (D[pme-emitters]).
+    construct those concrete operations directly (D427).
   }];
   let arguments = (ins MDRT_FloatOrVector:$in);
   let results = (outs MDRT_FloatOrVector:$out);

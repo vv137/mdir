@@ -205,7 +205,7 @@ destination writes the rows of its particles and loses it.
 PME spreading computes each stencil weight and immediately adds its charge
 to the grid or tile. A standalone `scatter_add` would need a value for
 each point of every particle stencil. The tiled stage emits its own
-block-scoped atomic addition (D[pme-emitters]).
+block-scoped atomic addition (D427).
 
 The FFT is an independent `md_exec.linear_transform` primitive
 (D306, #480), with `kind("fft3d")`, `direction`, the opposite

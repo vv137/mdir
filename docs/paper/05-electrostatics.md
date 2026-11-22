@@ -16,7 +16,7 @@ from those programs' by these factors (Section 9.1).
 The compiler builds each mesh stage for the chosen window, splitting and cell.
 The window determines the assignment weights and slopes, the splitting
 sets the reciprocal influence, and the cell determines the mapping from
-particle positions to grid coordinates (D[pme-emitters]).
+particle positions to grid coordinates (D427).
 
 ## 5.1 The splitting
 

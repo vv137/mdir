@@ -370,7 +370,7 @@ not below the order, those beyond it adding zeros), and adds their sums
 with shuffles: 127 µs on Cellulose, from 339 with a thread a particle.
 
 The stage emitters take the order and the position, charge, force, and grid
-types from the reciprocal sum (D[pme-emitters]). They build the constants,
+types from the reciprocal sum (D427). They build the constants,
 precision conversions and atomic additions where each stage uses them.
 The tile has $(E+P-1)^3$ points in block memory. The lowering requests
 listed kernels, the potential gather, and the kernels for a particular tile
