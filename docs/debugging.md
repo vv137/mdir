@@ -104,7 +104,9 @@ and passes of MLIR that their lowerings use (dialects in
 `lib/Dialect/Program/ProgramDialects.cpp`, passes in
 `lib/Compiler/Registry.cpp`, #655), so `MDIR_PIPELINE` may name those and
 MDIR's own; `mdir-opt` knows every pass and dialect of MLIR, for trying
-others on a reproducer.
+others on a reproducer, and their translations to LLVM IR, so that it
+serializes GPU modules as `mdir run` does and replays the whole pipeline
+(#839).
 
 ## Failures of a run
 

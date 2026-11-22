@@ -1,0 +1,48 @@
+# REQUIRES: cuda-toolkit
+# mdir-opt replays the whole pipeline of a GPU run, the serialization of
+# its GPU modules included: the pipeline and the module that `mdir emit`
+# prints give as many GPU binaries as `mdir emit --stage=lowered`, each PTX
+# for the architecture named. It failed in mdir-gpu-module-to-binary
+# ("missing `LLVMTranslationDialectInterface` registration") until mdir-opt
+# registered the translations to LLVM IR (#839). No device is needed.
+#
+# RUN: rm -rf %t && mkdir -p %t && cd %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: env MDIR_SKIN_SEARCH=never MDIR_SKIN_CACHE=off MDIR_COMPILE_CACHE=off MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 mdir emit --stage=module %t/run.toml > %t/module.mlir
+# RUN: env MDIR_SKIN_SEARCH=never MDIR_SKIN_CACHE=off MDIR_COMPILE_CACHE=off MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 mdir emit --stage=pipeline %t/run.toml > %t/pipeline.txt
+# RUN: env MDIR_SKIN_SEARCH=never MDIR_SKIN_CACHE=off MDIR_COMPILE_CACHE=off MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 mdir emit --stage=lowered %t/run.toml > %t/lowered.mlir
+# The pipeline goes through a response file, as one quoted argument.
+# RUN: %python -c "import sys; print('\"--pass-pipeline=builtin.module(' + open(sys.argv[1]).read().strip() + ')\"')" %t/pipeline.txt > %t/pipeline.rsp
+# RUN: env MDIR_COMPILE_CACHE=off mdir-opt @%t/pipeline.rsp %t/module.mlir -o %t/replayed.mlir
+# RUN: %python -c "import sys; t = [open(p).read() for p in sys.argv[1:]]; print('binaries', [x.count('gpu.binary @') for x in t], 'ptx', [x.count('.target sm_89') for x in t])" %t/replayed.mlir %t/lowered.mlir | FileCheck %s
+# CHECK: binaries [[[N:[1-9][0-9]*]], [[N]]] ptx [[[N]], [[N]]]
+
+#--- run.toml
+[input]
+topology   = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+
+[energy]
+cutoff       = 9.0
+pairlist_distance = 10.0
+electrostatics = "PME"
+
+[dynamics]
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.001
+steps         = 20
+
+[constraints]
+rigid_water = false
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target = "gpu"
+#--- end
