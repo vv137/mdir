@@ -45,8 +45,9 @@ private:
   TowersOutput output;
   unsigned yieldIndex;
   bool virial() const {
-    return output == TowersOutput::Virial || output == TowersOutput::DiagonalVirial;
+    return output != TowersOutput::Force && output != TowersOutput::Energy;
   }
+  int virialComponents() const { return output == TowersOutput::TensorVirial ? 9 : 6; }
   bool observer() const { return output != TowersOutput::Force; }
   bool energy() const { return output == TowersOutput::Energy; }
   StringRef observerName() const {
@@ -670,13 +671,15 @@ void Force::ownedPairs(Value owner) {
 // than 2^26 atoms even the sum of all signed i64 pair words fits in 128 bits.
 void Force::startObservation() {
   localSum = memref::AllocaOp::create(b, loc, cast<MemRefType>(types[4]));
-  for (int j = 0; j < (energy() ? 2 : 6); ++j)
+  for (int j = 0; j < (energy() ? 2 : virialComponents()); ++j)
     store(energy() ? cl(0) : cd(0), localSum, {cx(j)});
 }
 
 void Force::observe(Value value, Value d, bool physical) {
-  if (output == TowersOutput::DiagonalVirial) {
-    for (auto [a, j] : llvm::enumerate(std::array{0, 3, 5})) {
+  if (output == TowersOutput::DiagonalVirial || output == TowersOutput::TensorVirial) {
+    int size = cast<VectorType>(value.getType()).getNumElements();
+    for (int a = 0; a < size; ++a) {
+      int j = size == 3 ? std::array{0, 3, 5}[a] : a;
       Value part = extract(value, a);
       store(addf(load(localSum, {cx(j)}), part), localSum, {cx(j)});
     }
@@ -747,7 +750,7 @@ Value Force::warpDown(Value v, int d) {
 
 void Force::flushObservation() {
   if (!energy()) {
-    for (int j = 0; j < 6; ++j) {
+    for (int j = 0; j < virialComponents(); ++j) {
       Value part = load(localSum, {cx(j)});
       if (g.host)
         store(addf(load(words, {cx(j)}), part), words, {cx(j)});
@@ -801,7 +804,7 @@ void Force::observationEntries() {
   Type sum = types[4], state = types[5];
   if (!energy()) {
     emitTowersEntry(
-        b, loc, g.host, "towers_virial_check", {sum, state}, 6,
+        b, loc, g.host, "towers_virial_check", {sum, state}, virialComponents(),
         [&](Value j, ValueRange a) {
           Value v = absf(load(a[0], {j}));
           ifThen(notNarrow(cmpf(CmpFPredicate::OLE, v,
@@ -809,7 +812,7 @@ void Force::observationEntries() {
                  [&] { flag(a[1], Fatal, InvalidContribution); });
         });
     emitTowersEntry(
-        b, loc, g.host, "towers_publish_virial", {state, sum, sum}, 6,
+        b, loc, g.host, "towers_publish_virial", {state, sum, sum}, virialComponents(),
         [&](Value j, ValueRange a) {
           ifThen(cmpi(CmpIPredicate::eq, load(a[0], {cx(Fatal)}), ci(0)),
                  [&] { store(load(a[1], {j}), a[2], {j}); });
@@ -1946,11 +1949,11 @@ LogicalResult Force::emit() {
     if (i >= yield->getNumOperands())
       return false;
     Type t = yield->getOperand(i).getType();
-    if (energy() || output == TowersOutput::DiagonalVirial) {
+    if (observer() && output != TowersOutput::Virial) {
       if (i < op.getOuts().size() || op.getExchange(i) != md::Exchange::Symmetric ||
           !op.getWeights() || (*op.getWeights())[i - op.getOuts().size()] != 0.5)
         return false;
-      return energy() ? t == f32 || t == f64 : t == VectorType::get({3}, f64);
+      return energy() ? t == f32 || t == f64 : t == VectorType::get({output == TowersOutput::TensorVirial ? 9 : 3}, f64);
     }
     return i < op.getOuts().size() && op.getExchange(i) == md::Exchange::Antisymmetric && t == v3;
   };
@@ -1980,7 +1983,7 @@ LogicalResult Force::emit() {
            mem({slots}, i32),
            packedChargeType && !g.host ? mem({g.packedGeometrySize()}, f32)
                                        : mem({3, g.rawColumns()}, f64),
-           observer() ? mem({energy() ? 2 : 6}, energy() ? i64 : f64)
+           observer() ? mem({energy() ? 2 : virialComponents()}, energy() ? i64 : f64)
                       : mem({g.atoms, 3}, i64),
            mem({certified ? 2 : 1}, i32),
            f32};

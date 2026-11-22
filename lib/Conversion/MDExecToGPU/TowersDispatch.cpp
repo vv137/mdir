@@ -224,10 +224,18 @@ LogicalResult Dispatch::run(Value positions) {
   Value failedConversions = buffer("failed conversions", mem({1}, wide));
   Value finishedForce, host;
   auto count = op.getKernel().front().getTerminator()->getNumOperands();
+  auto components = [](Type type) -> int64_t {
+    if (auto vector = dyn_cast<VectorType>(type))
+      return vector.getNumElements();
+    return 1;
+  };
+  int64_t stride = 3;
+  for (Type type : op.getResultTypes())
+    stride = std::max(stride, components(type));
   if (op.getNumResults()) {
     OpBuilder top = OpBuilder::atBlockBegin(&fn.front());
     host = memref::AllocaOp::create(
-        top, loc, mem({int64_t(3 * op.getNumResults())}, dbl));
+        top, loc, mem({int64_t(stride * op.getNumResults())}, dbl));
   }
   Value observed;
   if (host)
@@ -236,8 +244,11 @@ LogicalResult Dispatch::run(Value positions) {
     bool force = i < op.getOuts().size();
     unsigned reduction = i - op.getOuts().size();
     bool energy = !force && !isa<VectorType>(op.getResult(reduction).getType());
+    int width = force ? 0 : components(op.getResult(reduction).getType());
+    bool tensor = width == 9;
     shape.output = force    ? TowersOutput::Force
                    : energy ? TowersOutput::Energy
+                   : tensor ? TowersOutput::TensorVirial
                             : TowersOutput::DiagonalVirial;
     shape.yieldIndex = i;
     if (failed(compile(i)))
@@ -256,7 +267,7 @@ LogicalResult Dispatch::run(Value positions) {
     fill(failedConversions, wide);
     Value words = force    ? buffer("force words", forceType)
                   : energy ? buffer("energy limbs", limbs)
-                           : buffer("virial", mem({6}, dbl));
+                           : buffer("virial", mem({tensor ? 9 : 6}, dbl));
     fill(words, force || energy ? wide : dbl);
     double scale = force ? 0x1p18 : energy ? 0x1p32 : 1.0;
     SmallVector<Value> args{spans,
@@ -298,7 +309,7 @@ LogicalResult Dispatch::run(Value positions) {
       result = buffer("published energy", mem({1}, wide));
       launch("towers_publish_energy", 1, 1, {state, words, recovered, result});
     } else {
-      launch("towers_virial_check", 6, 32, {words, state});
+      launch("towers_virial_check", tensor ? 9 : 6, 32, {words, state});
       result = words;
     }
     // A failed physical replay is fatal. No later launch in this context
@@ -331,11 +342,11 @@ LogicalResult Dispatch::run(Value positions) {
         scf::YieldOp::create(stop, l);
       });
       if (!force) {
-        for (int j = 0; j < (energy ? 1 : 3); ++j) {
+        for (int j = 0; j < width; ++j) {
           Value value = memref::LoadOp::create(
               k, loc, result,
-              ValueRange{
-                  createIndex(k, loc, energy ? 0 : std::array{0, 3, 5}[j])});
+              ValueRange{createIndex(k, loc,
+                                     width == 3 ? std::array{0, 3, 5}[j] : j)});
           if (energy) {
             value = arith::SIToFPOp::create(k, loc, dbl, value);
             value = arith::MulFOp::create(k, loc, value,
@@ -343,7 +354,7 @@ LogicalResult Dispatch::run(Value positions) {
           }
           memref::StoreOp::create(
               k, loc, value, observed,
-              ValueRange{createIndex(k, loc, 3 * reduction + j)});
+              ValueRange{createIndex(k, loc, stride * reduction + j)});
         }
       }
     });
@@ -370,9 +381,9 @@ LogicalResult Dispatch::run(Value positions) {
     for (auto [i, result] : llvm::enumerate(op.getResults())) {
       SmallVector<Value> parts;
       bool vector = isa<VectorType>(result.getType());
-      for (int j = 0; j < (vector ? 3 : 1); ++j)
-        parts.push_back(
-            memref::LoadOp::create(b, loc, host, ValueRange{idx(3 * i + j)}));
+      for (int j = 0; j < components(result.getType()); ++j)
+        parts.push_back(memref::LoadOp::create(
+            b, loc, host, ValueRange{idx(stride * i + j)}));
       Value value = vector ? Value(vector::FromElementsOp::create(
                                  b, loc, result.getType(), parts))
                            : parts.front();
@@ -416,7 +427,8 @@ LogicalResult mdir::kernels::lowerTowersPair(md_exec::PairForOp pair,
     return pair.emitError("TOWERS needs the current binary64 positions and at "
                           "most one force destination");
   for (Type result : pair.getResultTypes())
-    if (!result.isF64() && result != VectorType::get({3}, b.getF64Type()))
+    if (!result.isF64() && result != VectorType::get({3}, b.getF64Type()) &&
+        result != VectorType::get({9}, b.getF64Type()))
       return pair.emitError("unsupported TOWERS reduction type ") << result;
   Dispatch dispatch{pair,
                     b,

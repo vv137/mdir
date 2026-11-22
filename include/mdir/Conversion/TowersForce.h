@@ -5,7 +5,7 @@
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 
 namespace mdir::kernels {
-enum class TowersOutput { Force, Energy, Virial, DiagonalVirial };
+enum class TowersOutput { Force, Energy, Virial, DiagonalVirial, TensorVirial };
 struct TowersForceShape {
   int panel, stripe, workers, records, residency;
   bool packedChargeType, certified;
