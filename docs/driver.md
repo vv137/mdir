@@ -395,7 +395,10 @@ For rectangular TOWERS preflight, `[execution] towers_shape` accepts an
 inline table such as `{threads = 512, blocks_per_sm = 2, panel = 352,
 stripe = 384, records = 1536, split = 1, cell_height = "HALF"}` on one
 TOML line. The device limits and packed frame determine the available
-tile sizes. See [Appendix A](paper/A-control-file.md) for AUTO fields.
+tile sizes. AUTO chooses the cell height from the system geometry and atom
+count before resolving the launch parameters. A TOWERS run records its
+height as `towers_cell_height` in the effective manifest and checkpoint.
+See [Appendix A](paper/A-control-file.md) for AUTO fields.
 
 ## 2. The driver
 

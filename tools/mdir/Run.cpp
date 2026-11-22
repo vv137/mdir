@@ -356,13 +356,6 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // `neighbor_structure = "AUTO"` is resolved for the system before
   // anything is built from it (D261).
   resolveNeighborStructure(*control, *system);
-  std::string towersShapeReport;
-  if (control->towersShapeGiven || control->neighborStructure == NeighborStructure::Towers) {
-    auto shape = checkTowersShape(*control, *system);
-    if (!shape)
-      return fail(shape.takeError());
-    towersShapeReport = llvm::formatv("{0}", llvm::json::Value(std::move(*shape))).str();
-  }
 
   InputPaths inputPaths = getManifestInputs(controlFile, *control, *system);
   if (!control->manifestFile.empty() && emit == Emit::Run) {
@@ -537,6 +530,16 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     system->velocities.assign(3 * system->getNumParticles(), 0.0);
   } else if (!system->givenVelocities || fromPositions) {
     assignVelocities(*control, *system);
+  }
+  std::string towersShapeReport;
+  std::string towersCellHeight;
+  if (control->towersShapeGiven || control->neighborStructure == NeighborStructure::Towers) {
+    auto shape = checkTowersShape(*control, *system, /*setup=*/true);
+    if (!shape)
+      return fail(shape.takeError());
+    if (control->neighborStructure == NeighborStructure::Towers)
+      towersCellHeight = shape->getObject("effective")->getString("cell_height")->str();
+    towersShapeReport = llvm::formatv("{0}", llvm::json::Value(std::move(*shape))).str();
   }
   // The input of the build: a run that begins at the positions of a
   // checkpoint does not continue it.
@@ -1184,6 +1187,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         {"buffer_precision", llvm::json::Object{{"state", element(program->state)},
             {"force", element(program->force)}, {"mass", element(program->mass)},
             {"parameter", element(program->parameter)}}}, {"pme", std::move(pme)}};
+    if (!towersCellHeight.empty())
+      effective["towers_cell_height"] = towersCellHeight;
     llvm::json::Object metadata{
         {"build", getManifestBuild()}, {"effective", std::move(effective)},
         {"warnings", std::move(warnings)}, {"pipeline", pipeline},
@@ -1428,6 +1433,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     }
     checkpoint.periodic = control->periodic;
     checkpoint.integrator = integrator.str();
+    checkpoint.towersCellHeight = towersCellHeight;
     checkpoint.velocityOffset = velocityOffset;
     checkpoint.precision =
         control->precision == Precision::Single

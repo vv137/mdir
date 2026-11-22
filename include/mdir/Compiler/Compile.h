@@ -20,6 +20,8 @@ public:
   }
   std::string diagnostic;
 };
+/// Lower force-field expressions to precision-specialized pair regions.
+std::string getPairRegionPipeline(const driver::Control &, const driver::Program &);
 /// The pipeline of `program`. On a GPU, `gpuOptions` (getGpuOptions) are
 /// the options of the serialization of its kernels; empty, they are PTX
 /// for the default architecture (D214).

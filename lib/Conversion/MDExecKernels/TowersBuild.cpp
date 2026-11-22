@@ -2,7 +2,7 @@
 // The geometry is fixed at setup. All positions and memberships are rebuilt.
 #include "mdir/Conversion/TowersBuild.h"
 #include "NeighborBuildCode.h"
-#include "TowersForce.h"
+#include "mdir/Conversion/TowersForce.h"
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include <array>

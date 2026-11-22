@@ -22,7 +22,7 @@ Features of classical MD (Section 5) continue between milestones.
 TOWERS (#931, D[towers]) has a rectangular rebuild and a mixed-precision force entry
 in the compiler. It screens rectangular tiles, builds mask records and evaluates
 the force pair region. The checked force certifies narrow sums and replays failed
-evaluations into two limbs before publication. The rectangular force cancels excluded direct words and votes and applies the physical corrections. Shape qualification and driver selection remain open. Double precision is tracked in #937.
+evaluations into two limbs before publication. The rectangular force cancels excluded direct words and votes and applies the physical corrections. Rectangular preflight selects a system-only height and checks compiled occupancy. Energy, virial, timed launch selection and driver dispatch follow. Double precision is tracked in #937.
 
 Physical constants (#805): D394 centralizes C/C++
 definitions and derives native and expression coefficients from the exact

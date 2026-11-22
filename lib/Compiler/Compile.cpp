@@ -318,8 +318,8 @@ static std::string getFusedPruningOptions(llvm::StringRef gpuOptions) {
          std::to_string(value == "always" ? 0 : groups) + " ";
 }
 
-std::string mdir::compiler::getPipeline(const Control &control,
-                               const Program &program, StringRef gpuOptions) {
+std::string mdir::compiler::getPairRegionPipeline(const Control &control,
+                               const Program &program) {
   std::string pipeline;
   llvm::raw_string_ostream os(pipeline);
   os << "md-check-exchange,md-differentiate,md-expand-truncation,md-inline,"
@@ -379,6 +379,13 @@ std::string mdir::compiler::getPipeline(const Control &control,
   os << "md-exec-assign-algebra"
      << (control.deterministic ? "{deterministic=true}" : "") << ",";
 
+  return pipeline;
+}
+
+std::string mdir::compiler::getPipeline(const Control &control,
+                               const Program &program, StringRef gpuOptions) {
+  std::string pipeline = getPairRegionPipeline(control, program);
+  llvm::raw_string_ostream os(pipeline);
   if (control.target == Target::GPU) {
     // The architecture that the kernels are compiled for, whose entries of
     // the tuning policies the choosers and the lowering take

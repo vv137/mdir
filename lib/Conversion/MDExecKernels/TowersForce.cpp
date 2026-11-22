@@ -1,6 +1,6 @@
 // Rectangular particle traversal [Shaw2005]. The quantized screen, prefix
 // records and rank partition are the stage 4n GPU implementation of D[towers].
-#include "TowersForce.h"
+#include "mdir/Conversion/TowersForce.h"
 #include "NeighborBuildCode.h"
 #include "mdir/Conversion/CompactionEmitter.h"
 #include "mdir/Conversion/MDExecKernels.h"
@@ -1431,7 +1431,7 @@ LogicalResult Force::emit() {
       continue;
     for (Operation &op : region.getKernel().front().without_terminator())
       if (op.walk([](Operation *nested) {
-              return isa<memref::LoadOp>(nested) ||
+              return isa<memref::LoadOp, vector::LoadOp>(nested) ||
                              isMemoryEffectFree(nested) ||
                              nested->hasTrait<
                                  OpTrait::HasRecursiveMemoryEffects>()

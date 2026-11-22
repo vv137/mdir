@@ -11,6 +11,7 @@ set(LLVM_LINK_COMPONENTS
 add_llvm_executable(mdir
   mdir.cpp
   BugReport.cpp
+  TowersSpecialization.cpp
   TowersShape.cpp
   Check.cpp
   Checkpoint.cpp

@@ -1,5 +1,11 @@
 #include "TowersShape.h"
+#include "Commands.h"
+#include "TowersHeight.h"
+#include "TowersSpecialization.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/DynamicLibrary.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -18,9 +24,9 @@ llvm::Error refusal(llvm::StringRef reason) {
                                  "towers_shape: %s", reason.str().c_str());
 }
 struct Limits {
-  int blockBytes, smBytes, reserved, threads, smThreads, blocks;
+  int device, blockBytes, smBytes, reserved, threads, smThreads, blocks;
 };
-llvm::Expected<Limits> deviceLimits() {
+llvm::Expected<std::optional<Limits>> deviceLimits() {
 #if MDIR_HAS_CUDA
   auto lib = llvm::sys::DynamicLibrary::getPermanentLibrary("libcuda.so.1");
   if (lib.isValid()) {
@@ -47,13 +53,66 @@ llvm::Expected<Limits> deviceLimits() {
         if (attr(field, key, device) != CUDA_SUCCESS)
           return refusal("could not query CUDA launch limits");
       }
+      l.device = device;
       return l;
     }
   }
 #endif
-  return refusal(
-      "a visible CUDA device is required to resolve launch resources");
+  return std::nullopt;
 }
+
+#if MDIR_HAS_CUDA
+llvm::Expected<Object> checkRegisters(int device, const TowersShape &shape,
+                                      const std::string &image) {
+  auto lib = llvm::sys::DynamicLibrary::getPermanentLibrary("libcuda.so.1");
+#define LOAD(name, api, symbol)                                                \
+  auto name = reinterpret_cast<decltype(&api)>(lib.getAddressOfSymbol(symbol))
+  LOAD(retain, cuDevicePrimaryCtxRetain, "cuDevicePrimaryCtxRetain");
+  LOAD(release, cuDevicePrimaryCtxRelease, "cuDevicePrimaryCtxRelease_v2");
+  LOAD(push, cuCtxPushCurrent, "cuCtxPushCurrent_v2");
+  LOAD(pop, cuCtxPopCurrent, "cuCtxPopCurrent_v2");
+  LOAD(load, cuModuleLoadData, "cuModuleLoadData");
+  LOAD(unload, cuModuleUnload, "cuModuleUnload");
+  LOAD(function, cuModuleGetFunction, "cuModuleGetFunction");
+  LOAD(configure, cuFuncSetAttribute, "cuFuncSetAttribute");
+  LOAD(attribute, cuFuncGetAttribute, "cuFuncGetAttribute");
+  LOAD(occupancy, cuOccupancyMaxActiveBlocksPerMultiprocessor,
+       "cuOccupancyMaxActiveBlocksPerMultiprocessor");
+#undef LOAD
+  if (!retain || !release || !push || !pop || !load || !unload || !function ||
+      !attribute || !configure || !occupancy)
+    return refusal("missing CUDA function for compiled register check");
+  CUcontext ctx;
+  if (retain(&ctx, device) != CUDA_SUCCESS)
+    return refusal("could not retain device context for register check");
+  auto drop = llvm::scope_exit([&] { release(device); });
+  if (push(ctx) != CUDA_SUCCESS)
+    return refusal("could not enter device context for register check");
+  auto restore = llvm::scope_exit([&] { pop(&ctx); });
+  CUmodule module;
+  if (load(&module, image.data()) != CUDA_SUCCESS)
+    return refusal("could not load compiled pair specialization");
+  auto cleanup = llvm::scope_exit([&] { unload(module); });
+  CUfunction pair;
+  int registers, blocks;
+  if (function(&pair, module, "towers_force") != CUDA_SUCCESS ||
+      attribute(&registers, CU_FUNC_ATTRIBUTE_NUM_REGS, pair) != CUDA_SUCCESS ||
+      configure(pair, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+                8 * shape.records) != CUDA_SUCCESS ||
+      occupancy(&blocks, pair, shape.threads, 8 * shape.records) !=
+          CUDA_SUCCESS)
+    return refusal(
+        "could not query compiled pair register count and occupancy");
+  if (blocks < shape.blocksPerSM)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "towers_shape: compiled pair uses %d registers per thread and admits "
+        "%d resident blocks, below blocks_per_sm=%lld",
+        registers, blocks, static_cast<long long>(shape.blocksPerSM));
+  return Object{{"registers_per_thread", registers},
+                {"resident_blocks", blocks}};
+}
+#endif
 
 using Cell = std::array<int, 3>;
 llvm::Expected<TowersShape> derive(const TowersShape &given,
@@ -182,7 +241,8 @@ Object fields(const TowersShape &s, bool provenance) {
 } // namespace
 
 llvm::Expected<Object> mdir::tool::checkTowersShape(const Control &control,
-                                                    const System &system) {
+                                                    const System &system,
+                                                    bool setup) {
   if (!control.periodic ||
       std::any_of(std::begin(system.tilt), std::end(system.tilt),
                   [](double x) { return x != 0; }))
@@ -195,35 +255,46 @@ llvm::Expected<Object> mdir::tool::checkTowersShape(const Control &control,
                                   ? Value(fields(given, false))
                                   : Value("AUTO")},
                 {"source", fields(given, true)}};
-  auto resolve = [&](int reach) {
-    return derive(given, system, control.cutoffDistance * units::length, reach,
-                  *limits);
-  };
-  if (!given.cellHeight.empty()) {
-    auto shape = resolve(given.cellHeight == "FULL" ? 1 : 2);
-    if (!shape)
-      return shape.takeError();
-    result["effective"] = fields(*shape, false);
-  } else {
-    // The 4n direct-launch defaults take a geometry specialization as input.
-    // Retain both valid candidates until a geometry is selected.
-    Object candidates;
-    std::string reason;
-    for (int reach : {1, 2}) {
-      auto shape = resolve(reach);
-      if (shape)
-        candidates[shape->cellHeight] = fields(*shape, false);
-      else
-        reason = llvm::toString(shape.takeError());
-    }
-    if (candidates.empty())
-      return llvm::createStringError(llvm::inconvertibleErrorCode(), "%s",
-                                     reason.c_str());
-    result["effective"] = candidates.size() == 1
-                              ? std::move(candidates.begin()->second)
-                              : Value(nullptr);
-    if (candidates.size() > 1)
-      result["candidates"] = std::move(candidates);
+  double cutoff = control.cutoffDistance * units::length;
+  int reach = given.cellHeight == "HALF" ? 2 : 1;
+  if (given.cellHeight.empty()) {
+    reach = selectTowersReach(system.getNumParticles(), system.box, cutoff);
   }
+  if (!*limits) {
+    if (setup)
+      return refusal(
+          "a visible CUDA device is required to resolve launch resources");
+    for (int a = 0; a < 3; ++a) {
+      int k = a == 2 ? reach : 1;
+      if (std::floor(system.box[a] * k / cutoff) < 2 * k + 1)
+        return refusal("cell height is unsupported for this box and cutoff");
+    }
+    TowersShape partial = given;
+    partial.cellHeight = reach == 1 ? "FULL" : "HALF";
+    result["effective"] = fields(partial, false);
+    result["register_check"] = "register check runs at setup";
+    return result;
+  }
+  auto shape = derive(given, system, cutoff, reach, **limits);
+  if (!shape)
+    return shape.takeError();
+#if MDIR_HAS_CUDA
+  llvm::SmallString<256> deviceLibrary(getCudaToolkitRoot());
+  llvm::sys::path::append(deviceLibrary, "nvvm", "libdevice",
+                          "libdevice.10.bc");
+  if (!setup && !llvm::sys::fs::exists(deviceLibrary)) {
+    result["effective"] = fields(*shape, false);
+    result["register_check"] = "register check runs at setup";
+    return result;
+  }
+  auto image = compileTowersSpecialization(control, system, *shape);
+  if (!image)
+    return image.takeError();
+  auto compiled = checkRegisters((*limits)->device, *shape, *image);
+  if (!compiled)
+    return compiled.takeError();
+  result["register_check"] = std::move(*compiled);
+#endif
+  result["effective"] = fields(*shape, false);
   return result;
 }

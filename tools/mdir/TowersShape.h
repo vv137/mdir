@@ -5,5 +5,6 @@
 
 namespace mdir::tool {
 llvm::Expected<llvm::json::Object>
-checkTowersShape(const driver::Control &control, const driver::System &system);
+checkTowersShape(const driver::Control &control, const driver::System &system,
+                 bool setup);
 }

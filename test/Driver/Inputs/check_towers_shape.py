@@ -19,7 +19,7 @@ def check(shape, reason="", text=template):
     report = json.loads(result.stdout)
     if reason:
         assert result.returncode == 1 and reason in report["errors"][0], report
-        return
+        return report["errors"][0]
     assert result.returncode == 0, report
     return report["run"]["neighbors"]["towers_shape"]
 
@@ -35,6 +35,11 @@ check('{cell_height="FULL"}', "cell height",
 shape = check('{threads=512, blocks_per_sm=2, panel=352, stripe=384, records=1536, split=1, cell_height="HALF"}')
 assert shape["requested"] == shape["effective"]
 assert set(shape["source"].values()) == {"control"}
+diagnostic = check('{threads=384, blocks_per_sm=4, panel=32, stripe=32, records=1, cell_height="FULL"}',
+                   "registers per thread", template + '\nneighbor_structure = "TOWERS"')
+setup = subprocess.run([mdir, "run", control], capture_output=True, text=True)
+assert setup.returncode and diagnostic in setup.stderr, (diagnostic, setup.stderr)
+print(diagnostic)
 explicit = check('{cell_height="FULL"}', text=template + '\nneighbor_structure = "TOWERS"')
 assert explicit["effective"]["cell_height"] == "FULL"
 check('"AUTO"', "mixed precision", template.replace('"MIXED"', '"DOUBLE"') + '\nneighbor_structure = "TOWERS"')
@@ -51,10 +56,13 @@ towers_rebuild.MDIR_OPT = str(Path(mdir).with_name("mdir-opt"))
 
 work = control.with_suffix(".kernels")
 work.mkdir(exist_ok=True)
-outputs = []
-for workers, panel, stripe, records, split in [(32, 32, 32, 1, 1), (64, 64, 64, 2, 2)]:
-    settings = (f'{{threads={workers}, panel={panel}, stripe={stripe}, records={records}, '
-                f'blocks_per_sm=1, split={split}, cell_height="FULL"}}')
-    effective = check(settings)["effective"]
-    outputs.append(evaluate(work, True, effective["threads"], effective))
-assert outputs[0] == outputs[1]
+for height, reach in [("FULL", 1), ("HALF", 2)]:
+    outputs = []
+    for workers, panel, stripe, records, residency, split in [
+        (32, 32, 32, 1, 1, 1), (64, 64, 64, 2, 2, 2)
+    ]:
+        settings = (f'{{threads={workers}, panel={panel}, stripe={stripe}, records={records}, '
+                    f'blocks_per_sm={residency}, split={split}, cell_height="{height}"}}')
+        effective = check(settings)["effective"]
+        outputs.append(evaluate(work, True, effective["threads"], effective, reach))
+    assert outputs[0] == outputs[1]

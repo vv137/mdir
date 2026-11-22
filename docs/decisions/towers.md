@@ -114,14 +114,15 @@ wrap between audits.
 
 ## Setup and diagnostics
 
-Measure maximum source column and raw plate size for each feasible geometry.
+Select FULL or HALF from the atom count, rectangular cell and cutoff in every mode.
+Measure maximum source column and raw plate size at the selected height.
 Try 4, 8 and 16 warps, one or two resident blocks and one or two disjoint
 source ranges. Round panel and stripe sizes to warp multiples, cap the
 panel at 16 warp groups and two worker spans, and respect the packed
 prefix and target widths. Budget the certified tile, table and records
 against queried per-block and per-SM shared memory and driver reservations.
 Use read-only table access where staging cannot fit. Check actual occupancy.
-Time nine rebuilt certified calls per trial and remeasure the five finalists
+At that fixed height, time nine rebuilt certified calls per launch trial and remeasure the five finalists
 in five shuffled orders. Select by median. Stream longer columns and
 retry smaller stripes as positions evolve. Re-select on device or box change.
 
@@ -173,8 +174,19 @@ the physical correction and skips the excluded direct terms on wide replay.
 supply `threads`, `blocks_per_sm`, `stripe`, `panel`, `records`, `split`
 and `cell_height`. Preflight derives omitted tile dimensions for a given
 height. It reports the control and AUTO fields and checks device memory
-limits. The 4n direct defaults take a chosen geometry and panel specialization
-as input. Choosing between two feasible heights before the timed selector,
-the register diagnostic for the compiled pair region, and geometry-independent
-physical words remain open. Energy, virial and driver dispatch follow the
-rectangular force stage.
+limits. AUTO compares the two grids with the geometry-dependent terms of the
+stage 4i log-time model, using uniform-density estimates of the mean column
+and plate lengths, work per tower, and wave occupancy. The coefficients were
+fit on the six 4i frames. No timing or coordinate sample enters this choice.
+Stage (f) may time launch parameters only at the resolved height.
+
+At fixed height the force and energy words must be identical across all six
+launch parameters. At different heights validation uses the physical force
+tolerance against binary64. The strict cutoff operates on a cell-relative
+binary32 displacement. At the cutoff rounding boundary a change of cell
+origin can change membership by one pair and hence by its entire force.
+The resolved height belongs in the run record and checkpoint.
+Preflight compiles the mixed pair specialization when the toolchain and
+device are available. Setup checks the compiled register count and occupancy
+before the first step. As in 4n, the production compiler budget targets up to
+two resident blocks. A higher residency pin must fit the compiled kernel.

@@ -65,6 +65,8 @@ struct Checkpoint {
 
   /// What is needed to continue the run as it was.
   std::string integrator;
+  /// Resolved rectangular tower geometry for runs using that traversal.
+  std::string towersCellHeight;
   /// The time of the velocities relative to that of the positions, in
   /// time steps.
   double velocityOffset = 0.0;

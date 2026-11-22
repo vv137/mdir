@@ -2,13 +2,14 @@
 
 import ctypes as C
 import itertools
+import math
 from pathlib import Path
 import sys
 
 import towers_rebuild as rebuild
 
 
-def evaluate(directory, gpu, workers, shape=None):
+def evaluate(directory, gpu, workers, shape=None, reach=1):
     source = Path(__file__).with_name("towers-force.mlir").read_bytes()
     body = source[source.index(b"  md_exec.pair_for"):source.index(b"  return")]
     # The unconditional physical spring is independent of the direct table.
@@ -18,7 +19,7 @@ def evaluate(directory, gpu, workers, shape=None):
     x = (0.125, 5.875, 2.125, 0.375)
     bonds = [(0, 1), (0, 2)]
     n = len(x)
-    dims = (6, 6, 6)
+    dims = (6, 6, 6 * reach)
     split = 2 if workers == 64 else 1
     panel = stripe = 32
     records = residency = 1
@@ -26,16 +27,16 @@ def evaluate(directory, gpu, workers, shape=None):
         panel, stripe = shape["panel"], shape["stripe"]
         records, residency, split = shape["records"], shape["blocks_per_sm"], shape["split"]
     image = rebuild.compile_entries(
-        directory, dims, 1, n, 8, True, gpu, False, ("spring", source),
+        directory, dims, reach, n, 8, True, gpu, False, ("spring", source),
         {"certify-force": 1, "exclusions": len(bonds), "packed-charge-type": 1,
          "force-workers": workers, "force-panel": panel, "force-stripe": stripe,
          "force-records": records, "force-residency": residency, "force-split": split},
     )
     e = rebuild.Entries(image, gpu)
-    r = rebuild.Rebuild(e, dims, 1, n, 8, True)
+    r = rebuild.Rebuild(e, dims, reach, n, 8, True)
     r.box[:] = [6] * 3
     r.setup()
-    r.raw[:] = list(x) + [0] * (2 * n)
+    r.raw[:] = [0] * (2 * n) + list(x)
     r.types[:] = [1, 1, 0, 0]
     r.charge[:] = [1] * n
     geom = r.geometry
@@ -89,8 +90,8 @@ def evaluate(directory, gpu, workers, shape=None):
             else:
                 continue
             bad += int(abs(word) > 2**31)
-            expected[3 * i] += word
-            expected[3 * j] -= word
+            expected[3 * i + 2] += word
+            expected[3 * j + 2] -= word
         fatal = int(isolated_charge == 2**70)
         assert list(state) == [fatal, int(bool(bad))], (list(state), bad)
         assert failed[0] == bad, failed[0]
@@ -101,6 +102,35 @@ def evaluate(directory, gpu, workers, shape=None):
         if not bad:
             assert lo[:] == hi[:] == [987] * (3 * n)
         results.append(output[:])
+    # A non-dyadic axial frame exercises packing relative to different layer
+    # centers. Evaluate the same direct and physical springs in binary64.
+    x = (0.01031, 5.82107, 2.13571, 0.39793)
+    r.raw[:] = [0] * (2 * n) + list(x)
+    r.step()
+    scale = 2**18
+    state[:] = [0, 0]
+    failed[0] = 0
+    words[:] = [0] * (3 * n)
+    fields = (state, rebuild.F(scale), failed, topology, r.inverse, r.raw,
+              r.box, r.packed_types, table)
+    e.run("force", items, *prefix, words, *fields, block=workers, shared=8 * records)
+    e.run("certify", n, words, failed, state)
+    e.run("publish", n, state, words, lo, output)
+    e.sync()
+    assert state[:] == [0, 0] and failed[0] == 0
+    reference = [0.0] * n
+    for i, j in itertools.combinations(range(n), 2):
+        d = x[i] - x[j]
+        d -= round(d / 6) * 6
+        f = 2 * d if (i, j) in bonds else (8 * d if abs(d) < 1 else 0)
+        reference[i] += f
+        reference[j] -= f
+    assert all(output[3 * i + a] == 0 for i in range(n) for a in (0, 1))
+    vector = [output[3 * i + 2] / scale for i in range(n)]
+    error = math.dist(vector, reference) / math.hypot(*reference)
+    assert error < 1.4e-5, (reach, workers, error)
+    print(f"reach={reach} workers={workers} relative L2={error:.6g}")
+    results.append(output[:])
     e.close()
     return results
 
@@ -110,4 +140,10 @@ if __name__ == "__main__":
     directory.mkdir(parents=True, exist_ok=True)
     rebuild.MDIR_OPT = sys.argv[3]
     gpu = sys.argv[2] == "gpu"
-    assert evaluate(directory, gpu, 32) == evaluate(directory, gpu, 64)
+    by_height = []
+    for reach in (1, 2):
+        outputs = evaluate(directory, gpu, 32, reach=reach)
+        assert outputs == evaluate(directory, gpu, 64, reach=reach)
+        by_height.append(outputs[-1])
+    full, half = by_height
+    assert math.dist(full, half) <= 1.4e-5 * math.hypot(*full)

@@ -879,7 +879,7 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
   resolveNeighborStructure(*control, *system);
   std::optional<llvm::json::Object> towers;
   if (control->towersShapeGiven || control->neighborStructure == NeighborStructure::Towers) {
-    auto shape = checkTowersShape(*control, *system);
+    auto shape = checkTowersShape(*control, *system, /*setup=*/false);
     if (!shape)
       return fail(shape.takeError(), json);
     towers = std::move(*shape);
