@@ -36,7 +36,7 @@ public:
         workers(shape.workers), recordCap(shape.records),
         residency(shape.residency), groups(panel / 32),
         packedChargeType(shape.packedChargeType), certified(shape.certified),
-        probe(probe), indexedExclusions(shape.indexedExclusions),
+        packedDispatch(shape.packedDispatch), probe(probe), indexedExclusions(shape.indexedExclusions),
         v3(VectorType::get({3}, f32)), v4(VectorType::get({4}, f32)) {}
   LogicalResult emit();
 
@@ -75,7 +75,7 @@ private:
   void exclusion(Value row);
 
   int panel, stripe, workers, recordCap, residency, groups;
-  bool packedChargeType, certified, probe, indexedExclusions;
+  bool packedChargeType, certified, packedDispatch, probe, indexedExclusions;
   bool recovering = false;
   Value failedConversions, highWords, localVotes;
   bool shortVote() const {
@@ -105,7 +105,8 @@ private:
   IRMapping mapping;
   Value descriptors, packed, atomIds, geometry, words, invalid, wordScale;
   Values parameters, tileParameters;
-  int positionParameter = -1;
+  int positionParameter = -1, typeParameter = -1;
+  Value slotTypes;
   int64_t fixedBytes = 0;
   void stageParameters(gpu::GPUFuncOp fn);
   Value pos, id, features, bias, records, totals, keptSlots, accum, coarse;
@@ -386,7 +387,8 @@ void Force::addWord(Value dst, Value i, Value axis, Value w) {
   if (g.host) {
     store(addi(load(dst, {i, axis}), w), dst, {i, axis});
   } else if (dst == words) {
-    Value offset = muli(indexCast(i64, addi(muli(i, cx(3)), axis)), cl(8));
+    Value linear = packedDispatch ? addi(muli(axis, cx(g.atoms)), i) : addi(muli(i, cx(3)), axis);
+    Value offset = muli(indexCast(i64, linear), cl(8));
     atomic(LLVM::AtomicBinOp::add, pointerTo(baseAddress(dst), offset), w);
   } else {
     sharedAdd(
@@ -1051,7 +1053,15 @@ void Force::recoveryEntries() {
           Value source = select(retry(a[0]), a[2], a[1]);
           for (int axis = 0; axis < 3; ++axis) {
             Values at{i, cx(axis)};
-            store(load(source, at), a[3], at);
+            Value value;
+            if (packedDispatch) {
+              Value linear = addi(muli(cx(axis), cx(g.atoms)), i);
+              value = ifElse({i64}, retry(a[0]),
+                             [&] { return Values{load(a[2], at)}; },
+                             [&] { return Values{load(a[1], {divui(linear, cx(3)), remui(linear, cx(3))})}; })[0];
+            } else
+              value = load(source, at);
+            store(value, a[3], at);
           }
         });
       });
@@ -1089,11 +1099,11 @@ void Force::stage(ArrayRef<Value> starts, ArrayRef<Value> counts, Value begin,
     Value p = point(addr, indexCast(index, field));
     Value atom = load(atomIds, {addr});
     store(atom, id, {slot});
-    for (auto [src, dst] : llvm::zip(parameters, tileParameters)) {
-      if (!src)
+    for (auto [j, src, dst] : llvm::enumerate(parameters, tileParameters)) {
+      if (!src || (packedDispatch && int(j) == positionParameter))
         continue;
       Value value =
-          load(src, {packedChargeType ? addr : indexCast(index, atom)});
+          packedDispatch && int(j) == typeParameter ? load(slotTypes, {addr}) : load(src, {packedChargeType ? addr : indexCast(index, atom)});
       if (dst)
         store(value, dst, {slot});
       else
@@ -1590,6 +1600,8 @@ void Force::bind(ValueRange args) {
   }
   for (unsigned j = 0; j < term.getIns().size(); ++j)
     parameters.push_back(packedChargeType && j == 0 ? Value() : args[n++]);
+  if (packedDispatch)
+    slotTypes = args[n++];
   for (Value v : captures) {
     if (matchPattern(v, m_Constant())) {
       if (!mapping.contains(v))
@@ -2024,6 +2036,8 @@ LogicalResult Force::emit() {
   fixedBytes = (panel + stripe) * 44 + 16;
   for (unsigned j = 0; j < term.getIns().size(); ++j) {
     Type t = body.getArgument(2 + 2 * j).getType();
+    if (typeParameter < 0 && t == i32)
+      typeParameter = j;
     auto scalar = getElementTypeOrSelf(t);
     if (!scalar.isIntOrFloat())
       return term.emitError("unsupported TOWERS particle input type");
@@ -2036,6 +2050,8 @@ LogicalResult Force::emit() {
     if (!packedChargeType || j != 0)
       types.push_back(mem({packedChargeType ? slots : g.atoms}, t));
   }
+  if (packedDispatch)
+    types.push_back(mem({slots}, i32));
   if (!g.host && fixedBytes > 48 * 1024)
     return term.emitError("TOWERS force tile exceeds static workgroup storage");
   getUsedValuesDefinedAbove(term.getKernel(), term.getKernel(), captures);

@@ -204,16 +204,17 @@ struct Dispatch {
       }
       for (int a = 0; a < 3; ++a)
         memref::StoreOp::create(k, loc, xyz[a], raw, ValueRange{axis(a), i});
-      // The direct pair takes its actual input fields by atom ID. The
-      // packed fourth component and type slot are unused by this ABI.
-      memref::StoreOp::create(k, loc, createZero(k, loc, real), charge,
-                              ValueRange{i});
-      memref::StoreOp::create(k, loc, createZero(k, loc, narrow), types,
-                              ValueRange{i});
+      Value chargeValue, typeValue;
       for (auto [from, to] : llvm::zip(op.getIns(), fields)) {
         Value v = memref::LoadOp::create(k, loc, from, ValueRange{i});
         memref::StoreOp::create(k, loc, v, to, ValueRange{i});
+        if (!chargeValue && v.getType() == real)
+          chargeValue = v;
+        if (!typeValue && v.getType() == narrow)
+          typeValue = v;
       }
+      memref::StoreOp::create(k, loc, chargeValue ? chargeValue : createZero(k, loc, real), charge, ValueRange{i});
+      memref::StoreOp::create(k, loc, typeValue ? typeValue : createZero(k, loc, narrow), types, ValueRange{i});
     });
     return success();
   }
@@ -235,6 +236,7 @@ struct Dispatch {
 } // namespace
 
 LogicalResult Dispatch::run(Value positions) {
+  shape.packedDispatch = true;
   allocate();
   if (failed(inputs(positions)))
     return failure();
@@ -336,6 +338,7 @@ LogicalResult Dispatch::run(Value positions) {
     if (shape.exclusions)
       args.append({edges, inverse, raw, box, exclusionIndex});
     llvm::append_range(args, fields);
+    args.push_back(packedTypes);
     llvm::append_range(args, captures);
     int64_t blocks = int64_t(g.cells()) * shape.split +
                      llvm::divideCeil(shape.exclusions, shape.workers);

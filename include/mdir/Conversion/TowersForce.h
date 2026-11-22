@@ -14,6 +14,7 @@ struct TowersForceShape {
   unsigned yieldIndex = 0;
   bool indexedExclusions = false;
   int virialYield = -1;
+  bool packedDispatch = false;
 };
 
 mlir::LogicalResult emitTowersForce(mlir::ModuleOp module, TowersLayout layout,
