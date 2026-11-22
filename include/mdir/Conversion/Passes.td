@@ -613,6 +613,25 @@ def ConvertMDAlgToSCF : Pass<"convert-md-alg-to-scf", "::mlir::ModuleOp"> {
                            "::mlir::vector::VectorDialect"];
 }
 
+def AddTowersBuild : Pass<"add-towers-build", "::mlir::ModuleOp"> {
+  let summary = "Emit a rectangular TOWERS rebuild for a setup geometry";
+  let options = [
+    Option<"atoms", "atoms", "int", "1", "Particle count">,
+    Option<"nx", "nx", "int", "3", "X bins">,
+    Option<"ny", "ny", "int", "3", "Y bins">,
+    Option<"nz", "nz", "int", "3", "Z bins">,
+    Option<"reach", "reach", "int", "1", "Axial stencil reach (1 or 2)">,
+    Option<"capacity", "capacity", "int", "32", "Allocated slots per cell">,
+    Option<"host", "host", "bool", "false", "Emit serial reference functions">,
+    Option<"compact", "compact", "bool", "true", "Reset counts in sort/pack">,
+    Option<"audit", "audit", "bool", "false", "Emit ownership multiplicities for tests">
+  ];
+  let dependentDialects = ["::mlir::LLVM::LLVMDialect", "::mlir::NVVM::NVVMDialect",
+                           "::mlir::arith::ArithDialect", "::mlir::func::FuncDialect",
+                           "::mlir::gpu::GPUDialect", "::mlir::math::MathDialect",
+                           "::mlir::memref::MemRefDialect", "::mlir::scf::SCFDialect"];
+}
+
 def AddMatrixBuild : Pass<"add-matrix-build", "::mlir::ModuleOp"> {
   let summary = "Define the GPU matrix build for direct tests of its rows";
   let dependentDialects = ["::mlir::arith::ArithDialect",
