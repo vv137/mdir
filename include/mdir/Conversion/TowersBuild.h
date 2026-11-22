@@ -30,7 +30,8 @@ struct TowersLayout {
 };
 
 void emitTowersSetupRow(mlir::OpBuilder &builder, mlir::Location loc, TowersLayout layout,
-                        mlir::Value cell, mlir::ValueRange args);
+                        mlir::Value cell, mlir::ValueRange args, bool reset = true);
+void emitTowersInsertRow(mlir::OpBuilder &builder, mlir::Location loc, TowersLayout layout, mlir::Value atom, mlir::ValueRange args, mlir::ValueRange lattice);
 
 /// Emit a serial loop or one GPU work item per element of a TOWERS phase.
 void emitTowersEntry(

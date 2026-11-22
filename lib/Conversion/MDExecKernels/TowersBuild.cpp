@@ -35,7 +35,8 @@ public:
   }
 
   void emit(bool audit);
-  void setup(Value cell, ValueRange a);
+  void setup(Value cell, ValueRange a, bool reset = true);
+  void insert(Value item, ValueRange a, ValueRange lattice = {});
 
 private:
   using Offset = std::array<int, 3>;
@@ -199,10 +200,12 @@ void TowersBuild::sortWarp(Value keys, Value base, Value lane, Value count,
   }
 }
 
-void TowersBuild::setup(Value cell, ValueRange a) {
+void TowersBuild::setup(Value cell, ValueRange a, bool reset) {
+  if (reset) {
   store(ci(0), a[1], {cell});
   if (g.growCells)
     store(ci(-1), a[1], {addi(cx(g.cells()), cell)});
+  }
   ifThen(cmpi(CmpIPredicate::eq, cell, cx(0)), [&] {
     store(ci(0), a[2], {cx(0)});
     for (auto [axis, bins] :
@@ -249,6 +252,92 @@ void TowersBuild::setup(Value cell, ValueRange a) {
   }
 }
 
+void TowersBuild::insert(Value item, ValueRange a, ValueRange lattice) {
+  int n=g.atoms, cells=g.cells();
+  auto xyzw=VectorType::get({4},f32);
+  Value atom = select(cmpi(CmpIPredicate::ne, a[6], ci(0)),
+                      subi(cx(n - 1), item), item);
+  Value cell = cx(0), sub = ci(0);
+  Values coordinates;
+  for (auto [axis, bins] :
+       llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
+    Value length = lattice.empty() ? load(a[2], {cx(axis), cx(0)}) : g.triclinic ? cd(1) : lattice[axis];
+    Value x = load(a[0], {cx(axis), atom});
+    Value width = lattice.empty() ? load(a[2], {cx(axis), cx(1)}) : divf(length, cd(bins));
+    Value reciprocal = lattice.empty() ? load(a[2], {cx(axis), cx(2)}) : divf(cd(4), width);
+    Values located = locate(x, length, width, reciprocal, bins);
+    Value v = located[0], quarter = located[1];
+    Value bin = shrui(quarter, ci(2));
+    cell = addi(muli(cell, cx(bins)), indexCast(index, bin));
+    sub = addi(shli(sub, ci(2)), andi(quarter, ci(3)));
+    Value center = mulf(addf(sitofp(f64, bin), cd(0.5)), width);
+    Value local = subf(v, center);
+    coordinates.push_back(g.triclinic ? local : truncf(local));
+  }
+  if (g.triclinic) {
+    Values cartesian;
+    for (int k = 0; k < 3; ++k) {
+      auto component = [&](int axis) {
+        return mulf(
+            coordinates[axis],
+            lattice.empty() ? load(a[2], {cx(axis), cx(TowersLayout::lattice + k)}) : lattice[3*axis+k]);
+      };
+      cartesian.push_back(
+          truncf(addf(addf(component(0), component(1)), component(2))));
+    }
+    coordinates = std::move(cartesian);
+  }
+  coordinates.push_back(load(a[1], {atom}));
+  store(vector::FromElementsOp::create(b, loc, xyzw, coordinates), a[5],
+        {atom});
+  Value rank;
+  if (g.host) {
+    rank = load(a[3], {cell});
+    store(addi(rank, ci(1)), a[3], {cell});
+  } else {
+    // The mask excludes inactive lanes in the last particle warp.
+    Value lane = indexCast(i32, remui(item, cx(32)));
+    Value left = subi(ci(n), subi(indexCast(i32, item), lane));
+    Value active = shrui(ci(-1), subi(ci(32), minui(left, ci(32))));
+    Value group = NVVM::MatchSyncOp::create(b, loc, i32, active,
+                                            indexCast(i32, cell),
+                                            NVVM::MatchSyncKind::any);
+    Value first = math::CountTrailingZerosOp::create(b, loc, group);
+    Value base = ifElse(
+        {i32}, cmpi(CmpIPredicate::eq, lane, first),
+        [&] {
+          Value ptr = pointerTo(baseAddress(a[3]),
+                                muli(indexCast(i64, cell), cl(4)));
+          Value members = math::CtPopOp::create(b, loc, group);
+          return Values{atomic(LLVM::AtomicBinOp::add, ptr, members)};
+        },
+        [&] { return Values{ci(0)}; })[0];
+    base = NVVM::ShflOp::create(b, loc, i32, group, base, first, ci(31),
+                                NVVM::ShflKind::idx, nullptr);
+    Value preceding = andi(group, subi(shli(ci(1), lane), ci(1)));
+    rank = addi(base, math::CtPopOp::create(b, loc, preceding));
+  }
+  Value key = ori(shli(sub, ci(26)), indexCast(i32, atom));
+  if (g.growCells) {
+    ifThen(cmpi(CmpIPredicate::eq, item, cx(0)), [&] {
+      store(ci(int64_t(cells) * g.capacity), a[3], {cx(2LL * cells)});
+    });
+    // Each unplaced key belongs to one list. Both the key and its
+    // local coordinates come from this insertion, before any motion.
+    ifThen(cmpi(CmpIPredicate::uge, rank, ci(g.capacity)), [&] {
+      Value head = addi(cx(cells), cell);
+      Value previous = memref::AtomicRMWOp::create(
+          b, loc, arith::AtomicRMWKind::assign, key, a[3],
+          ValueRange{head});
+      store(previous, a[4], {addi(cx(g.slots()), atom)});
+    });
+  }
+  ifThen(cmpi(CmpIPredicate::ult, rank, ci(g.capacity)), [&] {
+    store(key, a[4],
+          {addi(muli(cell, cx(g.capacity)), indexCast(index, rank))});
+  });
+}
+
 void TowersBuild::emit(bool audit) {
   if (!g.host)
     LLVM::LLVMFuncOp::create(b, loc, "__nv_fmod",
@@ -276,87 +365,7 @@ void TowersBuild::emit(bool audit) {
   // Keys are unique even when all atoms lie on the same quarter-cell tie.
   phase("towers_insert", {raw, charges, geometry, counts, keys, local, i32}, n,
         [&](Value item, ValueRange a) {
-          Value atom = select(cmpi(CmpIPredicate::ne, a[6], ci(0)),
-                              subi(cx(n - 1), item), item);
-          Value cell = cx(0), sub = ci(0);
-          Values coordinates;
-          for (auto [axis, bins] :
-               llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
-            Value length = load(a[2], {cx(axis), cx(0)});
-            Value x = load(a[0], {cx(axis), atom});
-            Value width = load(a[2], {cx(axis), cx(1)});
-            Value reciprocal = load(a[2], {cx(axis), cx(2)});
-            Values located = locate(x, length, width, reciprocal, bins);
-            Value v = located[0], quarter = located[1];
-            Value bin = shrui(quarter, ci(2));
-            cell = addi(muli(cell, cx(bins)), indexCast(index, bin));
-            sub = addi(shli(sub, ci(2)), andi(quarter, ci(3)));
-            Value center = mulf(addf(sitofp(f64, bin), cd(0.5)), width);
-            Value local = subf(v, center);
-            coordinates.push_back(g.triclinic ? local : truncf(local));
-          }
-          if (g.triclinic) {
-            Values cartesian;
-            for (int k = 0; k < 3; ++k) {
-              auto component = [&](int axis) {
-                return mulf(
-                    coordinates[axis],
-                    load(a[2], {cx(axis), cx(TowersLayout::lattice + k)}));
-              };
-              cartesian.push_back(
-                  truncf(addf(addf(component(0), component(1)), component(2))));
-            }
-            coordinates = std::move(cartesian);
-          }
-          coordinates.push_back(load(a[1], {atom}));
-          store(vector::FromElementsOp::create(b, loc, xyzw, coordinates), a[5],
-                {atom});
-          Value rank;
-          if (g.host) {
-            rank = load(a[3], {cell});
-            store(addi(rank, ci(1)), a[3], {cell});
-          } else {
-            // The mask excludes inactive lanes in the last particle warp.
-            Value lane = indexCast(i32, remui(item, cx(32)));
-            Value left = subi(ci(n), subi(indexCast(i32, item), lane));
-            Value active = shrui(ci(-1), subi(ci(32), minui(left, ci(32))));
-            Value group = NVVM::MatchSyncOp::create(b, loc, i32, active,
-                                                    indexCast(i32, cell),
-                                                    NVVM::MatchSyncKind::any);
-            Value first = math::CountTrailingZerosOp::create(b, loc, group);
-            Value base = ifElse(
-                {i32}, cmpi(CmpIPredicate::eq, lane, first),
-                [&] {
-                  Value ptr = pointerTo(baseAddress(a[3]),
-                                        muli(indexCast(i64, cell), cl(4)));
-                  Value members = math::CtPopOp::create(b, loc, group);
-                  return Values{atomic(LLVM::AtomicBinOp::add, ptr, members)};
-                },
-                [&] { return Values{ci(0)}; })[0];
-            base = NVVM::ShflOp::create(b, loc, i32, group, base, first, ci(31),
-                                        NVVM::ShflKind::idx, nullptr);
-            Value preceding = andi(group, subi(shli(ci(1), lane), ci(1)));
-            rank = addi(base, math::CtPopOp::create(b, loc, preceding));
-          }
-          Value key = ori(shli(sub, ci(26)), indexCast(i32, atom));
-          if (g.growCells) {
-            ifThen(cmpi(CmpIPredicate::eq, item, cx(0)), [&] {
-              store(ci(int64_t(cells) * g.capacity), a[3], {cx(2LL * cells)});
-            });
-            // Each unplaced key belongs to one list. Both the key and its
-            // local coordinates come from this insertion, before any motion.
-            ifThen(cmpi(CmpIPredicate::uge, rank, ci(g.capacity)), [&] {
-              Value head = addi(cx(cells), cell);
-              Value previous = memref::AtomicRMWOp::create(
-                  b, loc, arith::AtomicRMWKind::assign, key, a[3],
-                  ValueRange{head});
-              store(previous, a[4], {addi(cx(g.slots()), atom)});
-            });
-          }
-          ifThen(cmpi(CmpIPredicate::ult, rank, ci(g.capacity)), [&] {
-            store(key, a[4],
-                  {addi(muli(cell, cx(g.capacity)), indexCast(index, rank))});
-          });
+          insert(item, a);
         });
 
   // One warp consumes each cell on the device. Each key has a unique
@@ -467,8 +476,10 @@ void TowersBuild::emit(bool audit) {
         ifThen(cmpi(CmpIPredicate::eq, lane, cx(0)), [&] {
           if (g.compact)
             store(ci(0), a[0], {cell});
-          if (g.growCells)
+          if (g.growCells) {
+            if (g.compact) store(ci(-1), a[0], {addi(cx(cells), cell)});
             return;
+          }
           ifThen(cmpi(CmpIPredicate::ugt, size, ci(g.capacity)), [&] {
             memref::AtomicRMWOp::create(b, loc, arith::AtomicRMWKind::maxu,
                                         size, a[10], ValueRange{cx(0)});
@@ -507,8 +518,11 @@ void TowersBuild::emitOwnership(MemRefType spans, MemRefType ids) {
 }
 } // namespace
 
-void mdir::kernels::emitTowersSetupRow(OpBuilder &b, Location loc, TowersLayout g, Value cell, ValueRange args) {
-  TowersBuild(b, loc, g).setup(cell, args);
+void mdir::kernels::emitTowersSetupRow(OpBuilder &b, Location loc, TowersLayout g, Value cell, ValueRange args, bool reset) {
+  TowersBuild(b, loc, g).setup(cell, args, reset);
+}
+void mdir::kernels::emitTowersInsertRow(OpBuilder &b, Location loc, TowersLayout g, Value item, ValueRange args, ValueRange lattice) {
+  TowersBuild(b, loc, g).insert(item, args, lattice);
 }
 
 void mdir::kernels::emitTowersEntry(

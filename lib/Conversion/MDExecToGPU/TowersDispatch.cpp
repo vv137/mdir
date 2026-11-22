@@ -164,6 +164,16 @@ struct Dispatch {
         edges.getDefiningOp()->setAttr("mdir.initialized", init.getUnitAttr());
       }
     }
+    if (g.cells() <= g.atoms && !counts.getDefiningOp()->hasAttr("mdir.initialized")) {
+      OpBuilder init(counts.getDefiningOp());
+      init.setInsertionPointAfter(counts.getDefiningOp());
+      rows(init, loc, createIndex(init, loc, g.cells()), [&](OpBuilder &k, Value i) {
+        memref::StoreOp::create(k, loc, createZero(k, loc, narrow), counts, ValueRange{i});
+        Value head = arith::AddIOp::create(k, loc, i, createIndex(k, loc, g.cells()));
+        memref::StoreOp::create(k, loc, arith::ConstantIntOp::create(k, loc,-1,32), counts, ValueRange{head});
+      });
+      counts.getDefiningOp()->setAttr("mdir.initialized",init.getUnitAttr());
+    }
     auto cell = op.getCellMutable().get();
     Value initialWords, initialState, initialFailed;
     if (!op.getOuts().empty()) {
@@ -215,7 +225,7 @@ struct Dispatch {
       if (g.cells() <= g.atoms) {
         Value cellRow = arith::CmpIOp::create(k, loc, arith::CmpIPredicate::ult, i, axis(g.cells()));
         scf::IfOp::create(k, loc, cellRow, [&](OpBuilder &at, Location l) {
-          emitTowersSetupRow(at, l, g, i, {map, counts, status, box, geometry});
+          emitTowersSetupRow(at, l, g, i, {map, counts, status, box, geometry}, false);
           scf::YieldOp::create(at, l);
         });
       }
@@ -232,6 +242,10 @@ struct Dispatch {
       }
       memref::StoreOp::create(k, loc, chargeValue ? chargeValue : createZero(k, loc, real), charge, ValueRange{i});
       memref::StoreOp::create(k, loc, typeValue ? typeValue : createZero(k, loc, narrow), types, ValueRange{i});
+      if (g.cells() <= g.atoms) {
+        Value forward = arith::ConstantIntOp::create(k, loc, 0, 32);
+        emitTowersInsertRow(k, loc, g, i, {raw, charge, geometry, counts, keys, local, forward}, lattice);
+      }
     });
     return success();
   }
@@ -256,6 +270,10 @@ LogicalResult Dispatch::run(Value positions) {
   shape.packedDispatch = true;
   shape.finishForce = true;
   allocate();
+  if (!module.lookupSymbol("__nv_fmod")) {
+    OpBuilder top = OpBuilder::atBlockBegin(module.getBody());
+    LLVM::LLVMFuncOp::create(top, loc, "__nv_fmod", LLVM::LLVMFunctionType::get(dbl, {dbl, dbl}));
+  }
   if (failed(inputs(positions)))
     return failure();
   // Radial globals are host constants here. Give kernels a device
@@ -328,7 +346,8 @@ LogicalResult Dispatch::run(Value positions) {
         launch("towers_setup", g.cells(), 128,
              {map, counts, status, box, geometry});
       Value forward = arith::ConstantIntOp::create(b, loc, 0, 32);
-      launch("towers_insert", n, 128,
+      if (g.cells() > g.atoms)
+        launch("towers_insert", n, 128,
              {raw, charge, geometry, counts, keys, local, forward});
       launch("towers_pack", 32LL * g.cells(), 128,
              {counts, keys, local, types, map, packed, packedTypes, ids,
