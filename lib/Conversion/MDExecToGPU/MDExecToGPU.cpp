@@ -5601,10 +5601,10 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                                  cast<MemRefType>(forces.getType()).getMemorySpace());
     auto word = MemRefType::get({ShapedType::kDynamic}, builder.getI32Type(),
                                 MemRefLayoutAttrInterface(), record.getMemorySpace());
-    if (scratch.size() != 13 || scratch[4].getType() != record ||
+    if (scratch.size() != 14 || scratch[4].getType() != record ||
         scratch[6].getType() != record ||
         !llvm::all_of(scratch.drop_front(7), [&](Value v) { return v.getType() == word; }))
-      return op.emitOpError("cell-order storage requires two four-component mesh buffers and six i32 work buffers");
+      return op.emitOpError("cell-order storage requires two four-component mesh buffers and seven i32 work buffers");
     cellOrder = {scratch[10], scratch[8], scratch[6]};
   }
   Value bins = ordered ? Value() : getBins(op);
@@ -5731,7 +5731,10 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_pack"),
                          ValueRange{scratch[4], cellOrder.permutation, cellOrder.particles});
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread_ordered"),
-                         ValueRange{cellOrder.particles, cellOrder.offsets, real, k1, k2, k3});
+                         ValueRange{cellOrder.particles, cellOrder.offsets, scratch[13], fixed,
+                                    scratch[11], real, k1, k2, k3,
+                                    createIndex(builder, loc, launch.blockSize),
+                                    createIndex(builder, loc, md_exec::PMECellEdge + 3)});
   } else if (tiles) {
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_weights"),
                          ValueRange{positions, box, weights, k1, k2, k3});
@@ -5840,9 +5843,11 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   if (op.getGatherAll())
     listed = Value();
   if (ordered) {
-    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_gather_ordered"),
+    bool paired = grid == ArrayRef<int64_t>({144, 84, 80});
+    func::CallOp::create(builder, loc, instance(paired ? "mdrt_gpu_pme_gather_ordered_pairs"
+                                                       : "mdrt_gpu_pme_gather_ordered"),
                          ValueRange{cellOrder.particles, cellOrder.permutation, real, box,
-                                    k1, k2, k3, forces});
+                                    k1, k2, k3, forces, createIndex(builder, loc, launch.blockSize)});
   } else if (listed && usesWeights)
     func::CallOp::create(builder, loc,
                          instance("mdrt_gpu_pme_gather_weights_listed"),

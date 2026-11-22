@@ -26,12 +26,20 @@ by $8BSQ$. At most $BP^3$ terms are rounded. Require
 $B(8.01SQ+P^3)<2^{31}$ for signed 32-bit accumulation, allowing for
 floating-point weight evaluation and rounding. The absolute bound also
 covers intermediate sums. Check the occupancy of the current frame and
-refresh the charge bound whenever charges change. On certificate failure,
-discard the narrow result and use a certified wide accumulation before
-the transform. Select a scale for the precision being computed and check
-the quantization error against the same-grid double oracle.
+refresh the charge bound whenever charges change. Mixed precision uses $S=2^{23}$, $Q\le2$ and $B\le15$.
+Check both inequalities on every evaluation before depositing any narrow
+word. On failure, accumulate directly into i64 at the same scale. Double
+precision uses i64 with $S=2^{40}$. A stencil visits each node at most
+once on the supported meshes. With $N$ particles the wide certificate
+requires $N(2S|q_i|+1)<2^{62}$ for every particle. The factor two covers
+the evaluated weight product, the added unit covers rounding, and the
+extra bit allows for evaluation of the bound in double precision. A
+nonfinite charge or failed wide certificate stops the calculation before
+the transform.
 
-For cubic gathering, four neighboring lanes each contract one z slice.
+For cubic gathering, four neighboring lanes each contract one z slice,
+or two lanes each contract a pair of adjacent slices on the measured
+Factor IX mesh. Both mappings add the same pairs first.
 Reduce the derivatives in a fixed shuffle tree. The producing lane
 writes the three Cartesian components directly to the driver's force
 array at the slot's original atom index. Compare integer grids bitwise
@@ -54,7 +62,9 @@ sentinel equal to the particle count. Each slot has an i32 original atom
 index and an aligned record of four mesh-precision values. Its first three
 values are periodic coordinates in mesh units and its fourth is the
 charge. The local producer groups the first wrapped stencil point on each
-axis in cells four grid points wide, with z varying fastest. The last
-cell along an axis may be shorter. A shared producer must use the same
+axis in cells eight grid points wide. Each cell contains eight four-point
+subcells. Both indices vary fastest in z. A cell's particle range begins
+at its first subcell offset and ends after its eighth subcell. Empty
+subcells at the mesh boundary have equal consecutive offsets. A shared producer must use the same
 frame, box, mesh placement and cell numbering. The order within one cell
 is immaterial to the consumer.

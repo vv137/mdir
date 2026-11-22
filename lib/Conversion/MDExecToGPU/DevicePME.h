@@ -52,6 +52,7 @@ private:
   }
   template <bool tilted> void emitCellOrder(StringRef symbol);
   void emitPack(StringRef symbol);
+  void emitIntegerPatch(StringRef symbol);
   Value meshCoordinate(Value fractional, Value size);
   std::pair<Value, Value> splitMeshAxis(Value mesh, Value size, Value support);
   int64_t realBytes = realType.getIntOrFloatBitWidth() / 8;
@@ -156,9 +157,9 @@ private:
   template <Window window, Splitting splitting, bool tilted>
   void emitScale(StringRef symbol);
   template <bool tilted, bool useList, bool potentialOnly, bool cachedWeights>
-  void emitGather(StringRef symbol, bool ordered = false);
+  void emitGather(StringRef symbol, unsigned orderedLanes = 0);
   template <bool useList, int tileEdge> void emitBin(StringRef symbol);
-  template <Window window, int tileEdge, bool ordered = false> void emitSpreadTile(StringRef symbol);
+  template <Window window, int tileEdge> void emitSpreadTile(StringRef symbol);
   void emitCoefficients(StringRef symbol);
   template <bool tilted> void emitPlaces(StringRef symbol);
   template <bool useList, bool fixedGrid> void emitWarpSpread(StringRef symbol);

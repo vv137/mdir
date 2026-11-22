@@ -1,6 +1,7 @@
 // Per-frame PME counting sort. The consumer interface is the cell offsets,
 // slot-to-atom permutation and aligned (mesh x,y,z, charge) records.
 #include "DevicePME.h"
+#include "mdir/Dialect/MDExec/PMECellOrder.h"
 
 using namespace mlir;
 using namespace mdir;
@@ -47,6 +48,7 @@ template <bool tilted> void DevicePME::emitCellOrder(StringRef symbol) {
     return maxui(one, arith::CeilDivUIOp::create(b, loc, count, width));
   };
   Value grid = blocks(n, threads);
+  Value edge = ix(md_exec::PMECellEdge);
   Value unit = arith::ConstantOp::create(b, loc, b.getF64FloatAttr(1));
   Value lx = extract(box, 0), ly = extract(box, 1), lz = extract(box, 2);
   Value inverse[] = {divf(unit, lx), divf(unit, ly), divf(unit, lz)};
@@ -84,13 +86,14 @@ template <bool tilted> void DevicePME::emitCellOrder(StringRef symbol) {
     components.push_back(convert(realType, load(q, {i})));
     for (int axis = 0; axis != 4; ++axis)
       store(components[axis], raw, {i, ix(axis)});
-    Value cell = zero;
+    Value cell = zero, subcell = zero;
     for (int axis = 0; axis < 3; ++axis) {
       Value k = a[10 + axis];
       Value start = splitMeshAxis(components[axis], k, four).first;
-      cell = addi(muli(cell, blocks(k, four)), divui(start, four));
+      cell = addi(muli(cell, blocks(k, edge)), divui(start, edge));
+      subcell = addi(muli(subcell, ix(2)), divui(remui(start, edge), four));
     }
-    md_alg::BinOp::create(b, loc, cell);
+    md_alg::BinOp::create(b, loc, addi(muli(cell, ix(8)), subcell));
   }
   func::ReturnOp::create(b, loc);
 }

@@ -1489,9 +1489,9 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
                       (op.getProlate() ||
                        (op.getOrder() == 4 && !op.getPotential()));
     if (ordered) {
-      int64_t cells = 1;
+      int64_t cells = 8; // Eight four-point subcells per spreading block.
       for (int64_t k : grid)
-        cells *= (k + 3) / 4;
+        cells *= llvm::divideCeil(k, PMECellEdge);
       Type word = IntegerType::get(context, 32);
 
       // Ordered mesh records, keys, and slot-to-atom IDs.
@@ -1499,6 +1499,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
         scratch.push_back(particleBuffer(element, element == word ? 1 : 4));
       for (int64_t count : {cells, cells + 1, cells, (cells + 1023) / 1024})
         scratch.push_back(allocate(word, count));
+      scratch.push_back(allocate(word, points));
     } else if (usesBricks) {
       int64_t bricks =
           (grid[0] + 3) / 4 * ((grid[1] + 3) / 4) * 16 * grid[2];

@@ -296,6 +296,14 @@ precision (D78).*
 | Product | `scale` or `convolve` | $\hat Q\leftarrow BC\,\hat Q$. When the energy or the virial is requested, `convolve` also sums $E_\mathbf m$ and the six components of $\mathsf W$: a block of 128 threads reduces in the type of the grid, stores its sums in f64, and one block adds the blocks in f64, in an order that depends only on the size of the grid; the host copies seven numbers |
 | Gathering | `gather_weights` | Order 4 in f32: four threads a particle; each recomputes the splines and their slopes from the stored fractions by the unrolled recursion, in the type of the grid, and the four sum by shuffles (D102). Otherwise four lanes a particle for order 4 and eight for 6 and 8, which recompute the places |
 
+For the ordered cubic Gaussian path, round each scaled contribution
+$q_i S M_x M_y M_z$ to nearest even before adding it to a patch.
+An escape deposits the same words at the periodic global nodes. The
+absolute-sum certificate bounds all intermediate sums, so that changing
+the partition among blocks preserves the integer mesh. Two or four lanes per
+particle contract the potential with the spline gradients and place the
+three force components at the original atom index (D[pme-tiles]).
+
 The fraction along the cell stays f64 because a position of a large cell
 in f32 would lose the digits that place it within a point: the product
 with $K$ in f32 resolves a point to $K\,2^{-24}$, $1.6\times10^{-5}$ of a
