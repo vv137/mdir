@@ -3,7 +3,7 @@
 # first evaluation must supply all nine pressure-tensor components.
 # RUN: rm -rf %t && mkdir %t
 # RUN: cp %S/../../examples/argon/argon.pdb %t/
-# RUN: sed -e '/^trajectory/d' -e '/^\[output\]/a checkpoint = "base.h5"\ncheckpoint_interval = 2' -e 's/^energy_interval.*/energy_interval = 2/' -e 's/^steps .*/steps = 10/' -e 's/"NVE"/"NPT"/' -e '/^\[ensemble\]/a pressure = 1.0' -e 's/"CPU"/"GPU"/' -e 's/"DOUBLE"/"MIXED"/' %S/../../examples/argon/argon.toml > %t/base.toml
+# RUN: sed -e '/^trajectory/d' -e '/^\[output\]/a checkpoint = "base.h5"\ncheckpoint_interval = 10' -e 's/^energy_interval.*/energy_interval = 10/' -e 's/^steps .*/steps = 10/' -e 's/"NVE"/"NPT"/' -e '/^\[ensemble\]/a pressure = 1.0' -e 's/"CPU"/"GPU"/' -e 's/"DOUBLE"/"MIXED"/' %S/../../examples/argon/argon.toml > %t/base.toml
 # RUN: echo '[thermostat]' >> %t/base.toml
 # RUN: echo 'method = "V-RESCALE"' >> %t/base.toml
 # RUN: echo 'time_constant = 1.0' >> %t/base.toml
@@ -14,4 +14,4 @@
 # RUN: sed -e 's/"base.h5"/"resumed.h5"/' -e '/^\[input\]/a checkpoint = "base.h5"' -e '/^\[execution\]/a neighbor_structure = "TOWERS"\ntowers_shape = {threads=128, blocks_per_sm=1, panel=64, stripe=64, records=16, split=1, cell_height="FULL"}' %t/base.toml > %t/resumed.toml
 # RUN: mdir run %t/resumed.toml | FileCheck %s
 # CHECK: continues after step 10
-# CHECK: INFO: {{ +}}20 {{ +}}0.1000
+# CHECK: INFO: 20 0.1000
