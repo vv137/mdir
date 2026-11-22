@@ -24,8 +24,9 @@ grids and evaluates mixed-precision force, energy and direct virial
 through compiler entries. The certified path checks narrow sums and
 recovers into two limbs before publication. Exclusion replay uses the
 closest periodic image. Setup chooses the height from the system, times
-launches at that height and caches the winner. Moving-step dispatch and
-its whole-step comparison remain open. Double precision is tracked in #937.
+launches at that height and caches the winner. Moving-step dispatch indexes topology exclusions once per run.
+The independent virial traversal still adds direct pair work on pressure
+steps. TOWERS remains an explicit choice. Double precision is tracked in #937.
 
 Physical constants (#805): D394 centralizes C/C++
 definitions and derives native and expression coefficients from the exact

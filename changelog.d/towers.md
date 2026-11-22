@@ -11,3 +11,4 @@
   The compiler also supports fractional triclinic cells and closest-lattice
   physical exclusions. Continuation preserves the saved height and recomputes
   the initial forces when the traversal or height changes.
+  Moving pressure evaluations index exclusions by permanent atom ID.

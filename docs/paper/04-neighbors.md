@@ -1376,7 +1376,12 @@ kernels. The energy kernel rounds each pair energy to Q32 and sums the
 words with signed two-limb arithmetic. The tensor kernel visits physical
 pairs and accumulates the six independent components of the minimum-image
 displacement times the target force in binary64. A force-only evaluation
-requires neither additional traversal.
+requires neither additional traversal. The moving virial traversal indexes each
+excluded pair by the smaller permanent atom ID. A 32-bit mask resolves
+the next 32 IDs exactly. A more distant partner above the greatest
+excluded ID in that row is outside the exclusion set. The remaining
+queries use the sorted topology pairs. This index also serves physical
+force replay and remains valid when the spatial cells are rebuilt.
 
 The height fixes the cell origins used by the binary32 displacement. Setup
 therefore chooses it from the atom count, box and cutoff before timing
