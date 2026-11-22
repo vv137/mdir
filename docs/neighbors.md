@@ -65,7 +65,12 @@ The optional `force-body` pass argument names a function containing a mixed
 `md_exec.pair_for` with one antisymmetric vector force. The rectangular
 GPU entry imports per-atom fields by particle ID, screens the staged tile,
 and evaluates the original pair region for candidates inside its strict
-cutoff. Small read-only coefficient tables can be staged with the tile.
+cutoff. When the two region inputs are the rebuild charge and type in that
+order, the internal `packed-charge-type` option takes charge from the fourth
+packed position lane and a single slot-indexed type array in place of both
+atom-indexed arrays. Screen features and the compacted target list share
+storage with the integer force planes across the prefix barrier.
+Small read-only coefficient tables can be staged with the tile.
 `force-panel`, `force-stripe`, `force-workers` and `force-records` specialize
 the test entry. Launch one block per tower with the selected worker count
 and eight bytes of dynamic shared memory per record. The optional

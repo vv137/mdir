@@ -25,6 +25,7 @@ def check(directory, gpu, reach):
     n = len(xyz)
     capacity = 29 if reach == 2 else 512
     source = Path(__file__).with_name("towers-force.mlir").read_bytes()
+    packed = reach == 2
     image = rebuild.compile_entries(
         directory,
         dims,
@@ -35,7 +36,7 @@ def check(directory, gpu, reach):
         gpu,
         False,
         ("spring", source),
-        {"force-records": capacity},
+        {"force-records": capacity, "packed-charge-type": int(packed)},
     )
     if gpu:
         assert b"mma.sync.aligned.m16n8k8" in image and b"cvt.rm.f16.f32" in image
@@ -44,6 +45,8 @@ def check(directory, gpu, reach):
     r.box[:] = lengths
     r.raw[:] = [p[a] for a in range(3) for p in xyz]
     r.types[:] = [i % 2 for i in range(n)]
+    r.charge[:] = [1 if i % 3 else -1 for i in range(n)]
+    fields = (r.packed_types,) if packed else (r.charge, r.types)
     r.setup()
     words = entries.array(C.c_int64, 3 * n)
     status = entries.array(rebuild.I, 1)
@@ -60,6 +63,7 @@ def check(directory, gpu, reach):
             if sum(v * v for v in d) < 1:
                 pairs += 1
                 k = table[2 * (i % 2) + (j % 2)]
+                k *= r.charge[i] * r.charge[j]
                 for a, v in enumerate(d):
                     w = round(k * v * 2**18)
                     expected[3 * i + a] += w
@@ -79,7 +83,7 @@ def check(directory, gpu, reach):
             words,
             status,
             rebuild.F(2**18),
-            r.types,
+            *fields,
             table,
             shared=8 * capacity,
         )
@@ -97,7 +101,7 @@ def check(directory, gpu, reach):
         words,
         status,
         rebuild.F(2**18),
-        r.types,
+        *fields,
         table,
         shared=8 * capacity,
     )
@@ -116,7 +120,7 @@ def check(directory, gpu, reach):
         words,
         status,
         rebuild.F(2**18),
-        r.types,
+        *fields,
         table,
         shared=8 * capacity,
     )

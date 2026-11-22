@@ -25,7 +25,8 @@ public:
       : NeighborBuildCode(b, term.getLoc()), g(g), term(term),
         panel(shape.panel), stripe(shape.stripe), workers(shape.workers),
         recordCap(shape.records), residency(shape.residency),
-        groups(panel / 32), probe(probe), v3(VectorType::get({3}, f32)),
+        groups(panel / 32), packedChargeType(shape.packedChargeType),
+        probe(probe), v3(VectorType::get({3}, f32)),
         v4(VectorType::get({4}, f32)) {}
   LogicalResult emit();
 
@@ -33,7 +34,7 @@ private:
   TowersLayout g;
   md_exec::PairForOp term;
   int panel, stripe, workers, recordCap, residency, groups;
-  bool probe;
+  bool packedChargeType, probe;
   Value trace, owner;
   void mark(int phase);
   Value recordPtr(Value rec, int col) {
@@ -241,7 +242,9 @@ void Force::host() {
                     [&](Value j, ValueRange) {
                       Value ts = addi(t.first, j),
                             ti = indexCast(index, load(atomIds, {ts}));
-                      auto force = pair(point(ts, t.field), source, ti, si);
+                      auto force = pair(point(ts, t.field), source,
+                                        packedChargeType ? ts : ti,
+                                        packedChargeType ? ss : si);
                       for (auto [axis, w] : llvm::enumerate(force)) {
                         addWord(words, ti, cx(axis), w);
                         addWord(words, si, cx(axis), subi(cl(0), w));
@@ -266,25 +269,32 @@ void Force::stage(ArrayRef<Value> starts, ArrayRef<Value> counts, Value begin,
                   Value size, bool source) {
   // Each lane imports one slot. Resolve its descriptor in registers instead
   // of reusing the front of every warp for each (usually short) span.
-  forLoop(tid, size, cx(workers), {}, [&](Value laneSlot, ValueRange) {
-    Value logical = addi(begin, laneSlot), first = cx(0), field = cx(0);
-    Value addr = addi(starts[0], logical);
+  auto import = [&](Value laneSlot) {
+    Value logical = indexCast(i32, addi(begin, laneSlot)), first = ci(0),
+          field = ci(0);
+    Value addr32 = addi(indexCast(i32, starts[0]), logical);
     int columns = 2 * g.reach + 1;
     for (int k = 0; k < (source ? columns : 5); ++k) {
       int j = source || k == 0 ? k : columns + k - 1;
       if (k) {
         Value inside = cmpi(CmpIPredicate::uge, logical, first);
-        addr = select(inside, addi(starts[j], subi(logical, first)), addr);
-        field = select(inside, cx(j), field);
+        addr32 = select(inside,
+                        addi(indexCast(i32, starts[j]), subi(logical, first)),
+                        addr32);
+        field = select(inside, ci(j), field);
       }
-      first = addi(first, counts[j]);
+      first = addi(first, indexCast(i32, counts[j]));
     }
+    Value addr = indexCast(index, addr32);
     Value slot = addi(cx(source ? 0 : panel), laneSlot);
-    Value p = point(addr, field);
+    Value p = point(addr, indexCast(index, field));
     Value atom = load(atomIds, {addr});
     store(atom, id, {slot});
     for (auto [src, dst] : llvm::zip(parameters, tileParameters)) {
-      Value value = load(src, {indexCast(index, atom)});
+      if (!src)
+        continue;
+      Value value =
+          load(src, {packedChargeType ? addr : indexCast(index, atom)});
       if (dst)
         store(value, dst, {slot});
       else
@@ -323,8 +333,11 @@ void Force::stage(ArrayRef<Value> starts, ArrayRef<Value> counts, Value begin,
     };
     store(halfPair(q[0], q[1]), xy, {slot});
     store(halfPair(q[2], fourth), zn, {slot});
-    return Values{};
-  });
+  };
+  for (int offset = 0; offset < (source ? panel : stripe); offset += workers) {
+    Value slot = addi(tid, cx(offset));
+    ifThen(cmpi(CmpIPredicate::ult, slot, size), [&] { import(slot); });
+  }
 }
 
 // Each warp supplies 32 targets. Lane r returns the 32 source signs for
@@ -691,7 +704,7 @@ void Force::bind(ValueRange args) {
   cutoff2 = createCutoff2(b, loc, f32, term.getCutoff().convertToDouble());
   unsigned n = 7;
   for (unsigned j = 0; j < term.getIns().size(); ++j)
-    parameters.push_back(args[n++]);
+    parameters.push_back(packedChargeType && j == 0 ? Value() : args[n++]);
   for (Value v : captures) {
     if (matchPattern(v, m_Constant())) {
       if (!mapping.contains(v))
@@ -707,7 +720,7 @@ void Force::bind(ValueRange args) {
 void Force::stageParameters(gpu::GPUFuncOp fn) {
   int64_t fixed = fixedBytes;
   for (auto [i, v] : llvm::enumerate(parameters)) {
-    Type t = cast<MemRefType>(v.getType()).getElementType();
+    Type t = term.getKernel().front().getArgument(2 + 2 * i).getType();
     tileParameters.push_back(static_cast<int>(i) == positionParameter
                                  ? Value()
                                  : shared(fn, {panel + stripe}, t));
@@ -890,6 +903,11 @@ LogicalResult Force::emit() {
            mem({g.atoms, 3}, i64),
            mem({1}, i32),
            f32};
+  if (packedChargeType &&
+      (term.getIns().size() != 2 || body.getArgument(2).getType() != f32 ||
+       body.getArgument(4).getType() != i32))
+    return term.emitError("packed-charge-type requires charge (f32) and type "
+                          "(i32) inputs in that order");
   fixedBytes = (panel + stripe) * 44 + 16;
   for (unsigned j = 0; j < term.getIns().size(); ++j) {
     Type t = body.getArgument(2 + 2 * j).getType();
@@ -902,7 +920,8 @@ LogicalResult Force::emit() {
     else
       fixedBytes += (panel + stripe) * (vec ? vec.getNumElements() : 1) *
                     ((scalar.getIntOrFloatBitWidth() + 7) / 8);
-    types.push_back(mem({g.atoms}, t));
+    if (!packedChargeType || j != 0)
+      types.push_back(mem({packedChargeType ? slots : g.atoms}, t));
   }
   if (!g.host && fixedBytes > 48 * 1024)
     return term.emitError("TOWERS force tile exceeds static workgroup storage");

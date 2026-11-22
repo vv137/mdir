@@ -624,6 +624,7 @@ def AddTowersBuild : Pass<"add-towers-build", "::mlir::ModuleOp"> {
     Option<"capacity", "capacity", "int", "32", "Allocated slots per cell">,
     Option<"host", "host", "bool", "false", "Emit serial reference functions">,
     Option<"compact", "compact", "bool", "true", "Reset counts in sort/pack">,
+    Option<"packedChargeType", "packed-charge-type", "bool", "false", "Bind the two force inputs to the rebuilt charge and type">,
     Option<"forcePanel", "force-panel", "int", "128", "Source slots per panel">,
     Option<"forceStripe", "force-stripe", "int", "128", "Target slots per stripe">,
     Option<"forceWorkers", "force-workers", "int", "128", "Threads per tower">,

@@ -488,11 +488,11 @@ public:
       signalPassFailure();
       return;
     }
-    if (failed(mdir::kernels::emitTowersForce(module, layout, terms.front(),
-                                              {forcePanel, forceStripe,
-                                               forceWorkers, forceRecords,
-                                               forceResidency},
-                                              probeForce)))
+    if (failed(mdir::kernels::emitTowersForce(
+            module, layout, terms.front(),
+            {forcePanel, forceStripe, forceWorkers, forceRecords,
+             forceResidency, packedChargeType},
+            probeForce)))
       signalPassFailure();
   }
 };
