@@ -302,6 +302,16 @@ LogicalResult Dispatch::run(Value positions) {
       transfer(init, loc, copy, source);
       copy.getDefiningOp()->setAttr("mdir.initialized", init.getUnitAttr());
     }
+    // Each cubic radial row occupies one aligned 16-byte word in the
+    // device allocation. Load its coefficients together for Horner evaluation.
+    auto type = get.getType();
+    if (type.getRank() == 2 && type.getDimSize(1) == 4 &&
+        type.getElementType().isF32() && type.getLayout().isIdentity())
+      for (Operation *use : get->getUsers())
+        if (auto load = dyn_cast<vector::LoadOp>(use))
+          if (load.getVectorType() == VectorType::get({4}, real) &&
+              matchPattern(load.getIndices().back(), m_Zero()))
+            load.setAlignmentAttr(b.getI64IntegerAttr(16));
     get.replaceAllUsesWith(copy);
     get.erase();
   }

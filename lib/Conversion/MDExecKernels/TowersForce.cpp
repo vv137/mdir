@@ -1383,15 +1383,22 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
                                     ci(1 << 18), ci(0)),
                              math::CtPopOp::create(b, loc, m)));
     }
+    // The feature storage is reused for force planes after screening.
+    // Only imported source and target slots can receive a contribution.
+    Value occupied = addi(sc, tc);
+    auto activeSlot = [&](Value i) {
+      return select(cmpi(CmpIPredicate::ult, i, sc), i,
+                    addi(cx(panel), subi(i, sc)));
+    };
     if (!observer())
-      forLoop(tid, cx(panel + stripe), cx(workers), {},
-              [&](Value i, ValueRange) {
-                for (int a = 0; a < 3; ++a) {
-                  store(ci(0), accum, {cx(a), i});
-                  store(ci(0), coarse, {cx(a), i});
-                }
-                return Values{};
-              });
+      forLoop(tid, occupied, cx(workers), {}, [&](Value i, ValueRange) {
+        Value slot = activeSlot(i);
+        for (int a = 0; a < 3; ++a) {
+          store(ci(0), accum, {cx(a), slot});
+          store(ci(0), coarse, {cx(a), slot});
+        }
+        return Values{};
+      });
     barrier();
     mark(4);
     Value nc = andi(total, ci(0x3ffff));
@@ -1434,7 +1441,7 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
       Values cached = targetValues(targetSlot(header));
       initial.append(cached);
       auto endState = forLoop(
-          indexCast(index, begin), indexCast(index, end), cx(1), initial,
+          begin, end, ci(1), initial,
           [&](Value, ValueRange x) {
             auto v = ifElse(
                 {i32, i32, i32}, cmpi(CmpIPredicate::eq, x[2], ci(0)),
@@ -1468,19 +1475,19 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
             // Separate the rounded quotient at a power of two. At most
             // max(panel,stripe) half-unit residuals reach either endpoint.
             int shift = std::max(panel, stripe) <= 512 ? 22 : 21;
-            Values quotients;
-            Value any = ci(0);
+            // In biased unsigned form every component with zero quotient
+            // has only its low shift bits set, including the negative tie.
+            Value biased = ci(0);
             for (int a = 0; a < 3; ++a) {
-              Value q = shrsi(addi(shrsi(f[a], ci(shift - 1)), ci(1)), ci(1));
-              quotients.push_back(q);
-              any = ori(any, q);
+              biased = ori(biased, addi(f[a], ci(1 << (shift - 1))));
               addWord(accum, s, cx(a), subi(ci(0), f[a]));
               next.push_back(addi(select(changed, ci(0), x[3 + a]), f[a]));
             }
-            ifThen(cmpi(CmpIPredicate::ne, any, ci(0)), [&] {
+            ifThen(cmpi(CmpIPredicate::uge, biased, ci(1 << shift)), [&] {
               for (int a = 0; a < 3; ++a) {
-                addWord(coarse, s, cx(a), subi(ci(0), quotients[a]));
-                addWord(coarse, t, cx(a), quotients[a]);
+                Value q = shrsi(addi(shrsi(f[a], ci(shift - 1)), ci(1)), ci(1));
+                addWord(coarse, s, cx(a), subi(ci(0), q));
+                addWord(coarse, t, cx(a), q);
               }
             });
             next.append(targetData.begin(), targetData.end());
@@ -1494,32 +1501,27 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
     barrier();
     mark(5);
     if (!observer())
-      forLoop(
-          tid, cx(panel + stripe), cx(workers), {}, [&](Value i, ValueRange) {
-            ifThen(ori(cmpi(CmpIPredicate::ult, i, sc),
-                       andi(cmpi(CmpIPredicate::uge, i, cx(panel)),
-                            cmpi(CmpIPredicate::ult, i, addi(cx(panel), tc)))),
-                   [&] {
-                     Value atom = indexCast(index, load(id, {i}));
-                     for (int a = 0; a < 3; ++a) {
-                       int shift = std::max(panel, stripe) <= 512 ? 22 : 21;
-                       Value q = load(coarse, {cx(a), i});
-                       Value residual =
-                           subi(load(accum, {cx(a), i}), shli(q, ci(shift)));
-                       Value w =
-                           addi(shli(arith::ExtSIOp::create(b, loc, i64, q),
-                                     cl(shift)),
-                                arith::ExtSIOp::create(b, loc, i64, residual));
-                       ifThen(cmpi(CmpIPredicate::ne, w, cl(0)), [&] {
-                         if (recovering)
-                           addWide(atom, cx(a), w, false);
-                         else
-                           addWord(words, atom, cx(a), w);
-                       });
-                     }
-                   });
-            return Values{};
+      forLoop(tid, occupied, cx(workers), {}, [&](Value thread, ValueRange) {
+        Value i = activeSlot(thread);
+        Value atom = indexCast(index, load(id, {i}));
+        for (int a = 0; a < 3; ++a) {
+          int shift = std::max(panel, stripe) <= 512 ? 22 : 21;
+          Value q = load(coarse, {cx(a), i});
+          Value residual =
+              subi(load(accum, {cx(a), i}), shli(q, ci(shift)));
+          Value w =
+              addi(shli(arith::ExtSIOp::create(b, loc, i64, q),
+                        cl(shift)),
+                   arith::ExtSIOp::create(b, loc, i64, residual));
+          ifThen(cmpi(CmpIPredicate::ne, w, cl(0)), [&] {
+            if (recovering)
+              addWide(atom, cx(a), w, false);
+            else
+              addWord(words, atom, cx(a), w);
           });
+        }
+        return Values{};
+      });
     mark(6);
   });
   ifThen(notNarrow(andi(lastTile, fits)), barrier);
