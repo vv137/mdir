@@ -32,7 +32,7 @@ struct Dispatch {
   gpu::GPUModuleOp image;
   Type narrow, wide, real, dbl;
   Value raw, box, counts, map, geometry, charge, types, keys, local, packed,
-      packedTypes, ids, inverse, spans, status, edges;
+      packedTypes, ids, inverse, spans, status, edges, exclusionIndex;
   SmallVector<Value> fields, captures;
   Value idx(int64_t n) { return createIndex(b, loc, n); }
   MemRefType mem(ArrayRef<int64_t> dims, Type t) {
@@ -118,12 +118,49 @@ struct Dispatch {
       if (!members)
         return op.emitError("missing input-order TOWERS exclusion pairs");
       edges = buffer("excluded", mem({shape.exclusions, 2}, narrow));
+      exclusionIndex = buffer("exclusion index", mem({g.atoms, 2}, narrow));
+      shape.indexedExclusions = true;
       // Tuple members are sorted by input identity. Physical tuple loops
       // still evaluate their topology corrections once.
       OpBuilder init(edges.getDefiningOp());
       init.setInsertionPointAfter(edges.getDefiningOp());
       if (!edges.getDefiningOp()->hasAttr("mdir.initialized")) {
         transfer(init, loc, edges, members);
+        rows(init, loc, createIndex(init, loc, g.atoms),
+             [&](OpBuilder &k, Value i) {
+               for (int column = 0; column < 2; ++column)
+                 memref::StoreOp::create(
+                     k, loc, createZero(k, loc, narrow), exclusionIndex,
+                     ValueRange{i, createIndex(k, loc, column)});
+             });
+        rows(init, loc, createIndex(init, loc, shape.exclusions),
+             [&](OpBuilder &k, Value i) {
+               Value zero = createIndex(k, loc, 0),
+                     one = createIndex(k, loc, 1);
+               Value first =
+                   memref::LoadOp::create(k, loc, edges, ValueRange{i, zero});
+               Value second =
+                   memref::LoadOp::create(k, loc, edges, ValueRange{i, one});
+               Value row =
+                   arith::IndexCastOp::create(k, loc, k.getIndexType(), first);
+               Value gap = arith::SubIOp::create(k, loc, second, first);
+               auto word = [&](int n) {
+                 return arith::ConstantIntOp::create(k, loc, n, 32);
+               };
+               Value near = arith::CmpIOp::create(
+                   k, loc, arith::CmpIPredicate::ule, gap, word(32));
+               Value shift = arith::AndIOp::create(
+                   k, loc, arith::SubIOp::create(k, loc, gap, word(1)),
+                   word(31));
+               Value bit = arith::ShLIOp::create(k, loc, word(1), shift);
+               Value mask = arith::SelectOp::create(k, loc, near, bit, word(0));
+               memref::AtomicRMWOp::create(k, loc, arith::AtomicRMWKind::ori,
+                                           mask, exclusionIndex,
+                                           ValueRange{row, zero});
+               memref::AtomicRMWOp::create(k, loc, arith::AtomicRMWKind::maxu,
+                                           second, exclusionIndex,
+                                           ValueRange{row, one});
+             });
         edges.getDefiningOp()->setAttr("mdir.initialized", init.getUnitAttr());
       }
     }
@@ -279,7 +316,7 @@ LogicalResult Dispatch::run(Value positions) {
                             createReal(b, loc, real, scale),
                             failedConversions};
     if (shape.exclusions)
-      args.append({edges, inverse, raw, box});
+      args.append({edges, inverse, raw, box, exclusionIndex});
     llvm::append_range(args, fields);
     llvm::append_range(args, captures);
     int64_t blocks = int64_t(g.cells()) * shape.split +

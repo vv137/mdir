@@ -139,6 +139,12 @@ component sets the shared fatal status before publication. Floating-point
 addition order can change tensor bits across launch layouts. Deterministic
 mode still requires its separate output and restart qualification.
 
+Moving virial and physical replay entries index exclusions by the smaller
+permanent atom ID. Setup records a bit for each excluded partner among
+the next 32 IDs and the greatest excluded partner ID. A farther partner
+within that upper bound uses the exact sorted-pair lookup. The index is
+valid across cell rebuilds because the topology and permanent IDs are fixed.
+
 ## Setup and diagnostics
 
 Select FULL or HALF from the atom count, the three perpendicular cell heights and the cutoff in every mode. For a rectangular box the heights are the box lengths.

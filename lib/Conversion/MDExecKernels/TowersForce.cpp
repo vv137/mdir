@@ -30,13 +30,14 @@ public:
   Force(OpBuilder &b, TowersLayout g, md_exec::PairForOp term,
         TowersForceShape shape, bool probe, md_exec::PairForOp correction)
       : NeighborBuildCode(b, term.getLoc()), g(g), term(term),
-        correction(correction), output(shape.output), yieldIndex(shape.yieldIndex),
-        exclusions(shape.exclusions), split(shape.split), panel(shape.panel),
-        stripe(shape.stripe), workers(shape.workers), recordCap(shape.records),
+        correction(correction), output(shape.output),
+        yieldIndex(shape.yieldIndex), exclusions(shape.exclusions),
+        split(shape.split), panel(shape.panel), stripe(shape.stripe),
+        workers(shape.workers), recordCap(shape.records),
         residency(shape.residency), groups(panel / 32),
         packedChargeType(shape.packedChargeType), certified(shape.certified),
-        probe(probe), v3(VectorType::get({3}, f32)),
-        v4(VectorType::get({4}, f32)) {}
+        probe(probe), indexedExclusions(shape.indexedExclusions),
+        v3(VectorType::get({3}, f32)), v4(VectorType::get({4}, f32)) {}
   LogicalResult emit();
 
 private:
@@ -63,13 +64,14 @@ private:
   void observationEntries();
   int exclusions, split;
   int64_t towerBlocks() const { return int64_t(g.cells()) * split; }
-  Value bonds, inverse, raw, box;
+  Value bonds, inverse, raw, box, exclusionIndex;
   bool excluding = false;
   Value isExcluded(Value a, Value c);
+  Value searchExclusions(Value first, Value second);
   void exclusion(Value row);
 
   int panel, stripe, workers, recordCap, residency, groups;
-  bool packedChargeType, certified, probe;
+  bool packedChargeType, certified, probe, indexedExclusions;
   bool recovering = false;
   Value failedConversions, highWords, localVotes;
   bool shortVote() const {
@@ -376,10 +378,34 @@ void Force::addWord(Value dst, Value i, Value axis, Value w) {
   }
 }
 
-// The sorted permanent-ID list is also the lookup index on the rare physical
-// recovery path. The blind traversal never visits it.
+// Virial and wide replay evaluate only physical pairs.
 Value Force::isExcluded(Value a, Value c) {
   Value first = minui(a, c), second = maxui(a, c);
+  if (!indexedExclusions)
+    return searchExclusions(first, second);
+  Value row = indexCast(index, first);
+  Value distance = subi(second, first);
+  // A bit represents each of the next 32 permanent IDs. For a longer
+  // edge only the owner's maximum can require the exact sorted search.
+  return ifElse(
+      {i1}, cmpi(CmpIPredicate::ule, distance, ci(32)),
+      [&] {
+        Value bit = andi(subi(distance, ci(1)), ci(31));
+        Value mask = load(exclusionIndex, {row, cx(0)});
+        return Values{andi(
+            cmpi(CmpIPredicate::ne, distance, ci(0)),
+            cmpi(CmpIPredicate::ne, andi(shrui(mask, bit), ci(1)), ci(0)))};
+      },
+      [&] {
+        Value maximum = load(exclusionIndex, {row, cx(1)});
+        return ifElse(
+            {i1}, cmpi(CmpIPredicate::ule, second, maximum),
+            [&] { return Values{searchExclusions(first, second)}; },
+            [&] { return Values{cb(false)}; });
+      })[0];
+}
+
+Value Force::searchExclusions(Value first, Value second) {
   auto bounds = whileLoop(
       {index, index}, {cx(0), cx(exclusions)},
       [&](ValueRange x) {
@@ -1574,6 +1600,8 @@ void Force::bind(ValueRange args) {
     inverse = args[n++];
     raw = args[n++];
     box = args[n++];
+    if (indexedExclusions)
+      exclusionIndex = args[n++];
   }
   for (unsigned j = 0; j < term.getIns().size(); ++j)
     parameters.push_back(packedChargeType && j == 0 ? Value() : args[n++]);
@@ -1992,6 +2020,8 @@ LogicalResult Force::emit() {
   if (exclusions) {
     types.append({mem({exclusions, 2}, i32), mem({g.inverseWords()}, i32),
                   mem({3, g.atoms}, f64), mem({g.boxSize()}, f64)});
+    if (indexedExclusions)
+      types.push_back(mem({g.atoms, 2}, i32));
     if (correction && (!supported(correction) ||
         !llvm::equal(correction.getIns(), term.getIns()) ||
         correction.getKernel().front().getArgumentTypes() !=
