@@ -112,11 +112,12 @@ neighbor structure and of the skins, which the manifest of a run, the JSON
 summaries, the cache of the skins, and the settings that Python resolves
 record. An entry of the cache written before, with `Å` in its reason, is
 still read: the reader takes the key and the two reaches alone. The messages of the builder of the
-program (`lib/Driver/Builder*.cpp`, `lib/Driver/Term*.cpp`) follow in a
-change of their own (#813).
+program (`lib/Driver/Builder*.cpp`, `lib/Driver/Term*.cpp`) are ASCII as
+well (#813).
 
 `scripts/check-before-push.sh` refuses a string literal with a non-ASCII
-character in `tools/mdir/*.cpp` outside a comment. A literal there that goes
+character in `tools/mdir/*.cpp`, `lib/Driver/Builder*.cpp`, and
+`lib/Driver/Term*.cpp` outside a comment. A literal there that goes
 into a file, not to the terminal, carries the comment `// ascii-exempt` on
 its line (the units of the file of the pulled coordinates). The strings of
 the libraries are kept by review.

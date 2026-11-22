@@ -214,8 +214,8 @@ def refusals():
                "System.pruned_distance must be positive, or 0 for one list")
     # The builder's: the reach of the groups against the least edge, 25.397 A.
     expect(mdir.InputError, compiled(structure="Groups", pairlist=2.6),
-           "'pairlist_distance', 26 Å, exceeds 0.999 of the least edge of the cell, "
-           "25.3716 Å, the most that the groups take")
+           "'pairlist_distance', 26 Ang, exceeds 0.999 of the least edge of the cell, "
+           "25.3716 Ang, the most that the groups take")
     # The fields: their defaults, their types, and a unit quantity.
     system, execution = mdir.System(), mdir.Execution()
     assert execution.neighbor_structure == mdir.NeighborStructure.Auto

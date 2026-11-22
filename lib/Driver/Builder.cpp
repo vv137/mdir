@@ -47,7 +47,7 @@ llvm::Error Builder::build() {
       control.pairlistDistance > 127.0 * control.cutoffDistance)
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
-        "'pairlist_distance', %g Å, exceeds 127 times 'cutoff', %g Å, the "
+        "'pairlist_distance', %g Ang, exceeds 127 times 'cutoff', %g Ang, the "
         "most that the neighbor matrix of a triclinic cell takes",
         control.pairlistDistance, control.cutoffDistance);
   // The groups hold an entry for every image of a pair within their reach
@@ -67,8 +67,8 @@ llvm::Error Builder::build() {
     if (reach > 0.999 * least)
       return llvm::createStringError(
           llvm::inconvertibleErrorCode(),
-          "'pairlist_distance', %g Å, exceeds 0.999 of the least %s of the "
-          "cell, %g Å, the most that the groups take",
+          "'pairlist_distance', %g Ang, exceeds 0.999 of the least %s of the "
+          "cell, %g Ang, the most that the groups take",
           control.pairlistDistance,
           isTriclinic() ? "of a_x, b_y, c_z" : "edge",
           0.999 * least / units::length);
@@ -81,7 +81,7 @@ llvm::Error Builder::build() {
     if (system.box[k] < 2.0 * control.cutoffDistance * units::length)
       return llvm::createStringError(
           llvm::inconvertibleErrorCode(),
-          "the cell is %.4f Å along %c, less than twice the cutoff, %.4f Å",
+          "the cell is %.4f Ang along %c, less than twice the cutoff, %.4f Ang",
           system.box[k] / units::length, axes[k],
           control.cutoffDistance);
   program.entry = "mdir_run";
