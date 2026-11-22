@@ -347,7 +347,7 @@ frame costs, so the accumulation of the fields was not taken.
 | Constants of pair terms; parameters of tuple terms | done |
 | Per-type $\sigma$ and $\epsilon$, and the table by pairs of types | done |
 | Charges with a Coulomb cutoff | done; the Python model has no reaction field |
-| Charges with PME | done, `D231`: the fourth result of `md.reciprocal` in the three templates of PME, the self term and the background on the host |
+| Charges with PME | done, `D231`: the fourth result of `md.reciprocal` in the host and device potential gathers, the self term and the background on the host |
 | Tails of pair terms and the correction for the dispersion (host) | done for constants of pair terms and for $\sigma$, $\epsilon$; the tail of a pair term that reads the charges is refused |
 | The charges with the other tunables of one program; a derivative without a rule refused by `mdir.compile` | done (#256, an amendment of `D230`): [several tunables of one program](#several-tunables-of-one-program) |
 

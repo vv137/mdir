@@ -544,7 +544,7 @@ void MatrixBuild::emitParticleBins() {
           },
           [&]() {
             store(k32, key, {i});
-            // A relaxed atomic at the scope of the device (see PMEGPU.mlir).
+            // A relaxed atomic at the scope of the device (D70).
             Value rx1Base =
                 memref::ExtractAlignedPointerAsIndexOp::create(b, loc, held);
             Value rx1Bi = indexCast(i64, rx1Base);
@@ -759,7 +759,7 @@ void MatrixBuild::emitSearchRows() {
         ifThen(writer, [&] {
           Value limited = minui(found, rowWidth32);
           store(limited, counts, {p});
-          // A relaxed atomic at the scope of the device (see PMEGPU.mlir).
+          // A relaxed atomic at the scope of the device (D70).
           Value rmBase =
               memref::ExtractAlignedPointerAsIndexOp::create(b, loc, result);
           Value rmAddr = indexCast(i64, rmBase);
