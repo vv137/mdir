@@ -10,6 +10,12 @@ struct TowersLayout {
   int cells() const { return nx * ny * nz; }
 };
 
+/// Emit a serial loop or one GPU work item per element of a TOWERS phase.
+void emitTowersEntry(
+    mlir::OpBuilder &builder, mlir::Location loc, bool host,
+    llvm::StringRef name, mlir::TypeRange types, int64_t items,
+    llvm::function_ref<void(mlir::Value, mlir::ValueRange)> body);
+
 /// One source and one target span in the coordinate frame of the owner.
 /// The fields identify their periodic offsets. In a triangular span only
 /// source slots strictly above the target slot participate.

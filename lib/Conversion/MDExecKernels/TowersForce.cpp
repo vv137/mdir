@@ -18,6 +18,13 @@ using namespace mdir::kernels;
 using namespace mdir::kernels::detail;
 
 namespace {
+// The fatal and replay words have disjoint writers at each launch boundary.
+enum StateWord { Fatal, Replay };
+enum ForceError {
+  InvalidContribution = 1,
+  InvalidGeometry = 2,
+  InvalidTotal = 4
+};
 class Force : public NeighborBuildCode {
 public:
   Force(OpBuilder &b, TowersLayout g, md_exec::PairForOp term,
@@ -26,7 +33,7 @@ public:
         panel(shape.panel), stripe(shape.stripe), workers(shape.workers),
         recordCap(shape.records), residency(shape.residency),
         groups(panel / 32), packedChargeType(shape.packedChargeType),
-        probe(probe), v3(VectorType::get({3}, f32)),
+        certified(shape.certified), probe(probe), v3(VectorType::get({3}, f32)),
         v4(VectorType::get({4}, f32)) {}
   LogicalResult emit();
 
@@ -34,7 +41,14 @@ private:
   TowersLayout g;
   md_exec::PairForOp term;
   int panel, stripe, workers, recordCap, residency, groups;
-  bool packedChargeType, probe;
+  bool packedChargeType, certified, probe;
+  bool recovering = false;
+  Value failedConversions, highWords;
+  void flag(Value state, int slot, int bits);
+  void addWide(Value atom, Value axis, Value word, bool negative);
+  void ownedPairs(Value owner);
+  void recoveryEntries();
+
   Value trace, owner;
   void mark(int phase);
   Value recordPtr(Value rec, int col) {
@@ -63,7 +77,7 @@ private:
   void prepareGeometry();
   void withValidGeometry(function_ref<void()> body);
   void host();
-  void device();
+  void device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes);
   Value point(Value slot, Value field);
   Value displacement(Value target, Value source);
   Value squared(Value d);
@@ -148,13 +162,14 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
         for (int a = 0; a < 3; ++a) {
           Value x = mulf(extract(f, a), wordScale);
           scaled.push_back(x);
-          narrow = andi(narrow, cmpf(CmpFPredicate::OLT, absf(x), cf(0x1p31)));
+          narrow = andi(narrow, andi(cmpf(CmpFPredicate::OGE, x, cf(-0x1p31)),
+                                     cmpf(CmpFPredicate::OLT, x, cf(0x1p31))));
         }
         auto wide = [&] {
           Values result;
           Value valid = cb(true);
           for (Value x : scaled) {
-            Value fits = andi(cmpf(CmpFPredicate::OGT, x, cf(-0x1p63)),
+            Value fits = andi(cmpf(CmpFPredicate::OGE, x, cf(-0x1p63)),
                               cmpf(CmpFPredicate::OLT, x, cf(0x1p63)));
             valid = andi(valid, fits);
             Value safe = select(fits, x, cf(0));
@@ -168,17 +183,33 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
                                    LLVM::AsmDialectAttr(), ArrayAttr())
                                    .getResult(0));
           }
-          ifThen(notNarrow(valid), [&] {
-            if (g.host)
-              store(ci(1), invalid, {cx(0)});
-            else
-              atomic(LLVM::AtomicBinOp::_or,
-                     pointerTo(baseAddress(invalid), cl(0)), ci(1));
-          });
+          ifThen(notNarrow(valid),
+                 [&] { flag(invalid, Fatal, InvalidContribution); });
           return result;
         };
-        if (g.host)
+        if (g.host && (recovering || !certified))
           return wide();
+        auto failed = [&] {
+          if (g.host)
+            store(addi(load(failedConversions, {cx(0)}), cl(1)),
+                  failedConversions, {cx(0)});
+          else
+            atomic(LLVM::AtomicBinOp::add,
+                   pointerTo(baseAddress(failedConversions), cl(0)), cl(1));
+          return Values(3, g.host ? cl(0) : ci(0));
+        };
+        if (g.host) {
+          Values converted = ifElse(
+              {i64, i64, i64}, narrow,
+              [&] {
+                Values result;
+                for (Value x : scaled)
+                  result.push_back(fptosi(i64, roundeven(x)));
+                return result;
+              },
+              failed);
+          return converted;
+        }
         Values result = ifElse(
             {i32, i32, i32}, narrow,
             [&] {
@@ -195,6 +226,8 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
               return words;
             },
             [&] {
+              if (certified && !recovering)
+                return failed();
               // A blind bonded interaction can exceed i32 before exclusion
               // replay. Keep its actual word for this stage's direct-only
               // oracle.
@@ -202,14 +235,19 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
               Value target = indexCast(index, load(id, {ti})),
                     source = indexCast(index, load(id, {si}));
               for (int a = 0; a < 3; ++a) {
-                addWord(words, target, cx(a), f[a]);
-                addWord(words, source, cx(a), subi(cl(0), f[a]));
+                if (recovering) {
+                  addWide(target, cx(a), f[a], false);
+                  addWide(source, cx(a), f[a], true);
+                } else {
+                  addWord(words, target, cx(a), f[a]);
+                  addWord(words, source, cx(a), subi(cl(0), f[a]));
+                }
               }
               return Values(3, ci(0));
             });
         return result;
       },
-      [&] { return Values(3, g.host ? cl(0) : ci(0)); });
+      [&] { return Values(3, wt == i64 ? cl(0) : ci(0)); });
 }
 
 // Only lanes of this CTA access the tile. The barriers protect its reuse.
@@ -237,30 +275,143 @@ void Force::addWord(Value dst, Value i, Value axis, Value w) {
 
 void Force::host() {
   forLoop(cx(0), cx(g.cells()), cx(1), {}, [&](Value owner, ValueRange) {
-    emitOwnedTowersSpans(
-        b, loc, g.reach, owner, descriptors,
-        [&](TowersSpan s, TowersSpan t, Value triangular) {
-          forLoop(cx(0), s.count, cx(1), {}, [&](Value i, ValueRange) {
-            Value ss = addi(s.first, i), source = point(ss, s.field),
-                  si = indexCast(index, load(atomIds, {ss}));
-            forLoop(cx(0), select(triangular, i, t.count), cx(1), {},
-                    [&](Value j, ValueRange) {
-                      Value ts = addi(t.first, j),
-                            ti = indexCast(index, load(atomIds, {ts}));
-                      auto force = pair(point(ts, t.field), source,
-                                        packedChargeType ? ts : ti,
-                                        packedChargeType ? ss : si);
-                      for (auto [axis, w] : llvm::enumerate(force)) {
+    ownedPairs(owner);
+    return Values{};
+  });
+}
+
+void Force::ownedPairs(Value owner) {
+  emitOwnedTowersSpans(
+      b, loc, g.reach, owner, descriptors,
+      [&](TowersSpan s, TowersSpan t, Value triangular) {
+        forLoop(cx(0), s.count, cx(1), {}, [&](Value i, ValueRange) {
+          Value ss = addi(s.first, i), source = point(ss, s.field),
+                si = indexCast(index, load(atomIds, {ss}));
+          forLoop(cx(0), select(triangular, i, t.count), cx(1), {},
+                  [&](Value j, ValueRange) {
+                    Value ts = addi(t.first, j),
+                          ti = indexCast(index, load(atomIds, {ts}));
+                    auto force = pair(point(ts, t.field), source,
+                                      packedChargeType ? ts : ti,
+                                      packedChargeType ? ss : si);
+                    for (auto [axis, w] : llvm::enumerate(force)) {
+                      if (recovering) {
+                        addWide(ti, cx(axis), w, false);
+                        addWide(si, cx(axis), w, true);
+                      } else {
                         addWord(words, ti, cx(axis), w);
                         addWord(words, si, cx(axis), subi(cl(0), w));
                       }
-                      return Values{};
-                    });
-            return Values{};
-          });
+                    }
+                    return Values{};
+                  });
+          return Values{};
         });
-    return Values{};
-  });
+      });
+}
+
+void Force::flag(Value state, int slot, int bits) {
+  if (g.host)
+    store(ori(load(state, {cx(slot)}), ci(bits)), state, {cx(slot)});
+  else
+    atomic(LLVM::AtomicBinOp::_or, pointerTo(baseAddress(state), cl(4 * slot)),
+           ci(bits));
+}
+
+// Sign extend before taking the opposite endpoint, including -2^63.
+// The old low limb returned by this atomic supplies the carry for this add.
+void Force::addWide(Value atom, Value axis, Value w, bool negative) {
+  Value hi = shrsi(w, cl(63));
+  if (negative) {
+    hi = addi(
+        xori(hi, cl(-1)),
+        arith::ExtUIOp::create(b, loc, i64, cmpi(CmpIPredicate::eq, w, cl(0))));
+    w = subi(cl(0), w);
+  }
+  Value offset = muli(indexCast(i64, addi(muli(atom, cx(3)), axis)), cl(8));
+  auto add = [&](Value mem, Value x) -> Value {
+    if (!g.host)
+      return atomic(LLVM::AtomicBinOp::add, pointerTo(baseAddress(mem), offset),
+                    x);
+    Value old = load(mem, {atom, axis});
+    store(addi(old, x), mem, {atom, axis});
+    return old;
+  };
+  Value old = add(words, w);
+  Value carry = cmpi(CmpIPredicate::ult, addi(old, w), old);
+  Value delta = addi(hi, arith::ExtUIOp::create(b, loc, i64, carry));
+  ifThen(cmpi(CmpIPredicate::ne, delta, cl(0)), [&] { add(highWords, delta); });
+}
+
+void Force::recoveryEntries() {
+  Type sums = types[4], state = types[5], failed = types[7];
+  auto retry = [&](Value flags) {
+    return cmpi(CmpIPredicate::ne, load(flags, {cx(Replay)}), ci(0));
+  };
+  // Each other atom can contribute at most once to this atom. Setup
+  // requires n < 2^26, so signed i32 pair words sum exactly in i64.
+  // A zero failed count and an inclusive i32 endpoint test certify the
+  // provisional force. A later exclusion stage can debit canceled failures.
+  emitTowersEntry(
+      b, loc, g.host, "towers_certify", {sums, failed, state}, g.atoms,
+      [&](Value i, ValueRange a) {
+        Value bad = andi(cmpi(CmpIPredicate::eq, i, cx(0)),
+                         cmpi(CmpIPredicate::ne, load(a[1], {cx(0)}), cl(0)));
+        for (int axis = 0; axis < 3; ++axis) {
+          Value w = load(a[0], {i, cx(axis)});
+          Value low = arith::TruncIOp::create(b, loc, i32, w);
+          bad = ori(bad, cmpi(CmpIPredicate::ne, w,
+                              arith::ExtSIOp::create(b, loc, i64, low)));
+        }
+        ifThen(
+            andi(bad, cmpi(CmpIPredicate::eq, load(a[2], {cx(Fatal)}), ci(0))),
+            [&] { flag(a[2], Replay, 1); });
+      });
+  emitTowersEntry(b, loc, g.host, "towers_clear_wide", {state, sums, sums},
+                  g.atoms, [&](Value i, ValueRange a) {
+                    ifThen(retry(a[0]), [&] {
+                      for (int axis = 0; axis < 3; ++axis) {
+                        store(cl(0), a[1], {i, cx(axis)});
+                        store(cl(0), a[2], {i, cx(axis)});
+                      }
+                    });
+                  });
+  if (g.host) {
+    SmallVector<Type> replay(types);
+    replay.push_back(sums);
+    recovering = true;
+    emitTowersEntry(b, loc, g.host, "towers_recover", replay, g.cells(),
+                    [&](Value i, ValueRange a) {
+                      bind(a);
+                      highWords = a.back();
+                      ifThen(retry(invalid), [&] { ownedPairs(i); });
+                    });
+    recovering = false;
+  }
+  emitTowersEntry(
+      b, loc, g.host, "towers_check_wide", {state, sums, sums}, g.atoms,
+      [&](Value i, ValueRange a) {
+        ifThen(retry(a[0]), [&] {
+          Value bad = cb(false);
+          for (int axis = 0; axis < 3; ++axis) {
+            Value low = load(a[1], {i, cx(axis)}),
+                  hi = load(a[2], {i, cx(axis)});
+            bad = ori(bad, cmpi(CmpIPredicate::ne, hi, shrsi(low, cl(63))));
+          }
+          ifThen(bad, [&] { flag(a[0], Fatal, InvalidTotal); });
+        });
+      });
+  emitTowersEntry(
+      b, loc, g.host, "towers_publish", {state, sums, sums, sums}, g.atoms,
+      [&](Value i, ValueRange a) {
+        ifThen(cmpi(CmpIPredicate::eq, load(a[0], {cx(Fatal)}), ci(0)), [&] {
+          Value source = select(retry(a[0]), a[2], a[1]);
+          for (int axis = 0; axis < 3; ++axis) {
+            Values at{i, cx(axis)};
+            store(load(source, at), a[3], at);
+          }
+        });
+      });
 }
 
 Value Force::shared(gpu::GPUFuncOp fn, ArrayRef<int64_t> shape, Type t) {
@@ -423,7 +574,7 @@ Value Force::mask(ValueRange operands, Value group, Value sc) {
 // One observer per tower. Each row contains the eight phase cycle sums,
 // the wall-clock span in ns, the last cycle timestamp, and the tile count.
 void Force::mark(int phase) {
-  if (!probe)
+  if (!probe || recovering)
     return;
   ifThen(cmpi(CmpIPredicate::eq, tid, cx(0)), [&] {
     Value now = NVVM::Clock64Op::create(b, loc, i64);
@@ -661,8 +812,12 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
                  Value w = addi(
                      shli(arith::ExtSIOp::create(b, loc, i64, q), cl(shift)),
                      arith::ExtSIOp::create(b, loc, i64, residual));
-                 ifThen(cmpi(CmpIPredicate::ne, w, cl(0)),
-                        [&] { addWord(words, atom, cx(a), w); });
+                 ifThen(cmpi(CmpIPredicate::ne, w, cl(0)), [&] {
+                   if (recovering)
+                     addWide(atom, cx(a), w, false);
+                   else
+                     addWord(words, atom, cx(a), w);
+                 });
                }
              });
       return Values{};
@@ -752,6 +907,8 @@ void Force::traversal(Value owner) {
 }
 
 void Force::bind(ValueRange args) {
+  mapping.clear();
+  parameters.clear();
   descriptors = args[0];
   packed = args[1];
   atomIds = args[2];
@@ -761,6 +918,8 @@ void Force::bind(ValueRange args) {
   wordScale = args[6];
   cutoff2 = createCutoff2(b, loc, f32, term.getCutoff().convertToDouble());
   unsigned n = 7;
+  if (certified)
+    failedConversions = args[n++];
   for (unsigned j = 0; j < term.getIns().size(); ++j)
     parameters.push_back(packedChargeType && j == 0 ? Value() : args[n++]);
   for (Value v : captures) {
@@ -886,25 +1045,20 @@ void Force::withValidGeometry(function_ref<void()> body) {
                                        cf(std::numeric_limits<float>::max()))));
   ifThenElse(valid, body, [&] {
     if (g.host)
-      store(ci(2), invalid, {cx(0)});
+      store(ci(InvalidGeometry), invalid, {cx(Fatal)});
     else
       ifThen(andi(cmpi(CmpIPredicate::eq, owner, cx(0)),
                   cmpi(CmpIPredicate::eq, tid, cx(0))),
-             [&] { store(ci(2), invalid, {cx(0)}); });
+             [&] { store(ci(InvalidGeometry), invalid, {cx(Fatal)}); });
   });
 }
 
-void Force::device() {
-  if (packedChargeType)
-    prepareGeometry();
-  // An external unsized array denotes the launch's dynamic shared memory.
-  // A zero-element internal definition can alias the fixed tile buffers.
-  auto dyn = LLVM::GlobalOp::create(b, loc, LLVM::LLVMArrayType::get(i32, 0),
-                                    false, LLVM::Linkage::External,
-                                    "towers_records", Attribute(), 8, 3);
-
-  auto fn = gpu::GPUFuncOp::create(b, loc, "towers_force",
-                                   b.getFunctionType(types, {}));
+void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes) {
+  OpBuilder::InsertionGuard guard(b);
+  tileParameters.clear();
+  auto fn = gpu::GPUFuncOp::create(
+      b, loc, recovering ? "towers_recover" : "towers_force",
+      b.getFunctionType(entryTypes, {}));
   fn.setKernel(true);
   fn.setKnownBlockSizeAttr(b.getDenseI32ArrayAttr({workers, 1, 1}));
   if (residency > 1)
@@ -934,7 +1088,7 @@ void Force::device() {
   accum = view(0, {3, slots}, i32);
   coarse = view(3 * slots, {3, slots}, i32);
   bind(entry.getArguments());
-  records = LLVM::AddressOfOp::create(b, loc, dyn);
+  records = LLVM::AddressOfOp::create(b, loc, recordsGlobal);
   tid = gpu::ThreadIdOp::create(b, loc, gpu::Dimension::x);
   lane = andi(indexCast(i32, tid), ci(31));
   if (packedChargeType) {
@@ -944,7 +1098,7 @@ void Force::device() {
   } else
     screenConstants(geometry);
   owner = gpu::BlockIdOp::create(b, loc, gpu::Dimension::x);
-  if (probe) {
+  if (probe && !recovering) {
     trace = shared(fn, {11}, i64);
     ifThen(cmpi(CmpIPredicate::eq, tid, cx(0)), [&] {
       for (int i = 0; i < 8; ++i)
@@ -954,12 +1108,18 @@ void Force::device() {
       store(NVVM::Clock64Op::create(b, loc, i64), trace, {cx(9)});
     });
   }
-  withValidGeometry([&] {
+  auto evaluate = [&] {
     stageParameters(fn);
     traversal(owner);
-  });
+  };
+  if (recovering) {
+    highWords = entry.getArgument(entryTypes.size() - 1);
+    ifThen(cmpi(CmpIPredicate::ne, load(invalid, {cx(Replay)}), ci(0)),
+           evaluate);
+  } else
+    withValidGeometry(evaluate);
   mark(7);
-  if (probe)
+  if (probe && !recovering)
     ifThen(cmpi(CmpIPredicate::eq, tid, cx(0)), [&] {
       store(
           subi(NVVM::GlobalTimerOp::create(b, loc, i64), load(trace, {cx(8)})),
@@ -1009,8 +1169,10 @@ LogicalResult Force::emit() {
            mem({slots}, i32),
            packedChargeType && !g.host ? mem({7}, f32) : mem({3, 3}, f64),
            mem({g.atoms, 3}, i64),
-           mem({1}, i32),
+           mem({certified ? 2 : 1}, i32),
            f32};
+  if (certified)
+    types.push_back(mem({1}, i64));
   if (packedChargeType &&
       (term.getIns().size() != 2 || body.getArgument(2).getType() != f32 ||
        body.getArgument(4).getType() != i32))
@@ -1042,6 +1204,8 @@ LogicalResult Force::emit() {
       return term.emitError("TOWERS force phase counters require a GPU");
     types.push_back(mem({g.cells(), 11}, i64));
   }
+  if (certified)
+    recoveryEntries();
   if (g.host) {
     auto fn = func::FuncOp::create(b, loc, "towers_force",
                                    b.getFunctionType(types, {}));
@@ -1050,8 +1214,23 @@ LogicalResult Force::emit() {
     bind(entry->getArguments());
     withValidGeometry([&] { host(); });
     func::ReturnOp::create(b, loc);
-  } else
-    device();
+  } else {
+    if (packedChargeType)
+      prepareGeometry();
+    auto dyn = LLVM::GlobalOp::create(b, loc, LLVM::LLVMArrayType::get(i32, 0),
+                                      false, LLVM::Linkage::External,
+                                      "towers_records", Attribute(), 8, 3);
+    device(dyn, types);
+    if (certified) {
+      SmallVector<Type> replay(types);
+      if (probe)
+        replay.pop_back();
+      replay.push_back(types[4]);
+      recovering = true;
+      device(dyn, replay);
+      recovering = false;
+    }
+  }
   return success();
 }
 } // namespace

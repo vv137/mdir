@@ -1,0 +1,1 @@
+# RUN: %python %S/Inputs/towers_certificate.py %t host mdir-opt

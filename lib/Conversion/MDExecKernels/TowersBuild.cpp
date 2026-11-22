@@ -58,30 +58,7 @@ private:
 
 void TowersBuild::phase(StringRef name, TypeRange types, int64_t items,
                         function_ref<void(Value, ValueRange)> body) {
-  OpBuilder::InsertionGuard guard(b);
-  FunctionType type = b.getFunctionType(types, {});
-  if (g.host) {
-    auto fn = func::FuncOp::create(b, loc, name, type);
-    Block *entry = fn.addEntryBlock();
-    b.setInsertionPointToStart(entry);
-    forLoop(cx(0), cx(items), cx(1), {}, [&](Value i, ValueRange) {
-      body(i, entry->getArguments());
-      return Values{};
-    });
-    func::ReturnOp::create(b, loc);
-    return;
-  }
-  auto fn = gpu::GPUFuncOp::create(b, loc, name, type);
-  fn.setKernel(true);
-  Block &entry = fn.getBody().front();
-  b.setInsertionPointToStart(&entry);
-  Value block = gpu::BlockIdOp::create(b, loc, gpu::Dimension::x);
-  Value size = gpu::BlockDimOp::create(b, loc, gpu::Dimension::x);
-  Value lane = gpu::ThreadIdOp::create(b, loc, gpu::Dimension::x);
-  Value item = addi(muli(block, size), lane);
-  ifThen(cmpi(CmpIPredicate::ult, item, cx(items)),
-         [&] { body(item, entry.getArguments()); });
-  gpu::ReturnOp::create(b, loc);
+  mdir::kernels::emitTowersEntry(b, loc, g.host, name, types, items, body);
 }
 
 Value TowersBuild::neighbor(Value cell, Offset shift) {
@@ -419,6 +396,36 @@ void TowersBuild::emitOwnership(MemRefType spans, MemRefType ids) {
 }
 } // namespace
 
+void mdir::kernels::emitTowersEntry(
+    OpBuilder &b, Location loc, bool host, StringRef name, TypeRange types,
+    int64_t items, function_ref<void(Value, ValueRange)> body) {
+  OpBuilder::InsertionGuard guard(b);
+  FunctionType type = b.getFunctionType(types, {});
+  NeighborBuildCode ir(b, loc);
+  if (host) {
+    auto fn = func::FuncOp::create(b, loc, name, type);
+    Block *entry = fn.addEntryBlock();
+    b.setInsertionPointToStart(entry);
+    ir.forLoop(ir.cx(0), ir.cx(items), ir.cx(1), {}, [&](Value i, ValueRange) {
+      body(i, entry->getArguments());
+      return SmallVector<Value>{};
+    });
+    func::ReturnOp::create(b, loc);
+    return;
+  }
+  auto fn = gpu::GPUFuncOp::create(b, loc, name, type);
+  fn.setKernel(true);
+  Block &entry = fn.getBody().front();
+  b.setInsertionPointToStart(&entry);
+  Value block = gpu::BlockIdOp::create(b, loc, gpu::Dimension::x);
+  Value size = gpu::BlockDimOp::create(b, loc, gpu::Dimension::x);
+  Value lane = gpu::ThreadIdOp::create(b, loc, gpu::Dimension::x);
+  Value item = ir.addi(ir.muli(block, size), lane);
+  ir.ifThen(ir.cmpi(arith::CmpIPredicate::ult, item, ir.cx(items)),
+            [&] { body(item, entry.getArguments()); });
+  gpu::ReturnOp::create(b, loc);
+}
+
 void mdir::kernels::emitOwnedTowersSpans(
     OpBuilder &builder, Location loc, int reach, Value owner, Value descriptors,
     llvm::function_ref<void(TowersSpan, TowersSpan, Value)> visit) {
@@ -491,7 +498,7 @@ public:
     if (failed(mdir::kernels::emitTowersForce(
             module, layout, terms.front(),
             {forcePanel, forceStripe, forceWorkers, forceRecords,
-             forceResidency, packedChargeType},
+             forceResidency, packedChargeType, certifyForce},
             probeForce)))
       signalPassFailure();
   }

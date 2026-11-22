@@ -7,7 +7,7 @@
 namespace mdir::kernels {
 struct TowersForceShape {
   int panel, stripe, workers, records, residency;
-  bool packedChargeType;
+  bool packedChargeType, certified;
 };
 
 mlir::LogicalResult emitTowersForce(mlir::ModuleOp module, TowersLayout layout,
