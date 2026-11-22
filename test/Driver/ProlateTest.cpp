@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "mdir/Driver/Prolate.h"
+#include "mdir/Driver/ProlateC2.h"
 #include "mdir/Dialect/MD/MDOps.h"
 
 #include <cmath>
@@ -185,6 +186,33 @@ int main() {
                 "the slope %.1e %s\n",
                 epsilon, series.size(), worst, atEdge, atEdge / edge, worstSlope,
                 ok ? "ok" : "FAIL");
+  }
+  for (double c : {9.5392, 12.024, 14.471}) {
+    Function split(c, true);
+    auto table = split.squaredDistanceTable();
+    constexpr int cells = mdir::prolate::C2PairCells;
+    constexpr double scale = 2 * cells;
+    double valueJump = 0, slopeJump = 0, curvatureJump = 0;
+    for (int i = 0; i < cells; ++i) {
+      const double *q = table.data() + 4 * i;
+      double value = q[0] + q[1] + q[2] + q[3];
+      double slope = scale * (q[1] + 2 * q[2] + 3 * q[3]);
+      double curvature = scale * scale * (2 * q[2] + 6 * q[3]);
+      double nextValue = 1, nextSlope = -0.5, nextCurvature = 0.75;
+      if (i + 1 < cells) {
+        q += 4;
+        nextValue = q[0] - q[1] + q[2] - q[3];
+        nextSlope = scale * (q[1] - 2 * q[2] + 3 * q[3]);
+        nextCurvature = scale * scale * (2 * q[2] - 6 * q[3]);
+      }
+      valueJump = std::max(valueJump, std::abs(value - nextValue));
+      slopeJump = std::max(slopeJump, std::abs(slope - nextSlope));
+      curvatureJump = std::max(curvatureJump, std::abs(curvature - nextCurvature));
+    }
+    bool ok = valueJump < 5e-14 && slopeJump < 1e-11 && curvatureJump < 2e-8;
+    failures += !ok;
+    std::printf("C2 pair joins at c %g: %.2e %.2e %.2e %s\n",
+                c, valueJump, slopeJump, curvatureJump, ok ? "ok" : "FAIL");
   }
   std::printf("%d failures\n", failures);
   return failures ? 1 : 0;

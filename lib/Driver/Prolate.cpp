@@ -613,30 +613,55 @@ Window mdir::prolate::getCubicWindow() {
 }
 
 std::vector<double> Function::squaredDistanceTable() const {
-  // L(t)=Phi(sqrt(t))/sqrt(t). The direct energy and its AD force use
-  // this same interpolant. Match the values and slopes at the endpoints.
-  double second = 0, legendreAtZero = 1;
-  for (size_t n = 2; n < coefficients.size(); n += 2) {
-    legendreAtZero *= -(double(n) - 1) / n;
-    second -= n * (n + 1) * coefficients[n] * legendreAtZero;
+  // The cubic B-spline for L(t) = Phi(sqrt(t))/sqrt(t) is C² at every
+  // interior knot. At t=1 it matches the value, slope and curvature of
+  // 1/sqrt(t), so the direct term vanishes through its second derivative.
+  constexpr int n = C2PairCells;
+  constexpr double h = 1.0 / n;
+  std::vector<double> controls(n + 3), upper(n);
+  auto at = [&](int i) -> double & { return controls[i + 1]; };
+  auto endpoint = [&](int i, double f, double df, double ddf) {
+    double curvature = h * h * ddf;
+    at(i - 1) = f - h * df + curvature / 3;
+    at(i) = f - curvature / 6;
+    at(i + 1) = f + h * df + curvature / 3;
+  };
+  // The second and fourth derivatives at zero follow from Legendre's equation.
+  double second = 0, fourth = 0, legendreAtZero = 1;
+  for (size_t k = 2; k < coefficients.size(); k += 2) {
+    legendreAtZero *= -(double(k) - 1) / k;
+    double lambda = double(k) * (k + 1);
+    double term = lambda * coefficients[k] * legendreAtZero;
+    second -= term;
+    fourth += (lambda - 6) * term;
   }
-  double left = value(0) / c0, dl = second / (6 * c0 * C2PairCells);
-  std::vector<double> result(4 * C2PairCells);
-  for (int i = 0; i < C2PairCells; ++i) {
-    double t = double(i + 1) / C2PairCells, x = std::sqrt(t);
-    double right = i + 1 == C2PairCells ? 1 : integral(x) / (x * c0);
-    double dr = (value(x) / c0 - right) / (2 * t * C2PairCells);
-    if (i + 1 == C2PairCells)
-      dr = -0.5 / C2PairCells;
-    double q = 3 * (right - left) - 2 * dl - dr,
-           a = dl + dr - 2 * (right - left);
-    // Recenter from the fractional interval to the lookup's [-1,1].
-    result[4 * i] = left + dl / 2 + q / 4 + a / 8;
-    result[4 * i + 1] = dl / 2 + q / 2 + 3 * a / 8;
-    result[4 * i + 2] = q / 4 + 3 * a / 8;
-    result[4 * i + 3] = a / 8;
-    left = right;
-    dl = dr;
+  endpoint(0, value(0) / c0, second / (6 * c0), fourth / (60 * c0));
+  endpoint(n, 1, -0.5, 0.75);
+
+  // Interpolate the free interior knots: b[i-1]+4b[i]+b[i+1]=6L(i h).
+  // The two nearest the endpoints are fixed by the boundary derivatives.
+  for (int i = 2; i <= n - 2; ++i) {
+    double x = std::sqrt(i * h);
+    double diagonal = 4 - upper[i - 1];
+    at(i) = (6 * integral(x) / (x * c0) - at(i - 1)) / diagonal;
+    upper[i] = 1 / diagonal;
+  }
+  for (int i = n - 2; i >= 2; --i)
+    at(i) -= upper[i] * at(i + 1);
+
+  std::vector<double> result(4 * n);
+  for (int i = 0; i < n; ++i) {
+    double before = at(i) - at(i - 1), here = at(i + 1) - at(i);
+    double after = at(i + 2) - at(i + 1);
+    double f = at(i) + (here - before) / 6;
+    double slope = (here + before) / 2;
+    double quadratic = (here - before) / 2;
+    double cubic = (after - 2 * here + before) / 6;
+    // Recenter the monomials from [0,1] to the pair lookup's [-1,1].
+    result[4 * i] = f + slope / 2 + quadratic / 4 + cubic / 8;
+    result[4 * i + 1] = slope / 2 + quadratic / 2 + 3 * cubic / 8;
+    result[4 * i + 2] = quadratic / 4 + 3 * cubic / 8;
+    result[4 * i + 3] = cubic / 8;
   }
   return result;
 }
