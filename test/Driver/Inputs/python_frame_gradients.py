@@ -118,6 +118,9 @@ def dipeptide(kind="plain"):
     system.electrostatics = mdir.Electrostatics.PME
     if scenario == "prolate":
         system.pme_kernel = mdir.PMEKernel.Prolate
+    elif scenario == "c2":
+        system.pme_kernel = mdir.PMEKernel.ProlateC2
+        system.pme_grid = [28] * 3
     if kind == "tail":
         system.truncation = mdir.Truncation.None_
         system.dispersion = mdir.DispersionCorrection.EnergyPressure
@@ -165,6 +168,9 @@ def water(kind="plain"):
     system.pme_grid = [28] * 3
     if scenario == "prolate":
         system.pme_kernel = mdir.PMEKernel.Prolate
+    elif scenario == "c2":
+        system.pme_kernel = mdir.PMEKernel.ProlateC2
+        system.pme_grid = [28] * 3
     if kind == "wall":
         wall = mdir.ExternalTerm()
         wall.name, wall.expression = "wall", "0.5*k*max(0, z - z0)^2 + 0.3*k*x*z"
@@ -1075,7 +1081,7 @@ def run_torch():
 
 
 if __name__ == "__main__":
-    if scenario in ("finite", "prolate"):
+    if scenario in ("finite", "prolate", "c2"):
         run_finite()
     elif scenario == "torch":
         run_torch()

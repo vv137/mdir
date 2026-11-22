@@ -16,6 +16,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "mdir/Driver/Prolate.h"
+#include "mdir/Driver/ProlateC2.h"
+#include <array>
+#include <numeric>
 
 #include <algorithm>
 #include <cmath>
@@ -65,9 +68,109 @@ void gaussLegendre(int n, std::vector<double> &x, std::vector<double> &w) {
   }
 }
 
+// Project the band-concentration operator onto the null space of value
+// and slope at x=1 in the orthonormal even Legendre basis on [0,1].
+using Basis = std::array<double, C2Basis>;
+using Matrix = std::array<Basis, C2Basis>;
+double dot(const Basis &a, const Basis &b) {
+  return std::inner_product(a.begin(), a.end(), b.begin(), 0.0);
+}
+
+std::vector<double> constrainedKernel(double bandwidth) {
+  Matrix basis{}, concentration{}, eigenvectors{};
+  for (int i = 0; i < C2Basis; ++i) {
+    basis[0][i] = std::sqrt(4*i+1);
+    basis[1][i] = i*(2*i+1)*basis[0][i];
+    if (i >= 2)
+      basis[i][i-2] = 1;
+    eigenvectors[i][i] = 1;
+  }
+  for (int i = 0; i < C2Basis; ++i) {
+    for (int pass = 0; pass < 2; ++pass)
+      for (int j = 0; j < i; ++j) {
+        double projection = dot(basis[i], basis[j]);
+        for (int k = 0; k < C2Basis; ++k)
+          basis[i][k] -= projection*basis[j][k];
+      }
+    double norm = std::sqrt(dot(basis[i],basis[i]));
+    for (double &v : basis[i])
+      v /= norm;
+  }
+
+  std::vector<double> nodes, weights;
+  gaussLegendre(std::max(128, static_cast<int>(bandwidth)+64), nodes, weights);
+  std::vector<Basis> values(nodes.size());
+  for (size_t i = 0; i < nodes.size(); ++i) {
+    double x = (1+nodes[i])/2, prev = 1, cur = x;
+    values[i][0] = weights[i]/2;
+    for (int k = 2; k <= 2*(C2Basis-1); ++k) {
+      double next = ((2*k-1)*x*cur-(k-1)*prev)/k;
+      if (k%2 == 0)
+        values[i][k/2] = std::sqrt(2*k+1)*next*weights[i]/2;
+      prev = cur;
+      cur = next;
+    }
+  }
+  for (size_t f = 0; f < nodes.size(); ++f) {
+    double frequency = bandwidth*(1+nodes[f])/2;
+    Basis spectrum{}, projected{};
+    for (size_t i = 0; i < nodes.size(); ++i) {
+      double cosine = std::cos(frequency*(1+nodes[i])/2);
+      for (int k = 0; k < C2Basis; ++k)
+        spectrum[k] += cosine*values[i][k];
+    }
+    for (int i = 2; i < C2Basis; ++i)
+      projected[i] = dot(basis[i], spectrum);
+    for (int i = 2; i < C2Basis; ++i)
+      for (int j = 2; j < C2Basis; ++j)
+        concentration[i][j] += weights[f]*projected[i]*projected[j];
+  }
+  // Symmetric Jacobi diagonalization in the constrained subspace.
+  for (int sweep = 0; sweep < 100; ++sweep) {
+    double off = 0;
+    for (int i = 2; i < C2Basis; ++i)
+      for (int j = i+1; j < C2Basis; ++j) {
+        double cross = concentration[i][j];
+        off = std::max(off, std::fabs(cross));
+        if (std::fabs(cross) < 1e-19)
+          continue;
+        double tau = (concentration[j][j]-concentration[i][i])/(2*cross);
+        double t = std::copysign(1/(std::fabs(tau)+std::hypot(1.0,tau)),tau);
+        double c = 1/std::hypot(1.0,t), s = t*c;
+        concentration[i][i] -= t*cross;
+        concentration[j][j] += t*cross;
+        concentration[i][j] = concentration[j][i] = 0;
+        for (int k = 2; k < C2Basis; ++k) {
+          if (k != i && k != j) {
+            double x=concentration[k][i], y=concentration[k][j];
+            concentration[i][k]=concentration[k][i]=c*x-s*y;
+            concentration[j][k]=concentration[k][j]=s*x+c*y;
+          }
+          double x=eigenvectors[k][i], y=eigenvectors[k][j];
+          eigenvectors[k][i]=c*x-s*y;
+          eigenvectors[k][j]=s*x+c*y;
+        }
+      }
+    if (off < 2e-18)
+      break;
+  }
+  int best=2;
+  for (int i=3; i<C2Basis; ++i)
+    if (concentration[i][i] > concentration[best][best])
+      best=i;
+  std::vector<double> coefficients(2*C2Basis);
+  for (int k=0; k<C2Basis; ++k)
+    for (int i=2; i<C2Basis; ++i)
+      coefficients[2*k] += std::sqrt(4*k+1)*basis[i][k]*eigenvectors[i][best];
+  return coefficients;
+}
+
 } // namespace
 
-Function::Function(double bandwidth) : c(bandwidth) {
+Function::Function(double bandwidth, bool constrained) : c(bandwidth) {
+  if (constrained) {
+    coefficients = constrainedKernel(c);
+  } else {
   // Enough terms that the last coefficients are below the rounding: the
   // coefficients decay superexponentially beyond k ≈ c.
   int n = static_cast<int>(std::ceil(c)) + 40;
@@ -123,6 +226,7 @@ Function::Function(double bandwidth) : c(bandwidth) {
   coefficients.assign(2 * n, 0.0);
   for (int i = 0; i != n; ++i)
     coefficients[2 * i] = v[i] * std::sqrt(2.0 * i + 0.5);
+  }
   if (value(0.0) < 0.0)
     for (double &a : coefficients)
       a = -a;
@@ -130,6 +234,7 @@ Function::Function(double bandwidth) : c(bandwidth) {
   lambda = 2.0 * coefficients[0] / value(0.0);
   c0 = integral(1.0);
   int points = std::max(200, static_cast<int>(4 * c) + 100);
+  if (constrained) points = std::max(points, 384);
   gaussLegendre(points, nodes, weights);
   values.resize(points);
   for (int i = 0; i != points; ++i)
@@ -437,4 +542,86 @@ std::vector<double> mdir::prolate::getSplittingTable(const Function &psi,
     }
   }
   return table;
+}
+
+double Function::endpointDerivative(int derivative) const {
+  long double result = 0.0L;
+  for (int k = derivative; k < static_cast<int>(coefficients.size()); ++k) {
+    long double factor = 1;
+    for (int j = 1; j <= derivative; ++j)
+      factor *= static_cast<long double>((k+j)*(k-j+1))/(2*j);
+    result += coefficients[k]*factor;
+  }
+  return static_cast<double>(result);
+}
+
+Influence mdir::prolate::getC2Influence(const Function &psi) {
+  Influence influence;
+  influence.terms = C2Terms;
+  influence.value.resize(C2Terms);
+  influence.slope.resize(C2Terms);
+  double norm = 2*psi.halfIntegral();
+  for (int i = 0; i < C2Knots; ++i) {
+    double k = static_cast<double>(i)/C2SamplesPerUnit;
+    influence.value[i] = psi.transform(k)/norm;
+    influence.slope[i] = psi.transformDerivative(k)/(norm*C2SamplesPerUnit);
+  }
+  // Integration by parts terminates at the degree of the polynomial.
+  // Values multiply sin(k)/k, slopes multiply cos(k)/k².
+  for (int i = 0; i < C2Basis; ++i) {
+    double scale = (i%2 ? -1 : 1) / (psi.halfIntegral()*std::pow(double(C2Transition), 2*i));
+    influence.value[C2Knots+i] = scale*psi.endpointDerivative(2*i);
+    influence.slope[C2Knots+i] = scale*psi.endpointDerivative(2*i+1);
+  }
+  return influence;
+}
+
+Window mdir::prolate::getCubicWindow() {
+  Window window;
+  window.points = window.degree = window.degreeSingle = 4;
+  for (int j = 0; j < 4; ++j) {
+    auto polynomial = [j](double t, bool slope) {
+      double u = 0.5*(t+1), v = 1-u;
+      switch (j) {
+      case 0: return slope ? -v*v/2 : v*v*v/6;
+      case 1: return slope ? (3*u*u-4*u)/2 : (4-6*u*u+3*u*u*u)/6;
+      case 2: return slope ? (4*v-3*v*v)/2 : (4-6*v*v+3*v*v*v)/6;
+      default: return slope ? u*u/2 : u*u*u/6;
+      }
+    };
+    for (bool slope : {false,true}) {
+      auto coeff = getChebyshevSeries([&](double t) { return polynomial(t,slope); }, 0);
+      coeff.resize(4);
+      auto &out = slope ? window.slopes : window.values;
+      out.insert(out.end(), coeff.begin(), coeff.begin()+4);
+    }
+  }
+  return window;
+}
+
+std::vector<double> Function::squaredDistanceTable() const {
+  // L(t)=Phi(sqrt(t))/sqrt(t). The direct energy and its AD force use
+  // this same interpolant. Match the values and slopes at the endpoints.
+  double second = 0, legendreAtZero = 1;
+  for (size_t n=2; n<coefficients.size(); n+=2) {
+    legendreAtZero *= -(double(n)-1)/n;
+    second -= n*(n+1)*coefficients[n]*legendreAtZero;
+  }
+  double left=value(0)/c0, dl=second/(6*c0*C2PairCells);
+  std::vector<double> result(4*C2PairCells);
+  for (int i=0; i<C2PairCells; ++i) {
+    double t=double(i+1)/C2PairCells, x=std::sqrt(t);
+    double right=i+1==C2PairCells ? 1 : integral(x)/(x*c0);
+    double dr=(value(x)/c0-right)/(2*t*C2PairCells);
+    if (i+1==C2PairCells) dr=-0.5/C2PairCells;
+    double q=3*(right-left)-2*dl-dr, a=dl+dr-2*(right-left);
+    // Recenter from the fractional interval to the lookup's [-1,1].
+    result[4*i]=left+dl/2+q/4+a/8;
+    result[4*i+1]=dl/2+q/2+3*a/8;
+    result[4*i+2]=q/4+3*a/8;
+    result[4*i+3]=a/8;
+    left=right;
+    dl=dr;
+  }
+  return result;
 }

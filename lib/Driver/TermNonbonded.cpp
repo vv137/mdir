@@ -1,4 +1,5 @@
 // Primary, excluded, reciprocal, and within-selection nonbonded terms (#683).
+#include "mdir/Driver/ProlateC2.h"
 #include "BuilderImpl.h"
 #include "KindPairsIR.h"
 #include "mdir/Dialect/MD/MDOps.h"
@@ -310,7 +311,7 @@ static mlir::Value buildLJPMEDirect(mlir::OpBuilder &builder,
 
 struct DirectCoulombIRConfig {
   bool scalesCoulomb = false, pme = false, prolate = false;
-  bool prolateSeries = false, shift = false, reactionField = false;
+  bool c2 = false, prolateSeries = false, shift = false, reactionField = false;
   bool shiftsAtCutoff = false;
   std::vector<double> farSeries;
   double beta = 0.0, cutoff = 0.0;
@@ -363,6 +364,14 @@ static mlir::Value buildDirectCoulomb(mlir::OpBuilder &builder,
     // zero.
     Value inverse = constant(1.0 / cutoff);
     Value xr = mul(rq, inverse);
+    if (config.c2) {
+      Value one = constant(1);
+      Value far = buildProlateSplitting(builder, values.back(), mul(xr,xr),
+                                        prolate::C2PairCells, 4);
+      Value direct = sub(div(one,rq), mul(far,inverse));
+      Value inside = arith::CmpFOp::create(builder,loc,arith::CmpFPredicate::OLT,xr,one);
+      return mul(fqq,arith::SelectOp::create(builder,loc,inside,direct,constant(0)));
+    }
     Value far;
     if (prolateSeries) {
       Value two = constant(2.0);
@@ -695,7 +704,7 @@ llvm::Error NonbondedWork::collectPME() {
   const Topology &topology = *system.topology;
   double rc = control.cutoffDistance * units::length;
 
-  if (control.pmeKernel == PMEKernel::Prolate) {
+  if (control.pmeKernel != PMEKernel::Gaussian) {
     if (llvm::Error error = collectProlate())
       return error;
   }
@@ -776,9 +785,10 @@ llvm::Error NonbondedWork::collectProlate() {
                   ? control.pmeWindowBandwidth
                   : prolate::bandwidthForTolerance(0.5 * epsilon);
   int64_t points = control.pmeOrder;
-  prolate::Function psi(c);
-  prolate::Window window = prolate::getWindow(c1, points);
-  prolate::Influence influence = prolate::getInfluence(psi);
+  bool c2 = control.pmeKernel == PMEKernel::ProlateC2;
+  prolate::Function psi(c, c2);
+  prolate::Window window = c2 ? prolate::getCubicWindow() : prolate::getWindow(c1, points);
+  prolate::Influence influence = c2 ? prolate::getC2Influence(psi) : prolate::getInfluence(psi);
 
   // The edges along which the grid is spaced, as collectMesh takes them.
   double edges[3];
@@ -815,7 +825,7 @@ llvm::Error NonbondedWork::collectProlate() {
     }
   }
   bool automatic = control.pmeGrid[0] == 0 && control.pmeMaxSpacing == 0.0;
-  double aliasing = prolate::getAliasing(psi, window, edges, grid, rc);
+  double aliasing = c2 ? 0 : prolate::getAliasing(psi, window, edges, grid, rc);
   double bound = 0.5 * epsilon;
   int64_t start[3] = {grid[0], grid[1], grid[2]};
   double spacing = 0.0;
@@ -881,6 +891,10 @@ llvm::Error NonbondedWork::collectProlate() {
       int64_t m = i <= grid[k] / 2 ? i : i - grid[k];
       double hat = window.transform(2.0 * M_PI * static_cast<double>(m) /
                                     static_cast<double>(grid[k]));
+      if (c2) {
+        double x = M_PI * m / grid[k];
+        hat = m == 0 ? 1 : std::pow(std::sin(x)/x, 4);
+      }
       table.values[k * columns + i] = 1.0 / (hat * hat);
     }
   std::copy(window.values.begin(), window.values.end(),
@@ -891,7 +905,7 @@ llvm::Error NonbondedWork::collectProlate() {
   row[0] = static_cast<double>(window.degree);
   row[1] = static_cast<double>(window.degreeSingle);
   row[2] = static_cast<double>(influence.terms);
-  row[3] = 2.0 * M_PI * rc / c;
+  row[3] = c2 ? -2.0 * M_PI * rc : 2.0 * M_PI * rc / c;
   std::copy(influence.value.begin(), influence.value.end(), row + 4);
   std::copy(influence.slope.begin(), influence.slope.end(),
             row + 4 + influence.terms);
@@ -904,7 +918,13 @@ llvm::Error NonbondedWork::collectProlate() {
     auto [cells, terms] = getProlateTableShape(control.precision);
     split.count = cells;
     split.columns = terms;
-    split.values = prolate::getSplittingTable(psi, part, cells, terms);
+    if (c2 && part == prolate::Part::Far) {
+      split.count = prolate::C2PairCells;
+      split.columns = 4;
+      split.values = psi.squaredDistanceTable();
+    } else {
+      split.values = prolate::getSplittingTable(psi, part, cells, terms);
+    }
     program.tables.push_back(std::move(split));
   }
 
@@ -2045,7 +2065,8 @@ public:
         spec.scalesCoulomb = scalesCoulomb;
         spec.pme = program.pme;
         spec.prolate = program.pmeProlate;
-        spec.prolateSeries = takesProlateSeries(control) && !scalesCoulomb;
+        spec.c2 = control.pmeKernel == PMEKernel::ProlateC2;
+        spec.prolateSeries = !spec.c2 && takesProlateSeries(control) && !scalesCoulomb;
         spec.farSeries = program.pmeFarSeries;
         spec.beta = program.pmeBeta;
         spec.shift = control.pmeShift || shiftsAtCutoff;

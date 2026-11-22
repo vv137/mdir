@@ -724,8 +724,8 @@ LogicalResult ReciprocalOp::verify() {
   if (getP3m() && (getProlate() || getDispersion()))
     return emitOpError()
            << "'p3m' is for the Coulomb sum with the Gaussian alone";
-  if (getProlate() && (getOrder() < 5 || getOrder() > 8))
-    return emitOpError() << "expected 5 to 8 points of the prolate window";
+  if (getProlate() && (getOrder() < 4 || getOrder() > 8))
+    return emitOpError() << "expected 4 points of the constrained cubic window or 5 to 8 points of the prolate window";
   if (cast<TableType>(getModuli().getType()).getRank() != 2)
     return emitOpError() << "expected a table of rank 2";
   return success();

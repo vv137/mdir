@@ -25,7 +25,7 @@
 # ORDER5: expected 4, 6, or 8 for 'order'
 # RUN: sed 's/^#PME$/kernel = "ELLIPTIC"/' %t/base.toml > %t/kernel.toml
 # RUN: not mdir run %t/kernel.toml 2>&1 | FileCheck %s --check-prefix=KERNEL
-# KERNEL: expected one of GAUSSIAN, PROLATE for 'kernel', got 'ELLIPTIC'
+# KERNEL: expected one of GAUSSIAN, PROLATE, PROLATE_C2 for 'kernel', got 'ELLIPTIC'
 # A tolerance that the aliasing estimate of the window does not reach
 # below half of it on twice the grid of eq. 15: refused, with what to do.
 # RUN: sed 's/^#PME$/kernel = "PROLATE"\ntolerance = 1e-9\norder = 8/' %t/base.toml > %t/floor8.toml
@@ -34,6 +34,19 @@
 # RUN: sed 's/^#PME$/kernel = "PROLATE"\ntolerance = 1e-9\norder = 5/' %t/base.toml > %t/floor5.toml
 # RUN: not mdir run %t/floor5.toml 2>&1 | FileCheck %s --check-prefix=FLOOR5
 # FLOOR5: with 5 points of the window stays above half the tolerance 1e-09 of [pme] on every grid: {{.*}}; give more points of the window in 'order' (up to 8), a looser 'tolerance', or 'grid'
+
+# RUN: sed 's/^#PME$/kernel = "PROLATE_C2"\nbeta = 0.35/' %t/base.toml > %t/c2.toml
+# RUN: not mdir run %t/c2.toml 2>&1 | FileCheck %s --check-prefix=C2-BETA
+# C2-BETA: 'beta' conflicts with PROLATE_C2
+# RUN: sed 's/^#PME$/kernel = "PROLATE_C2"\nwindow_bandwidth = 12.0/' %t/base.toml > %t/c2.toml
+# RUN: not mdir run %t/c2.toml 2>&1 | FileCheck %s --check-prefix=C2-WINDOW-BANDWIDTH
+# C2-WINDOW-BANDWIDTH: 'window_bandwidth' conflicts with PROLATE_C2
+# RUN: sed 's/^#PME$/kernel = "PROLATE_C2"\ninfluence = "SPME"/' %t/base.toml > %t/c2.toml
+# RUN: not mdir run %t/c2.toml 2>&1 | FileCheck %s --check-prefix=C2-INFLUENCE
+# C2-INFLUENCE: 'influence' conflicts with PROLATE_C2
+# RUN: sed 's/^#PME$/kernel = "PROLATE_C2"\norder = 6/' %t/base.toml > %t/c2.toml
+# RUN: not mdir run %t/c2.toml 2>&1 | FileCheck %s --check-prefix=C2-ORDER
+# C2-ORDER: PROLATE_C2 requires order 4
 
 #--- run.toml
 [input]

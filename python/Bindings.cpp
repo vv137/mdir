@@ -279,7 +279,8 @@ PYBIND11_MODULE(_core, m) {
   // function of Ewald summation with prolates (D266).
   py::enum_<driver::PMEKernel>(m, "PMEKernel")
     .value("Gaussian", driver::PMEKernel::Gaussian)
-    .value("Prolate", driver::PMEKernel::Prolate);
+    .value("Prolate", driver::PMEKernel::Prolate)
+    .value("ProlateC2", driver::PMEKernel::ProlateC2);
   // `[barostat] coupling` and `work` (D247).
   py::enum_<model::BarostatCoupling>(m, "BarostatCoupling")
     .value("Isotropic", model::BarostatCoupling::Isotropic)

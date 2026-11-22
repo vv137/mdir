@@ -527,7 +527,7 @@
                       "minimum": 1
                     },
                     "kernel": {
-                      "enum": ["GAUSSIAN", "PROLATE"]
+                      "enum": ["GAUSSIAN", "PROLATE", "PROLATE_C2"]
                     },
                     "bandwidth": {
                       "type": "number",
