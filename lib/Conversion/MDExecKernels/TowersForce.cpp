@@ -70,7 +70,9 @@ private:
   Value shared(gpu::GPUFuncOp fn, ArrayRef<int64_t> shape, Type t);
   void stage(ArrayRef<Value> starts, ArrayRef<Value> counts, Value begin,
              Value size, bool source);
-  Value mask(Value target, Value group, Value sourceCount);
+  Value screenOperand(Value x, Value z);
+  Values targetOperands(Value target);
+  Value mask(ValueRange operands, Value group, Value sourceCount);
   Value indexed(Value v, Value from) {
     return shuffle(gpu::ShuffleMode::IDX, v, from, ci(32)).first;
   }
@@ -342,32 +344,39 @@ void Force::stage(ArrayRef<Value> starts, ArrayRef<Value> counts, Value begin,
 
 // Each warp supplies 32 targets. Lane r returns the 32 source signs for
 // its target. Each m16n8k8 fragment covers 16 target rows and 8 sources.
-Value Force::mask(Value target, Value group, Value sc) {
-  Value row = shrui(lane, ci(2)), k = andi(lane, ci(3)), bits = ci(0);
+Value Force::screenOperand(Value x, Value z) {
+  Value k = andi(lane, ci(3));
+  return select(cmpi(CmpIPredicate::eq, k, ci(0)), x,
+                select(cmpi(CmpIPredicate::eq, k, ci(1)), z, ci(0)));
+}
+
+Values Force::targetOperands(Value target) {
   Value tx = load(xy, {addi(cx(panel), target)}),
         tz = load(zn, {addi(cx(panel), target)});
   Value c = subf(load(bias, {target}), limit);
-  auto operand = [&](Value x, Value z) {
-    return select(cmpi(CmpIPredicate::eq, k, ci(0)), x,
-                  select(cmpi(CmpIPredicate::eq, k, ci(1)), z, ci(0)));
-  };
+  Values operands;
+  for (int j = 0; j < 4; ++j) {
+    Value col = addi(andi(lane, ci(-4)), ci(j));
+    operands.push_back(screenOperand(indexed(tx, col), indexed(tz, col)));
+    operands.push_back(indexed(c, col));
+  }
+  return operands;
+}
+
+Value Force::mask(ValueRange operands, Value group, Value sc) {
+  Value row = shrui(lane, ci(2)), bits = ci(0);
   auto resultTy =
       LLVM::LLVMStructType::getLiteral(context, {f32, f32, f32, f32});
-  for (int h = 0; h < 2; ++h) {
-    Values ops, initial;
-    for (int j = 0; j < 2; ++j) {
-      Value col = addi(shli(row, ci(2)), ci(h * 2 + j));
-      ops.push_back(operand(indexed(tx, col), indexed(tz, col)));
-      initial.push_back(indexed(c, col));
-    }
-    for (int q = 0; q < 4; ++q) {
-      Value src = minui(subi(sc, cx(1)),
-                        addi(group, addi(cx(q * 8), indexCast(index, row))));
-      Value srcOp = operand(load(xy, {src}), load(zn, {src}));
+  for (int q = 0; q < 4; ++q) {
+    Value src = minui(subi(sc, cx(1)),
+                      addi(group, addi(cx(q * 8), indexCast(index, row))));
+    Value srcOp = screenOperand(load(xy, {src}), load(zn, {src}));
+    for (int h = 0; h < 2; ++h) {
+      auto op = operands.slice(4 * h, 4);
       auto mma =
           LLVM::InlineAsmOp::create(
               b, loc, TypeRange{resultTy},
-              ValueRange{ops[0], ops[1], srcOp, initial[0], initial[1]},
+              ValueRange{op[0], op[2], srcOp, op[1], op[3]},
               "mma.sync.aligned.m16n8k8.row.col.f32.f16.f16.f32 {$0,$1,$2,$3}, "
               "{$4,$5}, {$6}, {$7,$7,$8,$8};",
               "=f,=f,=f,=f,r,r,r,f,f", false, false, LLVM::TailCallKind::None,
@@ -398,12 +407,12 @@ void Force::mark(int phase) {
     return;
   ifThen(cmpi(CmpIPredicate::eq, tid, cx(0)), [&] {
     Value now = NVVM::Clock64Op::create(b, loc, i64);
-    Value last = load(trace, {owner, cx(9)});
-    Value sum = load(trace, {owner, cx(phase)});
-    store(addi(sum, subi(now, last)), trace, {owner, cx(phase)});
-    store(now, trace, {owner, cx(9)});
+    Value last = load(trace, {cx(9)});
+    Value sum = load(trace, {cx(phase)});
+    store(addi(sum, subi(now, last)), trace, {cx(phase)});
+    store(now, trace, {cx(9)});
     if (phase == 0)
-      store(addi(load(trace, {owner, cx(10)}), cl(1)), trace, {owner, cx(10)});
+      store(addi(load(trace, {cx(10)}), cl(1)), trace, {cx(10)});
   });
 }
 
@@ -455,6 +464,7 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
   Value high = select(atHome, minui(addi(sb, sc), lower), addi(sb, sc));
   Value low = select(atHome, maxui(addi(orig, cx(1)), sb), sb);
   mark(1);
+  Values operands = targetOperands(target);
   Values masks;
   Value counts = ci(0);
   for (int j = 0; j < groups; ++j) {
@@ -464,7 +474,7 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
     Value active = cmpi(CmpIPredicate::ult, l, h);
     Value m = ifElse(
         {i32}, andi(warpActive, cmpi(CmpIPredicate::ult, cx(32 * j), sc)),
-        [&] { return Values{mask(target, cx(32 * j), sc)}; },
+        [&] { return Values{mask(operands, cx(32 * j), sc)}; },
         [&] { return Values{ci(0)}; })[0];
     // Mask the shift amounts too: an empty interval may begin or end at 32.
     Value range = andi(shli(ci(-1), andi(l, ci(31))),
@@ -529,10 +539,13 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
       auto read = [&](Value rec, int col) { return recordWord(rec, col); };
       Value header = read(found, 0), m = read(found, 1);
       Value skip = subi(begin, shrui(header, ci(14)));
-      m = forLoop(cx(0), indexCast(index, skip), cx(1), {m},
-                  [&](Value, ValueRange x) {
-                    return Values{andi(x[0], subi(x[0], ci(1)))};
-                  })[0];
+      Value firstBit =
+          LLVM::InlineAsmOp::create(
+              b, loc, TypeRange{i32}, ValueRange{m, addi(skip, ci(1))},
+              "fns.b32 $0, $1, 0, $2;", "=r,r,r", false, false,
+              LLVM::TailCallKind::None, LLVM::AsmDialectAttr(), ArrayAttr())
+              .getResult(0);
+      m = andi(m, shli(ci(-1), firstBit));
       auto targetSlot = [&](Value h) {
         return addi(cx(panel), indexCast(index, andi(h, ci(1023))));
       };
@@ -542,8 +555,7 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
           v.push_back(p ? load(p, {slot}) : extract(v[0], 3));
         return v;
       };
-      Values initial{found, header, m,     ci(0), ci(0),
-                     ci(0), ci(0),  ci(0), ci(0)};
+      Values initial{found, header, m, ci(0), ci(0), ci(0)};
       Values cached = targetValues(targetSlot(header));
       initial.append(cached);
       auto endState = forLoop(
@@ -561,7 +573,6 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
             ifThen(changed, [&] {
               for (int a = 0; a < 3; ++a) {
                 addWord(accum, prev, cx(a), x[3 + a]);
-                addWord(coarse, prev, cx(a), x[6 + a]);
               }
             });
             Value s = indexCast(
@@ -569,7 +580,7 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
                             math::CountTrailingZerosOp::create(b, loc, v[2])));
             auto targetData = ifElse(
                 TypeRange(cached), changed, [&] { return targetValues(t); },
-                [&] { return Values(x.drop_front(9)); });
+                [&] { return Values(x.drop_front(6)); });
             Values f = pair(targetData[0], load(pos, {s}), t, s,
                             targetData.drop_front());
             Values next{v[0], v[1], andi(v[2], subi(v[2], ci(1)))};
@@ -586,18 +597,16 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
               next.push_back(addi(select(changed, ci(0), x[3 + a]), f[a]));
             }
             ifThen(cmpi(CmpIPredicate::ne, any, ci(0)), [&] {
-              for (int a = 0; a < 3; ++a)
+              for (int a = 0; a < 3; ++a) {
                 addWord(coarse, s, cx(a), subi(ci(0), quotients[a]));
+                addWord(coarse, t, cx(a), quotients[a]);
+              }
             });
-            for (int a = 0; a < 3; ++a)
-              next.push_back(
-                  addi(select(changed, ci(0), x[6 + a]), quotients[a]));
             next.append(targetData.begin(), targetData.end());
             return next;
           });
       for (int a = 0; a < 3; ++a) {
         addWord(accum, targetSlot(endState[1]), cx(a), endState[3 + a]);
-        addWord(coarse, targetSlot(endState[1]), cx(a), endState[6 + a]);
       }
     });
     barrier();
@@ -841,13 +850,13 @@ void Force::device() {
   limit = addf(math::CeilOp::create(b, loc, mulf(r, r)), cf(1));
   owner = gpu::BlockIdOp::create(b, loc, gpu::Dimension::x);
   if (probe) {
-    trace = entry.getArgument(types.size() - 1);
+    trace = shared(fn, {11}, i64);
     ifThen(cmpi(CmpIPredicate::eq, tid, cx(0)), [&] {
       for (int i = 0; i < 8; ++i)
-        store(cl(0), trace, {owner, cx(i)});
-      store(cl(0), trace, {owner, cx(10)});
-      store(NVVM::GlobalTimerOp::create(b, loc, i64), trace, {owner, cx(8)});
-      store(NVVM::Clock64Op::create(b, loc, i64), trace, {owner, cx(9)});
+        store(cl(0), trace, {cx(i)});
+      store(cl(0), trace, {cx(10)});
+      store(NVVM::GlobalTimerOp::create(b, loc, i64), trace, {cx(8)});
+      store(NVVM::Clock64Op::create(b, loc, i64), trace, {cx(9)});
     });
   }
   withValidGeometry([&] {
@@ -857,9 +866,12 @@ void Force::device() {
   mark(7);
   if (probe)
     ifThen(cmpi(CmpIPredicate::eq, tid, cx(0)), [&] {
-      store(subi(NVVM::GlobalTimerOp::create(b, loc, i64),
-                 load(trace, {owner, cx(8)})),
-            trace, {owner, cx(8)});
+      store(
+          subi(NVVM::GlobalTimerOp::create(b, loc, i64), load(trace, {cx(8)})),
+          trace, {cx(8)});
+      Value output = entry.getArgument(types.size() - 1);
+      for (int i = 0; i < 11; ++i)
+        store(load(trace, {cx(i)}), output, {owner, cx(i)});
     });
   gpu::ReturnOp::create(b, loc);
 }
