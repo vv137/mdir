@@ -130,10 +130,10 @@ void HostPME::emit(bool potential, bool listed) {
   emitPointSumsP3m();
   emitConvolveRow();
   emitConvolveRowTriclinic();
-  emitConvolve();
-  emitScale();
-  emitConvolveTriclinic();
-  emitScaleTriclinic();
+  emitConvolve<Cell::Orthorhombic, true>();
+  emitConvolve<Cell::Orthorhombic, false>();
+  emitConvolve<Cell::Triclinic, true>();
+  emitConvolve<Cell::Triclinic, false>();
   emitGatherSums();
   if (potential)
     emitPotentialSum();

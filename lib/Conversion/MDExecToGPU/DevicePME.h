@@ -29,6 +29,11 @@ public:
 
 private:
   template <Window window> void emitTiles(int64_t tiles, bool listed);
+  template <Window window, bool tilted> static StringRef blockSymbol() {
+    if constexpr (window == Window::Prolate)
+      return "mdrt_gpu_pme_prolate_blocks";
+    return tilted ? "mdrt_gpu_pme_blocks_triclinic" : "mdrt_gpu_pme_blocks";
+  }
   int64_t order, lanes;
   int64_t realBytes = realType.getIntOrFloatBitWidth() / 8;
   Type tokenType = gpu::AsyncTokenType::get(b.getContext());
@@ -122,10 +127,12 @@ private:
   template <bool tilted> void emitWeights(StringRef symbol);
   template <bool useList> void emitSpreadBricks(StringRef symbol);
   void emitReal(StringRef symbol);
-  template <Splitting splitting, bool tilted> void emitTables(StringRef symbol);
+  template <Window window, Splitting splitting, bool tilted>
+  void emitTables(StringRef symbol);
   template <Splitting splitting, bool tilted>
   void emitConvolve(StringRef symbol);
-  template <Splitting splitting, bool tilted> void emitScale(StringRef symbol);
+  template <Window window, Splitting splitting, bool tilted>
+  void emitScale(StringRef symbol);
   template <bool tilted, bool useList, bool potentialOnly, bool cachedWeights>
   void emitGather(StringRef symbol);
   template <bool useList, int tileEdge> void emitBin(StringRef symbol);

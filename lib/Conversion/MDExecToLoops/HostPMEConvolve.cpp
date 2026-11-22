@@ -816,7 +816,6 @@ void HostPME::emitConvolveRowTriclinic() {
   Block *entry = fn.addEntryBlock();
   b.setInsertionPointToStart(entry);
   Value c = entry->getArgument(0);
-  Value tables = entry->getArgument(1);
   Value moduli = entry->getArgument(2);
   Value box = entry->getArgument(3);
   Value beta = entry->getArgument(4);
@@ -956,198 +955,57 @@ void HostPME::emitConvolveRowTriclinic() {
 // with w(m) = 2 for the points whose conjugate is not stored: a row of the
 // grid an iteration of a parallel loop, the rows summed in f64 in the fixed
 // order of D171.
-void HostPME::emitConvolve() {
+template <HostPME::Cell cell, bool observables> void HostPME::emitConvolve() {
   OpBuilder::InsertionGuard guard(b);
+  constexpr bool tilted = cell == Cell::Triclinic;
+  StringRef suffix = tilted ? "_triclinic" : "";
+  StringRef stage = observables ? "mdrt.pme_convolve" : "mdrt.pme_scale";
+  auto grid = MemRefType::get({ShapedType::kDynamic}, realType);
+  auto moduliType =
+      MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, f64Type);
+  auto cellType = VectorType::get({tilted ? 6 : 3}, f64Type);
+  auto tensor = VectorType::get({9}, f64Type);
+  SmallVector<Type> results;
+  if constexpr (observables)
+    results = {f64Type, tensor};
   auto fn =
-      declare("mdrt.pme_convolve",
-              b.getFunctionType(
-                  {MemRefType::get({ShapedType::kDynamic}, realType),
-                   MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
-                                   f64Type),
-                   MemRefType::get({ShapedType::kDynamic}, realType),
-                   VectorType::get({3}, f64Type), f64Type, f64Type, boolType,
-                   idxType, idxType, idxType},
-                  {f64Type, VectorType::get({9}, f64Type)}));
+      declare((stage + suffix).str(),
+              b.getFunctionType({grid, moduliType, grid, cellType, f64Type,
+                                 f64Type, boolType, idxType, idxType, idxType},
+                                results));
   Block *entry = fn.addEntryBlock();
   b.setInsertionPointToStart(entry);
-  Value c = entry->getArgument(0);
-  Value moduli = entry->getArgument(1);
-  Value tables = entry->getArgument(2);
-  Value box = entry->getArgument(3);
-  Value beta = entry->getArgument(4);
-  Value coulomb = entry->getArgument(5);
-  Value dispersion = entry->getArgument(6);
-  Value k1 = entry->getArgument(7);
-  Value k2 = entry->getArgument(8);
-  Value k3 = entry->getArgument(9);
-  Value c0 = arith::ConstantIndexOp::create(b, loc, 0);
-  Value c1 = arith::ConstantIndexOp::create(b, loc, 1);
-  Value zero = arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 0.0));
-  Value none = arith::ConstantOp::create(
-      b, loc, dense(VectorType::get({9}, f64Type), {0.0}));
-  Value yes = arith::ConstantOp::create(b, loc, b.getBoolAttr(true));
-  func::CallOp::create(
-      b, loc, "mdrt.pme_tables", TypeRange{},
-      ValueRange{moduli, tables, box, beta, coulomb, k1, k2, k3});
-  Value rows = arith::MulIOp::create(b, loc, k1, k2);
-  auto energyOp = scf::ParallelOp::create(
-      b, loc, ValueRange{c0}, ValueRange{rows}, ValueRange{c1},
-      ValueRange{zero, none},
-      [&](OpBuilder &b, Location, ValueRange ivs, ValueRange) {
-        Value r = ivs[0];
-        auto erCall = func::CallOp::create(
-            b, loc, "mdrt.pme_convolve_row",
-            TypeRange{f64Type, VectorType::get({9}, f64Type)},
-            ValueRange{c, tables, moduli, box, beta, coulomb, dispersion, k1,
-                       k2, k3, r, yes});
-        Value er = erCall.getResult(0);
-        Value wr = erCall.getResult(1);
-        sumReductions({er, wr});
+  auto args = entry->getArguments();
+  Value first = arith::ConstantIndexOp::create(b, loc, 0);
+  Value step = arith::ConstantIndexOp::create(b, loc, 1);
+  SmallVector<Value> initial;
+  if constexpr (observables) {
+    initial.push_back(
+        arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 0.0)));
+    initial.push_back(arith::ConstantOp::create(b, loc, dense(tensor, {0.0})));
+  }
+  Value collect = arith::ConstantOp::create(b, loc, b.getBoolAttr(observables));
+  if constexpr (!tilted)
+    func::CallOp::create(b, loc, "mdrt.pme_tables", TypeRange{},
+                         ValueRange{args[1], args[2], args[3], args[4], args[5],
+                                    args[7], args[8], args[9]});
+  Value rows = arith::MulIOp::create(b, loc, args[7], args[8]);
+  auto loop = scf::ParallelOp::create(
+      b, loc, ValueRange{first}, ValueRange{rows}, ValueRange{step}, initial,
+      [&](OpBuilder &b, Location, ValueRange iv, ValueRange) {
+        auto row = func::CallOp::create(
+            b, loc, ("mdrt.pme_convolve_row" + suffix).str(),
+            TypeRange{f64Type, tensor},
+            ValueRange{args[0], args[2], args[1], args[3], args[4], args[5],
+                       args[6], args[7], args[8], args[9], iv.front(),
+                       collect});
+        if constexpr (observables)
+          sumReductions(row.getResults());
       });
-  Value energy = energyOp.getResult(0);
-  Value virial = energyOp.getResult(1);
-  func::ReturnOp::create(b, loc, ValueRange{energy, virial});
+  func::ReturnOp::create(b, loc, loop.getResults());
 }
 
-// As pme_convolve, for a step that writes neither the energy nor the
-// virial: the product alone, as on a device.
-void HostPME::emitScale() {
-  OpBuilder::InsertionGuard guard(b);
-  auto fn =
-      declare("mdrt.pme_scale",
-              b.getFunctionType(
-                  {MemRefType::get({ShapedType::kDynamic}, realType),
-                   MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
-                                   f64Type),
-                   MemRefType::get({ShapedType::kDynamic}, realType),
-                   VectorType::get({3}, f64Type), f64Type, f64Type, boolType,
-                   idxType, idxType, idxType},
-                  {}));
-  Block *entry = fn.addEntryBlock();
-  b.setInsertionPointToStart(entry);
-  Value c = entry->getArgument(0);
-  Value moduli = entry->getArgument(1);
-  Value tables = entry->getArgument(2);
-  Value box = entry->getArgument(3);
-  Value beta = entry->getArgument(4);
-  Value coulomb = entry->getArgument(5);
-  Value dispersion = entry->getArgument(6);
-  Value k1 = entry->getArgument(7);
-  Value k2 = entry->getArgument(8);
-  Value k3 = entry->getArgument(9);
-  Value c0 = arith::ConstantIndexOp::create(b, loc, 0);
-  Value c1 = arith::ConstantIndexOp::create(b, loc, 1);
-  Value no = arith::ConstantOp::create(b, loc, b.getBoolAttr(false));
-  func::CallOp::create(
-      b, loc, "mdrt.pme_tables", TypeRange{},
-      ValueRange{moduli, tables, box, beta, coulomb, k1, k2, k3});
-  Value rows = arith::MulIOp::create(b, loc, k1, k2);
-  scf::ParallelOp::create(
-      b, loc, ValueRange{c0}, ValueRange{rows}, ValueRange{c1},
-      [&](OpBuilder &b, Location, ValueRange ivs) {
-        Value r = ivs[0];
-        auto erCall = func::CallOp::create(
-            b, loc, "mdrt.pme_convolve_row",
-            TypeRange{f64Type, VectorType::get({9}, f64Type)},
-            ValueRange{c, tables, moduli, box, beta, coulomb, dispersion, k1,
-                       k2, k3, r, no});
-        Value er = erCall.getResult(0);
-        Value wr = erCall.getResult(1);
-      });
-  func::ReturnOp::create(b, loc);
-}
-
-// As pme_convolve, in a triclinic cell, with the wave vectors k = H⁻¹ m.
-void HostPME::emitConvolveTriclinic() {
-  OpBuilder::InsertionGuard guard(b);
-  auto fn =
-      declare("mdrt.pme_convolve_triclinic",
-              b.getFunctionType(
-                  {MemRefType::get({ShapedType::kDynamic}, realType),
-                   MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
-                                   f64Type),
-                   MemRefType::get({ShapedType::kDynamic}, realType),
-                   VectorType::get({6}, f64Type), f64Type, f64Type, boolType,
-                   idxType, idxType, idxType},
-                  {f64Type, VectorType::get({9}, f64Type)}));
-  Block *entry = fn.addEntryBlock();
-  b.setInsertionPointToStart(entry);
-  Value c = entry->getArgument(0);
-  Value moduli = entry->getArgument(1);
-  Value tables = entry->getArgument(2);
-  Value box = entry->getArgument(3);
-  Value beta = entry->getArgument(4);
-  Value coulomb = entry->getArgument(5);
-  Value dispersion = entry->getArgument(6);
-  Value k1 = entry->getArgument(7);
-  Value k2 = entry->getArgument(8);
-  Value k3 = entry->getArgument(9);
-  Value c0 = arith::ConstantIndexOp::create(b, loc, 0);
-  Value c1 = arith::ConstantIndexOp::create(b, loc, 1);
-  Value zero = arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 0.0));
-  Value none = arith::ConstantOp::create(
-      b, loc, dense(VectorType::get({9}, f64Type), {0.0}));
-  Value yes = arith::ConstantOp::create(b, loc, b.getBoolAttr(true));
-  Value rows = arith::MulIOp::create(b, loc, k1, k2);
-  auto energyOp = scf::ParallelOp::create(
-      b, loc, ValueRange{c0}, ValueRange{rows}, ValueRange{c1},
-      ValueRange{zero, none},
-      [&](OpBuilder &b, Location, ValueRange ivs, ValueRange) {
-        Value r = ivs[0];
-        auto erCall = func::CallOp::create(
-            b, loc, "mdrt.pme_convolve_row_triclinic",
-            TypeRange{f64Type, VectorType::get({9}, f64Type)},
-            ValueRange{c, tables, moduli, box, beta, coulomb, dispersion, k1,
-                       k2, k3, r, yes});
-        Value er = erCall.getResult(0);
-        Value wr = erCall.getResult(1);
-        sumReductions({er, wr});
-      });
-  Value energy = energyOp.getResult(0);
-  Value virial = energyOp.getResult(1);
-  func::ReturnOp::create(b, loc, ValueRange{energy, virial});
-}
-
-// As pme_scale, in a triclinic cell.
-void HostPME::emitScaleTriclinic() {
-  OpBuilder::InsertionGuard guard(b);
-  auto fn =
-      declare("mdrt.pme_scale_triclinic",
-              b.getFunctionType(
-                  {MemRefType::get({ShapedType::kDynamic}, realType),
-                   MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
-                                   f64Type),
-                   MemRefType::get({ShapedType::kDynamic}, realType),
-                   VectorType::get({6}, f64Type), f64Type, f64Type, boolType,
-                   idxType, idxType, idxType},
-                  {}));
-  Block *entry = fn.addEntryBlock();
-  b.setInsertionPointToStart(entry);
-  Value c = entry->getArgument(0);
-  Value moduli = entry->getArgument(1);
-  Value tables = entry->getArgument(2);
-  Value box = entry->getArgument(3);
-  Value beta = entry->getArgument(4);
-  Value coulomb = entry->getArgument(5);
-  Value dispersion = entry->getArgument(6);
-  Value k1 = entry->getArgument(7);
-  Value k2 = entry->getArgument(8);
-  Value k3 = entry->getArgument(9);
-  Value c0 = arith::ConstantIndexOp::create(b, loc, 0);
-  Value c1 = arith::ConstantIndexOp::create(b, loc, 1);
-  Value no = arith::ConstantOp::create(b, loc, b.getBoolAttr(false));
-  Value rows = arith::MulIOp::create(b, loc, k1, k2);
-  scf::ParallelOp::create(
-      b, loc, ValueRange{c0}, ValueRange{rows}, ValueRange{c1},
-      [&](OpBuilder &b, Location, ValueRange ivs) {
-        Value r = ivs[0];
-        auto erCall = func::CallOp::create(
-            b, loc, "mdrt.pme_convolve_row_triclinic",
-            TypeRange{f64Type, VectorType::get({9}, f64Type)},
-            ValueRange{c, tables, moduli, box, beta, coulomb, dispersion, k1,
-                       k2, k3, r, no});
-        Value er = erCall.getResult(0);
-        Value wr = erCall.getResult(1);
-      });
-  func::ReturnOp::create(b, loc);
-}
+template void HostPME::emitConvolve<HostPME::Cell::Orthorhombic, true>();
+template void HostPME::emitConvolve<HostPME::Cell::Orthorhombic, false>();
+template void HostPME::emitConvolve<HostPME::Cell::Triclinic, true>();
+template void HostPME::emitConvolve<HostPME::Cell::Triclinic, false>();

@@ -5,12 +5,11 @@ using namespace mlir;
 using namespace mdir;
 using namespace mdir::kernels;
 
-template <Splitting splitting, bool tilted>
+template <Window window, Splitting splitting, bool tilted>
 void DevicePME::emitTables(StringRef symbol) {
-  StringRef blockFunction = splitting == Splitting::Radial
-                                ? "mdrt_gpu_pme_prolate_blocks"
-                            : tilted ? "mdrt_gpu_pme_blocks_triclinic"
-                                     : "mdrt_gpu_pme_blocks";
+  static_assert(!tilted || splitting != Splitting::P3M,
+                "P3M requires a rectangular cell");
+  StringRef blockFunction = blockSymbol<window, tilted>();
   OpBuilder::InsertionGuard functionGuard(b);
   SmallVector<Type> inputs;
   inputs.push_back(
@@ -101,9 +100,7 @@ void DevicePME::emitTables(StringRef symbol) {
   Value k12a = addi(k1, k2);
   Value entries = addi(k12a, k3);
   Value blocks_entries;
-  if constexpr (tilted || splitting == Splitting::Radial ||
-                splitting == Splitting::Dispersion ||
-                splitting == Splitting::Gaussian) {
+  if constexpr (splitting != Splitting::P3M) {
     blocks_entries =
         func::CallOp::create(b, loc, blockFunction, TypeRange{idxType},
                              ValueRange{entries})
@@ -118,9 +115,7 @@ void DevicePME::emitTables(StringRef symbol) {
   }
   {
     gpu::LaunchOp launch;
-    if constexpr (tilted || splitting == Splitting::Radial ||
-                  splitting == Splitting::Dispersion ||
-                  splitting == Splitting::Gaussian) {
+    if constexpr (splitting != Splitting::P3M) {
       launch =
           gpu::LaunchOp::create(b, loc, blocks_entries, c1, c1, c128, c1, c1);
     }
@@ -148,9 +143,7 @@ void DevicePME::emitTables(StringRef symbol) {
     Value base = muli(bx, c128);
     Value item;
     scf::IfOp insideBranch;
-    if constexpr (tilted || splitting == Splitting::Radial ||
-                  splitting == Splitting::Dispersion ||
-                  splitting == Splitting::Gaussian) {
+    if constexpr (splitting != Splitting::P3M) {
       item = addi(base, tx);
       Value inside = cmpi(arith::CmpIPredicate::ult, item, entries);
       insideBranch =
@@ -246,9 +239,7 @@ void DevicePME::emitTables(StringRef symbol) {
       OpBuilder::InsertionGuard guard(b);
       Value on_y;
       Value on_z;
-      if constexpr (tilted || splitting == Splitting::Radial ||
-                    splitting == Splitting::Dispersion ||
-                    splitting == Splitting::Gaussian) {
+      if constexpr (splitting != Splitting::P3M) {
         b.setInsertionPointToStart(insideBranch.thenBlock());
         c0t = arith::ConstantIndexOp::create(b, loc, 0);
         c1t = arith::ConstantIndexOp::create(b, loc, 1);
@@ -264,9 +255,7 @@ void DevicePME::emitTables(StringRef symbol) {
         kk = select(on_z, k3, kk0);
       }
       Value l;
-      if constexpr ((splitting == Splitting::Radial && !tilted) ||
-                    (splitting == Splitting::Dispersion && !tilted) ||
-                    (splitting == Splitting::Gaussian && !tilted)) {
+      if constexpr (!tilted && splitting != Splitting::P3M) {
         Value l0 = select(on_y, ily, ilx);
         l = select(on_z, ilz, l0);
       }
@@ -275,9 +264,7 @@ void DevicePME::emitTables(StringRef symbol) {
       }
       Value m;
       Value m2;
-      if constexpr (tilted || splitting == Splitting::Radial ||
-                    splitting == Splitting::Dispersion ||
-                    splitting == Splitting::Gaussian) {
+      if constexpr (splitting != Splitting::P3M) {
         k = subi(item, from);
         m = waveNumber64(k, kk, l, c2t);
         m2 = mulf(m, m);
@@ -289,9 +276,8 @@ void DevicePME::emitTables(StringRef symbol) {
         ex = math::ExpOp::create(b, loc, ngm);
       }
       Value mod;
-      if constexpr (tilted || splitting == Splitting::Radial ||
-                    splitting == Splitting::Dispersion ||
-                    splitting == Splitting::Gaussian) {
+      if constexpr (splitting != Splitting::P3M) {
+        // The window supplies its inverse squared transform on each axis.
         mod = load(moduli, {axis, k});
       }
       Value factor0;
@@ -328,9 +314,7 @@ void DevicePME::emitTables(StringRef symbol) {
       Value at2 = addi(at1, kk);
       Value mr;
       Value m2r;
-      if constexpr (tilted || splitting == Splitting::Radial ||
-                    splitting == Splitting::Dispersion ||
-                    splitting == Splitting::Gaussian) {
+      if constexpr (splitting != Splitting::P3M) {
         mr = convert(realType, m);
         m2r = convert(realType, m2);
       }
@@ -360,10 +344,19 @@ void DevicePME::emitTables(StringRef symbol) {
   func::ReturnOp::create(b, loc);
 }
 
-template void DevicePME::emitTables<Splitting::Gaussian, false>(StringRef);
-template void DevicePME::emitTables<Splitting::Dispersion, false>(StringRef);
-template void DevicePME::emitTables<Splitting::P3M, false>(StringRef);
-template void DevicePME::emitTables<Splitting::Gaussian, true>(StringRef);
-template void DevicePME::emitTables<Splitting::Dispersion, true>(StringRef);
-template void DevicePME::emitTables<Splitting::Radial, false>(StringRef);
-template void DevicePME::emitTables<Splitting::Radial, true>(StringRef);
+template void DevicePME::emitTables<Window::Spline, Splitting::Gaussian, false>(
+    StringRef);
+template void
+    DevicePME::emitTables<Window::Spline, Splitting::Dispersion, false>(
+        StringRef);
+template void
+    DevicePME::emitTables<Window::Spline, Splitting::P3M, false>(StringRef);
+template void
+    DevicePME::emitTables<Window::Spline, Splitting::Gaussian, true>(StringRef);
+template void
+    DevicePME::emitTables<Window::Spline, Splitting::Dispersion, true>(
+        StringRef);
+template void
+    DevicePME::emitTables<Window::Prolate, Splitting::Radial, false>(StringRef);
+template void
+    DevicePME::emitTables<Window::Prolate, Splitting::Radial, true>(StringRef);

@@ -47,12 +47,14 @@ void DevicePME::emitSplineStages(bool potential, bool listed, int64_t tiles) {
     emitSpreadBricks<false>(name("spread_bricks"));
     emitReal(name("real"));
   }
-  emitTables<Splitting::Gaussian, tilted>(name("tables"));
+  emitTables<Window::Spline, Splitting::Gaussian, tilted>(name("tables"));
   emitConvolve<Splitting::Gaussian, tilted>(name("convolve"));
-  emitScale<Splitting::Gaussian, tilted>(name("scale"));
-  emitTables<Splitting::Dispersion, tilted>(name("tables_dispersion"));
+  emitScale<Window::Spline, Splitting::Gaussian, tilted>(name("scale"));
+  emitTables<Window::Spline, Splitting::Dispersion, tilted>(
+      name("tables_dispersion"));
   emitConvolve<Splitting::Dispersion, tilted>(name("convolve_dispersion"));
-  emitScale<Splitting::Dispersion, tilted>(name("scale_dispersion"));
+  emitScale<Window::Spline, Splitting::Dispersion, tilted>(
+      name("scale_dispersion"));
   emitGather<tilted, false, false, false>(name("gather"));
   emitGather<tilted, false, false, true>(name("gather_weights"));
   if (potential)
@@ -67,7 +69,7 @@ void DevicePME::emitSplineStages(bool potential, bool listed, int64_t tiles) {
   }
   if constexpr (!tilted) {
     emitTiles<Window::Spline>(tiles, listed);
-    emitTables<Splitting::P3M, false>(name("tables_p3m"));
+    emitTables<Window::Spline, Splitting::P3M, false>(name("tables_p3m"));
     emitConvolve<Splitting::P3M, false>(name("convolve_p3m"));
   }
 }
@@ -86,13 +88,17 @@ void DevicePME::emitProlate(bool listed, int64_t tiles) {
   emitWarpGather<false, false, true>("mdrt_gpu_pme_prolate_potential");
   emitWarpGather<true, false, false>("mdrt_gpu_pme_prolate_gather_triclinic");
   emitWarpGather<true, false, true>("mdrt_gpu_pme_prolate_potential_triclinic");
-  emitTables<Splitting::Radial, false>("mdrt_gpu_pme_prolate_tables");
-  emitTables<Splitting::Radial, true>("mdrt_gpu_pme_prolate_tables_triclinic");
+  emitTables<Window::Prolate, Splitting::Radial, false>(
+      "mdrt_gpu_pme_prolate_tables");
+  emitTables<Window::Prolate, Splitting::Radial, true>(
+      "mdrt_gpu_pme_prolate_tables_triclinic");
   emitConvolve<Splitting::Radial, false>("mdrt_gpu_pme_prolate_convolve");
-  emitScale<Splitting::Radial, false>("mdrt_gpu_pme_prolate_scale");
+  emitScale<Window::Prolate, Splitting::Radial, false>(
+      "mdrt_gpu_pme_prolate_scale");
   emitConvolve<Splitting::Radial, true>(
       "mdrt_gpu_pme_prolate_convolve_triclinic");
-  emitScale<Splitting::Radial, true>("mdrt_gpu_pme_prolate_scale_triclinic");
+  emitScale<Window::Prolate, Splitting::Radial, true>(
+      "mdrt_gpu_pme_prolate_scale_triclinic");
   if (listed) {
     emitWarpSpread<true, false>("mdrt_gpu_pme_prolate_spread_bricks_listed");
     emitWarpSpread<true, true>("mdrt_gpu_pme_prolate_spread_fixed_listed");

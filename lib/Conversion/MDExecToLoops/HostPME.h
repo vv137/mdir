@@ -68,10 +68,7 @@ private:
   void emitPointSumsP3m();
   void emitConvolveRow();
   void emitConvolveRowTriclinic();
-  void emitConvolve();
-  void emitScale();
-  void emitConvolveTriclinic();
-  void emitScaleTriclinic();
+  template <Cell cell, bool observables> void emitConvolve();
   void emitGatherSums();
   void emitPotentialSum();
   void emitGatherOne();

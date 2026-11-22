@@ -5,12 +5,9 @@ using namespace mlir;
 using namespace mdir;
 using namespace mdir::kernels;
 
-template <Splitting splitting, bool tilted>
+template <Window window, Splitting splitting, bool tilted>
 void DevicePME::emitScale(StringRef symbol) {
-  StringRef blockFunction = splitting == Splitting::Radial
-                                ? "mdrt_gpu_pme_prolate_blocks"
-                            : tilted ? "mdrt_gpu_pme_blocks_triclinic"
-                                     : "mdrt_gpu_pme_blocks";
+  StringRef blockFunction = blockSymbol<window, tilted>();
   OpBuilder::InsertionGuard functionGuard(b);
   SmallVector<Type> inputs;
   inputs.push_back(globalMem({ShapedType::kDynamic}, realType));
@@ -245,9 +242,16 @@ void DevicePME::emitScale(StringRef symbol) {
   func::ReturnOp::create(b, loc);
 }
 
-template void DevicePME::emitScale<Splitting::Gaussian, false>(StringRef);
-template void DevicePME::emitScale<Splitting::Dispersion, false>(StringRef);
-template void DevicePME::emitScale<Splitting::Gaussian, true>(StringRef);
-template void DevicePME::emitScale<Splitting::Dispersion, true>(StringRef);
-template void DevicePME::emitScale<Splitting::Radial, false>(StringRef);
-template void DevicePME::emitScale<Splitting::Radial, true>(StringRef);
+template void
+    DevicePME::emitScale<Window::Spline, Splitting::Gaussian, false>(StringRef);
+template void
+    DevicePME::emitScale<Window::Spline, Splitting::Dispersion, false>(
+        StringRef);
+template void
+    DevicePME::emitScale<Window::Spline, Splitting::Gaussian, true>(StringRef);
+template void DevicePME::emitScale<Window::Spline, Splitting::Dispersion, true>(
+    StringRef);
+template void
+    DevicePME::emitScale<Window::Prolate, Splitting::Radial, false>(StringRef);
+template void
+    DevicePME::emitScale<Window::Prolate, Splitting::Radial, true>(StringRef);

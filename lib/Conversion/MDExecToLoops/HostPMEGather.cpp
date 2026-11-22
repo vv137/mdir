@@ -320,7 +320,6 @@ void HostPME::emitPotentialOne() {
   Block *entry = fn.addEntryBlock();
   b.setInsertionPointToStart(entry);
   Value x = entry->getArgument(0);
-  Value q = entry->getArgument(1);
   Value phi = entry->getArgument(2);
   Value box = entry->getArgument(3);
   Value k1 = entry->getArgument(4);
@@ -566,7 +565,6 @@ void HostPME::emitPotentialOneTriclinic() {
   Block *entry = fn.addEntryBlock();
   b.setInsertionPointToStart(entry);
   Value x = entry->getArgument(0);
-  Value q = entry->getArgument(1);
   Value phi = entry->getArgument(2);
   Value box = entry->getArgument(3);
   Value k1 = entry->getArgument(4);

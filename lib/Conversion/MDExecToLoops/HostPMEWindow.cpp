@@ -144,7 +144,7 @@ void HostPME::emitClenshaw() {
   Value count = entry->getArgument(3);
   Value t2 = entry->getArgument(4);
   Value t = entry->getArgument(5);
-  Value c0 = arith::ConstantIndexOp::create(b, loc, 0);
+  arith::ConstantIndexOp::create(b, loc, 0);
   Value c1 = arith::ConstantIndexOp::create(b, loc, 1);
   Value zero = arith::ConstantOp::create(b, loc, b.getFloatAttr(f64Type, 0.0));
   Value v = evaluateSeries(count, c1, t, t2, zero, [&](Value k) {

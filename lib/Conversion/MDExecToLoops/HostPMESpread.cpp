@@ -99,9 +99,9 @@ void HostPME::emitSpreadPoint() {
                     Value fixed =
                         arith::FPToSIOp::create(b, loc, i64Type, rounded);
                     Value at = arith::AddIOp::create(b, loc, base, g3);
-                    Value old = memref::AtomicRMWOp::create(
-                        b, loc, arith::AtomicRMWKind::addi, fixed, grid,
-                        ValueRange{at});
+                    memref::AtomicRMWOp::create(b, loc,
+                                                arith::AtomicRMWKind::addi,
+                                                fixed, grid, ValueRange{at});
                     scf::YieldOp::create(b, loc);
                   });
               scf::YieldOp::create(b, loc);
