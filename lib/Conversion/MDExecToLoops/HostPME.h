@@ -47,8 +47,8 @@ private:
   }
   enum class Cell { Orthorhombic, Triclinic };
   enum class ParticleStage { Spread, Gather, Potential };
-  template <ParticleStage stage>
-  void emitParticles(Cell cell, bool listed = false);
+  template <ParticleStage stage, Cell cell, bool listed = false>
+  void emitParticles();
   void emitRaise();
   void emitBspline();
   void emitWindow();

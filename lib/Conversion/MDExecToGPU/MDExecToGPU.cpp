@@ -48,7 +48,6 @@
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "mlir/Parser/Parser.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
@@ -62,15 +61,6 @@ using namespace mdir::kernels;
 
 #include <functional>
 #include <limits>
-
-namespace mdir {
-/// The text of the template of particle mesh Ewald on a device.
-extern const char *const pmeGPUTemplate;
-/// The text of its kernels for a triclinic cell.
-extern const char *const pmeGPUTriclinicTemplate;
-/// The text of its kernels for the prolate kernel (D266).
-extern const char *const pmeGPUProlateTemplate;
-} // namespace mdir
 
 static const char *const spatialOrderName = "mdrt_gpu_spatial_order";
 static const char *const cellWidthName = "mdrt_gpu_cell_width";
@@ -899,20 +889,20 @@ private:
   /// (emitSegmentsBuild), with the helpers that the module lacks.
   LogicalResult addSegmentsBuild(bool tilted, unsigned kinds);
   func::FuncOp getOrDeclare(StringRef name, FunctionType type);
-  /// Adds the template of particle mesh Ewald for these types, with
+  /// Emits the particle mesh Ewald stages for these types, with
   /// `tilted` the kernels of a triclinic cell as well, and with
   /// `potential` the kernel of the potential at the particles, and with
   /// `listed` the kernels of a list of the particles, and with `tiles` E
   /// the binning and the spreading into tiles of bins of E points
   /// (D282).
-  LogicalResult addPMETemplates(Type position, Type charge, Type force,
+  LogicalResult addPMEKernels(Type position, Type charge, Type force,
                                 int64_t order, bool tilted, bool potential,
                                 bool listed, int64_t tiles = 0);
   /// Adds the kernels of the prolate kernel (D266) for these
   /// types and points of the window, and with `listed` those of a list of
   /// the particles, and with `tiles` E the spreading into tiles of bins
   /// of E points (D282).
-  LogicalResult addProlateTemplates(Type position, Type charge, Type force,
+  LogicalResult addProlateKernels(Type position, Type charge, Type force,
                                     int64_t order, bool listed,
                                     int64_t tiles = 0);
   LogicalResult lowerReciprocal(md_exec::ReciprocalOp op);
@@ -5231,14 +5221,14 @@ static void unrollSmallLoops(Operation *root, int64_t limit) {
   }
 }
 
-LogicalResult Lowering::addPMETemplates(Type position, Type charge,
+LogicalResult Lowering::addPMEKernels(Type position, Type charge,
                                         Type force, int64_t order,
                                         bool tilted, bool potential,
                                         bool listed, int64_t tiles) {
   // A triclinic cell takes the kernels of its own as well, which only it
-  // parses and specializes (docs/triclinic.md); the spreading into
+  // emits (docs/triclinic.md); the spreading into
   // bricks, of its list too.
-  if (tilted && failed(addPMETemplates(position, charge, force, order,
+  if (tilted && failed(addPMEKernels(position, charge, force, order,
                                        /*tilted=*/false, /*potential=*/false,
                                        listed, tiles)))
     return failure();
@@ -5249,7 +5239,7 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
                                           order)) != nullptr;
   };
   // The functions of the tiles of an edge (D282), which do not
-  // depend on the cell: in PMEGPU.mlir alone.
+  // depend on the cell: shared by both cells.
   std::string edge = std::to_string(tiles);
   auto hasTiles = [&]() {
     if (!tiles)
@@ -5266,37 +5256,37 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
       (!potential || has("mdrt_gpu_pme_potential")) &&
       (!listed || has("mdrt_gpu_pme_spread_listed")) && hasTiles())
     return success();
-  OwningOpRef<ModuleOp> templates = ModuleOp::create(module.getLoc());
+  OwningOpRef<ModuleOp> stages = ModuleOp::create(module.getLoc());
   OpBuilder pmeBuilder(context);
-  kernels::DevicePME emitter(pmeBuilder, *templates, position, charge, force, order,
+  kernels::DevicePME emitter(pmeBuilder, *stages, position, charge, force, order,
                              launch.getGatherLanes(order));
   if (tilted)
-    emitter.emitTriclinic(potential, listed, tiles);
+    emitter.emitSplineStages<true>(potential, listed, tiles);
   else
-    emitter.emitOrthorhombic(potential, listed, tiles);
-  if (failed(kernels::instantiatePMESymbols(*templates, position, charge,
+    emitter.emitSplineStages<false>(potential, listed, tiles);
+  if (failed(kernels::instantiatePMESymbols(*stages, position, charge,
                                             force, order)))
     return failure();
-  // The accessors of the template (md_alg.wrap, md_alg.grid_read) are
+  // The periodic grid accessors (md_alg.wrap, md_alg.grid_read) are
   // lowered here, not by convert-md-alg-to-gpu: the unrolling and the
   // promotion below fold their arithmetic, and they have no order and no
   // collection for a later pass to transform (D408).
-  if (failed(kernels::lowerAlgToSIMT(*templates)))
+  if (failed(kernels::lowerAlgToSIMT(*stages)))
     return failure();
-  unrollSmallLoops(templates->getOperation(), /*limit=*/8);
+  unrollSmallLoops(stages->getOperation(), /*limit=*/8);
   // The arrays of the splines, indexed by constants now, become values.
   PassManager promote(context);
   promote.addPass(createSROA());
   promote.addPass(createMem2Reg());
   promote.addPass(createCanonicalizerPass());
-  if (failed(promote.run(*templates)))
+  if (failed(promote.run(*stages)))
     return module.emitError()
            << "cannot promote the splines of particle mesh Ewald to values";
   // The canonicalization hoists the constants of the kernels to their
   // functions, where the outlining would make them arguments: a division
   // by 32 became one by an argument, of 64 bits, at twice the time of the
   // spreading (2026-10-01). They go back into the kernels.
-  WalkResult sunk = templates->walk([](gpu::LaunchOp launch) {
+  WalkResult sunk = stages->walk([](gpu::LaunchOp launch) {
     return failed(sinkOperationsIntoLaunchOp(
                launch, [](Operation *op) {
                  return isa<arith::ConstantOp>(op);
@@ -5313,13 +5303,9 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   // (D262), only where a sum asks for them, so
   // that a module without one is what it was; they may come after the
   // others, for a sum of the same types that was lowered before.
-  for (Operation &op : llvm::make_early_inc_range(*templates)) {
+  for (Operation &op : llvm::make_early_inc_range(*stages)) {
     auto function = dyn_cast<func::FuncOp>(&op);
-    // By the attributes of the function (D377): the
-    // binning and the tiles of the edge that the sum takes, alone.
-    bool wanted = kernels::keepTemplateFunction(&op, potential, listed, tiles);
-    if (!wanted ||
-        (function && SymbolTable::lookupSymbolIn(module, function.getSymName()))) {
+    if (function && SymbolTable::lookupSymbolIn(module, function.getSymName())) {
       op.erase();
       continue;
     }
@@ -5329,7 +5315,7 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   return success();
 }
 
-LogicalResult Lowering::addProlateTemplates(Type position, Type charge,
+LogicalResult Lowering::addProlateKernels(Type position, Type charge,
                                             Type force, int64_t order,
                                             bool listed, int64_t tiles) {
   auto has = [&](StringRef name) {
@@ -5343,26 +5329,26 @@ LogicalResult Lowering::addProlateTemplates(Type position, Type charge,
       (!listed || has("mdrt_gpu_pme_prolate_gather_listed")) &&
       (!tiles || has("mdrt_gpu_pme_prolate_spread_tiles" + edge)))
     return success();
-  OwningOpRef<ModuleOp> templates = ModuleOp::create(module.getLoc());
+  OwningOpRef<ModuleOp> stages = ModuleOp::create(module.getLoc());
   OpBuilder pmeBuilder(context);
-  kernels::DevicePME emitter(pmeBuilder, *templates, position, charge, force, order,
+  kernels::DevicePME emitter(pmeBuilder, *stages, position, charge, force, order,
                              launch.getGatherLanes(order));
-  emitter.emitProlate(true, listed, tiles);
-  if (failed(kernels::instantiatePMESymbols(*templates, position, charge,
+  emitter.emitProlate(listed, tiles);
+  if (failed(kernels::instantiatePMESymbols(*stages, position, charge,
                                             force, order)))
     return failure();
-  // The accessors here, as addPMETemplates.
-  if (failed(kernels::lowerAlgToSIMT(*templates)))
+  // The accessors here, as addPMEKernels.
+  if (failed(kernels::lowerAlgToSIMT(*stages)))
     return failure();
-  // As addPMETemplates: the loops over the points unroll, and the
+  // As addPMEKernels: the loops over the points unroll, and the
   // constants go back into the kernels.
-  unrollSmallLoops(templates->getOperation(), /*limit=*/8);
+  unrollSmallLoops(stages->getOperation(), /*limit=*/8);
   PassManager promote(context);
   promote.addPass(createCanonicalizerPass());
-  if (failed(promote.run(*templates)))
+  if (failed(promote.run(*stages)))
     return module.emitError()
            << "cannot canonicalize the kernels of the prolate kernel";
-  WalkResult sunk = templates->walk([](gpu::LaunchOp launch) {
+  WalkResult sunk = stages->walk([](gpu::LaunchOp launch) {
     return failed(sinkOperationsIntoLaunchOp(
                launch, [](Operation *op) {
                  return isa<arith::ConstantOp>(op);
@@ -5375,16 +5361,10 @@ LogicalResult Lowering::addProlateTemplates(Type position, Type charge,
            << "cannot sink the constants of the prolate kernel into its "
               "kernels";
   // The kernels of a list of the particles (D262) only where a sum asks
-  // for them, as addPMETemplates.
-  for (Operation &op : llvm::make_early_inc_range(*templates)) {
+  // for them, as addPMEKernels.
+  for (Operation &op : llvm::make_early_inc_range(*stages)) {
     auto function = dyn_cast<func::FuncOp>(&op);
-    // By the attributes of the function (D377); the
-    // prolate template marks no function of the potential.
-    bool wanted = kernels::keepTemplateFunction(&op, /*potential=*/true,
-                                                listed, tiles);
-    if (!wanted ||
-        (function &&
-         SymbolTable::lookupSymbolIn(module, function.getSymName()))) {
+    if (function && SymbolTable::lookupSymbolIn(module, function.getSymName())) {
       op.erase();
       continue;
     }
@@ -5471,7 +5451,7 @@ static LogicalResult lowerProlate(
     return operands;
   };
   std::string spreadTag = listed ? "_listed" : "";
-  // Into tiles (D282): the bins of PMEGPU.mlir from the places,
+  // Into tiles (D282): the bins of the PME emitter from the places,
   // then the window into the tiles.
   if (int64_t tiles = getTileEdge(op)) {
     std::string edge = std::to_string(tiles);
@@ -5611,7 +5591,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     if (!bins)
       return op->emitOpError() << "has tiles but no buffer of the bins";
   }
-  if (failed(addPMETemplates(position, charge, force, op.getOrder(), tilted,
+  if (failed(addPMEKernels(position, charge, force, op.getOrder(), tilted,
                              op.getPotential(), static_cast<bool>(listed),
                              tiles)))
     return failure();
@@ -5671,7 +5651,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
         ValueRange());
   // The prolate kernel has kernels of its own (D266).
   if (op.getProlate()) {
-    if (failed(addProlateTemplates(position, charge, force, op.getOrder(),
+    if (failed(addProlateKernels(position, charge, force, op.getOrder(),
                                    static_cast<bool>(listed), tiles)))
       return failure();
     // A triclinic cell takes its own places, gathering, and influence;
@@ -5757,8 +5737,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                          ValueRange{fixed, real});
   } else if (usesWeights) {
     // The weights of the particles once, then the charges into bricks of
-    // the grid and the bricks into the grid (weights_kernels in
-    // scripts/generate-pme-gpu-template.py).
+    // the grid and the bricks into the grid (PMESpreadBricks.cpp).
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_weights"),
                          ValueRange{positions, box, weights, k1, k2, k3});
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread_bricks"),

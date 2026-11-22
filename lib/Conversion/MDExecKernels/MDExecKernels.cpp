@@ -2162,285 +2162,29 @@ std::string kernels::getPMEInstanceName(StringRef name, Type position,
   return (name + getPMESuffix(position, charge, force, order)).str();
 }
 
-std::string kernels::getPMETemplateHeader(Type position, Type charge,
-                                          Type force, int64_t order,
-                                          bool tiles) {
-  // The aliases of the types of the instance, which the text of a template
-  // of particle mesh Ewald uses and does not define
-  // (D374, #739): the types that the positions, the
-  // charges, and the forces are stored in; the type of the forces, in which
-  // the splines, the grid, and its transform are; and, on a device, a tile
-  // of the spreading of bins of E points (D282), of (E + P - 1)^3 points in
-  // the memory of the block.
-  auto spell = [](Type type) {
-    std::string text;
-    llvm::raw_string_ostream os(text);
-    type.print(os);
-    return text;
-  };
-  std::string header = "!pme_pos = " + spell(position) + "\n" +
-                       "!pme_chg = " + spell(charge) + "\n" +
-                       "!pme_frc = " + spell(force) + "\n" +
-                       "!pme_real = " + spell(force) + "\n";
-  if (tiles)
-    for (int64_t edge : {4, 8, 16}) {
-      int64_t length = edge + order - 1;
-      header += "!pme_tile_" + std::to_string(edge) + " = memref<" +
-                std::to_string(length * length * length) +
-                "x!pme_real, #gpu.address_space<workgroup>>\n";
-    }
-  return header;
-}
-
-bool kernels::keepTemplateFunction(Operation *op, bool potential,
-                                   bool listed, int64_t tiles) {
-  // What a function of a template is for, as its attributes state
-  // (D377, #739): the potential at the particles (D231),
-  // a list of the particles (D262), or the spreading through tiles of an
-  // edge, its binning included (D282). The attributes are removed from a
-  // function that is kept, so that the module holds no trace of them.
-  auto potentialMark = StringAttr::get(op->getContext(),
-                                       "mdir.template.potential");
-  auto listedMark = StringAttr::get(op->getContext(), "mdir.template.listed");
-  auto edgeMark = StringAttr::get(op->getContext(), "mdir.template.tile_edge");
-  bool keep = true;
-  if (op->hasAttr(potentialMark) && !potential)
-    keep = false;
-  if (op->hasAttr(listedMark) && !listed)
-    keep = false;
-  if (auto edge = op->getAttrOfType<IntegerAttr>(edgeMark))
-    keep = keep && tiles && edge.getInt() == tiles;
-  op->removeAttr(potentialMark);
-  op->removeAttr(listedMark);
-  op->removeAttr(edgeMark);
-  return keep;
-}
-
-LogicalResult kernels::instantiatePMESymbols(ModuleOp templates,
+LogicalResult kernels::instantiatePMESymbols(ModuleOp stages,
                                              Type position, Type charge,
                                              Type force, int64_t order) {
-  // The functions that the template defines take the suffix of the
-  // instance; declarations, those of the runtime (`@mdrtFFTPrepare`) and
-  // the parameters of the instance among them, keep their names. A transform of the host, `@mdir.template.fft.NAME`,
-  // becomes that of the runtime for a grid in the type of the forces,
-  // `@mdrtFFT64NAME` or `@mdrtFFT32NAME` (runtime/mdrt_fft.c)
-  // (D374, #739).
-  MLIRContext *context = templates.getContext();
+  // Only definitions take an instance suffix. FFT calls already use the
+  // runtime entry point selected by the host emitter for the grid type.
+  MLIRContext *context = stages.getContext();
   std::string suffix = getPMESuffix(position, charge, force, order);
-  constexpr StringLiteral fft = "mdir.template.fft.";
   SmallVector<std::pair<Operation *, std::string>> renamed;
-  for (Operation &op : templates.getOps()) {
+  for (Operation &op : stages.getOps()) {
     if (!isa<SymbolOpInterface>(&op))
       continue;
     StringRef name = SymbolTable::getSymbolName(&op).getValue();
     bool defined = op.getNumRegions() != 0 && !op.getRegion(0).empty();
     if (defined)
       renamed.push_back({&op, (name + suffix).str()});
-    else if (name.starts_with(fft))
-      renamed.push_back(
-          {&op, ((force.isF64() ? "mdrtFFT64" : "mdrtFFT32") +
-                 name.drop_front(fft.size()))
-                    .str()});
+
   }
   for (auto &[op, instance] : renamed) {
     auto name = StringAttr::get(context, instance);
-    if (failed(SymbolTable::replaceAllSymbolUses(op, name, templates)))
+    if (failed(SymbolTable::replaceAllSymbolUses(op, name, stages)))
       return op->emitError() << "cannot rename the uses of "
                              << SymbolTable::getSymbolName(op);
     SymbolTable::setSymbolName(op, name);
-  }
-  return success();
-}
-
-LogicalResult kernels::resolveTemplateConversions(Operation *root) {
-  // Each `mdrt.template_convert` of a template becomes the conversion that
-  // the types of its instance need (D370, #739): a
-  // cast of the bits between two of the same type, which changes nothing,
-  // and otherwise an extension or a truncation. Every op is checked before
-  // any is replaced, so that a module with an error is left as it was.
-  SmallVector<mdrt::TemplateConvertOp> conversions;
-  root->walk([&](mdrt::TemplateConvertOp op) { conversions.push_back(op); });
-  for (mdrt::TemplateConvertOp op : conversions) {
-    Type from = getElementTypeOrSelf(op.getIn().getType());
-    Type to = getElementTypeOrSelf(op.getOut().getType());
-    if (from != to &&
-        from.getIntOrFloatBitWidth() == to.getIntOrFloatBitWidth())
-      return op.emitOpError() << "converts between " << from << " and " << to
-                              << ", which are of the same width";
-  }
-  for (mdrt::TemplateConvertOp op : conversions) {
-    OpBuilder builder(op);
-    Value in = op.getIn();
-    Type type = op.getOut().getType();
-    unsigned from = getElementTypeOrSelf(in.getType()).getIntOrFloatBitWidth();
-    unsigned to = getElementTypeOrSelf(type).getIntOrFloatBitWidth();
-    Value out;
-    if (in.getType() == type)
-      out = arith::BitcastOp::create(builder, op.getLoc(), type, in);
-    else if (to > from)
-      out = arith::ExtFOp::create(builder, op.getLoc(), type, in);
-    else
-      out = arith::TruncFOp::create(builder, op.getLoc(), type, in);
-    op.getOut().replaceAllUsesWith(out);
-    op.erase();
-  }
-  return success();
-}
-
-LogicalResult kernels::resolveTemplateParameters(Operation *root, Type real,
-                                                 int64_t order, int64_t lanes) {
-  // The calls `@mdir.template.NAME.TYPE()` and `@mdir.template.NAME(...)`
-  // of the templates of particle mesh Ewald on a device, each replaced
-  // where it stands by what the instance takes for it
-  // (D369, #739). Every call is checked before any is
-  // replaced, so that a module with an error is left as it was.
-  constexpr StringLiteral prefix = "mdir.template.";
-  MLIRContext *context = root->getContext();
-  bool wide = real.isF64();
-  int64_t bytes = wide ? 8 : 4;
-  SmallVector<func::CallOp> calls;
-  root->walk([&](func::CallOp call) {
-    if (call.getCallee().starts_with(prefix))
-      calls.push_back(call);
-  });
-  // The edge E of a name `NAME_E`, or 0.
-  auto edgeOf = [](StringRef name, StringRef stem) -> int64_t {
-    int64_t edge = 0;
-    if (!name.consume_front(stem) || name.getAsInteger(10, edge))
-      return 0;
-    return edge;
-  };
-  for (func::CallOp call : calls) {
-    StringRef name =
-        call.getCallee().drop_front(prefix.size()).split('.').first;
-    bool constant = name == "order" || name == "lanes" ||
-                    name == "real_bytes" || edgeOf(name, "tile_side_") ||
-                    edgeOf(name, "tile_points_");
-    if (constant) {
-      if (call.getNumOperands() != 0 || call.getNumResults() != 1 ||
-          !call.getResult(0).getType().isIntOrIndex())
-        return call.emitOpError()
-               << "takes the parameter '" << name
-               << "' of the template, which is an integer of no operands";
-      continue;
-    }
-    if (name == "global_add") {
-      if (call.getNumOperands() != 2 || call.getNumResults() != 0 ||
-          !isa<LLVM::LLVMPointerType>(call.getOperand(0).getType()) ||
-          call.getOperand(1).getType() != real)
-        return call.emitOpError()
-               << "adds to global memory with operands other than a "
-                  "pointer and a value of "
-               << real;
-      continue;
-    }
-    if (edgeOf(name, "shared_add_")) {
-      auto tile = dyn_cast<MemRefType>(call.getOperand(0).getType());
-      if (call.getNumOperands() != 3 || call.getNumResults() != 0 || !tile ||
-          tile.getElementType() != real ||
-          !call.getOperand(1).getType().isIndex() ||
-          call.getOperand(2).getType() != real)
-        return call.emitOpError()
-               << "adds to a tile with operands other than the tile of "
-               << real << ", an index, and a value";
-      continue;
-    }
-    return call.emitOpError()
-           << "calls an unknown parameter of the template '" << name << "'";
-  }
-  for (func::CallOp call : calls) {
-    OpBuilder builder(call);
-    Location loc = call.getLoc();
-    StringRef name =
-        call.getCallee().drop_front(prefix.size()).split('.').first;
-    if (call.getNumResults() == 1) {
-      // The order of the splines, the threads of a particle in the gather
-      // (`lanes`, from the launch policy: the least power of 2 not below
-      // the order up to 8, so that they are aligned within a warp), the
-      // bytes of a value of the type of the forces, and
-      // the points of a side, E + P - 1, and of a tile, (E + P - 1)^3, of
-      // the spreading of bins of E points (D282).
-      int64_t value = 0;
-      if (name == "order")
-        value = order;
-      else if (name == "lanes")
-        value = lanes;
-      else if (name == "real_bytes")
-        value = bytes;
-      else if (int64_t edge = edgeOf(name, "tile_side_"))
-        value = edge + order - 1;
-      else if (int64_t edge = edgeOf(name, "tile_points_"))
-        value = (edge + order - 1) * (edge + order - 1) * (edge + order - 1);
-      Type type = call.getResult(0).getType();
-      Value result = arith::ConstantOp::create(
-          builder, loc, builder.getIntegerAttr(type, value));
-      call.getResult(0).replaceAllUsesWith(result);
-    } else if (name == "global_add") {
-      // An atomic addition to global memory at the scope of the device,
-      // with no result. The NVPTX backend of LLVM expands `atomicrmw fadd`
-      // of f32 into a loop of compare-and-swap, at four times the time of
-      // PTX's own reduction on an RTX 3090, so f32 takes that (NVIDIA only,
-      // as the template is); f64 is native.
-      Value pointer = call.getOperand(0), value = call.getOperand(1);
-      if (wide)
-        LLVM::AtomicRMWOp::create(builder, loc, LLVM::AtomicBinOp::fadd,
-                                  pointer, value,
-                                  LLVM::AtomicOrdering::monotonic, "device");
-      else
-        LLVM::InlineAsmOp::create(
-            builder, loc, TypeRange(), ValueRange{pointer, value},
-            "red.relaxed.gpu.global.add.f32 [$0], $1;", "l,f",
-            /*has_side_effects=*/true, /*is_align_stack=*/false,
-            LLVM::tailcallkind::TailCallKind::None,
-            /*asm_dialect=*/LLVM::AsmDialectAttr(),
-            /*operand_attrs=*/ArrayAttr());
-    } else {
-      // A relaxed atomic addition to a tile in the memory of the block, at
-      // the scope of the block, native for f32 and f64
-      // (`atom.relaxed.cta.shared.add`): `memref.atomic_rmw` is acq_rel at
-      // the scope of the system.
-      Value tile = call.getOperand(0), at = call.getOperand(1),
-            value = call.getOperand(2);
-      Value base =
-          memref::ExtractAlignedPointerAsIndexOp::create(builder, loc, tile);
-      Value size = arith::ConstantOp::create(builder, loc,
-                                             builder.getIndexAttr(bytes));
-      Value offset = arith::MulIOp::create(builder, loc, at, size);
-      Value address = arith::AddIOp::create(builder, loc, base, offset);
-      Value integer = arith::IndexCastOp::create(
-          builder, loc, builder.getI64Type(), address);
-      Value pointer = LLVM::IntToPtrOp::create(
-          builder, loc, LLVM::LLVMPointerType::get(context, 3), integer);
-      LLVM::AtomicRMWOp::create(builder, loc, LLVM::AtomicBinOp::fadd,
-                                pointer, value,
-                                LLVM::AtomicOrdering::monotonic, "block");
-    }
-    call.erase();
-  }
-  // The alignment of a load or a store of a value of the type of the forces:
-  // its bytes.
-  auto alignment = StringAttr::get(context, "mdir.template.real_alignment");
-  root->walk([&](Operation *op) {
-    if (!op->hasAttr(alignment))
-      return;
-    op->removeAttr(alignment);
-    if (auto load = dyn_cast<LLVM::LoadOp>(op))
-      load.setAlignment(bytes);
-    else if (auto store = dyn_cast<LLVM::StoreOp>(op))
-      store.setAlignment(bytes);
-  });
-  // The declarations, now that nothing calls them.
-  SmallVector<func::FuncOp> declarations;
-  root->walk([&](func::FuncOp function) {
-    if (function.getSymName().starts_with(prefix))
-      declarations.push_back(function);
-  });
-  for (func::FuncOp function : declarations) {
-    if (!function.isDeclaration())
-      return function.emitOpError()
-             << "defines a parameter of the template, which the instance "
-                "gives";
-    function.erase();
   }
   return success();
 }

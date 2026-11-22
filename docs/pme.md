@@ -374,8 +374,8 @@ types from the reciprocal sum (D[pme-emitters]). They build the constants,
 precision conversions and atomic additions where each stage uses them.
 The tile has $(E+P-1)^3$ points in block memory. The lowering requests
 listed kernels, the potential gather, and the kernels for a particular tile
-edge according to the sum. The symbol table supplies the instance suffix
-and selects the host FFT runtime entry points for the force precision.
+edge according to the sum. The symbol table supplies the instance suffix. The host emitter selects
+the FFT runtime entry points for the force precision.
 
 The device lowering unrolls the loops over the order and promotes the
 B-spline arrays to values

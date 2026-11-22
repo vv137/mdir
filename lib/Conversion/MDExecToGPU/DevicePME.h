@@ -23,11 +23,12 @@ public:
       : PMECode(builder, position, charge, force), order(order), lanes(lanes) {
     b.setInsertionPointToEnd(module.getBody());
   }
-  void emitOrthorhombic(bool potential, bool listed, int64_t tiles);
-  void emitTriclinic(bool potential, bool listed, int64_t tiles);
-  void emitProlate(bool potential, bool listed, int64_t tiles);
+  template <bool tilted>
+  void emitSplineStages(bool potential, bool listed, int64_t tiles);
+  void emitProlate(bool listed, int64_t tiles);
 
 private:
+  template <Window window> void emitTiles(int64_t tiles, bool listed);
   int64_t order, lanes;
   int64_t realBytes = realType.getIntOrFloatBitWidth() / 8;
   Type tokenType = gpu::AsyncTokenType::get(b.getContext());

@@ -16,6 +16,7 @@ template <bool forward> void emitTransform(ModuleOp module) {
   b.setInsertionPointToStart(entry);
   Location loc = fn.getLoc();
   Value src = entry->getArgument(0), dst = entry->getArgument(1);
+  Type grid = cast<MemRefType>(src.getType()).getElementType();
   Value spectrum = forward ? dst : src;
   Value planes = entry->getArgument(2);
   Type i64 = b.getI64Type();
@@ -35,11 +36,11 @@ template <bool forward> void emitTransform(ModuleOp module) {
           Value plane = arith::IndexCastOp::create(body, loc, i64, iv[0]);
           Value first = arith::MulIOp::create(body, loc, plane, ny);
           Value last = arith::AddIOp::create(body, loc, first, ny);
-          func::CallOp::create(body, loc,
-                               forward ? "mdir.template.fft.RowsForward"
-                                       : "mdir.template.fft.RowsBackward",
-                               TypeRange{},
-                               ValueRange{src, dst, nz, first, last});
+          func::CallOp::create(
+              body, loc,
+              mdir::kernels::hostFFTName(grid, forward ? "RowsForward"
+                                                       : "RowsBackward"),
+              TypeRange{}, ValueRange{src, dst, nz, first, last});
         });
   };
   auto columns = [&](Value outer, Value axis) {
@@ -52,7 +53,8 @@ template <bool forward> void emitTransform(ModuleOp module) {
         [&](OpBuilder &body, Location, ValueRange iv) {
           Value first = arith::IndexCastOp::create(body, loc, i64, iv[0]);
           Value last = arith::AddIOp::create(body, loc, first, one);
-          func::CallOp::create(body, loc, "mdir.template.fft.Columns",
+          func::CallOp::create(body, loc,
+                               mdir::kernels::hostFFTName(grid, "Columns"),
                                TypeRange{},
                                ValueRange{spectrum, nx, ny, nz, axis,
                                           forward ? one : zero, first, last});

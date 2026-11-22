@@ -361,54 +361,11 @@ mlir::LogicalResult instantiateTemplates(mlir::ModuleOp templates,
                                          mlir::Type real);
 std::string getInstanceName(llvm::StringRef name, mlir::Type real);
 
-/// The header of the text of a template of particle mesh Ewald for
-/// positions, charges, and forces stored as `position`, `charge`, and
-/// `force` and splines of the order `order`: the aliases `!pme_pos`,
-/// `!pme_chg`, `!pme_frc`, and `!pme_real` (the type of the forces), and,
-/// with `tiles`, `!pme_tile_E`, a tile of the spreading of bins of E points
-/// in the memory of the block (D374, #739). The
-/// template is parsed with this header above its text.
-std::string getPMETemplateHeader(mlir::Type position, mlir::Type charge,
-                                 mlir::Type force, int64_t order,
-                                 bool tiles);
-/// Whether a sum keeps the function `op` of a template of particle mesh
-/// Ewald, by the attributes that state what it is for
-/// (D377, #739): `mdir.template.potential` only where the
-/// sum asks for the potential at the particles, `mdir.template.listed` only
-/// where it has a list of the particles, and `mdir.template.tile_edge = E`
-/// only where it spreads through tiles of the edge E (`tiles`, 0 for
-/// none). Removes those attributes from `op`.
-bool keepTemplateFunction(mlir::Operation *op, bool potential, bool listed,
-                          int64_t tiles);
-/// Names the functions of the parsed templates `templates` of particle mesh
-/// Ewald for an instance: those that they define take the suffix of
-/// `getPMESuffix`, through the symbol table, and the transforms of the host,
-/// `@mdir.template.fft.NAME`, those of the runtime for the type of the
-/// forces. The other parameters of the instance are resolved in IR as well
-/// (resolveTemplateParameters, resolveTemplateConversions).
-mlir::LogicalResult instantiatePMESymbols(mlir::ModuleOp templates,
+/// Give the emitted PME functions their precision and order suffix.
+mlir::LogicalResult instantiatePMESymbols(mlir::ModuleOp stages,
                                           mlir::Type position,
                                           mlir::Type charge, mlir::Type force,
                                           int64_t order);
-/// Replaces, in `root`, each `mdrt.template_convert` of a template with the
-/// conversion that the types of its instance need: `arith.bitcast` between
-/// two of the same type, `arith.extf` to a wider one, and `arith.truncf` to
-/// a narrower one (D370, #739).
-mlir::LogicalResult resolveTemplateConversions(mlir::Operation *root);
-
-/// Resolves, in `root`, the parameters of the instance that the templates of
-/// particle mesh Ewald on a device call (D369, #739):
-/// `@mdir.template.order`, `lanes`, `real_bytes`, `tile_side_E`, and
-/// `tile_points_E` become constants; `@mdir.template.global_add` and
-/// `shared_add_E` the atomic additions of a value of `real`, the type of the
-/// forces, to global memory and to a tile in the memory of the block; and a
-/// load or a store marked `mdir.template.real_alignment` takes the bytes of
-/// `real` as its alignment. The declarations are removed. `lanes` is the
-/// threads of a particle in the gathering, from the launch policy
-/// (`LaunchPolicy::getGatherLanes`, DevicePolicy.h).
-mlir::LogicalResult resolveTemplateParameters(mlir::Operation *root,
-                                              mlir::Type real, int64_t order,
-                                              int64_t lanes);
 std::string getPMEInstanceName(llvm::StringRef name, mlir::Type position,
                                mlir::Type charge, mlir::Type force,
                                int64_t order);

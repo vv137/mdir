@@ -5,6 +5,9 @@
 #include "mlir/IR/BuiltinOps.h"
 
 namespace mdir::kernels {
-void emitHostPMEFFTs(mlir::ModuleOp module);
+inline std::string hostFFTName(mlir::Type grid, llvm::StringRef transform) {
+  return ((grid.isF64() ? "mdrtFFT64" : "mdrtFFT32") + transform).str();
 }
+void emitHostPMEFFTs(mlir::ModuleOp module);
+} // namespace mdir::kernels
 #endif
