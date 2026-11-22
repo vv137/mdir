@@ -200,6 +200,15 @@ void DevicePME::emitGather(StringRef symbol) {
     Value dx = memref::AllocaOp::create(b, loc, MemRefType::get({8}, realType));
     Value dy = memref::AllocaOp::create(b, loc, MemRefType::get({8}, realType));
     Value dz = memref::AllocaOp::create(b, loc, MemRefType::get({8}, realType));
+    const bool cubicForce = order == 4 && !potentialOnly;
+    std::array<Value, 4> cubicX, cubicY, cubicZ, slopeX, slopeY, slopeZ;
+    auto prepareAxis = [&](Value fraction, Value weights, Value slopes,
+                           std::array<Value, 4> &w, std::array<Value, 4> &dw) {
+      if (cubicForce)
+        w = cubicWeights(fraction, &dw);
+      else
+        splineWeights(fraction, pointCount, weights, slopes);
+    };
     Value xs;
     Value ys;
     Value zs;
@@ -233,7 +242,7 @@ void DevicePME::emitGather(StringRef symbol) {
     if constexpr (!cachedWeights) {
       px_start = xPlacement.first;
       Value px_w = xPlacement.second;
-      splineWeights(px_w, pointCount, wx, dx);
+      prepareAxis(px_w, wx, dx, cubicX, slopeX);
     }
     std::pair<Value, Value> yPlacement;
     if constexpr (!tilted && !cachedWeights) {
@@ -246,7 +255,7 @@ void DevicePME::emitGather(StringRef symbol) {
     if constexpr (!cachedWeights) {
       py_start = yPlacement.first;
       Value py_w = yPlacement.second;
-      splineWeights(py_w, pointCount, wy, dy);
+      prepareAxis(py_w, wy, dy, cubicY, slopeY);
     }
     std::pair<Value, Value> zPlacement;
     if constexpr (!tilted && !cachedWeights) {
@@ -259,7 +268,7 @@ void DevicePME::emitGather(StringRef symbol) {
     if constexpr (!cachedWeights) {
       pz_start = zPlacement.first;
       Value pz_w = zPlacement.second;
-      splineWeights(pz_w, pointCount, wz, dz);
+      prepareAxis(pz_w, wz, dz, cubicZ, slopeZ);
     }
     Value xstart;
     Value ystart;
@@ -274,7 +283,7 @@ void DevicePME::emitGather(StringRef symbol) {
       Value xfn = muli(count, xfc);
       Value xfat = addi(xfn, i);
       Value xfrac = load(weights, {xfat});
-      splineWeights(xfrac, pointCount, wx, dx);
+      prepareAxis(xfrac, wx, dx, cubicX, slopeX);
       Value ysc = arith::ConstantIndexOp::create(b, loc, 1);
       Value ysn = muli(count, ysc);
       Value ysat = addi(ysn, i);
@@ -284,7 +293,7 @@ void DevicePME::emitGather(StringRef symbol) {
       Value yfn = muli(count, yfc);
       Value yfat = addi(yfn, i);
       Value yfrac = load(weights, {yfat});
-      splineWeights(yfrac, pointCount, wy, dy);
+      prepareAxis(yfrac, wy, dy, cubicY, slopeY);
       Value zsc = arith::ConstantIndexOp::create(b, loc, 2);
       Value zsn = muli(count, zsc);
       Value zsat = addi(zsn, i);
@@ -294,10 +303,12 @@ void DevicePME::emitGather(StringRef symbol) {
       Value zfn = muli(count, zfc);
       Value zfat = addi(zfn, i);
       Value zfrac = load(weights, {zfat});
-      splineWeights(zfrac, pointCount, wz, dz);
+      prepareAxis(zfrac, wz, dz, cubicZ, slopeZ);
     }
-    Value w3p_value = pickSpline(wz, j3, pointCount);
-    Value d3p_value = pickSpline(dz, j3, pointCount);
+    Value w3p_value =
+        cubicForce ? cubicLane(cubicZ, j3) : pickSpline(wz, j3, pointCount);
+    Value d3p_value =
+        cubicForce ? cubicLane(slopeZ, j3) : pickSpline(dz, j3, pointCount);
     Value gzero =
         arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 0.0));
     Value j0 = arith::ConstantIndexOp::create(b, loc, 0);
@@ -316,96 +327,130 @@ void DevicePME::emitGather(StringRef symbol) {
       Value j3t = indexCast(i32Type, j3);
       g3 = md_alg::WrapOp::create(b, loc, zstart, j3t, k3t, false);
     }
-    auto sumxOp = scf::ForOp::create(
-        b, loc, j0, pointCount, j1c, ValueRange{gzero, gzero, gzero},
-        [&](OpBuilder &b, Location, Value j1, ValueRange carried) {
-          Value ax = carried[0];
-          Value ay = carried[1];
-          Value az = carried[2];
-          Value g1s;
-          Value g1w;
-          Value g1over;
-          if constexpr (!cachedWeights) {
-            g1s = addi(px_start, j1);
-            g1w = subi(g1s, k1);
-            g1over = cmpi(arith::CmpIPredicate::uge, g1s, k1);
-          }
-          if constexpr (cachedWeights) {
-            Value j1t = indexCast(i32Type, j1);
-            g1s = addi(xstart, j1t);
-            g1w = subi(g1s, k1t);
-            g1over = cmpi(arith::CmpIPredicate::uge, g1s, k1t);
-          }
-          Value g1 = select(g1over, g1w, g1s);
-          Value row1;
-          if constexpr (cachedWeights) {
-            row1 = muli(g1, k2t);
-          }
-          Value w1 = load(wx, {j1});
-          Value d1 = load(dx, {j1});
-          auto bx2Op = scf::ForOp::create(
-              b, loc, j0, pointCount, j1c, ValueRange{ax, ay, az},
-              [&](OpBuilder &b, Location, Value j2, ValueRange carried) {
-                Value cx = carried[0];
-                Value cy = carried[1];
-                Value cz = carried[2];
-                Value g2s;
-                Value g2w;
-                Value g2over;
-                if constexpr (!cachedWeights) {
-                  g2s = addi(py_start, j2);
-                  g2w = subi(g2s, k2);
-                  g2over = cmpi(arith::CmpIPredicate::uge, g2s, k2);
-                }
-                if constexpr (cachedWeights) {
-                  Value j2t = indexCast(i32Type, j2);
-                  g2s = addi(ystart, j2t);
-                  g2w = subi(g2s, k2t);
-                  g2over = cmpi(arith::CmpIPredicate::uge, g2s, k2t);
-                }
-                Value g2 = select(g2over, g2w, g2s);
-                Value w2 = load(wy, {j2});
-                Value d2 = load(dy, {j2});
-                if constexpr (!cachedWeights) {
-                  row1 = muli(g1, k2);
-                }
-                Value row = addi(row1, g2);
-                Value gbase;
-                if constexpr (!cachedWeights) {
-                  gbase = muli(row, k3);
-                }
-                if constexpr (cachedWeights) {
-                  gbase = muli(row, k3t);
-                }
-                Value p =
-                    md_alg::GridReadOp::create(b, loc, phi, gbase, g3, Value{});
-                Value d1w2 = mulf(d1, w2);
-                Value w1d2 = mulf(w1, d2);
-                Value w1w2 = mulf(w1, w2);
-                Value px;
-                if constexpr (!potentialOnly) {
-                  px = mulf(d1w2, w3p_value);
-                } else {
-                  px = mulf(w1w2, w3p_value);
-                }
-                Value py = mulf(w1d2, w3p_value);
-                Value pz = mulf(w1w2, d3p_value);
-                Value vx = mulf(p, px);
-                Value vy = mulf(p, py);
-                Value vz = mulf(p, pz);
-                Value nx = addf(cx, vx);
-                Value ny = addf(cy, vy);
-                Value nz = addf(cz, vz);
-                scf::YieldOp::create(b, loc, ValueRange{nx, ny, nz});
-              });
-          Value bx2 = bx2Op.getResult(0);
-          Value by2 = bx2Op.getResult(1);
-          Value bz2 = bx2Op.getResult(2);
-          scf::YieldOp::create(b, loc, ValueRange{bx2, by2, bz2});
-        });
-    Value sumx = sumxOp.getResult(0);
-    Value sumy = sumxOp.getResult(1);
-    Value sumz = sumxOp.getResult(2);
+    Value sumx, sumy, sumz;
+    if (cubicForce) {
+      // Keep one z plane per lane. Contract y first so the three derivatives
+      // share each row of potential samples.
+      auto wrapped = [&](Value start, int offset, Value size) {
+        Value j = arith::ConstantOp::create(
+            b, loc, b.getIntegerAttr(size.getType(), offset));
+        return md_alg::WrapOp::create(b, loc, start, j, size, false).getResult();
+      };
+      Value nx = cachedWeights ? k1t : k1;
+      Value ny = cachedWeights ? k2t : k2;
+      Value nz = cachedWeights ? k3t : k3;
+      Value sx = cachedWeights ? xstart : px_start;
+      Value sy = cachedWeights ? ystart : py_start;
+      Value dxPlane = gzero, dyPlane = gzero, plane = gzero;
+      for (int xj = 0; xj < 4; ++xj) {
+        Value xrow = muli(wrapped(sx, xj, nx), ny);
+        Value row = gzero, dyRow = gzero;
+        for (int yj = 0; yj < 4; ++yj) {
+          Value base = muli(addi(xrow, wrapped(sy, yj, ny)), nz);
+          Value sample =
+              md_alg::GridReadOp::create(b, loc, phi, base, g3, Value{});
+          row = addf(row, mulf(cubicY[yj], sample));
+          dyRow = addf(dyRow, mulf(slopeY[yj], sample));
+        }
+        dxPlane = addf(dxPlane, mulf(slopeX[xj], row));
+        dyPlane = addf(dyPlane, mulf(cubicX[xj], dyRow));
+        plane = addf(plane, mulf(cubicX[xj], row));
+      }
+      sumx = mulf(dxPlane, w3p_value);
+      sumy = mulf(dyPlane, w3p_value);
+      sumz = mulf(plane, d3p_value);
+    } else {
+      auto sumxOp = scf::ForOp::create(
+          b, loc, j0, pointCount, j1c, ValueRange{gzero, gzero, gzero},
+          [&](OpBuilder &b, Location, Value j1, ValueRange carried) {
+            Value ax = carried[0];
+            Value ay = carried[1];
+            Value az = carried[2];
+            Value g1s;
+            Value g1w;
+            Value g1over;
+            if constexpr (!cachedWeights) {
+              g1s = addi(px_start, j1);
+              g1w = subi(g1s, k1);
+              g1over = cmpi(arith::CmpIPredicate::uge, g1s, k1);
+            }
+            if constexpr (cachedWeights) {
+              Value j1t = indexCast(i32Type, j1);
+              g1s = addi(xstart, j1t);
+              g1w = subi(g1s, k1t);
+              g1over = cmpi(arith::CmpIPredicate::uge, g1s, k1t);
+            }
+            Value g1 = select(g1over, g1w, g1s);
+            Value row1;
+            if constexpr (cachedWeights) {
+              row1 = muli(g1, k2t);
+            }
+            Value w1 = load(wx, {j1});
+            Value d1 = load(dx, {j1});
+            auto bx2Op = scf::ForOp::create(
+                b, loc, j0, pointCount, j1c, ValueRange{ax, ay, az},
+                [&](OpBuilder &b, Location, Value j2, ValueRange carried) {
+                  Value cx = carried[0];
+                  Value cy = carried[1];
+                  Value cz = carried[2];
+                  Value g2s;
+                  Value g2w;
+                  Value g2over;
+                  if constexpr (!cachedWeights) {
+                    g2s = addi(py_start, j2);
+                    g2w = subi(g2s, k2);
+                    g2over = cmpi(arith::CmpIPredicate::uge, g2s, k2);
+                  }
+                  if constexpr (cachedWeights) {
+                    Value j2t = indexCast(i32Type, j2);
+                    g2s = addi(ystart, j2t);
+                    g2w = subi(g2s, k2t);
+                    g2over = cmpi(arith::CmpIPredicate::uge, g2s, k2t);
+                  }
+                  Value g2 = select(g2over, g2w, g2s);
+                  Value w2 = load(wy, {j2});
+                  Value d2 = load(dy, {j2});
+                  if constexpr (!cachedWeights) {
+                    row1 = muli(g1, k2);
+                  }
+                  Value row = addi(row1, g2);
+                  Value gbase;
+                  if constexpr (!cachedWeights) {
+                    gbase = muli(row, k3);
+                  }
+                  if constexpr (cachedWeights) {
+                    gbase = muli(row, k3t);
+                  }
+                  Value p =
+                      md_alg::GridReadOp::create(b, loc, phi, gbase, g3, Value{});
+                  Value d1w2 = mulf(d1, w2);
+                  Value w1d2 = mulf(w1, d2);
+                  Value w1w2 = mulf(w1, w2);
+                  Value px;
+                  if constexpr (!potentialOnly) {
+                    px = mulf(d1w2, w3p_value);
+                  } else {
+                    px = mulf(w1w2, w3p_value);
+                  }
+                  Value py = mulf(w1d2, w3p_value);
+                  Value pz = mulf(w1w2, d3p_value);
+                  Value vx = mulf(p, px);
+                  Value vy = mulf(p, py);
+                  Value vz = mulf(p, pz);
+                  Value nx = addf(cx, vx);
+                  Value ny = addf(cy, vy);
+                  Value nz = addf(cz, vz);
+                  scf::YieldOp::create(b, loc, ValueRange{nx, ny, nz});
+                });
+            Value bx2 = bx2Op.getResult(0);
+            Value by2 = bx2Op.getResult(1);
+            Value bz2 = bx2Op.getResult(2);
+            scf::YieldOp::create(b, loc, ValueRange{bx2, by2, bz2});
+          });
+      sumx = sumxOp.getResult(0);
+      sumy = sumxOp.getResult(1);
+      sumz = sumxOp.getResult(2);
+    }
     Value width =
         arith::ConstantOp::create(b, loc, b.getIntegerAttr(i32Type, 32));
     Value one32 =

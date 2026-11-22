@@ -33,3 +33,9 @@ func.func @tiled_gather(%n: index, %k: index, %cell: !md.cell) {
       : !pos, !chg, !mod -> f64, vector<9xf64>
   return
 }
+
+// Each z lane reads its 4 x 4 plane once for all three derivatives.
+// CHECK-LABEL: func.func private @mdrt_gpu_pme_gather_weights_p32c32f32o4(
+// CHECK-COUNT-16: memref.load %arg2[
+// CHECK-NOT: memref.load %arg2[
+// CHECK: gpu.shuffle xor

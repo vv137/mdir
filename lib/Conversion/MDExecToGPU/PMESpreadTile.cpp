@@ -201,50 +201,15 @@ void DevicePME::emitSpreadTile(StringRef symbol) {
                   Value frac = load(staged, {fk});
                   Value spline;
                   if constexpr (window == Window::Spline) {
-                    Value pointCount = arith::ConstantOp::create(
-                        b, loc, b.getIntegerAttr(idxType, order));
-                    Value c4o = arith::ConstantIndexOp::create(b, loc, 4);
-                    Value closed =
-                        cmpi(arith::CmpIPredicate::eq, pointCount, c4o);
-                    Value splines = memref::AllocaOp::create(
-                        b, loc, MemRefType::get({8}, realType));
-                    splineWeights(frac, pointCount, splines);
-                    Value tp_value = pickSpline(splines, j_l, pointCount);
-                    Value w_sixth = arith::ConstantOp::create(
-                        b, loc, b.getFloatAttr(realType, 0.16666666666666666));
-                    Value w_one = arith::ConstantOp::create(
-                        b, loc, b.getFloatAttr(realType, 1.0));
-                    Value w_three = arith::ConstantOp::create(
-                        b, loc, b.getFloatAttr(realType, 3.0));
-                    Value w_four = arith::ConstantOp::create(
-                        b, loc, b.getFloatAttr(realType, 4.0));
-                    Value w_six = arith::ConstantOp::create(
-                        b, loc, b.getFloatAttr(realType, 6.0));
-                    Value cw_w2 = mulf(frac, frac);
-                    Value cw_w3 = mulf(cw_w2, frac);
-                    Value cw_omw = subf(w_one, frac);
-                    Value cw_omw2 = mulf(cw_omw, cw_omw);
-                    Value cw_m0 = mulf(cw_omw2, cw_omw);
-                    Value cw_a1 = mulf(w_three, cw_w3);
-                    Value cw_b1 = mulf(w_six, cw_w2);
-                    Value cw_c1 = subf(cw_a1, cw_b1);
-                    Value cw_m1 = addf(cw_c1, w_four);
-                    Value cw_a2 = mulf(w_three, cw_w2);
-                    Value cw_b2 = mulf(w_three, frac);
-                    Value cw_c2 = subf(cw_a2, cw_a1);
-                    Value cw_d2 = addf(cw_c2, cw_b2);
-                    Value cw_m2 = addf(cw_d2, w_one);
-                    Value cw_j0 = arith::ConstantIndexOp::create(b, loc, 0);
-                    Value cw_j1 = arith::ConstantIndexOp::create(b, loc, 1);
-                    Value cw_j2 = arith::ConstantIndexOp::create(b, loc, 2);
-                    Value cw_is0 = cmpi(arith::CmpIPredicate::eq, j_l, cw_j0);
-                    Value cw_is1 = cmpi(arith::CmpIPredicate::eq, j_l, cw_j1);
-                    Value cw_is2 = cmpi(arith::CmpIPredicate::eq, j_l, cw_j2);
-                    Value cw_s2 = select(cw_is2, cw_m2, cw_w3);
-                    Value cw_s1 = select(cw_is1, cw_m1, cw_s2);
-                    Value cw_s0 = select(cw_is0, cw_m0, cw_s1);
-                    Value cw_value = mulf(cw_s0, w_sixth);
-                    spline = select(closed, cw_value, tp_value);
+                    if (order == 4) {
+                      spline = cubicLane(cubicWeights(frac), j_l);
+                    } else {
+                      Value pointCount = arith::ConstantIndexOp::create(b, loc, order);
+                      Value weights = memref::AllocaOp::create(
+                          b, loc, MemRefType::get({8}, realType));
+                      splineWeights(frac, pointCount, weights);
+                      spline = pickSpline(weights, j_l, pointCount);
+                    }
                   }
                   Value wvalue;
                   if constexpr (window == Window::Prolate) {

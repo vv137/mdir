@@ -1,5 +1,6 @@
 // Typed builders of the reciprocal sum on a device [Essmann1995, Liang2026].
 #pragma once
+#include <array>
 #include "../MDExecKernels/PMECode.h"
 #include "../MDExecKernels/ShuffleLane.h"
 #include "mdir/Dialect/MDAlg/MDAlgOps.h"
@@ -93,6 +94,9 @@ private:
                         Value n_all, Value pe, Value c0w, Value two_i,
                         Value three_i, bool slopes);
   Value placementStart(Value places, Value n, Value i, int axis);
+  std::array<Value, 4> cubicWeights(Value fraction,
+                                    std::array<Value, 4> *slopes = nullptr);
+  Value cubicLane(const std::array<Value, 4> &weights, Value lane);
   void splineWeights(Value fraction, Value pointCount, Value weights,
                      Value slopes = {});
   std::pair<Value, Value> placeAxis(Value coordinate, Value inverseLength,

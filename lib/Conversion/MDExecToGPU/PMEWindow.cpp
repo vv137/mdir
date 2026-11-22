@@ -4,6 +4,39 @@ using namespace mlir;
 using namespace mdir;
 using namespace mdir::kernels;
 
+// Cubic cardinal weights in mesh order, and their fractional derivatives.
+std::array<Value, 4> DevicePME::cubicWeights(Value u,
+                                            std::array<Value, 4> *slopes) {
+  auto constant = [&](double x) {
+    return arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, x));
+  };
+  Value one = constant(1), three = constant(3), sixth = constant(1.0 / 6);
+  Value v = subf(one, u), vv = mulf(v, v), uu = mulf(u, u);
+  Value cube = mulf(uu, u), threeCube = mulf(three, cube);
+  if (slopes) {
+    Value half = constant(0.5);
+    Value first = mulf(half, vv), last = mulf(half, uu);
+    Value middle = subf(subf(one, first), last);
+    *slopes = {subf(constant(0), first), subf(first, middle),
+               subf(middle, last), last};
+  }
+  Value w1 = addf(subf(threeCube, mulf(constant(6), uu)), constant(4));
+  Value w2 = addf(addf(subf(mulf(three, uu), threeCube), mulf(three, u)), one);
+  return {mulf(mulf(vv, v), sixth), mulf(w1, sixth), mulf(w2, sixth),
+          mulf(cube, sixth)};
+}
+
+Value DevicePME::cubicLane(const std::array<Value, 4> &weights, Value lane) {
+  Value selected = weights.back();
+  for (int j = 2; j >= 0; --j) {
+    Value index = arith::ConstantOp::create(
+        b, loc, b.getIntegerAttr(lane.getType(), j));
+    selected = select(cmpi(arith::CmpIPredicate::eq, lane, index),
+                      weights[j], selected);
+  }
+  return selected;
+}
+
 // Cardinal B-spline recursion [Essmann1995, Eq. 2.28].
 void DevicePME::splineWeights(Value fraction, Value pointCount, Value weights,
                               Value slopes) {
