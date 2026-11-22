@@ -5584,10 +5584,16 @@ LogicalResult Lowering::selectReciprocal(md_exec::ReciprocalOp op, Value cachedC
   auto scratch = op.getScratch();
   auto grid = op.getGrid();
   Value n = count(op.getPositions());
+  // Both single and mixed transform an f32 mesh. Their particle positions
+  // have different widths during the order rebuild, spread and gather.
+  bool narrowGrid = cast<MemRefType>(scratch[1].getType()).getElementType().isF32();
+  bool narrowPositions =
+      cast<MemRefType>(op.getPositions().getType()).getElementType().isF32();
+  int precision = narrowGrid ? (narrowPositions ? 2 : 1) : 0;
   Value state = call("mdrtCudaPMEPathPrepare",
       {word(grid[0]), word(grid[1]), word(grid[2]), n,
        op.getListed() ? count(op.getListed()) : word(-1),
-       word(cast<MemRefType>(scratch[1].getType()).getElementType().isF32()),
+       word(precision),
        word(isTriclinic(op.getCellMutable().get())), word(getTileEdge(op)), word(op.getProlate())},
       true).getResult(0);
   Value trials = call("mdrtCudaPMEPathTrials", {state}, true).getResult(0);

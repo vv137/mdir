@@ -279,11 +279,11 @@ void mdrtCudaPMEFixedPath(void) { lastPMEPath = 2; }
 int mdrtCudaPMESelectedPath(void) { return lastPMEPath; }
 
 intptr_t mdrtCudaPMEPathPrepare(int64_t x, int64_t y, int64_t z, int64_t n,
-                                int64_t listed, int64_t single, int64_t tilted,
+                                int64_t listed, int64_t precision, int64_t tilted,
                                 int64_t tile, int64_t radial) {
   if (!pmePathVersion)
     cufftGetVersion(&pmePathVersion);
-  int64_t key[] = {x,y,z,n,listed,single,tilted,tile,radial,defaultDevice,pmePathVersion};
+  int64_t key[] = {x,y,z,n,listed,precision,tilted,tile,radial,defaultDevice,pmePathVersion};
   for (struct PMEPath *p = pmePaths; p; p = p->next)
     if (!memcmp(p->key, key, sizeof key))
       return (intptr_t)p;

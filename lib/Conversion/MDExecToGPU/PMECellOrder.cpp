@@ -81,8 +81,16 @@ template <bool tilted> void DevicePME::emitCellOrder(StringRef symbol) {
         xyz[axis] = mulf(xyz[axis], inverse[axis]);
     }
     SmallVector<Value> components;
-    for (int axis = 0; axis < 3; ++axis)
-      components.push_back(meshCoordinate(xyz[axis], a[10 + axis]));
+    for (int axis = 0; axis < 3; ++axis) {
+      Value size = a[10 + axis];
+      Value coordinate = meshCoordinate(xyz[axis], size);
+      // A divergent position can still reach the side stream before the
+      // neighbor guard stops its part. Keep its bin and stencil in bounds.
+      Value limit = sitofp(realType, indexCast(i32Type, size));
+      Value lower = arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 0.0));
+      coordinate = arith::MaxNumFOp::create(b, loc, coordinate, lower);
+      components.push_back(arith::MinNumFOp::create(b, loc, coordinate, limit));
+    }
     components.push_back(convert(realType, load(q, {i})));
     for (int axis = 0; axis != 4; ++axis)
       store(components[axis], raw, {i, ix(axis)});
