@@ -42,7 +42,7 @@ Refusal checkReorder(mlir::Type element, std::optional<Algebra> algebra);
 //===----------------------------------------------------------------------===//
 
 /// Whether the template of PME has the kernels of bins of `edge` points
-/// (TILE_EDGES of scripts/generate-pme-gpu-template.py).
+/// (the edge specializations in DevicePME.cpp).
 bool isTileEdge(int64_t edge);
 /// The threads of a block of the tiles of `edge` (TILE_THREADS of the
 /// script).

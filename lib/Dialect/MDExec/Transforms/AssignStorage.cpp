@@ -1507,7 +1507,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
     // each binning zeroes first, a run of C places for each bin, C twice
     // the mean number of particles of a bin and 8 more, and n places for
     // those that overflow (bin_header of
-    // scripts/generate-pme-gpu-template.py, which computes the same).
+    // PMEBin.cpp, which computes the same).
     if (tiled) {
       int64_t edge = scatter.getEdge();
       int64_t bins = 1;

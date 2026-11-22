@@ -671,7 +671,7 @@ void NonbondedWork::collectFreeEnergyConstants() {
 /// The aliases |j| ≤ P3MAliases of each index of an edge in the sums of
 /// influence "P3M" (D304; docs/pme.md, Section 1.1). The
 /// kernels of a device take it as a constant (tables_p3m of
-/// scripts/generate-pme-gpu-template.py): change both together.
+/// PMETables.cpp): change both together.
 static constexpr int64_t P3MAliases = 2;
 
 /// The smallest even number of points, at least `least`, whose prime

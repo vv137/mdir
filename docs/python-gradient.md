@@ -314,11 +314,9 @@ k)$, with the weights in place of their gradient and without the charge.
   forces. It is stored in f64 in every precision mode, and the grid of that
   sum is computed in f64 as well, on a device too, where the grid of the
   forces is f32 in mixed precision.
-- The templates gain `@mdrt.pme_potential` (and `_triclinic`) in
-  `PME.mlir` and `@mdrt_gpu_pme_potential` in `PMEGPU.mlir` and
-  `PMEGPUTriclinic.mlir`: the gather with the weights. A module takes
-  these functions only if one of its sums asks for the potential, so a
-  program without the derivative in the charges lowers to what it did.
+- The host and device gather emitters build the potential functions for
+  either cell shape when a sum requests the potential. These functions
+  gather the grid with the window weights.
 - The host adds the derivatives of the constants of PME,
   $\partial E_\text{self}/\partial q_i = -2f\beta q_i/\sqrt\pi$ and
   $\partial E_\text{bg}/\partial q_i = -f\pi Q/(V\beta^2)$, the second
@@ -349,7 +347,7 @@ frame costs, so the accumulation of the fields was not taken.
 | Constants of pair terms; parameters of tuple terms | done |
 | Per-type $\sigma$ and $\epsilon$, and the table by pairs of types | done |
 | Charges with a Coulomb cutoff | done; the Python model has no reaction field |
-| Charges with PME | done, `D231`: the fourth result of `md.reciprocal` in the three templates of PME, the self term and the background on the host |
+| Charges with PME | done, `D231`: the fourth result of `md.reciprocal` in the host and device potential gathers, the self term and the background on the host |
 | Tails of pair terms and the correction for the dispersion (host) | done for constants of pair terms and for $\sigma$, $\epsilon$; the tail of a pair term that reads the charges is refused |
 | The charges with the other tunables of one program; a derivative without a rule refused by `mdir.compile` | done (#256, an amendment of `D230`): [several tunables of one program](#several-tunables-of-one-program) |
 

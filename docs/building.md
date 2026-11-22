@@ -165,9 +165,8 @@ Some tests check the tree itself:
   definitions; `ninja mdir-dialect-docs` writes it again after a change of
   a `.td` file (#610).
 - `test/Runtime/generated-templates.test` compares what
-  `scripts/generate-pme-gpu-template.py` generates with the checked-in
-  templates, byte for byte (#211); the generator emits the guards of #168
-  that the templates hold.
+  `scripts/generate-matrix-images-template.py` generates with the checked-in
+  host neighbor-matrix template, byte for byte (#211).
 - `test/Lit/test-outputs.test` lists any test that runs `mdir run` or a
   Python interpreter on a path under `%t` that no `rm` removes before its
   first use (#423). A test starts from an empty `%t`

@@ -5,10 +5,6 @@ set(TEMPLATE_FILE
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
   ${TEMPLATE_FILE})
 file(READ ${TEMPLATE_FILE} NEIGHBORS_MATRIX_TEMPLATE)
-set(PME_TEMPLATE_FILE ${PROJECT_SOURCE_DIR}/lib/Runtime/Templates/PME.mlir)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-  ${PME_TEMPLATE_FILE})
-file(READ ${PME_TEMPLATE_FILE} PME_TEMPLATE)
 configure_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/Templates.cpp.in
   ${CMAKE_CURRENT_BINARY_DIR}/Templates.cpp
@@ -19,6 +15,12 @@ add_mlir_conversion_library(MDIRMDExecToLoops
   FixedOrderReductions.cpp
   HoistAllocas.cpp
   MDExecToLoops.cpp
+  HostPME.cpp
+  HostPMEWindow.cpp
+  HostPMESpread.cpp
+  HostPMEConvolve.cpp
+  HostPMEGather.cpp
+  PMEFFTs.cpp
   SeparateSinCos.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/Templates.cpp
 

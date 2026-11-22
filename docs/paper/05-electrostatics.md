@@ -13,6 +13,11 @@ input: Amber's constant is smaller by a factor 1.0000346 and CHARMM's
 larger by 1.0000238, so the electrostatic terms of the same charges differ
 from those programs' by these factors (Section 9.1).
 
+The compiler builds each mesh stage for the chosen window, splitting and cell.
+The window determines the assignment weights and slopes, the splitting
+sets the reciprocal influence, and the cell determines the mapping from
+particle positions to grid coordinates (D[pme-emitters]).
+
 ## 5.1 The splitting
 
 The Coulomb energy of the charges of the cell and their periodic images,

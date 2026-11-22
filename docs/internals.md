@@ -97,7 +97,7 @@ requires the full layout; D409; printed by
 `lib/Conversion/MDExecKernels/MDAlgLowering.cpp`) replaces each op with
 its emitter's code and records its policy in `mdir.alg_policy`, which
 `mdir run` writes to its log and manifest (D408). The accessors of
-the templates of PME and the counting sort of the device's ragged rows are
+the PME stages and the counting sort of the device's ragged rows are
 lowered by `lowerAlgToSIMT` where `convert-md-exec-to-gpu` creates them;
 `convert-md-alg-to-scf` lowers the ops to their serial definitions, the
 oracle of the tests. The warp's votes are written as upstream ops. The build of the groups
@@ -261,12 +261,12 @@ same path in `include/mdir/`; a row names both.
 | `lib/Dialect/Program` | No dialect: the one set of dialects a program may contain, shared by the driver and the compiler | A program may contain a new dialect; extend the list and its libraries together | |
 | `lib/Conversion/MDToMDExec` | `convert-md-to-md-exec` (sums over relations become loops over sets) and the passes that place semantic linear transforms | A new `md` or `dyn` op needs a lowering, or the mapping to loops changes | [ops.md](ops.md), [pme-semantic-transform.md](pme-semantic-transform.md) |
 | `lib/Conversion/MDExecKernels` | What one thread does, shared by both lowerings, and the device-primitive emitters (compaction, scans, sorts, reductions, scatters, gathers, ragged rows); `MDAlgLowering.cpp` lowers the `md_alg` ops, serially or through the emitters | Changing per-thread code common to both lowerings, or adding or changing an emitter | [device-primitives.md](device-primitives.md), [primitives-map.md](primitives-map.md) |
-| `lib/Conversion/MDExecToLoops` | The CPU lowering to `scf` loops, fixed-order reductions, the read-only proof; embeds the host templates | Changing how `md_exec` runs on the CPU or with OpenMP | [ops.md](ops.md), [overview.md, Section 2.4](overview.md#24-the-lowerings) |
-| `lib/Conversion/MDExecToGPU` | The device lowering to `gpu` kernels and the lowering of neural-stage bodies; embeds the device templates | Changing how `md_exec` becomes kernels or how they are launched | [ops.md](ops.md), [device-primitives.md](device-primitives.md), [ml4-ir.md](ml4-ir.md) |
+| `lib/Conversion/MDExecToLoops` | The CPU lowering to `scf` loops, fixed-order reductions, the read-only proof; emits PME and embeds the host neighbor matrix | Changing how `md_exec` runs on the CPU or with OpenMP | [ops.md](ops.md), [overview.md, Section 2.4](overview.md#24-the-lowerings) |
+| `lib/Conversion/MDExecToGPU` | The device lowering to `gpu` kernels and the lowering of neural-stage bodies; emits the device PME stages | Changing how `md_exec` becomes kernels or how they are launched | [ops.md](ops.md), [device-primitives.md](device-primitives.md), [ml4-ir.md](ml4-ir.md) |
 | `lib/Conversion/GPUToBinary` | The NVIDIA back end: NVVM lowering, `ptxas`, one binary per module, cached | Changing NVVM options, the target architecture, or the caching of device code | [compile-cache.md](compile-cache.md) |
 | `lib/Conversion/MDDistToLoops` | The in-process executors of `md_dist`, the lowering of halo events, the printed schedule | Changing how `md_dist` executes; reached through `mdir-opt` only | [distributed-ml2.md](distributed-ml2.md) |
 | `include/mdir/Conversion` | `Passes.td` of every conversion pass, and the headers of the emitters and the back end | Declaring a conversion pass or option, or changing an emitter's interface or preconditions | [device-primitives.md, Section 1.1](device-primitives.md#11-preconditions-at-a-glance) |
-| `lib/Runtime/Templates` | Structures written in MLIR: neighbor builds, the spatial sort, PME on the host and on a device; most are generated | Changing a neighbor build or the PME code of a template (through its generator where there is one) | [white paper, Section 3.5](paper/03-design.md#35-lowerings-and-templates), [pme.md](pme.md), [neighbor-groups.md](neighbor-groups.md) |
+| `lib/Runtime/Templates` | Host neighbor-matrix build in MLIR | Changing the host neighbor-matrix build | [white paper, Section 3.5](paper/03-design.md#35-lowerings-and-templates), [pme.md](pme.md), [neighbor-groups.md](neighbor-groups.md) |
 | `lib/Compiler`, `include/mdir/Compiler` | The pipeline of a run (`getPipeline`), the host optimizer, the JIT and its memory, the compile cache, the registry of passes, the persistent simulation, the choice of skins | Adding or moving a pass in the pipeline, or changing the JIT, the cache key, or the simulation | [overview.md](overview.md), [compile-cache.md](compile-cache.md), [jit-invariants.md](jit-invariants.md), [python-segments.md](python-segments.md) |
 | `lib/Driver`, `include/mdir/Driver` | The control file, the topology readers, the model, the builder of the program and its `Term*.cpp` builders, checkpoints, outputs, tunables | A control-file key, a reader, a term, the dynamics, an output, or a checkpoint changes | [driver.md, Section 2.12](driver.md#212-the-files-of-the-builder), [Appendix B.2](paper/B-contributing.md#b2-where-a-change-goes) |
 | `lib/Effects`, `include/mdir/Effects`, `include/mdir/Analysis` | The declared effect summaries of programs and host calls, with the singleton resources; the access facts behind the loop effects of `md_exec` | Adding a declared resource, or changing an effect or access summary | [execution-contracts.md](execution-contracts.md), [dynamics.md](dynamics.md) |
@@ -342,9 +342,8 @@ same path in `include/mdir/`; a row names both.
 - **Generated files are not edited by hand.** Edit the source and
   regenerate; a test compares them. `docs/dialects/*.md` come from the
   `*Ops.td` files (`ninja mdir-dialect-docs`; `test/Docs/dialect-docs.test`).
-  The PME templates, and the part between `BEGIN GENERATED` and
-  `END GENERATED` of the matrix templates, come from
-  `scripts/generate-*-template.py` (`test/Runtime/generated-templates.test`).
+  The part between `BEGIN GENERATED` and `END GENERATED` of the host
+  matrix template comes from `scripts/generate-matrix-images-template.py` (`test/Runtime/generated-templates.test`).
   `scripts/mdir_physical_constants.py` comes from
   `scripts/generate-physical-constants.py`
   (`test/Driver/physical-constants.test`). `test/Integration/GPU/tuples*.mlir`

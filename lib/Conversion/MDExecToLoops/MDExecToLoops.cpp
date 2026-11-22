@@ -4,6 +4,7 @@
 // `memref`s, where the op is. See docs/ops.md, Section 10.
 
 #include "mdir/Conversion/Passes.h"
+#include "HostPME.h"
 
 #include "mdir/Conversion/HostPairEmitter.h"
 #include "mdir/Conversion/MDExecKernels.h"
@@ -37,7 +38,6 @@ using namespace mdir::kernels;
 namespace mdir {
 /// The text of the template that builds a neighbor matrix.
 extern const char *const neighborsMatrixTemplate;
-extern const char *const pmeTemplate;
 } // namespace mdir
 
 static const char *const spatialOrderName = "mdrt.spatial_order";
@@ -136,11 +136,11 @@ private:
   /// Adds the templates for positions of the type `real` to the module.
   /// With `centers`, the build with a center extent as well.
   LogicalResult addTemplates(Type real, bool centers = false);
-  /// Adds the templates of particle mesh Ewald for the types of the
+  /// Emits the particle mesh Ewald stages for the types of the
   /// positions, the charges, and the forces.
   /// With `potential`, the functions of the potential at the particles
   /// as well; with `listed`, those of a list of the particles.
-  LogicalResult addPMETemplates(Type position, Type charge, Type force,
+  LogicalResult addPMEKernels(Type position, Type charge, Type force,
                                 int64_t order, bool potential, bool listed);
   LogicalResult lowerReciprocal(md_exec::ReciprocalOp op);
   LogicalResult lowerLinearTransform(md_exec::LinearTransformOp op);
@@ -629,7 +629,7 @@ LogicalResult Lowering::addTemplates(Type real, bool centers) {
   return success();
 }
 
-LogicalResult Lowering::addPMETemplates(Type position, Type charge,
+LogicalResult Lowering::addPMEKernels(Type position, Type charge,
                                         Type force, int64_t order,
                                         bool potential, bool listed) {
   auto has = [&](StringRef name) {
@@ -641,29 +641,17 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   if (has("mdrt.pme_spread") && (!potential || has("mdrt.pme_potential")) &&
       (!listed || has("mdrt.pme_spread_listed")))
     return success();
-  ParserConfig config(context);
-  // The template takes the aliases of the types of the instance from a
-  // header above its text, and its names in IR (D374,
-  // #739).
-  OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
-      getPMETemplateHeader(position, charge, force, order, /*tiles=*/false) +
-          pmeTemplate,
-      config);
-  if (!templates)
-    return module.emitError()
-           << "cannot parse the template of particle mesh Ewald";
-  if (failed(instantiatePMESymbols(*templates, position, charge, force,
+  OwningOpRef<ModuleOp> stages = ModuleOp::create(module.getLoc());
+  OpBuilder pmeBuilder(stages->getContext());
+  HostPME(pmeBuilder, *stages, position, charge, force).emit(potential, listed);
+  if (failed(instantiatePMESymbols(*stages, position, charge, force,
                                    order)))
-    return failure();
-  // The conversions between the types of the instance and f64
-  // (D370, #739).
-  if (failed(resolveTemplateConversions(*templates)))
     return failure();
   // On one thread the spreading adds to the fixed-point grid without
   // atomics: an integer sum is the same in any order, and a locked addition
   // costs about 20 cycles where nothing else writes (D271).
   if (!atomicGrid)
-    templates->walk([](memref::AtomicRMWOp atomic) {
+    stages->walk([](memref::AtomicRMWOp atomic) {
       if (atomic.getKind() != arith::AtomicRMWKind::addi)
         return;
       OpBuilder builder(atomic);
@@ -681,12 +669,9 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   // (D262), only where a sum asks for them, so
   // that a module without one is what it was; they may come after the
   // others, for a sum of the same types that was lowered before.
-  for (Operation &op : llvm::make_early_inc_range(*templates)) {
+  for (Operation &op : llvm::make_early_inc_range(*stages)) {
     auto function = dyn_cast<func::FuncOp>(&op);
-    // By the attributes of the function (D377).
-    bool wanted = keepTemplateFunction(&op, potential, listed, /*tiles=*/0);
-    if (!wanted ||
-        (function && SymbolTable::lookupSymbolIn(module, function.getSymName()))) {
+    if (function && SymbolTable::lookupSymbolIn(module, function.getSymName())) {
       op.erase();
       continue;
     }
@@ -739,7 +724,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
        force = elementOf(forces);
   // The listed particles alone (D262).
   Value listed = op.getListed();
-  if (failed(addPMETemplates(position, charge, force, op.getOrder(),
+  if (failed(addPMEKernels(position, charge, force, op.getOrder(),
                              op.getPotential(), static_cast<bool>(listed))))
     return failure();
   // A triclinic cell takes the functions of its own (docs/triclinic.md).
