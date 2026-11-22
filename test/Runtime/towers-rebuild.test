@@ -1,3 +1,4 @@
+# RUN: rm -rf %t %t-force
 # RUN: %python %S/Inputs/towers_rebuild.py %t host mdir-opt
 # RUN: not mdir-opt --add-towers-build='nx=2' /dev/null 2>&1 | FileCheck %s
 # RUN: not mdir-opt --add-towers-build='reach=2 nz=4' /dev/null 2>&1 | FileCheck %s

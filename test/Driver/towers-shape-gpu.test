@@ -1,2 +1,3 @@
 # REQUIRES: cuda
+# RUN: rm -rf %t.toml
 # RUN: %python %S/Inputs/check_towers_shape.py mdir %S/../.. %t.toml
