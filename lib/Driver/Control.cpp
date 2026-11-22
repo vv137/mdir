@@ -75,6 +75,7 @@ private:
   Error readChoice(const toml::table &table, StringRef key, T &value,
                    std::initializer_list<std::pair<StringRef, T>> choices);
 
+  Error readTowersShape(const toml::table &execution);
   Error readEnergy(const toml::table &table);
   Error readPair(const toml::table &table);
   /// [[energy.triplet]]: a term over the triplets centered on each particle
@@ -2970,12 +2971,56 @@ Error Reader::readBoundary(const toml::table &table) {
   return Error::success();
 }
 
+Error Reader::readTowersShape(const toml::table &execution) {
+  const auto *node = execution.get("towers_shape");
+  if (!node)
+    return Error::success();
+  control.towersShapeGiven = true;
+  auto *table = node->as_table();
+  if (!table) {
+    StringRef choice;
+    return readChoice<StringRef>(execution, "towers_shape", choice,
+                                 {{"AUTO", "AUTO"}});
+  }
+  control.towersShapeTable = true;
+  if (Error error = checkKeywords(*table, "towers_shape",
+                                  {"threads", "blocks_per_sm", "stripe",
+                                   "panel", "records", "split", "cell_height"}))
+    return error;
+  TowersShape &shape = control.towersShape;
+  for (auto [key, field] : {std::pair{"threads", &shape.threads},
+                            {"blocks_per_sm", &shape.blocksPerSM},
+                            {"stripe", &shape.stripe},
+                            {"panel", &shape.panel},
+                            {"records", &shape.records},
+                            {"split", &shape.split}}) {
+    if (Error error = readCount(*table, key, *field, 1))
+      return error;
+    if (*field > INT32_MAX)
+      return fail(*table->get(key),
+                  "towers_shape field exceeds the signed 32-bit index range");
+  }
+  if (shape.stripe % 32 || shape.panel % 32 || shape.threads % 32)
+    return fail(*table, "towers_shape stripe, panel and threads must be "
+                        "multiples of a warp (32)");
+  if (shape.split > 2)
+    return fail(*table, "towers_shape split must be 1 or 2");
+  if (shape.panel > 512)
+    return fail(*table,
+                "towers_shape panel exceeds the 16 warp groups of a record");
+  return readChoice<std::string>(
+      *table, "cell_height", shape.cellHeight,
+      {{"FULL", "FULL"}, {"HALF", "HALF"}, {"AUTO", ""}});
+}
+
 Error Reader::readExecution(const toml::table &table) {
   if (Error error = checkKeywords(table, "execution",
                                   {"target", "threads", "precision",
                                    "neighbor_capacity", "fast_math",
                                    "spatial_order", "deterministic",
-                                   "neighbor_structure"}))
+                                   "neighbor_structure", "towers_shape"}))
+    return error;
+  if (Error error = readTowersShape(table))
     return error;
   if (Error error = readChoice<Target>(
           table, "target", control.target,
@@ -3004,8 +3049,15 @@ Error Reader::readExecution(const toml::table &table) {
           table, "neighbor_structure", control.neighborStructure,
           {{"AUTO", NeighborStructure::Auto},
            {"MATRIX", NeighborStructure::Matrix},
-           {"GROUPS", NeighborStructure::Groups}}))
+           {"GROUPS", NeighborStructure::Groups},
+           {"TOWERS", NeighborStructure::Towers}}))
     return error;
+  if (control.neighborStructure == NeighborStructure::Towers) {
+    if (control.target != Target::GPU || control.precision != Precision::Mixed)
+      return fail(table, "TOWERS requires the GPU target and mixed precision");
+    if (control.deterministic)
+      return fail(table, "TOWERS deterministic force, energy and virial qualification is pending");
+  }
   if (control.neighborStructure == NeighborStructure::Groups &&
       (control.target != Target::GPU || control.deterministic))
     return fail(table, "'neighbor_structure = \"GROUPS\"' needs 'target = "

@@ -138,10 +138,11 @@ enum class Target { CPU, GPU };
 enum class Precision { Single, Mixed, Double };
 /// `AUTO` is resolved to one of the other two before a program is built
 /// (`resolveNeighborStructure`, D261).
-enum class NeighborStructure { Matrix, Groups, Auto };
+enum class NeighborStructure { Matrix, Groups, Auto, Towers };
 /// "matrix", "groups", or "auto", as a manifest names them.
 inline const char *getNeighborStructureName(NeighborStructure structure) {
-  return structure == NeighborStructure::Groups ? "groups"
+  return structure == NeighborStructure::Towers ? "towers"
+         : structure == NeighborStructure::Groups ? "groups"
          : structure == NeighborStructure::Auto ? "auto"
                                                 : "matrix";
 }
@@ -213,6 +214,13 @@ enum class ReferenceScaling { Center, All };
 /// middle of the drift of every step (D135), or a Nose-Hoover chain at the
 /// end of a period (D163a).
 enum class ThermostatMethod { VRescale, Langevin, NoseHoover };
+
+/// A zero integer or an empty cell height leaves that field to setup.
+struct TowersShape {
+  int64_t threads = 0, blocksPerSM = 0, stripe = 0, panel = 0, records = 0,
+          split = 0;
+  std::string cellHeight;
+};
 
 /// What a control file says. Lengths are in Å, energies in kcal/mol, times
 /// in ps, masses in amu, and temperatures in K.
@@ -418,6 +426,8 @@ struct Control {
   /// default). NOT A DEFAULT: at an interval, the structures are not
   /// tested between builds and may miss pairs within the cutoff (D88).
   int64_t rebuildPeriod = 0;
+  TowersShape towersShape;
+  bool towersShapeGiven = false, towersShapeTable = false;
   /// The neighbor structure of the loops over pairs on a device: a row a
   /// particle, or groups of 16 that share a list, each pair once, where the
   /// loops allow it (D89). `Auto` until `resolveNeighborStructure` chooses

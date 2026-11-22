@@ -24,6 +24,8 @@ std::vector<const Program::TupleSet *> Builder::getRigidGroups() const {
 llvm::Error Builder::build() {
   // Every front end resolves `AUTO` for its system first
   // (resolveNeighborStructure, D261).
+  if (control.neighborStructure == NeighborStructure::Towers)
+    return makeError("TOWERS driver dispatch is pending; the rectangular force is available through add-towers-build");
   if (control.neighborStructure == NeighborStructure::Auto)
     return makeError("the neighbor structure 'AUTO' was not resolved; this "
                      "is a defect of mdir");

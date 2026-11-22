@@ -5,6 +5,7 @@
 
 #include "BuildInfo.h"
 #include "Commands.h"
+#include "TowersShape.h"
 #include "Manifest.h"
 
 #include "mdir/Conversion/GPUToBinary.h"
@@ -355,6 +356,13 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // `neighbor_structure = "AUTO"` is resolved for the system before
   // anything is built from it (D261).
   resolveNeighborStructure(*control, *system);
+  std::string towersShapeReport;
+  if (control->towersShapeGiven || control->neighborStructure == NeighborStructure::Towers) {
+    auto shape = checkTowersShape(*control, *system);
+    if (!shape)
+      return fail(shape.takeError());
+    towersShapeReport = llvm::formatv("{0}", llvm::json::Value(std::move(*shape))).str();
+  }
 
   InputPaths inputPaths = getManifestInputs(controlFile, *control, *system);
   if (!control->manifestFile.empty() && emit == Emit::Run) {
@@ -1516,6 +1524,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     output.log.print(
                  "MDIR: the velocities are those of the file of "
                  "coordinates\n");
+  if (!towersShapeReport.empty())
+    output.log.print("MDIR: TOWERS launch shape %s\n", towersShapeReport.c_str());
   for (const std::string &note : notes)
     output.log.print("MDIR: note: %s\n", note.c_str());
   // The structure that `AUTO` took, and why (D261); a
