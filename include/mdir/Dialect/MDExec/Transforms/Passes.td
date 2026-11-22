@@ -319,6 +319,9 @@ def AssignAlgebra
                  {md_exec.algebra = #md_exec.algebra<any_order, any_order_exact>}
     ```
   }];
+  // The attribute is of md_exec, which a module of md_dist alone has not
+  // loaded (#835).
+  let dependentDialects = ["::mdir::md_exec::MDExecDialect"];
   let options = [
     Option<"deterministic", "deterministic", "bool", /*default=*/"false",
            "The deterministic mode (D84): floating-point sums are fixed_order">

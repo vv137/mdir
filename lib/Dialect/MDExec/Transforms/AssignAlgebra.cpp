@@ -9,6 +9,7 @@
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 
 #include "mdir/Dialect/MDExec/Algebra.h"
+#include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 
 using namespace mlir;

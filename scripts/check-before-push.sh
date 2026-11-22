@@ -49,15 +49,17 @@ control_chars() {
 
 # The text that the mdir tool prints is ASCII (D396, #812;
 # the spellings are in docs/conventions.md, Units and symbols in printed
-# text): a line of tools/mdir/*.cpp that is not a comment (it begins with
-# //, /*, or * and a space) holds no string literal, "...", with a byte
-# beyond 0x7f.
+# text): a line of tools/mdir/*.cpp, or of the builder's messages in
+# lib/Driver/Builder*.cpp and lib/Driver/Term*.cpp (#813), that is not a
+# comment (it begins with //, /*, or * and a space) holds no string
+# literal, "...", with a byte beyond 0x7f.
 # A literal split over lines is checked piece by piece. A string that goes
 # into a file format, not to the terminal, carries the comment
 # `ascii-exempt` on its line and keeps its text until a ruling of its own.
 # Prints file:line of each.
 ascii_strings() {
-  no_match '^(?!\s*(//|/\*|\*(\s|/|$)))(?!.*ascii-exempt).*"[^"]*[^\x00-\x7f][^"]*"' -- 'tools/mdir/*.cpp'
+  no_match '^(?!\s*(//|/\*|\*(\s|/|$)))(?!.*ascii-exempt).*"[^"]*[^\x00-\x7f][^"]*"' -- 'tools/mdir/*.cpp' \
+    'lib/Driver/Builder*.cpp' 'lib/Driver/Term*.cpp'
 }
 
 run "Links" python3 scripts/check-markdown-links.py
@@ -66,7 +68,7 @@ run "Changelog fragments" python3 scripts/release/changelog.py fragments
 run "The list of the expected unsupported tests" python3 test/mdir_lit.py
 run "The release path" scripts/release/check-path.sh
 run "Control characters in the text files" control_chars
-run "ASCII in the strings of the mdir tool" ascii_strings
+run "ASCII in the strings of the mdir tool and the builder" ascii_strings
 run "Physical constants defined once" python3 scripts/check-physical-constants.py
 
 if [ "$failed" -ne 0 ]; then

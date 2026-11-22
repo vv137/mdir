@@ -26,4 +26,4 @@
 
 # STOP:    mdir run failed: mdir: the barostat has made the cell {{[0-9.]+}} Ang along x, less than the pairlist distance over 0.999, 20.0200 Ang, below which the groups do not hold every pair
 
-# REFUSED: mdir run failed: mdir: 'pairlist_distance', 23 Å, exceeds 0.999 of the least of a_x, b_y, c_z of the cell, 21.978 Å, the most that the groups take
+# REFUSED: mdir run failed: mdir: 'pairlist_distance', 23 Ang, exceeds 0.999 of the least of a_x, b_y, c_z of the cell, 21.978 Ang, the most that the groups take

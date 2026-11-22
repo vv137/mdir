@@ -18,6 +18,7 @@
 #include "mlir/InitAllDialects.h"
 #include "mlir/InitAllExtensions.h"
 #include "mlir/InitAllPasses.h"
+#include "mlir/Target/LLVMIR/Dialect/All.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 
 namespace mdir {
@@ -53,6 +54,9 @@ int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
   mlir::registerAllExtensions(registry);
+  // The translations to LLVM IR, which the serialization of GPU modules
+  // takes, as `mdir` registers them (#839).
+  mlir::registerAllToLLVMIRTranslations(registry);
   mdir::md::registerDerivativeInterfaces(registry);
   registry.insert<mdir::dyn::DynDialect, mdir::md::MDDialect,
                   mdir::md_exec::MDExecDialect, mdir::mdrt::MDRTDialect,

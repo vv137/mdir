@@ -26,6 +26,7 @@ set(LIBS
   MLIRRegisterAllDialects
   MLIRRegisterAllExtensions
   MLIRRegisterAllPasses
+  MLIRToLLVMIRTranslationRegistration
   )
 
 add_llvm_executable(mdir-opt mdir-opt.cpp)

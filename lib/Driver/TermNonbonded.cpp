@@ -832,7 +832,7 @@ llvm::Error NonbondedWork::collectProlate() {
           llvm::inconvertibleErrorCode(),
           "the aliasing estimate of the prolate kernel with %lld points of "
           "the window stays above half the tolerance %g of [pme] on every "
-          "grid: it is %g at %lld × %lld × %lld points, twice the grid of "
+          "grid: it is %g at %lld x %lld x %lld points, twice the grid of "
           "eq. 15, and falls only slowly beyond it, toward the floor that "
           "the tail of the window sets; %s",
           static_cast<long long>(points), epsilon, aliasing,

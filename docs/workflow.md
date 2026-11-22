@@ -263,8 +263,9 @@ the cluster.
   tracked text files (none but the tab and the newline, and no tab in a
   Markdown file, #768: an escape such as `\b` or `\t` in a shell or Python
   string turns TeX such as `\times` into bytes), the non-ASCII
-  characters in the string literals of `tools/mdir/*.cpp`, outside comments
-  and lines marked `// ascii-exempt` (#812; the text that the tool prints is
+  characters in the string literals of `tools/mdir/*.cpp`,
+  `lib/Driver/Builder*.cpp`, and `lib/Driver/Term*.cpp`, outside comments
+  and lines marked `// ascii-exempt` (#812, #813; the text that the tool prints is
   ASCII, [conventions.md](conventions.md#units-and-symbols-in-printed-text)),
   and that no file but `include/mdir/Support/PhysicalConstants.h` writes a
   physical constant (`scripts/check-physical-constants.py`, #805: Python
