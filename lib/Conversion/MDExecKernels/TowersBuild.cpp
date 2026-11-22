@@ -50,6 +50,7 @@ private:
                 function_ref<void(Value, Value)> place);
   Value wrap(Value position, Value length);
   Value quarterCell(Value v, Value width, Value reciprocal);
+  Values locate(Value x, Value length, Value width, Value reciprocal, int bins);
   void emitOwnership(MemRefType spans, MemRefType ids);
 };
 
@@ -133,6 +134,44 @@ Value TowersBuild::quarterCell(Value v, Value width, Value reciprocal) {
                 subi(estimate, ci(1)),
                 select(cmpf(CmpFPredicate::OGE, residual, width),
                        addi(estimate, ci(1)), estimate));
+}
+
+Values TowersBuild::locate(Value x, Value length, Value width, Value reciprocal,
+                           int bins) {
+  auto precise = [&] {
+    Value v = wrap(x, length);
+    Value q = quarterCell(v, width, reciprocal);
+    return Values{v, minsi(maxsi(q, ci(0)), ci(4 * bins - 1))};
+  };
+  if (g.host || bins > (1 << 20)) {
+    return precise();
+  }
+  // Classify in the input image. Away from a quarter-cell face,
+  // two f32 conversions and the product perturb the scaled
+  // coordinate by less than eight unit roundoffs. The guard
+  // also covers rounding of a single f64 box translation.
+  Value q = mulf(truncf(x), truncf(reciprocal));
+  Value nearest = math::RoundEvenOp::create(b, loc, q);
+  Value gap = math::AbsFOp::create(b, loc, subf(q, nearest));
+  Value guard =
+      mulf(cf(0x1p-20f), arith::MaximumFOp::create(
+                             b, loc, cf(1), math::AbsFOp::create(b, loc, q)));
+  Value interior = andi(cmpf(CmpFPredicate::OGT, gap, guard),
+                        andi(cmpf(CmpFPredicate::OGT, q, cf(-4 * bins)),
+                             cmpf(CmpFPredicate::OLT, q, cf(8 * bins))));
+  return ifElse(
+      {f64, i32}, interior,
+      [&] {
+        Value k = fptosi(i32, math::FloorOp::create(b, loc, q));
+        Value below = cmpi(CmpIPredicate::slt, k, ci(0));
+        Value above = cmpi(CmpIPredicate::sge, k, ci(4 * bins));
+        Value shift =
+            select(below, length, select(above, subf(cd(0), length), cd(0)));
+        Value delta =
+            select(below, ci(4 * bins), select(above, ci(-4 * bins), ci(0)));
+        return Values{addf(x, shift), addi(k, delta)};
+      },
+      precise);
 }
 
 void TowersBuild::sortWarp(Value keys, Value base, Value lane, Value count,
@@ -230,11 +269,10 @@ void TowersBuild::emit(bool audit) {
                llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
             Value length = load(a[2], {cx(axis), cx(0)});
             Value x = load(a[0], {cx(axis), atom});
-            Value v = wrap(x, length);
             Value width = load(a[2], {cx(axis), cx(1)});
             Value reciprocal = load(a[2], {cx(axis), cx(2)});
-            Value quarter = quarterCell(v, width, reciprocal);
-            quarter = minsi(maxsi(quarter, ci(0)), ci(4 * bins - 1));
+            Values located = locate(x, length, width, reciprocal, bins);
+            Value v = located[0], quarter = located[1];
             Value bin = shrui(quarter, ci(2));
             cell = addi(muli(cell, cx(bins)), indexCast(index, bin));
             sub = addi(shli(sub, ci(2)), andi(quarter, ci(3)));
