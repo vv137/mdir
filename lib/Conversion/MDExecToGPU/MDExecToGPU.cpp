@@ -906,8 +906,9 @@ private:
   LogicalResult addProlateKernels(Type position, Type charge, Type force,
                                     int64_t order, bool listed,
                                     int64_t tiles = 0);
-  LogicalResult selectReciprocal(md_exec::ReciprocalOp op);
-  LogicalResult lowerReciprocal(md_exec::ReciprocalOp op);
+  DenseMap<Value, Value> pmeCells;
+  LogicalResult selectReciprocal(md_exec::ReciprocalOp op, Value cachedCell);
+  LogicalResult lowerReciprocal(md_exec::ReciprocalOp op, Value cachedCell = {});
   LogicalResult inlineFrameReadbacks(func::FuncOp function);
   LogicalResult lowerLinearTransform(md_exec::LinearTransformOp op);
 
@@ -5561,7 +5562,7 @@ LogicalResult Lowering::lowerLinearTransform(md_exec::LinearTransformOp op) {
 
 /// Both candidates overwrite the same output and reuse the FFT buffers. Time
 /// force-only evaluations, even if the first caller requests an observation.
-LogicalResult Lowering::selectReciprocal(md_exec::ReciprocalOp op) {
+LogicalResult Lowering::selectReciprocal(md_exec::ReciprocalOp op, Value cachedCell) {
   OpBuilder b(op);
   Location loc = op.getLoc();
   Type wide = b.getI64Type();
@@ -5612,7 +5613,7 @@ LogicalResult Lowering::selectReciprocal(md_exec::ReciprocalOp op) {
       candidate.getScratchMutable().assign(buffers);
       if (observe)
         scf::YieldOp::create(b, loc, candidate.getResults());
-      if (failed(lowerReciprocal(candidate)))
+      if (failed(lowerReciprocal(candidate, cachedCell)))
         return failure();
       candidate.erase();
     }
@@ -5642,7 +5643,7 @@ LogicalResult Lowering::selectReciprocal(md_exec::ReciprocalOp op) {
   return success();
 }
 
-LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
+LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op, Value cachedCell) {
   if (!op.isStorageForm() || !isDeviceType(op.getPositions().getType()))
     return op->emitOpError()
            << "expected the storage form with the buffers on the device; "
@@ -5673,12 +5674,27 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // (Scatter.h, D285); never where the spreading is `fixed_order` (the
   // deterministic mode), whose grid is in fixed point (D70, D84).
   int64_t tiles = getTileEdge(op);
+  if (op->hasAttr("md_exec.private_pme_tables") && !cachedCell)
+    cachedCell = pmeCells.lookup(op.getScratch()[5]);
+  if (op->hasAttr("md_exec.private_pme_tables") && !cachedCell) {
+    // Initialize the host cell stamp at allocation of the persistent device
+    // tables, outside the time-step loop. Each sum owns its factors.
+    OpBuilder::InsertionGuard guard(builder);
+    Value tables = op.getScratch()[5];
+    builder.setInsertionPointAfterValue(tables);
+    cachedCell = memref::AllocaOp::create(builder, loc,
+        MemRefType::get({7}, builder.getF64Type()));
+    Value zero = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
+    for (int i = 0; i < 7; ++i)
+      memref::StoreOp::create(builder, loc, zero, cachedCell, createIndex(builder, loc, i));
+    pmeCells[tables] = cachedCell;
+  }
   auto scratch = op.getScratch();
   bool ordered = scratch.size() > 4 &&
                  cast<MemRefType>(scratch[4].getType()).getRank() == 2;
   PMECellOrder cellOrder;
   if (ordered && !fixedPoint && scratch.size() >= 16)
-    return selectReciprocal(op);
+    return selectReciprocal(op, cachedCell);
   if (ordered) {
     if (!md_exec::canUsePMECellOrder(op))
       return op.emitOpError("cell-order storage requires a cubic Gaussian force sum with compatible scatter and grid");
@@ -5917,15 +5933,46 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   std::string tabled = op.getP3m() ? "_p3m" : kind;
   bool observe = !op.getEnergy().use_empty() || !op.getVirial().use_empty();
   bool calibrate = ordered && !fixedPoint;
+  bool flat = cachedCell && calibrate && md_exec::usePMEInfluenceMesh(grid);
   SmallVector<Value> tableArgs{op.getModuli(), tables, box, beta,
                                coulomb,        k1,     k2,  k3};
   auto makeTables = [&] {
+    OpBuilder::InsertionGuard guard(builder);
+    if (cachedCell) {
+      // State 2 includes the callback pointers. Their addresses are fixed for
+      // this sum; the per-frame wide/narrow flag lives behind one pointer.
+      Value index = createIndex(builder, loc, 6);
+      Value state = memref::LoadOp::create(builder, loc, cachedCell, index);
+      Value need = arith::ConstantOp::create(builder, loc,
+          builder.getF64FloatAttr(calibrate ? 2.0 : 1.0));
+      Value changed = arith::CmpFOp::create(builder, loc,
+          arith::CmpFPredicate::ULT, state, need);
+      SmallVector<Value> components;
+      for (int i = 0; i < (tilted ? 6 : 3); ++i) {
+        Value component = vector::ExtractOp::create(builder, loc, box, i);
+        Value old = memref::LoadOp::create(builder, loc, cachedCell,
+                                           createIndex(builder, loc, i));
+        Value different = arith::CmpFOp::create(builder, loc,
+            arith::CmpFPredicate::UNE, component, old);
+        changed = arith::OrIOp::create(builder, loc, changed, different);
+        components.push_back(component);
+      }
+      auto refresh = scf::IfOp::create(builder, loc, changed);
+      builder.setInsertionPointToStart(refresh.thenBlock());
+      for (auto [i, component] : llvm::enumerate(components))
+        memref::StoreOp::create(builder, loc, component, cachedCell,
+                                createIndex(builder, loc, i));
+      memref::StoreOp::create(builder, loc, need, cachedCell, index);
+    }
     if (calibrate)
       tableArgs.append({fixed, scratch[11], scratch[14]});
     func::CallOp::create(builder, loc,
                          instance(calibrate ? "mdrt_gpu_pme_tables_ordered"
                                             : "mdrt_gpu_pme_tables" + tabled),
                          tableArgs);
+    if (flat)
+      func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_influence"),
+                           ValueRange{complex, tables, box, beta, coulomb, k1, k2, k3});
   };
   auto toReal = [&] {
     if (ordered)
@@ -5960,11 +6007,14 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                                   returnsWord ? TypeRange{wide} : TypeRange{}));
       return func::CallOp::create(builder, loc, fn, args);
     };
-    Value state = runtime("mdrtCudaPMEPrepare",
-                          {sizes[0], sizes[1], sizes[2], word(narrow),
-                           word(tilted), pointer(scratch[14])},
-                          true)
-                      .getResult(0);
+    SmallVector<Value> prepareArgs{sizes[0], sizes[1], sizes[2], word(narrow),
+                                   word(tilted), pointer(scratch[14])};
+    if (flat) {
+      int64_t bytes = 3 * (grid[0] + grid[1] + grid[2]) * (narrow ? 4 : 8);
+      prepareArgs.push_back(arith::AddIOp::create(builder, loc, pointer(tables), word(bytes)));
+    }
+    Value state = runtime(flat ? "mdrtCudaPMEPrepareFlat" : "mdrtCudaPMEPrepare",
+                          prepareArgs, true).getResult(0);
     Value trials = runtime("mdrtCudaPMETrials", {state}, true).getResult(0);
     Value count =
         observe ? trials : arith::AddIOp::create(builder, loc, trials, word(1));
@@ -6022,7 +6072,9 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   if (op.getGatherAll())
     listed = Value();
   if (ordered) {
-    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_gather_ordered"),
+    bool twoLanes = cachedCell && !fixedPoint && grid[0] * grid[1] * grid[2] >= (1 << 22);
+    func::CallOp::create(builder, loc, instance(twoLanes ? "mdrt_gpu_pme_gather_ordered_two"
+                                                         : "mdrt_gpu_pme_gather_ordered"),
                          ValueRange{cellOrder.particles, cellOrder.permutation, real, box,
                                     k1, k2, k3, forces, createIndex(builder, loc, launch.blockSize)});
   } else if (listed && usesWeights)
@@ -6066,7 +6118,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
 /// nothing with the allocator of the runtime: the transforms of cuFFT,
 /// whose plans hold their work areas (runtime/mdrt_cuda.c).
 static bool isAuditedNotToAllocate(StringRef name) {
-  return name == "mdrtCudaPMEFixedPath" || name.starts_with("mdrtCudaPMEPath") || (name == "mdrtCudaPMEPrepare" || name == "mdrtCudaPMETrials" ||
+  return name == "mdrtCudaPMEFixedPath" || name.starts_with("mdrtCudaPMEPath") || (name == "mdrtCudaPMEPrepareFlat" || name == "mdrtCudaPMEPrepare" || name == "mdrtCudaPMETrials" ||
           name == "mdrtCudaPMEBegin" || name == "mdrtCudaPMEFFT" ||
           name == "mdrtCudaPMEEnd" || name == "mdrtCudaPMERelease") ||
          name == "mdrtCudaFFTForward3D" || name == "mdrtCudaFFTBackward3D" ||

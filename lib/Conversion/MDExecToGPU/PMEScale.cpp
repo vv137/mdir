@@ -6,7 +6,7 @@ using namespace mdir;
 using namespace mdir::kernels;
 
 template <Window window, Splitting splitting, bool tilted>
-void DevicePME::emitScale(StringRef symbol) {
+void DevicePME::emitScale(StringRef symbol, bool storeFactors) {
   StringRef blockFunction = blockSymbol<window, tilted>();
   OpBuilder::InsertionGuard functionGuard(b);
   SmallVector<Type> inputs;
@@ -227,14 +227,19 @@ void DevicePME::emitScale(StringRef symbol) {
         influence = radialInfluence(tables, pe, cc1, msqr, rone, t1, t2, t3);
       }
       Value bc = influence.factor;
-      Value re_at = muli(item, cc2);
-      Value im_at = addi(re_at, cc1);
-      Value re = load(c, {re_at});
-      Value im = load(c, {im_at});
-      Value reb = mulf(re, bc);
-      Value imb = mulf(im, bc);
-      store(reb, c, {re_at});
-      store(imb, c, {im_at});
+      if (storeFactors) {
+        Value axes = muli(addi(addi(k1, k2), k3), c3t);
+        store(bc, tables, {addi(axes, item)});
+      } else {
+        Value re_at = muli(item, cc2);
+        Value im_at = addi(re_at, cc1);
+        Value re = load(c, {re_at});
+        Value im = load(c, {im_at});
+        Value reb = mulf(re, bc);
+        Value imb = mulf(im, bc);
+        store(reb, c, {re_at});
+        store(imb, c, {im_at});
+      }
       scf::YieldOp::create(b, loc);
     }
     gpu::TerminatorOp::create(b, loc);
@@ -243,15 +248,15 @@ void DevicePME::emitScale(StringRef symbol) {
 }
 
 template void
-    DevicePME::emitScale<Window::Spline, Splitting::Gaussian, false>(StringRef);
+    DevicePME::emitScale<Window::Spline, Splitting::Gaussian, false>(StringRef, bool);
 template void
     DevicePME::emitScale<Window::Spline, Splitting::Dispersion, false>(
-        StringRef);
+        StringRef, bool);
 template void
-    DevicePME::emitScale<Window::Spline, Splitting::Gaussian, true>(StringRef);
+    DevicePME::emitScale<Window::Spline, Splitting::Gaussian, true>(StringRef, bool);
 template void DevicePME::emitScale<Window::Spline, Splitting::Dispersion, true>(
-    StringRef);
+    StringRef, bool);
 template void
-    DevicePME::emitScale<Window::Prolate, Splitting::Radial, false>(StringRef);
+    DevicePME::emitScale<Window::Prolate, Splitting::Radial, false>(StringRef, bool);
 template void
-    DevicePME::emitScale<Window::Prolate, Splitting::Radial, true>(StringRef);
+    DevicePME::emitScale<Window::Prolate, Splitting::Radial, true>(StringRef, bool);

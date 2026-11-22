@@ -302,6 +302,10 @@ private:
   /// sums that run one after another can take one buffer.
   using ScratchKey = std::tuple<Type, Value, int64_t, unsigned, unsigned>;
   llvm::DenseMap<ScratchKey, SmallVector<Value, 1>> sharedScratch;
+  // Static evaluation sites of one sum share the persistent cell factors.
+  // Include the frame size because the callback metadata names spread buffers.
+  using PMEKey = std::tuple<Value, Value, Type, Attribute, Attribute, Attribute, unsigned>;
+  llvm::DenseMap<PMEKey, std::pair<Value, Value>> pmeTables;
   /// The buffers of the partial sums of the reductions on a device, by
   /// type, shared by the sums of the function (getPartials).
   llvm::DenseMap<Type, SmallVector<Value, 1>> sharedPartials;
@@ -1480,10 +1484,25 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
     // each point of each edge (D104), five with `p3m` (D304).
     // The prolate kernel keeps its coefficients after them: at most
     // 3 + 2 * 64 + 2 * 8 * 64 (D266).
-    scratch.push_back(
-        allocate(gridType, (op.getP3m() ? 5 : 3) *
-                                   (grid[0] + grid[1] + grid[2]) +
-                               (op.getProlate() ? 1280 : 0)));
+    int64_t tableSize = (op.getP3m() ? 5 : 3) * (grid[0] + grid[1] + grid[2]) +
+                        (op.getProlate() ? 1280 : 0);
+    auto privateBuffer = [&](Type element, int64_t count) {
+      return allocateLength(MemRefType::get({ShapedType::kDynamic}, element,
+                                MemRefLayoutAttrInterface(), space),
+          arith::ConstantIndexOp::create(root->builder, loc, count));
+    };
+    Value metadata;
+    if (ordered) {
+      auto &stored = pmeTables[{moduli, size, gridType, op.getGridAttr(),
+                                op.getBetaAttr(), op.getCoulombAttr(), fixedOrder}];
+      if (!stored.first)
+        stored = {privateBuffer(gridType, tableSize + (!fixedOrder && usePMEInfluenceMesh(grid) ? half : 0)),
+                  privateBuffer(IntegerType::get(context, 64), 14)};
+      scratch.push_back(stored.first);
+      metadata = stored.second;
+    } else {
+      scratch.push_back(allocate(gridType, tableSize));
+    }
     // Bricks are used only by the non-tiled f32 spreading of order 4, or
     // by the non-tiled prolate spreading. The tiled and fixed-order paths
     // never read them (D108, D282, D301).
@@ -1502,7 +1521,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       for (int64_t count : {cells, cells + 1, cells, (cells + 1023) / 1024})
         scratch.push_back(allocate(word, count));
       scratch.push_back(allocate(word, points));
-      scratch.push_back(allocate(IntegerType::get(context, 64), 14));
+      scratch.push_back(metadata);
       if (!fixedOrder)
         allocateWeights();
     }
@@ -1561,6 +1580,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
             return allocateLength(type, length);
           }));
     }
+
   }
 
   auto created = ReciprocalOp::create(
@@ -1571,6 +1591,8 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       op.getPotentialAttr(), op.getProlateAttr(), op.getP3mAttr(),
       op.getGatherAllAttr(),
       onDevice ? op.getScatterAttr() : ScatterAttr());
+  if (onDevice && canUsePMECellOrder(op))
+    created->setAttr("md_exec.private_pme_tables", scope.builder.getUnitAttr());
   algebra::carry(op, created);
   mapping.map(op.getEnergy(), created.getEnergy());
   mapping.map(op.getVirial(), created.getVirial());
@@ -2671,6 +2693,7 @@ LogicalResult Assignment::convertFunction(func::FuncOp function) {
 
     sizes.clear();
     sharedScratch.clear();
+    pmeTables.clear();
     sharedPartials.clear();
     neighborStorages.clear();
     hostBuffers.clear();

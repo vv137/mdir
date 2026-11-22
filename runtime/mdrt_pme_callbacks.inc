@@ -15,7 +15,7 @@ struct PMETrial {
   struct PMEPolicy *policy;
   CUstream stream;
   CUevent start, stop, lastUse;
-  CUdeviceptr metadata;
+  CUdeviceptr metadata, influence;
   cufftHandle callback[2];
   size_t workspace;
   int modes[PME_MODES], count, measured, pinned;
@@ -69,12 +69,14 @@ static int makePMECallback(struct PMETrial *s, int dir, int single, int tilted,
                            : (single ? "pmeLoadF32" : "pmeLoadF64");
   if (dir && tilted)
     symbol = single ? "pmeScaleF32Tilted" : "pmeScaleF64Tilted";
+  if (dir && s->influence)
+    symbol = single ? "pmeScaleFlatF32" : "pmeScaleFlatF64";
   cufftXtCallbackType cb =
       dir ? (single ? CUFFT_CB_LD_COMPLEX : CUFFT_CB_LD_COMPLEX_DOUBLE)
           : (single ? CUFFT_CB_LD_REAL : CUFFT_CB_LD_REAL_DOUBLE);
   cufftType type =
       dir ? (single ? CUFFT_C2R : CUFFT_Z2D) : (single ? CUFFT_R2C : CUFFT_D2Z);
-  void *info = (void *)(uintptr_t)s->metadata;
+  void *info = (void *)(uintptr_t)(dir && s->influence ? s->influence : s->metadata);
   cufftResult result = cufftXtSetJITCallback(h, symbol, pmeCallbackCode,
                                              sizeof pmeCallbackCode, cb, &info);
   size_t bytes = 0;
@@ -122,17 +124,17 @@ static struct PMEPolicy *findPMEPolicy(int k1, int k2, int k3, int single,
   return pmePolicies = p;
 }
 
-intptr_t mdrtCudaPMEPrepare(int64_t k1, int64_t k2, int64_t k3, int64_t single,
-                            int64_t tilted, uintptr_t metadata) {
+intptr_t mdrtCudaPMEPrepareFlat(int64_t k1, int64_t k2, int64_t k3, int64_t single,
+                            int64_t tilted, uintptr_t metadata, uintptr_t influence) {
 #ifndef MDIR_PME_LTO
   return 0;
 #else
   CUstream stream = mgpuStreamCreate();
   struct PMETrial *s = &pmeTrials[onSide != 0];
   struct PMEPolicy *p = s->policy;
-  if (!p || s->stream != stream || s->metadata != metadata || p->k[0] != k1 ||
+  if (!p || s->stream != stream || s->influence != influence || s->metadata != metadata || p->k[0] != k1 ||
       p->k[1] != k2 || p->k[2] != k3 || p->single != single ||
-      p->tilted != tilted) {
+      p->tilted != tilted + 2 * !!influence) {
     releasePMETrial(s);
     /* Make room for the two ordinary plans first. Under a tight workspace
        budget the explicit implementation remains available. */
@@ -141,6 +143,7 @@ intptr_t mdrtCudaPMEPrepare(int64_t k1, int64_t k2, int64_t k3, int64_t single,
         !getFFTPlan(k1, k2, k3, 0, single, &plain))
       return 0;
     s->metadata = metadata;
+    s->influence = influence;
     s->stream = stream;
     int available = 0, version = 0;
     cufftGetVersion(&version);
@@ -148,7 +151,7 @@ intptr_t mdrtCudaPMEPrepare(int64_t k1, int64_t k2, int64_t k3, int64_t single,
       for (int dir = 0; dir < 2; ++dir)
         available |= makePMECallback(s, dir, single, tilted, k1, k2, k3) << dir;
     }
-    p = findPMEPolicy(k1, k2, k3, single, tilted, version, available);
+    p = findPMEPolicy(k1, k2, k3, single, tilted + 2 * !!influence, version, available);
     if (!p) {
       releasePMETrial(s);
       return 0;
@@ -168,6 +171,11 @@ intptr_t mdrtCudaPMEPrepare(int64_t k1, int64_t k2, int64_t k3, int64_t single,
   s->measured = p->winner < 0 ? s->count * PME_ROUNDS : 0;
   return (intptr_t)s;
 #endif
+}
+
+intptr_t mdrtCudaPMEPrepare(int64_t k1, int64_t k2, int64_t k3, int64_t single,
+                            int64_t tilted, uintptr_t metadata) {
+  return mdrtCudaPMEPrepareFlat(k1, k2, k3, single, tilted, metadata, 0);
 }
 
 int64_t mdrtCudaPMETrials(intptr_t handle) {

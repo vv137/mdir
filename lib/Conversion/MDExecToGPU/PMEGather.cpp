@@ -7,8 +7,8 @@ using namespace mdir;
 using namespace mdir::kernels;
 
 template <bool tilted, bool useList, bool potentialOnly, bool cachedWeights>
-void DevicePME::emitGather(StringRef symbol, bool ordered) {
-  const int gatherLanes = ordered ? 4 : lanes;
+void DevicePME::emitGather(StringRef symbol, bool ordered, int orderedLanes) {
+  const int gatherLanes = ordered ? orderedLanes : lanes;
   StringRef blockFunction =
       tilted ? "mdrt_gpu_pme_blocks_triclinic" : "mdrt_gpu_pme_blocks";
   OpBuilder::InsertionGuard functionGuard(b);
@@ -162,6 +162,8 @@ void DevicePME::emitGather(StringRef symbol, bool ordered) {
       slot = divui(item, laneCount);
     }
     Value j3 = remui(item, laneCount);
+    if (ordered && gatherLanes == 2)
+      j3 = addi(j3, j3);
     Value listed;
     Value is_listed;
     scf::IfOp warp_activeBranch;
@@ -352,6 +354,13 @@ void DevicePME::emitGather(StringRef symbol, bool ordered) {
                                     mulf(plane, dw)};
       };
       auto force = contract(g3, w3p_value, d3p_value);
+      if (ordered && gatherLanes == 2) {
+        Value next = addi(j3, c1);
+        auto second = contract(wrapped(g3, 1, nz), cubicLane(cubicZ, next),
+                               cubicLane(slopeZ, next));
+        for (int axis = 0; axis < 3; ++axis)
+          force[axis] = addf(force[axis], second[axis]);
+      }
       sumx = force[0];
       sumy = force[1];
       sumz = force[2];
@@ -549,13 +558,13 @@ void DevicePME::emitGather(StringRef symbol, bool ordered) {
   func::ReturnOp::create(b, loc);
 }
 
-template void DevicePME::emitGather<false, false, false, false>(StringRef, bool);
-template void DevicePME::emitGather<false, false, false, true>(StringRef, bool);
-template void DevicePME::emitGather<false, false, true, false>(StringRef, bool);
-template void DevicePME::emitGather<false, true, false, false>(StringRef, bool);
-template void DevicePME::emitGather<false, true, false, true>(StringRef, bool);
-template void DevicePME::emitGather<true, false, false, false>(StringRef, bool);
-template void DevicePME::emitGather<true, false, false, true>(StringRef, bool);
-template void DevicePME::emitGather<true, false, true, false>(StringRef, bool);
-template void DevicePME::emitGather<true, true, false, false>(StringRef, bool);
-template void DevicePME::emitGather<true, true, false, true>(StringRef, bool);
+template void DevicePME::emitGather<false, false, false, false>(StringRef, bool, int);
+template void DevicePME::emitGather<false, false, false, true>(StringRef, bool, int);
+template void DevicePME::emitGather<false, false, true, false>(StringRef, bool, int);
+template void DevicePME::emitGather<false, true, false, false>(StringRef, bool, int);
+template void DevicePME::emitGather<false, true, false, true>(StringRef, bool, int);
+template void DevicePME::emitGather<true, false, false, false>(StringRef, bool, int);
+template void DevicePME::emitGather<true, false, false, true>(StringRef, bool, int);
+template void DevicePME::emitGather<true, false, true, false>(StringRef, bool, int);
+template void DevicePME::emitGather<true, true, false, false>(StringRef, bool, int);
+template void DevicePME::emitGather<true, true, false, true>(StringRef, bool, int);

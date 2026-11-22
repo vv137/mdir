@@ -78,3 +78,12 @@ median wins. The process caches this choice by mesh, particle and listed
 counts, mesh precision, geometry, scatter edge, device and cuFFT version.
 The first observation calibrates using force-only evaluations before computing
 its energy and virial. Deterministic evaluation always takes the integer path.
+
+The axis factors persist across steps of a fixed cell. The host compares all
+three edge lengths and, for a tilted cell, all three tilts before reusing
+them. Sums sharing factors also share the cell stamp. On meshes of up to
+4,194,304 points the inverse load callback reads one precomputed factor per
+half-spectrum mode. On larger meshes it evaluates the separable influence
+from the cached axis factors. Two lanes per atom contract adjacent pairs of
+z planes on large mixed- or double-precision meshes, with four lanes retained
+for fixed-order reproducibility.

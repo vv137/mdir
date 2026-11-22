@@ -86,3 +86,18 @@ __device__ cufftDoubleComplex pmeScaleF64Tilted(void *input,
                                                 void *data, void *) {
   return scale<double, cufftDoubleComplex, true>(input, i, data);
 }
+
+// Each half-spectrum mode has a cell-dependent influence, prepared once.
+__device__ cufftComplex pmeScaleFlatF32(void *input, unsigned long long i,
+                                        void *factors, void *) {
+  cufftComplex value = static_cast<const cufftComplex *>(input)[i];
+  float w = static_cast<const float *>(factors)[i];
+  return {value.x * w, value.y * w};
+}
+
+__device__ cufftDoubleComplex pmeScaleFlatF64(void *input, unsigned long long i,
+                                              void *factors, void *) {
+  cufftDoubleComplex value = static_cast<const cufftDoubleComplex *>(input)[i];
+  double w = static_cast<const double *>(factors)[i];
+  return {value.x * w, value.y * w};
+}
