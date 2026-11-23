@@ -6,7 +6,7 @@
 #include "mdir/Conversion/Passes.h"
 #include "DevicePME.h"
 #include "mdir/Dialect/MDExec/PMECellOrder.h"
-#include "mdir/Driver/ProlateC2.h"
+#include "mdir/Driver/ProlateC3.h"
 #include "mdir/Runtime/GroupsABI.h"
 
 #include "mdir/Conversion/MDExecKernels.h"
@@ -6025,7 +6025,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op, Value cachedCe
                                    word(tilted), pointer(scratch[14])};
     if (flat) {
       int64_t bytes = (3 * (grid[0] + grid[1] + grid[2]) +
-                       (cubicRadial ? prolate::C2DeviceTableWords : 0)) * (narrow ? 4 : 8);
+                       (cubicRadial ? prolate::C3DeviceTableWords : 0)) * (narrow ? 4 : 8);
       prepareArgs.push_back(arith::AddIOp::create(builder, loc, pointer(tables), word(bytes)));
     }
     Value state = runtime(flat ? "mdrtCudaPMEPrepareFlat" : "mdrtCudaPMEPrepare",

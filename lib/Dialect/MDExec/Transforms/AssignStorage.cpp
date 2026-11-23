@@ -12,7 +12,7 @@
 #include "mdir/Dialect/MDExec/Algebra.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDExec/PMECellOrder.h"
-#include "mdir/Driver/ProlateC2.h"
+#include "mdir/Driver/ProlateC3.h"
 #include "mdir/Dialect/MDExec/StorageSet.h"
 #include "mdir/Dialect/MDExec/Transfers.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
@@ -1486,7 +1486,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
     // The prolate kernel keeps its coefficients after them: at most
     // 3 + 2 * 64 + 2 * 8 * 64 (D266).
     int64_t tableSize = (op.getP3m() ? 5 : 3) * (grid[0] + grid[1] + grid[2]) +
-                        (op.getProlate() ? (op.getOrder() == 4 ? prolate::C2DeviceTableWords : 1280) : 0);
+                        (op.getProlate() ? (op.getOrder() == 4 ? prolate::C3DeviceTableWords : 1280) : 0);
     auto privateBuffer = [&](Type element, int64_t count) {
       return allocateLength(MemRefType::get({ShapedType::kDynamic}, element,
                                 MemRefLayoutAttrInterface(), space),

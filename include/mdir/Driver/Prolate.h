@@ -27,7 +27,7 @@ public:
   /// ψ₀ᶜ of bandwidth `c` > 0.
   explicit Function(double c, bool constrained = false);
   double endpointDerivative(int derivative) const;
-  std::vector<double> squaredDistanceTable() const;
+  std::vector<double> squaredDistanceSeries() const;
 
   double bandwidth() const { return c; }
   /// ψ(x), for |x| ≤ 1.
@@ -105,7 +105,7 @@ struct Influence {
   std::vector<double> value, slope;
 };
 Influence getInfluence(const Function &psi);
-Influence getC2Influence(const Function &psi);
+Influence getC3Influence(const Function &psi);
 
 /// The parts of the splitting that the pair terms take, as functions of
 /// x = r / r_c on [0, 1] (1 beyond): `Far`, 1 − Φ(x), which multiplies

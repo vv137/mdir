@@ -42,7 +42,7 @@ enum class DispersionCorrection { None, EnergyPressure };
 /// The kernel of the splitting and the spreading of particle mesh Ewald:
 /// the Gaussian with B-splines, or the prolate spheroidal wave function
 /// (D266).
-enum class PMEKernel { Gaussian, Prolate, ProlateC2 };
+enum class PMEKernel { Gaussian, Prolate, ProlateC3 };
 /// The influence function of particle mesh Ewald with the Gaussian
 /// (docs/pme.md, Section 1.1): that of Essmann et al., the separable
 /// one that the aliasing of the B-splines sets (as sander), or the one

@@ -713,8 +713,8 @@ static void describeRun(const Control &control, const System &system,
                   "order %lld\n",
                   control.pmeMaxSpacing,
                   static_cast<long long>(control.pmeOrder));
-    if (control.pmeKernel == PMEKernel::ProlateC2)
-      std::printf("PME kernel:         PROLATE_C2, order 4\n");
+    if (control.pmeKernel == PMEKernel::ProlateC3)
+      std::printf("PME kernel:         PROLATE_C3, order 4\n");
     else if (control.pmeKernel == PMEKernel::Prolate)
       std::printf("PME kernel:         PROLATE, tolerance %g\n",
                   control.pmeAlphaTolerance);

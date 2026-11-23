@@ -2440,14 +2440,14 @@ Error Reader::readPME(const toml::table &table) {
   if (Error error = readChoice<PMEKernel>(
           table, "kernel", control.pmeKernel,
           {{"GAUSSIAN", PMEKernel::Gaussian},
-           {"PROLATE", PMEKernel::Prolate}, {"PROLATE_C2", PMEKernel::ProlateC2}}))
+           {"PROLATE", PMEKernel::Prolate}, {"PROLATE_C3", PMEKernel::ProlateC3}}))
     return error;
-  bool c2 = control.pmeKernel == PMEKernel::ProlateC2;
+  bool c3 = control.pmeKernel == PMEKernel::ProlateC3;
   bool prolate = control.pmeKernel == PMEKernel::Prolate;
-  if (c2) {
+  if (c3) {
     for (StringRef key : {"beta", "influence", "window_bandwidth"})
       if (auto *node = table.get(std::string_view(key)))
-        return fail(*node, "'" + key + "' conflicts with PROLATE_C2");
+        return fail(*node, "'" + key + "' conflicts with PROLATE_C3");
     control.pmeMaxSpacing = 0;
   }
   // What belongs to the other kernel is refused, not ignored
@@ -2458,7 +2458,7 @@ Error Reader::readPME(const toml::table &table) {
         return fail(*node, "'" + key + "' is for kernel = \"GAUSSIAN\"; the "
                            "prolate kernel takes 'bandwidth' and "
                            "'window_bandwidth'");
-  if (!prolate && !c2)
+  if (!prolate && !c3)
     for (StringRef key : {"bandwidth", "window_bandwidth"})
       if (const toml::node *node = table.get(std::string_view(key)))
         return fail(*node, "'" + key + "' is for kernel = \"PROLATE\"");
@@ -2473,8 +2473,8 @@ Error Reader::readPME(const toml::table &table) {
                              control.pmeMaxSpacing, control.pmeOrder,
                              prolate))
     return error;
-  if (c2 && control.pmeOrder != 4)
-    return fail(*table.get("order"), "PROLATE_C2 requires order 4");
+  if (c3 && control.pmeOrder != 4)
+    return fail(*table.get("order"), "PROLATE_C3 requires order 4");
   if (Error error = readPositive(table, "bandwidth", control.pmeBandwidth))
     return error;
   if (Error error = readPositive(table, "window_bandwidth",

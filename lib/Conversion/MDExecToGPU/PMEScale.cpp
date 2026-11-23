@@ -1,6 +1,6 @@
 // Apply the same influence when the sum needs only the potential grid.
 #include "DevicePME.h"
-#include "mdir/Driver/ProlateC2.h"
+#include "mdir/Driver/ProlateC3.h"
 
 using namespace mlir;
 using namespace mdir;
@@ -226,7 +226,7 @@ void DevicePME::emitScale(StringRef symbol, bool storeFactors, bool loadFactors)
       }
       if constexpr (splitting == Splitting::Radial) {
         if (loadFactors) {
-          Value offset = arith::ConstantIndexOp::create(b, loc, prolate::C2DeviceTableWords);
+          Value offset = arith::ConstantIndexOp::create(b, loc, prolate::C3DeviceTableWords);
           influence.factor = load(tables, {addi(addi(pe, offset), item)});
         } else {
           influence = radialInfluence(tables, pe, cc1, msqr, rone, t1, t2, t3);
@@ -236,7 +236,7 @@ void DevicePME::emitScale(StringRef symbol, bool storeFactors, bool loadFactors)
       if (storeFactors) {
         Value axes = muli(addi(addi(k1, k2), k3), c3t);
         if constexpr (splitting == Splitting::Radial)
-          axes = addi(axes, arith::ConstantIndexOp::create(b, loc, prolate::C2DeviceTableWords));
+          axes = addi(axes, arith::ConstantIndexOp::create(b, loc, prolate::C3DeviceTableWords));
         store(bc, tables, {addi(axes, item)});
       } else {
         Value re_at = muli(item, cc2);

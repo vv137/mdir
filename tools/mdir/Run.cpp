@@ -1159,7 +1159,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
           {"grid", llvm::json::Array{program->pmeGrid[0], program->pmeGrid[1],
                                     program->pmeGrid[2]}},
           {"order", program->pmeOrder},
-          {"kernel", control->pmeKernel == PMEKernel::ProlateC2 ? "PROLATE_C2" : program->pmeProlate ? "PROLATE" : "GAUSSIAN"}};
+          {"kernel", control->pmeKernel == PMEKernel::ProlateC3 ? "PROLATE_C3" : program->pmeProlate ? "PROLATE" : "GAUSSIAN"}};
     // The prolate kernel's own parameters (D266).
     if (program->pme && program->pmeProlate) {
       llvm::json::Object &object = *pme.getAsObject();
@@ -1498,7 +1498,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                  count, static_cast<long long>(control->numSteps),
                  control->timestep);
   // The parameters that the prolate kernel derives (D266).
-  if (control->pmeKernel == PMEKernel::ProlateC2)
+  if (control->pmeKernel == PMEKernel::ProlateC3)
     output.log.print("MDIR: constrained cubic PME, bandwidth %.6g\n", program->pmeBandwidth);
   else if (program->pmeProlate)
     output.log.print("MDIR: the prolate kernel of PME: c = %.6g, c1 = %.6g, "

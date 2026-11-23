@@ -1,5 +1,5 @@
 #include "HostPME.h"
-#include "mdir/Conversion/PMEC2Spectrum.h"
+#include "mdir/Conversion/PMEC3Spectrum.h"
 
 using namespace mlir;
 using namespace mdir::kernels;
@@ -352,15 +352,15 @@ void HostPME::emitInfluence() {
     Value p_scale = load(moduli, {p_r4, p_c3});
     Value p_mabs = math::SqrtOp::create(b, loc, msq);
     Value p_x = arith::MulFOp::create(b, loc, p_scale, p_mabs);
-    Value c2 =
+    Value constrained =
         arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT, p_scale, zero);
     auto spectrum =
-        scf::IfOp::create(b, loc, TypeRange{f64Type, f64Type}, c2, true);
+        scf::IfOp::create(b, loc, TypeRange{f64Type, f64Type}, constrained, true);
     {
       OpBuilder::InsertionGuard guard(b);
       b.setInsertionPointToStart(spectrum.thenBlock());
       Value k = arith::NegFOp::create(b, loc, p_x);
-      auto [v, slope] = mdir::prolate::emitC2Spectrum(
+      auto [v, slope] = mdir::prolate::emitC3Spectrum(
           b, loc, k, [&](bool derivative, Value i) {
             Value col = arith::AddIOp::create(b, loc, p_r4, i);
             if (derivative)

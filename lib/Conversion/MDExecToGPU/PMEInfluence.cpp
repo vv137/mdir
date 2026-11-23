@@ -1,5 +1,5 @@
 #include "DevicePME.h"
-#include "mdir/Conversion/PMEC2Spectrum.h"
+#include "mdir/Conversion/PMEC3Spectrum.h"
 
 using namespace mlir;
 using namespace mdir;
@@ -24,7 +24,7 @@ DevicePME::Influence DevicePME::radialInfluence(Value tables, Value pe,
     Value start = addi(pe, arith::ConstantIndexOp::create(b, loc, 3));
     Value k = arith::NegFOp::create(b, loc, px);
     std::tie(pchi, pgchi) =
-        mdir::prolate::emitC2Spectrum(b, loc, k, [&](bool derivative, Value i) {
+        mdir::prolate::emitC3Spectrum(b, loc, k, [&](bool derivative, Value i) {
           Value at = addi(start, i);
           return load(tables, {derivative ? addi(at, pn) : at});
         });

@@ -2,14 +2,14 @@
 // The host and device emitters differ only in where they read the coefficients.
 #pragma once
 
-#include "mdir/Driver/ProlateC2.h"
+#include "mdir/Driver/ProlateC3.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
 namespace mdir::prolate {
 template <class Load>
-std::pair<mlir::Value, mlir::Value> emitC2Spectrum(mlir::OpBuilder &b,
+std::pair<mlir::Value, mlir::Value> emitC3Spectrum(mlir::OpBuilder &b,
                                                    mlir::Location loc,
                                                    mlir::Value k, Load load) {
   using namespace mlir;
@@ -32,13 +32,13 @@ std::pair<mlir::Value, mlir::Value> emitC2Spectrum(mlir::OpBuilder &b,
   auto div = [&](Value x, Value y) -> Value {
     return arith::DivFOp::create(b, loc, x, y);
   };
-  Value edge = real(C2Transition), one = real(1), two = real(2);
+  Value edge = real(C3Transition), one = real(1), two = real(2);
   Value low = arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT, k, edge);
   auto branch = scf::IfOp::create(b, loc, TypeRange{t, t}, low, true);
   {
     OpBuilder::InsertionGuard guard(b);
     b.setInsertionPointToStart(branch.thenBlock());
-    Value scaled = mul(k, real(C2SamplesPerUnit));
+    Value scaled = mul(k, real(C3SamplesPerUnit));
     Value cell = arith::FPToSIOp::create(b, loc, b.getI32Type(), scaled);
     Value i = arith::IndexCastOp::create(b, loc, b.getIndexType(), cell);
     Value next = arith::AddIOp::create(b, loc, i, index(1));
@@ -58,14 +58,14 @@ std::pair<mlir::Value, mlir::Value> emitC2Spectrum(mlir::OpBuilder &b,
     Value inv = div(one, k), ratio = mul(edge, inv), x = mul(ratio, ratio);
     Value zero = real(0);
     auto sum = scf::ForOp::create(
-        b, loc, index(0), index(C2Basis), index(1),
+        b, loc, index(0), index(C3Basis), index(1),
         ValueRange{zero, zero, zero, zero},
         [&](OpBuilder &body, Location, Value i, ValueRange args) {
           OpBuilder::InsertionGuard point(b);
           b.setInsertionPoint(body.getInsertionBlock(),
                               body.getInsertionPoint());
           Value j =
-              arith::SubIOp::create(b, loc, index(C2Knots + C2Basis - 1), i);
+              arith::SubIOp::create(b, loc, index(C3Knots + C3Basis - 1), i);
           scf::YieldOp::create(b, loc,
                                ValueRange{add(load(false, j), mul(x, args[0])),
                                           add(load(true, j), mul(x, args[1])),

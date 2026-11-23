@@ -115,14 +115,14 @@ def main():
     if pme.get("order", 4) != 4:
         raise ValueError("expected an order-four mesh")
     kernel = pme.get("kernel", "GAUSSIAN")
-    if kernel == "PROLATE_C2":
-        system.pme_kernel = mdir.PMEKernel.ProlateC2
+    if kernel == "PROLATE_C3":
+        system.pme_kernel = mdir.PMEKernel.ProlateC3
         system.pme_bandwidth = pme["bandwidth"]
     elif kernel == "GAUSSIAN" and pme.get("influence") == "OPTIMAL":
         system.pme_alpha = 10 * pme["beta"]
         system.pme_influence = mdir.PMEInfluence.Optimal
     else:
-        raise ValueError("expected PROLATE_C2 or Gaussian with explicit optimal influence")
+        raise ValueError("expected PROLATE_C3 or Gaussian with explicit optimal influence")
     exe = mdir.Execution()
     exe.target, exe.precision = mdir.Target.GPU, getattr(mdir.Precision, args.precision)
     integrator = mdir.Integrator()

@@ -16,7 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "mdir/Driver/Prolate.h"
-#include "mdir/Driver/ProlateC2.h"
+#include "mdir/Driver/ProlateC3.h"
 #include <array>
 #include <numeric>
 
@@ -68,28 +68,30 @@ void gaussLegendre(int n, std::vector<double> &x, std::vector<double> &w) {
   }
 }
 
-// Project the band-concentration operator onto the null space of value
-// and slope at x=1 in the orthonormal even Legendre basis on [0,1].
-using Basis = std::array<double, C2Basis>;
-using Matrix = std::array<Basis, C2Basis>;
+// Project the band-concentration operator onto the null space of value,
+// slope and curvature at x=1 in the orthonormal even Legendre basis on [0,1].
+using Basis = std::array<double, C3Basis>;
+using Matrix = std::array<Basis, C3Basis>;
 double dot(const Basis &a, const Basis &b) {
   return std::inner_product(a.begin(), a.end(), b.begin(), 0.0);
 }
 
 std::vector<double> constrainedKernel(double bandwidth) {
   Matrix basis{}, concentration{}, eigenvectors{};
-  for (int i = 0; i < C2Basis; ++i) {
+  for (int i = 0; i < C3Basis; ++i) {
     basis[0][i] = std::sqrt(4 * i + 1);
     basis[1][i] = i * (2 * i + 1) * basis[0][i];
-    if (i >= 2)
-      basis[i][i - 2] = 1;
+    int degree = 2 * i;
+    basis[2][i] = basis[1][i] * ((degree - 1) * (degree + 2) / 4.0);
+    if (i >= 3)
+      basis[i][i - 3] = 1;
     eigenvectors[i][i] = 1;
   }
-  for (int i = 0; i < C2Basis; ++i) {
+  for (int i = 0; i < C3Basis; ++i) {
     for (int pass = 0; pass < 2; ++pass)
       for (int j = 0; j < i; ++j) {
         double projection = dot(basis[i], basis[j]);
-        for (int k = 0; k < C2Basis; ++k)
+        for (int k = 0; k < C3Basis; ++k)
           basis[i][k] -= projection * basis[j][k];
       }
     double norm = std::sqrt(dot(basis[i], basis[i]));
@@ -104,7 +106,7 @@ std::vector<double> constrainedKernel(double bandwidth) {
   for (size_t i = 0; i < nodes.size(); ++i) {
     double x = (1 + nodes[i]) / 2, prev = 1, cur = x;
     values[i][0] = weights[i] / 2;
-    for (int k = 2; k <= 2 * (C2Basis - 1); ++k) {
+    for (int k = 2; k <= 2 * (C3Basis - 1); ++k) {
       double next = ((2 * k - 1) * x * cur - (k - 1) * prev) / k;
       if (k % 2 == 0)
         values[i][k / 2] = std::sqrt(2 * k + 1) * next * weights[i] / 2;
@@ -117,20 +119,20 @@ std::vector<double> constrainedKernel(double bandwidth) {
     Basis spectrum{}, projected{};
     for (size_t i = 0; i < nodes.size(); ++i) {
       double cosine = std::cos(frequency * (1 + nodes[i]) / 2);
-      for (int k = 0; k < C2Basis; ++k)
+      for (int k = 0; k < C3Basis; ++k)
         spectrum[k] += cosine * values[i][k];
     }
-    for (int i = 2; i < C2Basis; ++i)
+    for (int i = 3; i < C3Basis; ++i)
       projected[i] = dot(basis[i], spectrum);
-    for (int i = 2; i < C2Basis; ++i)
-      for (int j = 2; j < C2Basis; ++j)
+    for (int i = 3; i < C3Basis; ++i)
+      for (int j = 3; j < C3Basis; ++j)
         concentration[i][j] += weights[f] * projected[i] * projected[j];
   }
   // Symmetric Jacobi diagonalization in the constrained subspace.
   for (int sweep = 0; sweep < 100; ++sweep) {
     double off = 0;
-    for (int i = 2; i < C2Basis; ++i)
-      for (int j = i + 1; j < C2Basis; ++j) {
+    for (int i = 3; i < C3Basis; ++i)
+      for (int j = i + 1; j < C3Basis; ++j) {
         double cross = concentration[i][j];
         off = std::max(off, std::fabs(cross));
         if (std::fabs(cross) < 1e-19)
@@ -142,7 +144,7 @@ std::vector<double> constrainedKernel(double bandwidth) {
         concentration[i][i] -= t * cross;
         concentration[j][j] += t * cross;
         concentration[i][j] = concentration[j][i] = 0;
-        for (int k = 2; k < C2Basis; ++k) {
+        for (int k = 3; k < C3Basis; ++k) {
           if (k != i && k != j) {
             double x = concentration[k][i], y = concentration[k][j];
             concentration[i][k] = concentration[k][i] = c * x - s * y;
@@ -156,13 +158,13 @@ std::vector<double> constrainedKernel(double bandwidth) {
     if (off < 2e-18)
       break;
   }
-  int best = 2;
-  for (int i = 3; i < C2Basis; ++i)
+  int best = 3;
+  for (int i = 4; i < C3Basis; ++i)
     if (concentration[i][i] > concentration[best][best])
       best = i;
-  std::vector<double> coefficients(2 * C2Basis);
-  for (int k = 0; k < C2Basis; ++k)
-    for (int i = 2; i < C2Basis; ++i)
+  std::vector<double> coefficients(2 * C3Basis);
+  for (int k = 0; k < C3Basis; ++k)
+    for (int i = 3; i < C3Basis; ++i)
       coefficients[2 * k] +=
           std::sqrt(4 * k + 1) * basis[i][k] * eigenvectors[i][best];
   return coefficients;
@@ -560,24 +562,24 @@ double Function::endpointDerivative(int derivative) const {
   return static_cast<double>(result);
 }
 
-Influence mdir::prolate::getC2Influence(const Function &psi) {
+Influence mdir::prolate::getC3Influence(const Function &psi) {
   Influence influence;
-  influence.terms = C2Terms;
-  influence.value.resize(C2Terms);
-  influence.slope.resize(C2Terms);
+  influence.terms = C3Terms;
+  influence.value.resize(C3Terms);
+  influence.slope.resize(C3Terms);
   double norm = 2 * psi.halfIntegral();
-  for (int i = 0; i < C2Knots; ++i) {
-    double k = static_cast<double>(i) / C2SamplesPerUnit;
+  for (int i = 0; i < C3Knots; ++i) {
+    double k = static_cast<double>(i) / C3SamplesPerUnit;
     influence.value[i] = psi.transform(k) / norm;
-    influence.slope[i] = psi.transformDerivative(k) / (norm * C2SamplesPerUnit);
+    influence.slope[i] = psi.transformDerivative(k) / (norm * C3SamplesPerUnit);
   }
   // Integration by parts terminates at the degree of the polynomial.
   // Values multiply sin(k)/k, slopes multiply cos(k)/k².
-  for (int i = 0; i < C2Basis; ++i) {
+  for (int i = 0; i < C3Basis; ++i) {
     double scale = (i % 2 ? -1 : 1) /
-                   (psi.halfIntegral() * std::pow(double(C2Transition), 2 * i));
-    influence.value[C2Knots + i] = scale * psi.endpointDerivative(2 * i);
-    influence.slope[C2Knots + i] = scale * psi.endpointDerivative(2 * i + 1);
+                   (psi.halfIntegral() * std::pow(double(C3Transition), 2 * i));
+    influence.value[C3Knots + i] = scale * psi.endpointDerivative(2 * i);
+    influence.slope[C3Knots + i] = scale * psi.endpointDerivative(2 * i + 1);
   }
   return influence;
 }
@@ -612,56 +614,33 @@ Window mdir::prolate::getCubicWindow() {
   return window;
 }
 
-std::vector<double> Function::squaredDistanceTable() const {
-  // The cubic B-spline for L(t) = Phi(sqrt(t))/sqrt(t) is C² at every
-  // interior knot. At t=1 it matches the value, slope and curvature of
-  // 1/sqrt(t), so the direct term vanishes through its second derivative.
-  constexpr int n = C2PairCells;
-  constexpr double h = 1.0 / n;
-  std::vector<double> controls(n + 3), upper(n);
-  auto at = [&](int i) -> double & { return controls[i + 1]; };
-  auto endpoint = [&](int i, double f, double df, double ddf) {
-    double curvature = h * h * ddf;
-    at(i - 1) = f - h * df + curvature / 3;
-    at(i) = f - curvature / 6;
-    at(i + 1) = f + h * df + curvature / 3;
-  };
-  // The second and fourth derivatives at zero follow from Legendre's equation.
-  double second = 0, fourth = 0, legendreAtZero = 1;
-  for (size_t k = 2; k < coefficients.size(); k += 2) {
-    legendreAtZero *= -(double(k) - 1) / k;
-    double lambda = double(k) * (k + 1);
-    double term = lambda * coefficients[k] * legendreAtZero;
-    second -= term;
-    fourth += (lambda - 6) * term;
+// Integrate the even Legendre series in its own basis, then convert the odd
+// primitive to Chebyshev form. The Legendre generating function at cos(theta)
+// factors into (1-z exp(i theta))^-1/2 and its conjugate, giving the cosine
+// coefficients below. This avoids amplifying sampling noise in derivatives.
+std::vector<double> Function::squaredDistanceSeries() const {
+  std::array<double, 2 * C3Basis> primitive{}, binomial{};
+  primitive[1] = coefficients[0];
+  for (int n = 2; n < 2 * C3Basis; n += 2) {
+    double term = coefficients[n] / (2 * n + 1);
+    primitive[n + 1] += term;
+    primitive[n - 1] -= term;
   }
-  endpoint(0, value(0) / c0, second / (6 * c0), fourth / (60 * c0));
-  endpoint(n, 1, -0.5, 0.75);
-
-  // Interpolate the free interior knots: b[i-1]+4b[i]+b[i+1]=6L(i h).
-  // The two nearest the endpoints are fixed by the boundary derivatives.
-  for (int i = 2; i <= n - 2; ++i) {
-    double x = std::sqrt(i * h);
-    double diagonal = 4 - upper[i - 1];
-    at(i) = (6 * integral(x) / (x * c0) - at(i - 1)) / diagonal;
-    upper[i] = 1 / diagonal;
+  binomial[0] = 1;
+  for (int k = 1; k < 2 * C3Basis; ++k)
+    binomial[k] = binomial[k - 1] * (1 - 0.5 / k);
+  std::vector<double> series(C3Basis);
+  double next = 0;
+  for (int j = C3Basis - 1; j >= 0; --j) {
+    int m = 2 * j + 1;
+    double cosine = 0;
+    for (int n = m; n < 2 * C3Basis; n += 2)
+      cosine += 2 * primitive[n] * binomial[(n - m) / 2] *
+                binomial[(n + m) / 2];
+    // Divide by x using 2x T_k = T_(k+1) + T_(k-1).
+    next = 2 * cosine / c0 - next;
+    series[j] = j ? next : next / 2;
   }
-  for (int i = n - 2; i >= 2; --i)
-    at(i) -= upper[i] * at(i + 1);
-
-  std::vector<double> result(4 * n);
-  for (int i = 0; i < n; ++i) {
-    double before = at(i) - at(i - 1), here = at(i + 1) - at(i);
-    double after = at(i + 2) - at(i + 1);
-    double f = at(i) + (here - before) / 6;
-    double slope = (here + before) / 2;
-    double quadratic = (here - before) / 2;
-    double cubic = (after - 2 * here + before) / 6;
-    // Recenter the monomials from [0,1] to the pair lookup's [-1,1].
-    result[4 * i] = f + slope / 2 + quadratic / 4 + cubic / 8;
-    result[4 * i + 1] = slope / 2 + quadratic / 2 + 3 * cubic / 8;
-    result[4 * i + 2] = quadratic / 4 + 3 * cubic / 8;
-    result[4 * i + 3] = cubic / 8;
-  }
-  return result;
+  // T_(2j)(x) = T_j(2x²-1).
+  return series;
 }
