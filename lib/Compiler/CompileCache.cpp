@@ -811,7 +811,7 @@ uint64_t listAndEvict(CacheDirectory &directory, uint64_t maxBytes,
         return;
       }
       if (!name.ends_with(".o") && !name.ends_with(".ptx") &&
-          !name.ends_with(".cubin"))
+          !name.ends_with(".cubin") && !name.ends_with(".shape"))
         return;
       entries.push_back({at, name.str(), uint64_t(status.st_size),
                          getModificationTime(status)});
@@ -997,7 +997,7 @@ ClearedCache mdir::compiler::clearCache(CacheDirectory &directory) {
         return;
       }
       if (!name.ends_with(".o") && !name.ends_with(".ptx") &&
-          !name.ends_with(".cubin"))
+          !name.ends_with(".cubin") && !name.ends_with(".shape"))
         return;
       // Only entries of this format: the magic tag of the layout.
       Descriptor fd(::openat(at, name.data(), O_RDONLY | O_NOFOLLOW |

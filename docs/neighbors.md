@@ -49,6 +49,100 @@ new with every build.
 
 ## 2. The build
 
+The periodic TOWERS emitter in `TowersBuild.cpp` rebuilds at each
+evaluation. Its direct compiler entry, `add-towers-build`, specializes
+the number of particles, grid dimensions, axial reach and capacity. Setup
+computes the inverse periodic stencil. The default entries take Cartesian
+positions and rectangular edge lengths. With `triclinic=true`, they take
+fractional positions and the three Cartesian lattice vectors as rows.
+Insertion groups particles by cell.
+Sort/pack orders each cell by quarter-cell coordinates and stable particle
+ID, writes positions relative to the cell center, charges, types and the two
+ID maps, and scatters each occupied span to its owners. Empty spans have
+count zero. The moving-step build keeps one reserve slot per atom. When a cell exceeds
+its primary allocation, insertion chains the excess particle keys on the
+device. Pack allocates a span of the required size and rebuilds its sorted
+contents from both sets of keys before publishing its descriptors. The host reference and device
+entries can also enumerate candidate multiplicities for validation.
+[Rectangular ownership](paper/04-neighbors.md#48-rectangular-tower-and-plate-ownership-dtowers)
+
+The optional `force-body` pass argument names a function containing a mixed
+`md_exec.pair_for` with one antisymmetric vector force. The
+GPU entry imports per-atom fields by particle ID, screens the staged tile,
+and evaluates the original pair region for candidates inside its strict
+cutoff. When the two region inputs are the rebuild charge and type in that
+order, the internal `packed-charge-type` option takes charge from the fourth
+packed position lane and a single slot-indexed type array in place of both
+atom-indexed arrays. On the GPU, after each box setup, launch one block of
+`towers_prepare_force` with the geometry and an output sized for the compiled layout.
+The rectangular layout uses seven floats for the widths, quantization
+scale, screen thresholds and validity flag. The triclinic layout uses 43
+floats at FULL or 49 at HALF for the transformed geometry, slab normals
+and stencil shifts. Pass the prepared geometry until the box changes.
+Screen features and the compacted target list share
+storage with the integer force planes across the prefix barrier.
+Small read-only coefficient tables can be staged with the tile.
+`force-panel`, `force-stripe`, `force-workers` and `force-records` specialize
+the test entry. Launch one block per tower with the selected worker count
+and eight bytes of dynamic shared memory per record. The optional
+`force-residency` launch bound targets up to four resident blocks per SM. A caller supplies
+zeroed signed 64-bit force words and a zeroed status word. Status bit 0
+reports an unrepresentable pair component and bit 1 rejects the geometry or
+scale. The caller discards the result on either error. These words precede
+exclusion corrections and certification. The optional GPU `probe-force`
+entry additionally writes eight phase durations in cycles per tower, wall
+time in nanoseconds, the final cycle timestamp and the number of tile attempts.
+
+The internal `certify-force` pass option emits a checked force
+sequence. Zero the
+provisional force words, both 32-bit state words and a signed 64-bit failed-pair
+counter at the start of each evaluation. Pass the counter immediately after
+the force scale. For the same geometry, packing, parameters and table, issue
+the following entries in order. Each entry takes its own launch boundary.
+
+| Entry | Arguments and work |
+|---|---|
+| `towers_force` | Accumulate into provisional words. A pair with any component outside signed 32-bit conversion contributes one to the failed-pair counter and zero provisional words. |
+| `towers_certify` | Provisional words, counter, state. One item per atom checks the inclusive signed 32-bit range. An outstanding conversion count or failed endpoint sets the replay word. |
+| `towers_clear_wide` | State, low limbs, high limbs. One item per atom clears both scratch buffers when replay is requested. |
+| `towers_recover` | Force arguments with the low buffer in place of provisional words, plus a final high-buffer argument. The GPU uses the same tower grid, worker count and shared-record capacity as the force entry. Replay needs no probe argument. |
+| `towers_check_wide` | State, low limbs, high limbs. One item per atom checks exact signed 64-bit representability. |
+| `towers_publish` | State, provisional words, low limbs, destination. One item per atom copies the accepted result after all checks pass. |
+
+The low and high buffers, the provisional result and the publication destination
+are distinct particle-by-three arrays of 64-bit words. The first state word
+reports fatal errors. Bit 0 means an unrepresentable physical component, bit 1
+invalid geometry or scale, and bit 2 an unrepresentable final sum. A fatal
+error preserves the destination. The second word records whether this evaluation
+required replay. A successful narrow evaluation leaves wide scratch untouched.
+
+The `exclusions` pass argument specializes the number of unique excluded
+pairs. With a nonzero count the named function contains two pair regions
+with matching per-atom inputs. The second supplies the physical correction,
+including outside the direct cutoff. After the failed-pair counter, pass the
+lexicographically sorted permanent-ID pairs (smaller ID first), the rebuilt
+atom-to-slot map, the three planes of binary64 input positions and the three
+box lengths. Captured parameters follow the per-atom inputs. Keep the frame,
+maps and topology fixed through publication.
+
+The force grid has one or two source splits per tower (`force-split`),
+followed by enough blocks for one thread per excluded pair. These threads
+orient the endpoints in the same image and use the original direct region
+to subtract its provisional words and conversion vote. They add the
+independently quantized correction. Wide recovery tests membership before
+evaluating a direct pair, so even a canceled term too large for signed
+64-bit conversion cannot invalidate the physical result.
+
+On the GPU, a single block of `towers_recover_once` can replace the clear,
+recover and check launches. Its arguments and shared record reservation
+match `towers_recover`. It reads the replay word on the device. On failure
+it visits the whole grid with one block, including all physical corrections.
+The multi-block sequence remains available for parallel wide recovery.
+
+The control-file shape for preflight is `[execution] towers_shape`. The
+fields and the current geometry qualification are in
+[Appendix A](paper/A-control-file.md).
+
 ### 2.1 Steps
 
 The host build is the IR template `lib/Runtime/Templates/NeighborsMatrix.mlir`.

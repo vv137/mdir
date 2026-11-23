@@ -3,6 +3,7 @@
 // Every op of md_exec becomes ops of the upstream gpu dialect, where the op
 // is. See docs/ops.md, Section 10.8.
 
+#include "TowersDispatch.h"
 #include "mdir/Conversion/Passes.h"
 #include "DevicePME.h"
 #include "mdir/Runtime/GroupsABI.h"
@@ -2240,7 +2241,7 @@ void Lowering::findRows(func::FuncOp function) {
     // loop over the rows of a domain is lowered alone (D290), and so is a
     // loop of batched stages (D293).
     auto pair = dyn_cast<md_exec::PairForOp>(op);
-    return pair && !appliesBatchedStage(pair) &&
+    return pair && !module->hasAttr("mdir.towers_grid") && !appliesBatchedStage(pair) &&
            pair.getTraversal() == md_exec::Traversal::Directed &&
            pair.getConflict() == md_exec::Conflict::OwnerOnly &&
            !pair.getCenters() &&
@@ -3782,6 +3783,27 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   OpBuilder builder(op);
   if (failed(checkScratch(op, op.getReduce().size(), op.getScratch().size())))
     return failure();
+
+  if (module->hasAttr("mdir.towers_grid")) {
+    auto refresh =
+        op.getNeighbors().getDefiningOp<md_exec::RefreshNeighborsOp>();
+    func::CallOp::create(
+        builder, loc,
+        getOrDeclare(countBuildName, builder.getFunctionType({}, {})),
+        ValueRange{});
+    Neighbors tower;
+    if (failed(getNeighbors(op, op.getNeighbors(), tower)))
+      return failure();
+    return lowerTowersPair(
+        op, refresh ? refresh.getPositions() : Value(), bool(tower.excluded),
+        numKernels++,
+        [&](OpBuilder &at, Location l, Value count, auto body) {
+          launchOver(at, l, count, body);
+        },
+        [&](OpBuilder &at, Location l, Value to, Value from) {
+          createTransfer(at, l, to, from);
+        });
+  }
 
   Neighbors structure;
   if (failed(getNeighbors(op, op.getNeighbors(), structure)))
@@ -5942,6 +5964,12 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
 
   Neighbors structure;
   structure.size = op.getSize();
+  if (module->hasAttr("mdir.towers_grid")) {
+    structure.builds = memref::AllocaOp::create(builder,loc,MemRefType::get({},builder.getI64Type()));
+    memref::StoreOp::create(builder,loc,createZero(builder,loc,builder.getI64Type()),structure.builds,ValueRange{});
+    neighbors[op.getResult()] = structure;
+    return;
+  }
   structure.width = createIndex(builder, loc, op.getWidth());
   if (op.getKind() == md_exec::NeighborKind::Groups) {
     // Groups of 16 (D89). The runtime holds the buffers, sized from an
@@ -9608,6 +9636,13 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
   // The structure is refreshed where it is.
   neighbors[op.getResult()] = structure;
 
+  if (module->hasAttr("mdir.towers_grid")) {
+    Value previous = memref::LoadOp::create(builder,loc,structure.builds,ValueRange{});
+    Value next = arith::AddIOp::create(builder,loc,previous,arith::ConstantIntOp::create(builder,loc,1,64));
+    memref::StoreOp::create(builder,loc,next,structure.builds,ValueRange{});
+    return success();
+  }
+
   Value positions = op.getPositions();
   Value box = op.getCellMutable().get();
   if (positions.getType() != structure.reference.getType())
@@ -10032,6 +10067,8 @@ LogicalResult Lowering::lowerOp(Operation *op) {
       return op->emitOpError()
              << "is not in the storage form; run 'md-exec-assign-storage' "
                 "first";
+    if (module->hasAttr("mdir.towers_grid") && feedsEdges(empty.getResult()))
+      return empty.emitError("TOWERS does not supply explicit edge slots");
     lowerEmptyNeighbors(empty);
   } else if (auto refresh = dyn_cast<md_exec::RefreshNeighborsOp>(op)) {
     if (failed(lowerRefreshNeighbors(refresh)))
@@ -10115,7 +10152,8 @@ LogicalResult Lowering::lowerOp(Operation *op) {
                                          builder.getBoolAttr(false));
     Value none = arith::ConstantOp::create(
         builder, loc, builder.getI64Type(), builder.getI64IntegerAttr(0));
-    memref::StoreOp::create(builder, loc, no, structure.valid, ValueRange{});
+    if (structure.valid)
+      memref::StoreOp::create(builder, loc, no, structure.valid, ValueRange{});
     memref::StoreOp::create(builder, loc, none, structure.builds,
                             ValueRange{});
   } else if (auto edges = dyn_cast<md_exec::BuildEdgesOp>(op)) {
@@ -10950,7 +10988,8 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
 
   SmallVector<Operation *> ops;
   function.walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (op != function.getOperation())
+    if (op != function.getOperation() &&
+        !(module->hasAttr("mdir.towers_grid") && op->getParentOfType<md_exec::PairForOp>()))
       ops.push_back(op);
   });
 
@@ -11250,6 +11289,8 @@ public:
   void runOnOperation() final {
     if (failed(md_exec::verifyTransfers(getOperation())))
       return signalPassFailure();
+    if (getOperation()->hasAttr("mdir.towers_grid"))
+      markTowersExclusions(getOperation());
     if (failed(md_exec::eraseStorageSets(getOperation())))
       return signalPassFailure();
     if (getOperation()->hasAttr("md.derivative_check")) {

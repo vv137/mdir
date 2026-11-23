@@ -1,0 +1,41 @@
+[input]
+coordinates = "argon.pdb"
+
+[output]
+energy_interval = 1
+
+[energy]
+switch_distance   = 7.5
+cutoff            = 8.5
+pairlist_distance = 9.5
+
+[[energy.pair]]
+name       = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+mixing     = "lorentz-berthelot"
+
+[[energy.type]]
+name    = "AR"
+mass    = 39.95
+epsilon = 0.238465
+sigma   = 3.4
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.005
+steps      = 1
+seed       = 314159
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 183.0
+
+[boundary]
+type = "PERIODIC"
+box  = [34.7786, 34.7786, 34.7786]
+
+[execution]
+target    = "GPU"
+threads   = 16
+precision = "MIXED"
+neighbor_structure = "TOWERS"

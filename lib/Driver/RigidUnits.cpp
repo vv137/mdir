@@ -229,6 +229,8 @@ double findAnchored(const Topology &topology, const std::vector<bool> &inKind,
 
 /// Why the program cannot take the units, or "" where it can.
 std::string getProgramReason(const Control &control, const System &system) {
+  if (control.neighborStructure == NeighborStructure::Towers)
+    return "TOWERS traverses particles";
   if (control.target != Target::GPU)
     return "the CPU target: lists of units run on a GPU";
   if (control.precision != Precision::Mixed)

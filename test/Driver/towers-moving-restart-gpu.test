@@ -1,0 +1,12 @@
+# REQUIRES: cuda, hdf5
+# RUN: rm -rf %t && mkdir %t
+# RUN: cp %S/../../examples/argon/argon.pdb %t/
+# RUN: sed -e '/^trajectory/d' -e '/^\[output\]/a checkpoint = "continuous.h5"\ncheckpoint_interval = 10' -e 's/^energy_interval.*/energy_interval = 5/' -e 's/^steps .*/steps = 20/' -e 's/"CPU"/"GPU"/' -e 's/"DOUBLE"/"MIXED"/' %S/../../examples/argon/argon.toml > %t/continuous.toml
+# RUN: echo 'neighbor_structure = "TOWERS"' >> %t/continuous.toml
+# RUN: echo 'towers_shape = {threads=128, blocks_per_sm=1, panel=64, stripe=64, records=16, split=1, cell_height="FULL"}' >> %t/continuous.toml
+# RUN: mdir run %t/continuous.toml > %t/continuous.log
+# RUN: sed -e 's/"continuous.h5"/"resumed.h5"/' -e '/^\[input\]/a checkpoint = "continuous.h5.prev"' -e 's/steps = 20/steps = 10/' -e 's/, cell_height="FULL"//' %t/continuous.toml > %t/resumed.toml
+# RUN: mdir run %t/resumed.toml | FileCheck %s --check-prefix=HEIGHT
+# RUN: mdir checkpoint %t/continuous.h5 %t/resumed.h5 | FileCheck %s
+# HEIGHT: "source":{{.*}}"cell_height":"checkpoint"
+# CHECK: the states are identical

@@ -11,6 +11,10 @@ set(LLVM_LINK_COMPONENTS
 add_llvm_executable(mdir
   mdir.cpp
   BugReport.cpp
+  TowersSpecialization.cpp
+  TowersTrial.cpp
+  TowersTrialInputs.cpp
+  TowersShape.cpp
   Check.cpp
   Checkpoint.cpp
   Manifest.cpp
@@ -29,6 +33,9 @@ add_custom_target(mdir-build-info
   )
 add_dependencies(mdir mdir-build-info)
 target_include_directories(mdir PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+if(MDIR_CUDA_FOUND)
+  target_include_directories(mdir PRIVATE "${MDIR_CUDA_ROOT}/include")
+endif()
 llvm_update_compile_flags(mdir)
 target_link_libraries(mdir PRIVATE
   MDIRDriver

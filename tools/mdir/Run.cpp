@@ -5,6 +5,7 @@
 
 #include "BuildInfo.h"
 #include "Commands.h"
+#include "TowersShape.h"
 #include "Manifest.h"
 
 #include "mdir/Conversion/GPUToBinary.h"
@@ -191,6 +192,10 @@ public:
     if (pass->getArgument() != "convert-md-exec-to-gpu" &&
         pass->getArgument() != "convert-md-exec-to-loops")
       return;
+    if (operation->hasAttr("mdir.towers_grid")) {
+      kinds.insert("towers");
+      return;
+    }
     auto add = [&](md_exec::NeighborKind kind) {
       kinds.insert(kind == md_exec::NeighborKind::Groups ? "groups" : "matrix");
     };
@@ -529,6 +534,34 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     system->velocities.assign(3 * system->getNumParticles(), 0.0);
   } else if (!system->givenVelocities || fromPositions) {
     assignVelocities(*control, *system);
+  }
+  StringRef previousTowersHeight =
+      isRestart ? StringRef(checkpoint->towersCellHeight) : StringRef();
+  bool usesTowers = control->neighborStructure == NeighborStructure::Towers;
+  std::string towersShapeReport;
+  std::string towersCellHeight;
+  if (control->towersShapeGiven || usesTowers) {
+    auto shape =
+        checkTowersShape(*control, *system, /*setup=*/true,
+                         usesTowers ? previousTowersHeight : StringRef(),
+                         usesTowers ? &control->towersSetup : nullptr);
+    if (!shape)
+      return fail(shape.takeError());
+    if (usesTowers)
+      towersCellHeight =
+          shape->getObject("effective")->getString("cell_height")->str();
+    towersShapeReport =
+        llvm::formatv("{0}", llvm::json::Value(std::move(*shape))).str();
+  }
+  // The stored forces use the writer's strict pair predicate. Rebuild
+  // them at the restored positions if the requested traversal or its
+  // cell origins have changed.
+  if (isRestart && previousTowersHeight != towersCellHeight) {
+    control->restartRecomputes = true;
+    forces.clear();
+    system->barostatState.clear();
+    notes.push_back("the tower geometry differs from the checkpoint; "
+                    "the run evaluates the forces again at its first step");
   }
   // The input of the build: a run that begins at the positions of a
   // checkpoint does not continue it.
@@ -1176,6 +1209,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         {"buffer_precision", llvm::json::Object{{"state", element(program->state)},
             {"force", element(program->force)}, {"mass", element(program->mass)},
             {"parameter", element(program->parameter)}}}, {"pme", std::move(pme)}};
+    if (!towersCellHeight.empty())
+      effective["towers_cell_height"] = towersCellHeight;
     llvm::json::Object metadata{
         {"build", getManifestBuild()}, {"effective", std::move(effective)},
         {"warnings", std::move(warnings)}, {"pipeline", pipeline},
@@ -1420,6 +1455,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     }
     checkpoint.periodic = control->periodic;
     checkpoint.integrator = integrator.str();
+    checkpoint.towersCellHeight = towersCellHeight;
     checkpoint.velocityOffset = velocityOffset;
     checkpoint.precision =
         control->precision == Precision::Single
@@ -1516,6 +1552,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     output.log.print(
                  "MDIR: the velocities are those of the file of "
                  "coordinates\n");
+  if (!towersShapeReport.empty())
+    output.log.print("MDIR: TOWERS launch shape %s\n", towersShapeReport.c_str());
   for (const std::string &note : notes)
     output.log.print("MDIR: note: %s\n", note.c_str());
   // The structure that `AUTO` took, and why (D261); a

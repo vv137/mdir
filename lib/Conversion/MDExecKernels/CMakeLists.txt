@@ -2,6 +2,8 @@ add_mlir_conversion_library(MDIRMDExecKernels
   CompactionEmitter.cpp
   GatherEmitter.cpp
   GroupsBuild.cpp
+  TowersBuild.cpp
+  TowersForce.cpp
   MatrixBuild.cpp
   HostPairLanes.cpp
   MDAlgLowering.cpp

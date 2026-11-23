@@ -318,8 +318,8 @@ static std::string getFusedPruningOptions(llvm::StringRef gpuOptions) {
          std::to_string(value == "always" ? 0 : groups) + " ";
 }
 
-std::string mdir::compiler::getPipeline(const Control &control,
-                               const Program &program, StringRef gpuOptions) {
+std::string mdir::compiler::getPairRegionPipeline(const Control &control,
+                               const Program &program) {
   std::string pipeline;
   llvm::raw_string_ostream os(pipeline);
   os << "md-check-exchange,md-differentiate,md-expand-truncation,md-inline,"
@@ -338,8 +338,9 @@ std::string mdir::compiler::getPipeline(const Control &control,
   // the loop over particles before it and the one after it (D110), so
   // the loop that closes one run is not fused with the one that opens the
   // next.
-  os << "md-exec-expose-validity,"
-     << "md-exec-fuse-loops"
+  if (control.neighborStructure != NeighborStructure::Towers)
+    os << "md-exec-expose-validity,";
+  os << "md-exec-fuse-loops"
      << (control.target == Target::GPU ? "{integration-runs=true}" : "")
      << ",md-exec-accumulate-destinations,"
      << "md-exec-narrow-sums,";
@@ -379,6 +380,13 @@ std::string mdir::compiler::getPipeline(const Control &control,
   os << "md-exec-assign-algebra"
      << (control.deterministic ? "{deterministic=true}" : "") << ",";
 
+  return pipeline;
+}
+
+std::string mdir::compiler::getPipeline(const Control &control,
+                               const Program &program, StringRef gpuOptions) {
+  std::string pipeline = getPairRegionPipeline(control, program);
+  llvm::raw_string_ostream os(pipeline);
   if (control.target == Target::GPU) {
     // The architecture that the kernels are compiled for, whose entries of
     // the tuning policies the choosers and the lowering take

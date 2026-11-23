@@ -613,6 +613,44 @@ def ConvertMDAlgToSCF : Pass<"convert-md-alg-to-scf", "::mlir::ModuleOp"> {
                            "::mlir::vector::VectorDialect"];
 }
 
+def AddTowersBuild : Pass<"add-towers-build", "::mlir::ModuleOp"> {
+  let summary = "Emit a periodic TOWERS rebuild for a setup geometry";
+  let options = [
+    Option<"atoms", "atoms", "int", "1", "Particle count">,
+    Option<"nx", "nx", "int", "3", "X bins">,
+    Option<"ny", "ny", "int", "3", "Y bins">,
+    Option<"nz", "nz", "int", "3", "Z bins">,
+    Option<"reach", "reach", "int", "1", "Axial stencil reach (1 or 2)">,
+    Option<"triclinic", "triclinic", "bool", "false", "Use fractional cells of a lower-triangular lattice">,
+    Option<"capacity", "capacity", "int", "32", "Allocated slots per cell">,
+    Option<"host", "host", "bool", "false", "Emit serial reference functions">,
+    Option<"compact", "compact", "bool", "true", "Reset counts in sort/pack">,
+    Option<"exclusions", "exclusions", "int", "0", "Number of sorted unique excluded atom pairs; a second pair region supplies their physical correction">,
+    Option<"certifyForce", "certify-force", "bool", "false", "Emit the checked force, wide replay and publication entries">,
+    Option<"packedChargeType", "packed-charge-type", "bool", "false", "Bind the two force inputs to the rebuilt charge and type">,
+    Option<"growCells", "grow-cells", "bool", "false", "Grow overflowing cells on device before publishing their spans">,
+    Option<"forceSplit", "force-split", "int", "1", "Disjoint source ranges per tower">,
+    Option<"forcePanel", "force-panel", "int", "128", "Source slots per panel">,
+    Option<"forceStripe", "force-stripe", "int", "128", "Target slots per stripe">,
+    Option<"forceWorkers", "force-workers", "int", "128", "Threads per tower">,
+    Option<"forceResidency", "force-residency", "int", "1", "Target resident blocks per multiprocessor">,
+    Option<"forceRecords", "force-records", "int", "512", "Eight-byte record capacity">,
+    Option<"probeForce", "probe-force", "bool", "false", "Emit per-tower force phase counters">,
+    Option<"energyBody", "energy-body", "std::string", "\"\"",
+           "Function containing symmetric scalar pair energy and correction regions">,
+    Option<"directVirial", "direct-virial", "bool", "false",
+           "Emit a separate direct configurational virial entry">,
+    Option<"forceBody", "force-body", "std::string", "\"\"",
+           "Function containing the pair region for a force entry">,
+    Option<"audit", "audit", "bool", "false", "Emit ownership multiplicities for tests">
+  ];
+  let dependentDialects = ["::mlir::LLVM::LLVMDialect", "::mlir::NVVM::NVVMDialect",
+                           "::mlir::arith::ArithDialect", "::mlir::func::FuncDialect",
+                           "::mlir::gpu::GPUDialect", "::mlir::math::MathDialect",
+                           "::mlir::memref::MemRefDialect", "::mlir::scf::SCFDialect",
+                           "::mlir::vector::VectorDialect"];
+}
+
 def AddMatrixBuild : Pass<"add-matrix-build", "::mlir::ModuleOp"> {
   let summary = "Define the GPU matrix build for direct tests of its rows";
   let dependentDialects = ["::mlir::arith::ArithDialect",

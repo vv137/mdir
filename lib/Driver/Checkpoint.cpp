@@ -143,6 +143,8 @@ std::string hashState(const Checkpoint &state) {
   uint8_t periodic = state.periodic ? 1 : 0;
   number(periodic);
   text(state.integrator);
+  if (!state.towersCellHeight.empty())
+    text(state.towersCellHeight);
   number(state.velocityOffset);
   text(state.precision);
   number(state.timestep);
@@ -577,6 +579,8 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
       int format = checkpointFormat;
       writer.writeAttribute(mdir, "format", H5T_NATIVE_INT, &format);
       writer.writeText(mdir, "state_sha256", stateHash);
+      if (!checkpoint.towersCellHeight.empty())
+        writer.writeText(mdir, "towers_cell_height", checkpoint.towersCellHeight);
       writer.writeText(mdir, "integrator", checkpoint.integrator);
       writer.writeReal(mdir, "velocity_offset", checkpoint.velocityOffset);
       writer.writeText(mdir, "precision", checkpoint.precision);
@@ -770,6 +774,8 @@ mdir::driver::readCheckpoint(const std::string &path) {
   reader.readDataset("/particles/all/position/time", H5T_NATIVE_DOUBLE, 1,
                      time);
 
+  if (reader.hasAttribute("/parameters/mdir", "towers_cell_height"))
+    reader.readText("/parameters/mdir", "towers_cell_height", checkpoint.towersCellHeight);
   reader.readText("/parameters/mdir", "integrator", checkpoint.integrator);
   reader.readText("/parameters/mdir", "precision", checkpoint.precision);
   reader.readAttribute("/parameters/mdir", "velocity_offset",

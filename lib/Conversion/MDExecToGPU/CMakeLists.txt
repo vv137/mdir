@@ -1,5 +1,6 @@
 add_mlir_conversion_library(MDIRMDExecToGPU
   MDExecToGPU.cpp
+  TowersDispatch.cpp
   MDExecToMDAlg.cpp
   StageBodies.cpp
   DevicePME.cpp

@@ -19,6 +19,15 @@ follows are in [principles.md](principles.md).
 
 The size sweeps of M3 take boxes of more than 99,999 waters (D339, #550).
 Features of classical MD (Section 5) continue between milestones.
+TOWERS (#931, D[towers]) rebuilds rectangular and fractional triclinic
+grids and evaluates mixed-precision force, energy and direct virial
+through compiler entries. The certified path checks narrow sums and
+recovers into two limbs before publication. Exclusion replay uses the
+closest periodic image. Setup chooses the height from the system, times
+force-only launches at that height and caches the winner. Programs without
+a force-only region use the derived shape. Moving-step dispatch indexes topology exclusions once per run.
+Moving pressure steps accumulate direct force and virial in one traversal.
+Ordinary steps certify and publish the force in one cooperative launch. TOWERS remains an explicit choice. Double precision is tracked in #937.
 
 Physical constants (#805): D394 centralizes C/C++
 definitions and derives native and expression coefficients from the exact

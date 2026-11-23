@@ -391,6 +391,21 @@ HDF5 was built but does not test checkpoints, PME, constraints, or the
 stability of a user's system; use `mdir check FILE` and the test suite for
 those concerns.
 
+For periodic TOWERS preflight, `[execution] towers_shape` accepts an
+inline table such as `{threads = 512, blocks_per_sm = 2, panel = 352,
+stripe = 384, records = 1536, split = 1, cell_height = "HALF"}` on one
+TOML line. The device limits and packed frame determine the available
+tile sizes. AUTO chooses the cell height from the system geometry and atom
+count before resolving the launch parameters. For a triclinic box the
+selector uses perpendicular face heights. Setup times a rebuilt force on a
+private copy of the starting frame. If the program has no force-only pair
+region, setup uses the shape derived from the frame, device limits and control pins. An explicit TOWERS run then rebuilds from the current positions at each direct evaluation and certifies the forces before integration. Pressure steps accumulate direct force and virial together.
+For a topology with exclusions, setup allocates eight bytes per atom for the
+physical-pair exclusion index used in pressure evaluation and wide replay.
+The effective manifest and checkpoint reserve `towers_cell_height` for the
+resolved height.
+See [Appendix A](paper/A-control-file.md) for AUTO fields.
+
 ## 2. The driver
 
 ### 2.1 What it does

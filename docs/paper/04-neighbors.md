@@ -1284,3 +1284,126 @@ f32 compares $\mathrm{fl}(\mathbf h\cdot\mathbf h)$ with the largest f32 at
 most $e^2(1 - 2^{-20})$: the square of an offset narrowed from f64 is
 within $5u$ of the exact one, so no place beyond its radius passes.
 
+
+## 4.8 Rectangular tower and plate ownership (D[towers])
+
+Shaw (2005, pp. 1321–1323) assigns each pair to the intersection of a tower through one atom's
+home box and a half plate through the other's. The interaction box can
+contain neither atom. The outer tower extends the box by the cutoff in
+both axial directions. The outer plate has the thickness of the box and
+extends halfway around it, with edges rounded into quarter-cylinders of
+cutoff radius. Shaw chooses the tower atom by smaller lateral base
+coordinate, first in $x$, then in $y$. For equal lateral bases the smaller
+$z$ supplies the plate. Either assignment works inside one home box.
+After evaluation the box exports opposite forces to both home boxes.
+
+For a square lateral base the two tower extensions contribute
+$2r_c b_{xy}^2$. The plate contributes two lateral face strips and
+rounded edges totaling a half disk times the layer height. Thus Shaw's
+import volume is $V_i = 2r_c b_{xy}^2 + 2r_c b_{xy} b_z + \pi r_c^2 b_z/2$.
+Minimizing it at fixed box volume favors shorter, wider boxes as the
+processor count rises (Eq. 1, pp. 1321–1325). [[Shaw2005]](references.md#shaw2005)
+
+For a rectangular cell at least as wide as the cutoff, a pair strictly
+inside the cutoff differs by at most one lateral bin on each axis after
+periodic imaging. The eight nonzero lateral offsets form four opposite
+pairs. Choosing the negative half in $y$, then in $x$ on the same row,
+selects exactly one source column and one target layer. This mirrors
+Shaw's lateral orientation. Axial bins at least as tall as the cutoff
+require only the nearest layers above and below. Halving the minimum
+height extends the column to two layers on each side, moving toward Shaw's
+shorter boxes. Within one column the target takes only earlier layers,
+and within one layer the later sorted slot supplies the source. Distinct
+periodic images of these offsets are required for uniqueness.
+
+In TOWERS the owning box maps to a GPU block and imported atoms occupy
+shared memory. The traversal stages whole cells at cutoff scale.
+A lateral distance filter and a quantized tensor-core screen with a
+conservative error margin trim candidates. Masks encode records and
+workers divide their candidate ranks evenly. Newton's opposite forces
+become opposite integer words, with a certificate on the final sums and
+exact recovery. Blind evaluation and exact cancellation handle exclusions.
+The triclinic extension uses perpendicular face heights. Setup chooses the cell height from the geometry and atom count, then
+times candidate launches at that height when a force-only region is available.
+
+The rectangular force entry realizes the screen in the owning box's image.
+It rounds the scaled positions to a lattice and rounds the encoded source
+squared norm downward. A padded distance threshold accounts for the endpoint
+rounding. Each surviving record holds a source mask and a header identifying
+the target, source group and candidate prefix. Dividing the prefix range
+among workers assigns each set bit to one worker. The worker retests the
+distance in binary32 before evaluating the antisymmetric pair region.
+The prefix barrier ends all reads of the screening features and compacted
+target indices. The force planes occupy the same storage afterward. Streaming
+a further stripe regenerates the features before the next screen.
+A stripe that exceeds record capacity is split before any endpoint update.
+
+One nearest-even rounding of each scaled force component supplies both
+endpoints with opposite integer contributions. The checked entry counts a
+pair once if any scaled component fails signed 32-bit conversion and omits
+that pair from the provisional result. Unique ownership limits each endpoint
+to $N-1$ direct contributions. The rectangular packing admits $N<2^{26}$,
+so the magnitude of every partial sum of accepted words is bounded by
+$(N-1)2^{31}<2^{57}$. After lifting the tile sums, a zero outstanding
+failure count and a final value in $[-2^{31},2^{31}-1]$ certify each
+component at the narrow precision.
+
+If certification fails, the traversal starts afresh with two 64-bit limbs
+per component. The low-word atomic gives the preceding unsigned low word,
+so its wrap supplies exactly the carry belonging to this addition. The
+high word also receives the sign extension of the addend. Negating the two
+limbs together handles the opposite of $-2^{63}$. The same ownership bound
+limits a wide partial sum to $(N-1)2^{63}<2^{89}$. The GPU combines narrow
+pairs in a tile before adding the lifted partials to the two limbs. A larger
+pair goes directly to the two-limb sum. The CPU enumerates owned spans.
+The result fits signed 64-bit output exactly when its high limb equals
+the sign extension of its low limb. A final publication pass ensures that
+an invalid contribution or endpoint preserves the preceding destination
+for every atom. For an excluded pair the replay adds the negatives of the original
+quantized words and subtracts its failed-conversion indicator. The strict
+predicate, endpoint orientation, coefficient expression and rounding agree
+with the blind traversal. The net count therefore counts only failed
+surviving direct conversions and failed physical corrections. Each unique
+excluded pair replaces one direct interaction with at most one physical
+correction per endpoint. The same final-sum bound applies. Wide recovery
+omits the excluded direct evaluation and includes the physical correction
+at every distance.
+
+
+The rectangular mixed-precision compiler shares the packed positions and
+ownership rule among separately requested force, energy and direct virial
+kernels. The energy kernel rounds each pair energy to Q32 and sums the
+words with signed two-limb arithmetic. The tensor kernel visits physical
+pairs and accumulates the six independent components of the minimum-image
+displacement times the target force in binary64. Moving pressure steps accumulate the binary64 virial in the force traversal.
+The two outputs share the displacement and pair evaluation. Each endpoint
+receives the same quantized force word as in a force-only step. The moving traversal indexes each
+excluded pair by the smaller permanent atom ID. A 32-bit mask resolves
+the next 32 IDs exactly. A more distant partner above the greatest
+excluded ID in that row is outside the exclusion set. The remaining
+queries use the sorted topology pairs. This index also serves physical
+force replay and remains valid when the spatial cells are rebuilt.
+
+The height fixes the cell origins used by the binary32 displacement. Setup
+therefore chooses it from the atom count, box and cutoff before timing
+launches. For $M$ towers on the FULL grid and mean population $p=N/M$,
+the selector takes HALF through $M/p^2=1/4$. The rectangular sweep
+brackets the crossover between 0.073 and 0.433. A count-only crossover
+at 724 towers also selected each rectangular winner, but missed HALF
+on a 311,971-atom truncated octahedron with 2,744 FULL towers. Within the resolved grid the trial varies the division of
+work among blocks and the storage for compact records. Each timing covers
+nine rebuilt certified force evaluations. Five shuffled rounds among the
+five fastest candidates determine the lowest median.
+
+For a triclinic cell with lattice matrix $H$, a position is binned by its
+wrapped fractional coordinates. The bin counts use the three perpendicular
+face heights. Insertion converts the displacement about the fractional bin
+center to Cartesian coordinates in binary64 and stores it in binary32.
+The staged endpoint adds a precomputed Cartesian bin translation. A strict
+pair must pass the slab bound on each of the two reciprocal normals. Their
+squared gaps cannot be added for an oblique basis. A physical exclusion
+outside the direct stencil still uses its closest periodic image. An
+initial image of length $R$ bounds the translations worth testing along
+axis $i$ by $|u_i-n_i| \le R/h_i$, where $h_i$ is the perpendicular face
+height. The same endpoint orientation is used to cancel a blind direct
+term and its conversion vote.

@@ -1,0 +1,18 @@
+### Added
+
+- D[towers] adds `[execution] neighbor_structure = "TOWERS"` for explicit mixed-precision GPU runs
+  and `towers_shape` for optional launch and cell-height pins. It rebuilds a tower and half plate at each direct evaluation,
+  with host and GPU ownership checks against periodic all-pairs enumeration.
+  Its mixed-precision force entry screens rectangular tiles and evaluates
+  the antisymmetric pair region from compact candidate records. A checked sequence
+  validates narrow words and recovers exact two-limb sums before publication.
+  The rectangular entry replays excluded pairs and their physical corrections.
+  Setup chooses the height from the atom count, cell and cutoff, measures the
+  unpinned launch fields at that height, and caches the winning launch.
+  Programs without a force-only region skip the launch trial.
+  The compiler also supports fractional triclinic cells and closest-lattice
+  physical exclusions. Continuation preserves the saved height and recomputes
+  the initial forces when the traversal or height changes.
+  Moving pressure evaluations index exclusions by permanent atom ID.
+  Moving steps pack particle fields with the coordinates, certify and publish
+  ordinary forces in one launch, and accumulate pressure virials alongside force.

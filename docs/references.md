@@ -1551,6 +1551,15 @@ PMLR **139**, 9377–9388 (2021); arXiv:2102.03150.
 Used for: PaiNN, the architecture of ML4's first baseline, as SchNetPack 2
 implements it (docs/ml4-baselines.md).
 
+### Shaw2005
+
+D. E. Shaw, "A fast, scalable method for the parallel evaluation of
+distance-limited pairwise particle interactions," *J. Comput. Chem.*
+**26**, 1318–1328 (2005).
+[doi:10.1002/jcc.20267](https://doi.org/10.1002/jcc.20267)
+
+Used for: the Neutral Territory tower and half plate (D[towers]).
+
 ### Shih2021
 
 Y.-H. Shih, G. Wright, J. Andén, J. Blaschke, A. H. Barnett, "cuFINUFFT: a

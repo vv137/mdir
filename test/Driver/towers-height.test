@@ -1,0 +1,7 @@
+# RUN: mdir-towers-height-test | FileCheck %s
+# CHECK: t10 HALF
+# CHECK-NEXT: t20 HALF
+# CHECK-NEXT: jac HALF
+# CHECK-NEXT: factorix FULL
+# CHECK-NEXT: cellulose FULL
+# CHECK-NEXT: stmv FULL

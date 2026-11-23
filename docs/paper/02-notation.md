@@ -25,6 +25,8 @@ element.
 | $N_\text{layer};\ \mathbf h_i^{(k)}$ | The number of message-passing layers of a learned potential, and the features of atom $i$ after layer $k$ (Section 13) |
 | $\phi_k,\ \psi_k,\ \eta,\ \mathcal R;\ \mathbf A_i^{(k)};\ z_i$ | In Section 3.3, the edge stage and the node stage of layer $k$ of a message-passing model, its embedding of the species, and its readout; the sum of the edge stage over the neighbors of $i$, $\mathbf A_i^{(k)} = \sum_j\phi_k(i,j)$; the species of atom $i$ |
 | $\bar v = \partial U/\partial v;\ \bar r_{ij},\ \bar{\mathbf d}_{ij},\ \bar{\mathbf h}^\mathrm c_{ij},\ \bar{\mathbf h}^\mathrm n_{ij}$ | The adjoint of a value $v$ that the computation of $U$ forms; in Section 3.3, the cotangents of the distance, the displacement, the center's features, and the neighbor's features that the vector-Jacobian product of an edge stage gives at the directed pair $(i, j)$ for the cotangent $\bar{\mathbf A}_i$ of its value |
+| $M, p=N/M$ | In Section 4.8, the tower count on the full-height grid and the mean particle count per tower |
+| $b_{xy}, b_z, V_i$ | Lateral width, layer height and import volume of a Neutral Territory interaction box (Section 4.8) |
 | $r_c$ | Cutoff of the pair terms and of the direct sum of Ewald |
 | $r_s$, $S_2(r)$ | Onset and squared-distance potential switch of a topology Lennard-Jones term (Section 3.3) |
 | $s,\ R = r_c + s$ | Skin and reach of a neighbor structure |

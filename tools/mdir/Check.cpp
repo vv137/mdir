@@ -2,6 +2,7 @@
 // without compiling anything.
 
 #include "Commands.h"
+#include "TowersShape.h"
 #include "mdir/Compiler/Skins.h"
 #include "Manifest.h"
 
@@ -670,6 +671,7 @@ static void describeRun(const Control &control, const System &system,
   std::printf("neighbors:          %s, reach %g Ang",
               control.neighborStructure == NeighborStructure::Groups
                   ? "groups of 16"
+                  : control.neighborStructure == NeighborStructure::Towers ? "towers"
                   : "matrix",
               control.pairlistDistance);
   if (control.prunedDistance != 0.0)
@@ -875,6 +877,13 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
     return fail(system.takeError(), json);
   // As `mdir run` resolves it (D261).
   resolveNeighborStructure(*control, *system);
+  std::optional<llvm::json::Object> towers;
+  if (control->towersShapeGiven || control->neighborStructure == NeighborStructure::Towers) {
+    auto shape = checkTowersShape(*control, *system, /*setup=*/false);
+    if (!shape)
+      return fail(shape.takeError(), json);
+    towers = std::move(*shape);
+  }
   // As `mdir run` resolves it, at the input's positions
   // (D424); a refusal of `ON` is an error of the file.
   if (llvm::Error error = resolveRigidUnits(*control, *system))
@@ -904,8 +913,15 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
   for (const auto &[code, message] : control->rigidUnitsRoute.warnings)
     report.warnings.push_back({code, message});
   if (json) {
-    printJSON(makeJSON(*control, *system, report));
+    auto object = makeJSON(*control, *system, report);
+    if (towers)
+      (*object.getObject("run")->getObject("neighbors"))["towers_shape"] =
+          std::move(*towers);
+    printJSON(std::move(object));
   } else {
+    if (towers)
+      llvm::outs() << "TOWERS launch shape "
+                   << llvm::formatv("{0}", llvm::json::Value(std::move(*towers))) << "\n";
     if (system->topology)
       describeTopology(*control, *system);
     else
