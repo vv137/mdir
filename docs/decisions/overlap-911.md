@@ -1,5 +1,8 @@
-# D[overlap-911] Place the reciprocal-stream join at its first dependency
+# D[overlap-911]
 
+Recorded at its merge.
+
+**Place the reciprocal-stream join at its first dependency.**
 When reciprocal stream assignment is enabled, the direct pair traversal can
 run on the main stream while PME writes its own result on the side stream.
 This applies to TOWERS and to the MATRIX and GROUPS list paths. Both streams
