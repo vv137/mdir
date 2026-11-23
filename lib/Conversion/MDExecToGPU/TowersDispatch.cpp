@@ -593,6 +593,8 @@ LogicalResult mdir::kernels::lowerTowersPair(md_exec::PairForOp pair,
                          true,
                          masked ? int(grid[6]) : 0,
                          int(launch[5])};
+  if (auto count = module->getAttrOfType<IntegerAttr>("mdir.towers_type_count"))
+    shape.typeCount = count.getInt();
   if (pair.getOuts().size() > 1 || !positions ||
       !cast<MemRefType>(positions.getType()).getElementType().isF64())
     return pair.emitError("TOWERS needs the current binary64 positions and at "

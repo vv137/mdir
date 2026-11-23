@@ -16,6 +16,7 @@ struct TowersForceShape {
   int virialYield = -1;
   bool movingDispatch = false;
   mlir::Type cartesianPositions = {};
+  int64_t typeCount = 0;
 };
 
 mlir::LogicalResult emitTowersForce(mlir::ModuleOp module, TowersLayout layout,

@@ -38,7 +38,7 @@ public:
         packedChargeType(shape.packedChargeType), certified(shape.certified),
         movingDispatch(shape.movingDispatch), probe(probe),
         indexedExclusions(shape.indexedExclusions),
-        cartesianPositions(shape.cartesianPositions),
+        cartesianPositions(shape.cartesianPositions), typeCount(shape.typeCount),
         v3(VectorType::get({3}, f32)), v4(VectorType::get({4}, f32)) {}
   LogicalResult emit();
 
@@ -88,6 +88,7 @@ private:
   int panel, stripe, workers, recordCap, residency, groups;
   bool packedChargeType, certified, movingDispatch, probe, indexedExclusions;
   Type cartesianPositions;
+  int64_t typeCount;
   bool recovering = false;
   Value failedConversions, highWords, localVotes;
   bool shortVote() const {
@@ -1641,7 +1642,7 @@ void Force::stageParameters(gpu::GPUFuncOp fn) {
   }
   for (Value v : captures) {
     auto t = dyn_cast<MemRefType>(v.getType());
-    if (!t || !t.hasStaticShape() || t.getRank() != 2 || !t.getNumElements())
+    if (!t || t.getRank() != 2)
       continue;
     // Remapping is local to simple loads. A call or a view could require
     // the original address space or memory layout.
@@ -1654,17 +1655,53 @@ void Force::stageParameters(gpu::GPUFuncOp fn) {
     auto scalar = getElementTypeOrSelf(element);
     if (!scalar.isIntOrFloat())
       continue;
-    int64_t bytes = t.getNumElements() * (vec ? vec.getNumElements() : 1) *
+    int64_t rows = t.getDimSize(0), columns = t.getDimSize(1);
+    if (!t.hasStaticShape()) {
+      // Folded LJ coefficients have a dynamic descriptor. Only specialize a
+      // table whose two subscripts come directly from particle type fields.
+      if (!movingDispatch || typeCount <= 0 || typeCount > 32 ||
+          typeParameter < 0 || element != VectorType::get({2}, f32))
+        continue;
+      Block &body = term.getKernel().front();
+      auto fromType = [&](Value index) {
+        auto cast = index.getDefiningOp<arith::IndexCastOp>();
+        if (!cast)
+          return false;
+        Value value = cast.getIn();
+        return value == body.getArgument(2 + 2 * typeParameter) ||
+               value == body.getArgument(3 + 2 * typeParameter);
+      };
+      if (!llvm::all_of(v.getUsers(), [&](Operation *op) {
+            if (!term->isAncestor(op))
+              return true;
+            auto indices = cast<memref::LoadOp>(op).getIndices();
+            return llvm::all_of(indices, fromType);
+          }))
+        continue;
+      rows = columns = typeCount;
+    }
+    int64_t entries = rows * columns;
+    if (!entries)
+      continue;
+    int64_t bytes = entries * (vec ? vec.getNumElements() : 1) *
                     ((scalar.getIntOrFloatBitWidth() + 7) / 8);
     if (bytes > 8192 || fixed + bytes > 48 * 1024)
       continue;
     fixed += bytes;
-    Value src = mapping.lookup(v), dst = shared(fn, t.getShape(), element);
-    forLoop(tid, cx(t.getNumElements()), cx(workers), {},
+    Value src = mapping.lookup(v), dst = shared(fn, {rows, columns}, element);
+    forLoop(tid, cx(entries), cx(workers), {},
             [&](Value i, ValueRange) {
-              Values at{divui(i, cx(t.getDimSize(1))),
-                        remui(i, cx(t.getDimSize(1)))};
-              store(load(src, at), dst, at);
+              Values at{divui(i, cx(columns)),
+                        remui(i, cx(columns))};
+              auto copy = [&] { store(load(src, at), dst, at); };
+              if (t.hasStaticShape())
+                copy();
+              else {
+                Value nr = memref::DimOp::create(b, loc, src, 0);
+                Value nc = memref::DimOp::create(b, loc, src, 1);
+                ifThen(andi(cmpi(CmpIPredicate::ult, at[0], nr),
+                            cmpi(CmpIPredicate::ult, at[1], nc)), copy);
+              }
               return Values{};
             });
     mapping.map(v, dst);

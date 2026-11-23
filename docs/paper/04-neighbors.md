@@ -1317,7 +1317,10 @@ and within one layer the later sorted slot supplies the source. Distinct
 periodic images of these offsets are required for uniqueness.
 
 In TOWERS the owning box maps to a GPU block and imported atoms occupy
-shared memory. The traversal stages whole cells at cutoff scale.
+shared memory. The traversal stages whole cells at cutoff scale. For a small packed
+type-pair coefficient table, the block also copies the coefficients once.
+The two particle types then index a shared-memory row and column
+(D[towers-pair-loop]).
 A lateral distance filter and a quantized tensor-core screen with a
 conservative error margin trim candidates. Masks encode records and
 workers divide their candidate ranks evenly. Newton's opposite forces
@@ -1359,23 +1362,19 @@ pair goes directly to the two-limb sum. The CPU enumerates owned spans.
 The result fits signed 64-bit output exactly when its high limb equals
 the sign extension of its low limb. A final publication pass ensures that
 an invalid contribution or endpoint preserves the preceding destination
-for every atom. For an excluded pair the replay adds the negatives of the original
-quantized words and subtracts its failed-conversion indicator. The strict
-predicate, endpoint orientation, coefficient expression and rounding agree
-with the blind traversal. The net count therefore counts only failed
-surviving direct conversions and failed physical corrections. Each unique
-excluded pair replaces one direct interaction with at most one physical
-correction per endpoint. The same final-sum bound applies. Wide recovery
-omits the excluded direct evaluation and includes the physical correction
-at every distance.
-
+for every atom. On the moving path, an exclusion block recomputes the blind direct
+contribution with the same cutoff, orientation, coefficients and rounding.
+It cancels the direct words and their conversion vote. Wide recovery skips
+excluded direct pairs. The topology tuple loops add the physical
+corrections.
 
 The rectangular mixed-precision compiler shares the packed positions and
 ownership rule among separately requested force, energy and direct virial
 kernels. The energy kernel rounds each pair energy to Q32 and sums the
 words with signed two-limb arithmetic. The tensor kernel visits physical
 pairs and accumulates the six independent components of the minimum-image
-displacement times the target force in binary64. Moving pressure steps accumulate the binary64 virial in the force traversal.
+displacement times the target force in binary64. On moving pressure steps, the force traversal sums the pair
+region's binary64 virial term and omits excluded direct pairs from this sum.
 The two outputs share the displacement and pair evaluation. Each endpoint
 receives the same quantized force word as in a force-only step. The moving traversal indexes each
 excluded pair by the smaller permanent atom ID. A 32-bit mask resolves
