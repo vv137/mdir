@@ -725,6 +725,7 @@ specification follow those made with it.
 | [D427](decisions/D427.md) | Build the particle mesh Ewald stages with typed MLIR builders. | 2026-11-22 |
 | [D428](decisions/D428.md) | Particle tower and plate traversal: design for #931, proposed November 22, 2026. | 2026-11-23 |
 | [D429](decisions/D429.md) | Place the reciprocal-stream join at its first dependency. | 2026-11-23 |
+| [D430](decisions/D430.md) | Reduce the work per candidate in the moving TOWERS force loop. | 2026-11-23 |
 <!-- end decisions-table -->
 
 

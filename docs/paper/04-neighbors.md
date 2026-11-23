@@ -1320,7 +1320,7 @@ In TOWERS the owning box maps to a GPU block and imported atoms occupy
 shared memory. The traversal stages whole cells at cutoff scale. For a small packed
 type-pair coefficient table, the block also copies the coefficients once.
 The two particle types then index a shared-memory row and column
-(D[towers-pair-loop]).
+(D430).
 A lateral distance filter and a quantized tensor-core screen with a
 conservative error margin trim candidates. Masks encode records and
 workers divide their candidate ranks evenly. Newton's opposite forces
