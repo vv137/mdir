@@ -1,3 +1,3 @@
 ### Changed
 
-- **TOWERS stages small packed type-pair coefficient tables in shared memory** for the moving mixed-precision traversal (D[towers-pair-loop], #947).
+- The moving mixed-precision TOWERS force loop stages small type tables, selects zero words outside the cutoff, and reuses target data across each mask record (D[towers-pair-loop], #947).

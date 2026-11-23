@@ -1334,8 +1334,22 @@ It rounds the scaled positions to a lattice and rounds the encoded source
 squared norm downward. A padded distance threshold accounts for the endpoint
 rounding. Each surviving record holds a source mask and a header identifying
 the target, source group and candidate prefix. Dividing the prefix range
-among workers assigns each set bit to one worker. The worker retests the
-distance in binary32 before evaluating the antisymmetric pair region.
+among workers assigns each set bit to one worker. Bits in one record share
+the target coordinates, parameters and partial force. On advancing to another
+record, the worker flushes and reloads these values only if the target changes.
+
+The moving force-only loop compares the binary32 squared distance with the
+squared cutoff. For a pair region that can be evaluated speculatively, a
+select supplies an in-range squared distance for rejected candidates. A
+second select supplies exactly zero for each rejected scaled component before
+the conversion check. Such a candidate adds neither force words nor a failed
+conversion vote. Regions with displacement-dependent addresses, observers,
+the pressure virial and wide replay keep their guarded evaluation.
+For the Lennard-Jones inverse powers, a subnormal squared distance already
+overflows the square of its reciprocal. When all uses take powers of at least
+two and the cutoff bounds the reciprocal away from underflow, the hardware
+reciprocal can flush subnormals. The radial table still uses the original
+in-range squared distance.
 The prefix barrier ends all reads of the screening features and compacted
 target indices. The force planes occupy the same storage afterward. Streaming
 a further stripe regenerates the features before the next screen.
