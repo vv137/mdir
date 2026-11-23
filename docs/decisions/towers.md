@@ -9,8 +9,8 @@ Particle tower and plate traversal: design for #931, proposed November 22, 2026.
 An explicit `[execution] neighbor_structure = "TOWERS"` requests a fresh
 particle traversal at every direct-space evaluation. Keep the current AUTO
 resolution in `resolveNeighborStructure` throughout qualification. Benchmark
-AUTO changes separately on moving trajectories. The additional key is
-`[execution] towers_unchecked = false`, applicable only to explicit TOWERS.
+AUTO changes separately on moving trajectories. The driver accepts `towers_shape` and certifies each evaluation.
+The proposed `towers_unchecked` control remains unimplemented.
 
 The strategy belongs on the neighbor structure and its consumers.
 `md-exec-choose-neighbors` follows the structure through loops and branches.
@@ -113,7 +113,7 @@ A force step instantiates only force arithmetic. An energy step reuses the
 packing and launches a separate energy entry. A barostat step also requests
 the direct tensor, including periodic image and replay corrections. Recovery
 replaces every requested output together. Certification is the default.
-With the unchecked opt-in, force certification during minimization,
+The proposed unchecked mode would force certification during minimization,
 in deterministic mode if admitted, for ages 0 through 99 after setup or
 restart, and at subsequent multiples of 100. Unchecked modular output can
 wrap between audits.

@@ -1287,7 +1287,7 @@ within $5u$ of the exact one, so no place beyond its radius passes.
 
 ## 4.8 Rectangular tower and plate ownership (D[towers])
 
-Shaw assigns each pair to the intersection of a tower through one atom's
+Shaw (2005, pp. 1321–1323) assigns each pair to the intersection of a tower through one atom's
 home box and a half plate through the other's. The interaction box can
 contain neither atom. The outer tower extends the box by the cutoff in
 both axial directions. The outer plate has the thickness of the box and
@@ -1317,14 +1317,14 @@ and within one layer the later sorted slot supplies the source. Distinct
 periodic images of these offsets are required for uniqueness.
 
 In TOWERS the owning box maps to a GPU block and imported atoms occupy
-shared memory. The proposed traversal stages whole cells at cutoff scale.
+shared memory. The traversal stages whole cells at cutoff scale.
 A lateral distance filter and a quantized tensor-core screen with a
 conservative error margin trim candidates. Masks encode records and
 workers divide their candidate ranks evenly. Newton's opposite forces
 become opposite integer words, with a certificate on the final sums and
 exact recovery. Blind evaluation and exact cancellation handle exclusions.
-The triclinic extension uses perpendicular face heights. Setup measures
-the launch shape and cell height on the device.
+The triclinic extension uses perpendicular face heights. Setup chooses the cell height from the geometry and atom count, then
+times candidate launches at that height when a force-only region is available.
 
 The rectangular force entry realizes the screen in the owning box's image.
 It rounds the scaled positions to a lattice and rounds the encoded source
@@ -1395,7 +1395,7 @@ work among blocks and the storage for compact records. Each timing covers
 nine rebuilt certified force evaluations. Five shuffled rounds among the
 five fastest candidates determine the lowest median.
 
-For a triclinic lattice with rows $a,b,c$, a position is binned by its
+For a triclinic cell with lattice matrix $H$, a position is binned by its
 wrapped fractional coordinates. The bin counts use the three perpendicular
 face heights. Insertion converts the displacement about the fractional bin
 center to Cartesian coordinates in binary64 and stores it in binary32.
