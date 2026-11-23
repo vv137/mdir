@@ -723,6 +723,7 @@ specification follow those made with it.
 | [D425](decisions/D425.md) | At the end of a GROUPS round, the lane holding a real entry tests its accumulated receipts in the destination precision. | 2026-11-19 |
 | [D426](decisions/D426.md) | Emit the GPU neighbor-matrix build with MLIR builders in the style of the GROUPS build. | 2026-11-21 |
 | [D427](decisions/D427.md) | Build the particle mesh Ewald stages with typed MLIR builders. | 2026-11-22 |
+| [D428](decisions/D428.md) | Particle tower and plate traversal: design for #931, proposed November 22, 2026. | 2026-11-23 |
 <!-- end decisions-table -->
 
 

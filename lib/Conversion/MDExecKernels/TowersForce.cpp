@@ -1,5 +1,5 @@
 // Rectangular particle traversal [Shaw2005]. The quantized screen, prefix
-// records and rank partition are the stage 4n GPU implementation of D[towers].
+// records and rank partition are the stage 4n GPU implementation of D428.
 #include "mdir/Conversion/TowersForce.h"
 #include "NeighborBuildCode.h"
 #include "mdir/Conversion/CompactionEmitter.h"

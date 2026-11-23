@@ -1285,7 +1285,7 @@ most $e^2(1 - 2^{-20})$: the square of an offset narrowed from f64 is
 within $5u$ of the exact one, so no place beyond its radius passes.
 
 
-## 4.8 Rectangular tower and plate ownership (D[towers])
+## 4.8 Rectangular tower and plate ownership (D428)
 
 Shaw (2005, pp. 1321–1323) assigns each pair to the intersection of a tower through one atom's
 home box and a half plate through the other's. The interaction box can

@@ -1,4 +1,4 @@
-// Rectangular Neutral Territory ownership [Shaw2005], D[towers].
+// Rectangular Neutral Territory ownership [Shaw2005], D428.
 // The geometry is fixed at setup. All positions and memberships are rebuilt.
 #include "mdir/Conversion/TowersBuild.h"
 #include "NeighborBuildCode.h"

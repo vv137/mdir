@@ -19,7 +19,7 @@ follows are in [principles.md](principles.md).
 
 The size sweeps of M3 take boxes of more than 99,999 waters (D339, #550).
 Features of classical MD (Section 5) continue between milestones.
-TOWERS (#931, D[towers]) rebuilds rectangular and fractional triclinic
+TOWERS (#931, D428) rebuilds rectangular and fractional triclinic
 grids and evaluates mixed-precision force, energy and direct virial
 through compiler entries. The certified path checks narrow sums and
 recovers into two limbs before publication. Exclusion replay uses the

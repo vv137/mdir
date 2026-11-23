@@ -1558,7 +1558,7 @@ distance-limited pairwise particle interactions," *J. Comput. Chem.*
 **26**, 1318–1328 (2005).
 [doi:10.1002/jcc.20267](https://doi.org/10.1002/jcc.20267)
 
-Used for: the Neutral Territory tower and half plate (D[towers]).
+Used for: the Neutral Territory tower and half plate (D428).
 
 ### Shih2021
 

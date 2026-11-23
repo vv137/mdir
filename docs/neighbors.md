@@ -64,7 +64,7 @@ its primary allocation, insertion chains the excess particle keys on the
 device. Pack allocates a span of the required size and rebuilds its sorted
 contents from both sets of keys before publishing its descriptors. The host reference and device
 entries can also enumerate candidate multiplicities for validation.
-[Rectangular ownership](paper/04-neighbors.md#48-rectangular-tower-and-plate-ownership-dtowers)
+[Rectangular ownership](paper/04-neighbors.md#48-rectangular-tower-and-plate-ownership-d428)
 
 The optional `force-body` pass argument names a function containing a mixed
 `md_exec.pair_for` with one antisymmetric vector force. The

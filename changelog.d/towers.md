@@ -1,6 +1,6 @@
 ### Added
 
-- D[towers] adds `[execution] neighbor_structure = "TOWERS"` for explicit mixed-precision GPU runs
+- D428 adds `[execution] neighbor_structure = "TOWERS"` for explicit mixed-precision GPU runs
   and `towers_shape` for optional launch and cell-height pins. It rebuilds a tower and half plate at each direct evaluation,
   with host and GPU ownership checks against periodic all-pairs enumeration.
   Its mixed-precision force entry screens rectangular tiles and evaluates
