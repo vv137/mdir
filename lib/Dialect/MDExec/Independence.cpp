@@ -6,8 +6,11 @@
 #include "mdir/Dialect/MDAlg/MDAlgOps.h"
 #include "mdir/Dialect/MDExec/Independence.h"
 
+#include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MD/MDTypes.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -45,7 +48,7 @@ BufferAliases::getPermutation(Operation *loop) {
   SmallVector<unsigned> permutation(arguments.size());
   SmallVector<bool> taken(arguments.size(), false);
   for (auto [i, operand] : llvm::enumerate(*yielded)) {
-    auto argument = dyn_cast<BlockArgument>(operand.get());
+    auto argument = dyn_cast<BlockArgument>(resolveLoopResult(operand.get()));
     if (!argument || arguments.empty() ||
         argument.getOwner() != arguments.front().getOwner())
       return std::nullopt;
@@ -58,8 +61,40 @@ BufferAliases::getPermutation(Operation *loop) {
   return permutation;
 }
 
+// A nested loop can yield a permutation to its enclosing loop. After a
+// known trip count its result is precisely one initial operand. Reduce the
+// count modulo the length of the orbit, including for zero iterations.
+Value BufferAliases::resolveLoopResult(Value value) {
+  auto result = dyn_cast<OpResult>(value);
+  auto loop = result ? dyn_cast<scf::ForOp>(result.getOwner()) : scf::ForOp();
+  if (!loop)
+    return value;
+  auto found = resolvedResults.find(value);
+  if (found != resolvedResults.end())
+    return found->second;
+  Value resolved = value;
+  if (auto count = loop.getStaticTripCount()) {
+    if (auto permutation = getPermutation(loop)) {
+      unsigned start = result.getResultNumber();
+      SmallVector<unsigned> orbit;
+      unsigned index = start;
+      do {
+        orbit.push_back(index);
+        index = (*permutation)[index];
+      } while (index != start);
+      unsigned source = orbit[count->urem(orbit.size())];
+      resolved = resolveLoopResult(loop.getInitArgs()[source]);
+    }
+  }
+  return resolvedResults[value] = resolved;
+}
+
 std::optional<BufferAliases::Roots> BufferAliases::computeRoots(Value value) {
-  if (isFunctionArgument(value) || isAllocated(value)) {
+  Value resolved = resolveLoopResult(value);
+  if (resolved != value)
+    return getRoots(resolved);
+  if (isFunctionArgument(value) || isAllocated(value) ||
+      value.getDefiningOp<memref::GetGlobalOp>()) {
     Roots single;
     single.insert(value);
     return single;
@@ -175,6 +210,8 @@ BufferAliases::getRoots(Value value) {
 }
 
 bool BufferAliases::mayAlias(Value a, Value b) {
+  a = resolveLoopResult(a);
+  b = resolveLoopResult(b);
   if (a == b)
     return true;
 
@@ -229,9 +266,10 @@ bool BufferAliases::mayAlias(Value a, Value b) {
   for (Value root : *rootsA)
     if (rootsB->contains(root))
       return true;
-  // Arguments of the function may be the same memory.
-  return llvm::any_of(*rootsA, isFunctionArgument) &&
-         llvm::any_of(*rootsB, isFunctionArgument);
+  // Global tables in a pair body cannot alias a live allocation. Two
+  // handles to external storage (arguments or globals) may coincide.
+  auto external = [](Value v) { return !isAllocated(v); };
+  return llvm::any_of(*rootsA, external) && llvm::any_of(*rootsB, external);
 }
 
 /// Returns true if `op` or an op inside it has a value in the value form,
@@ -258,6 +296,19 @@ static bool usesResultOf(Operation *inner, Operation *outer) {
   return uses;
 }
 
+// A table lookup is pure in the value form. In the storage form its
+// captured operand is a buffer read, just like a vector.load of a table.
+static auto storageEffects(Operation *op) {
+  auto effects = getEffectsRecursively(op);
+  if (effects)
+    op->walk([&](md::LookupOp lookup) {
+      if (isa<MemRefType>(lookup.getTable().getType()))
+        effects->emplace_back(MemoryEffects::Read::get(),
+                              &lookup.getTableMutable());
+    });
+  return effects;
+}
+
 bool md_exec::areIndependent(Operation *a, Operation *b,
                              BufferAliases &aliases) {
   if (usesResultOf(a, b) || usesResultOf(b, a))
@@ -265,9 +316,9 @@ bool md_exec::areIndependent(Operation *a, Operation *b,
   if (hasValueForm(a) || hasValueForm(b))
     return false;
   std::optional<SmallVector<MemoryEffects::EffectInstance>> effectsA =
-      getEffectsRecursively(a);
+      storageEffects(a);
   std::optional<SmallVector<MemoryEffects::EffectInstance>> effectsB =
-      getEffectsRecursively(b);
+      storageEffects(b);
   if (!effectsA || !effectsB)
     return false;
   auto changes = [](const MemoryEffects::EffectInstance &effect) {

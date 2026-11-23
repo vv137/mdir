@@ -109,8 +109,8 @@ func.func @ends(%n: index, %k: index, %cell: !md.cell) -> f64 {
 // CHECK:         scf.for
 // CHECK:           md_exec.reciprocal {{.*}} {md_exec.side}
 // CHECK-NEXT:      md_exec.permute
-// CHECK-NEXT:      md_exec.join
-// CHECK-NEXT:      scf.yield
+// CHECK:      md_exec.join
+// CHECK-NEXT:           scf.yield
 // CHECK:         scf.for
 // CHECK:           md_exec.reciprocal {{.*}} {md_exec.side}
 // CHECK-NEXT:      md_exec.join
@@ -137,7 +137,14 @@ func.func @carried(%n: index, %k: index, %steps: index, %cell: !md.cell) {
         grid([8, 8, 8]) order(4) beta(3.0) coulomb(138.935457644)
         : !pos, !chg, !mod -> f64, vector<9xf64>
     md_exec.permute %h, %o outs(%b : !frc) : !frc, !ord
-    scf.yield %b, %a : !frc, !frc
+    // An outer step carries the results of the inner steps. Three swaps
+    // exchange the inputs. The two destinations remain distinct.
+    %three = arith.constant 3 : index
+    %inner:2 = scf.for %j = %c0 to %three step %c1
+        iter_args(%u = %a, %v = %b) -> (!frc, !frc) {
+      scf.yield %v, %u : !frc, !frc
+    }
+    scf.yield %inner#0, %inner#1 : !frc, !frc
   }
   %t:2 = scf.for %i = %c0 to %steps step %c1 iter_args(%a = %f, %b = %g)
       -> (!frc, !frc) {

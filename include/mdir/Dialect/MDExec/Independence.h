@@ -58,6 +58,9 @@ private:
   std::optional<llvm::SmallVector<unsigned>>
   getPermutation(mlir::Operation *loop);
 
+  /// Follow results of statically counted loops that permute their inputs.
+  mlir::Value resolveLoopResult(mlir::Value value);
+  llvm::DenseMap<mlir::Value, mlir::Value> resolvedResults;
   llvm::DenseMap<mlir::Value, std::optional<Roots>> roots;
   /// Values whose roots are being computed, which a cycle reaches again.
   llvm::DenseSet<mlir::Value> visiting;
