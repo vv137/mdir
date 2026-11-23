@@ -290,6 +290,27 @@ Value Force::clonePair(Value t, Value s, Value ti, Value si, Value r2, Value d,
   return inside.lookupOrDefault(body.getTerminator()->getOperand(physical ? 0 : yieldIndex));
 }
 
+// A rejected pair gets a legal radius, but its displacement still belongs
+// to the original pair. A user region that computes an address from that
+// displacement or has another non-speculatable operation needs the branch.
+static bool canSelectCutoff(Block &body) {
+  llvm::SmallDenseSet<Value> fromDisplacement{body.getArgument(1)};
+  for (Operation &op : body.without_terminator()) {
+    bool depends = llvm::any_of(op.getOperands(), [&](Value operand) {
+      return fromDisplacement.contains(operand);
+    });
+    if (isa<memref::LoadOp, vector::LoadOp>(op)) {
+      if (depends)
+        return false;
+    } else if (!isSpeculatable(&op) || !isMemoryEffectFree(&op)) {
+      return false;
+    }
+    if (depends)
+      fromDisplacement.insert(op.result_begin(), op.result_end());
+  }
+  return true;
+}
+
 Values Force::pair(Value t, Value s, Value ti, Value si,
                    ValueRange targetParameters, bool physical) {
   Value d = displacement(t, s), r2 = squared(d);
@@ -311,102 +332,113 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
     });
     return {};
   }
-  return ifElse(
-      {wt, wt, wt}, take,
-      [&] {
-        Value f = clonePair(t, s, ti, si, r2, d, targetParameters, physical);
-        Values scaled;
-        Value narrow = cb(true);
-        for (int a = 0; a < 3; ++a) {
-          Value x = mulf(extract(f, a), wordScale);
-          scaled.push_back(x);
-          narrow = andi(narrow, andi(cmpf(CmpFPredicate::OGE, x, cf(-0x1p31)),
-                                     cmpf(CmpFPredicate::OLT, x, cf(0x1p31))));
-        }
-        auto wide = [&] {
-          Values result;
-          Value valid = cb(true);
+  // The moving force region reads a type table and a radial table. Give a
+  // rejected candidate an in-range radius for the radial lookup. Mask the
+  // scaled components before certification so even a NaN force contributes
+  // zero words and zero failed conversions. Fused virials have side effects.
+  bool selectCutoff = movingDispatch && !fused() && !excluding && !recovering &&
+                      canSelectCutoff(term.getKernel().front());
+  if (selectCutoff)
+    r2 = select(take, r2, mulf(cutoff2, cf(0.5)));
+  auto convert = [&]() -> Values {
+    Value f = clonePair(t, s, ti, si, r2, d, targetParameters, physical);
+    Values scaled;
+    Value narrow = cb(true);
+    for (int a = 0; a < 3; ++a) {
+      Value x = mulf(extract(f, a), wordScale);
+      if (selectCutoff)
+        x = select(take, x, cf(0));
+      scaled.push_back(x);
+      narrow = andi(narrow, andi(cmpf(CmpFPredicate::OGE, x, cf(-0x1p31)),
+                                 cmpf(CmpFPredicate::OLT, x, cf(0x1p31))));
+    }
+    auto wide = [&] {
+      Values result;
+      Value valid = cb(true);
+      for (Value x : scaled) {
+        Value fits = andi(cmpf(CmpFPredicate::OGE, x, cf(-0x1p63)),
+                          cmpf(CmpFPredicate::OLT, x, cf(0x1p63)));
+        valid = andi(valid, fits);
+        Value safe = select(fits, x, cf(0));
+        if (g.host)
+          result.push_back(fptosi(i64, roundeven(safe)));
+        else
+          result.push_back(LLVM::InlineAsmOp::create(
+                               b, loc, TypeRange{i64}, ValueRange{safe},
+                               "cvt.rni.s64.f32 $0, $1;", "=l,f", false,
+                               false, LLVM::TailCallKind::None,
+                               LLVM::AsmDialectAttr(), ArrayAttr())
+                               .getResult(0));
+      }
+      ifThen(notNarrow(valid),
+             [&] { flag(invalid, Fatal, InvalidContribution); });
+      return result;
+    };
+    if ((g.host || excluding) && (recovering || !certified))
+      return wide();
+    auto failed = [&] {
+      Value vote = cl(excluding && !physical ? -1 : 1);
+      if (g.host)
+        store(addi(load(failedConversions, {cx(0)}), vote),
+              failedConversions, {cx(0)});
+      else
+        store(addi(load(localVotes, {}), shortVote() ? trunci(vote) : vote),
+              localVotes, {});
+      return Values(3, g.host ? cl(0) : ci(0));
+    };
+    if (g.host) {
+      Values converted = ifElse(
+          {i64, i64, i64}, narrow,
+          [&] {
+            Values result;
+            for (Value x : scaled)
+              result.push_back(fptosi(i64, roundeven(x)));
+            return result;
+          },
+          failed);
+      return converted;
+    }
+    Values result = ifElse(
+        {i32, i32, i32}, narrow,
+        [&] {
+          Values words;
           for (Value x : scaled) {
-            Value fits = andi(cmpf(CmpFPredicate::OGE, x, cf(-0x1p63)),
-                              cmpf(CmpFPredicate::OLT, x, cf(0x1p63)));
-            valid = andi(valid, fits);
-            Value safe = select(fits, x, cf(0));
-            if (g.host)
-              result.push_back(fptosi(i64, roundeven(safe)));
-            else
-              result.push_back(LLVM::InlineAsmOp::create(
-                                   b, loc, TypeRange{i64}, ValueRange{safe},
-                                   "cvt.rni.s64.f32 $0, $1;", "=l,f", false,
-                                   false, LLVM::TailCallKind::None,
-                                   LLVM::AsmDialectAttr(), ArrayAttr())
-                                   .getResult(0));
+            Value q = LLVM::InlineAsmOp::create(
+                          b, loc, TypeRange{i32}, ValueRange{x},
+                          "cvt.rni.s32.f32 $0, $1;", "=r,f", false, false,
+                          LLVM::TailCallKind::None, LLVM::AsmDialectAttr(),
+                          ArrayAttr())
+                          .getResult(0);
+            words.push_back(q);
           }
-          ifThen(notNarrow(valid),
-                 [&] { flag(invalid, Fatal, InvalidContribution); });
-          return result;
-        };
-        if ((g.host || excluding) && (recovering || !certified))
-          return wide();
-        auto failed = [&] {
-          Value vote = cl(excluding && !physical ? -1 : 1);
-          if (g.host)
-            store(addi(load(failedConversions, {cx(0)}), vote),
-                  failedConversions, {cx(0)});
-          else
-            store(addi(load(localVotes, {}), shortVote() ? trunci(vote) : vote),
-                  localVotes, {});
-          return Values(3, g.host ? cl(0) : ci(0));
-        };
-        if (g.host) {
-          Values converted = ifElse(
-              {i64, i64, i64}, narrow,
-              [&] {
-                Values result;
-                for (Value x : scaled)
-                  result.push_back(fptosi(i64, roundeven(x)));
-                return result;
-              },
-              failed);
-          return converted;
-        }
-        Values result = ifElse(
-            {i32, i32, i32}, narrow,
-            [&] {
-              Values words;
-              for (Value x : scaled) {
-                Value q = LLVM::InlineAsmOp::create(
-                              b, loc, TypeRange{i32}, ValueRange{x},
-                              "cvt.rni.s32.f32 $0, $1;", "=r,f", false, false,
-                              LLVM::TailCallKind::None, LLVM::AsmDialectAttr(),
-                              ArrayAttr())
-                              .getResult(0);
-                words.push_back(q);
-              }
-              return words;
-            },
-            [&] {
-              if (certified && !recovering)
-                return failed();
-              // A blind bonded interaction can exceed i32 before exclusion
-              // replay. Keep its actual word for this stage's direct-only
-              // oracle.
-              Values f = wide();
-              Value target = indexCast(index, load(id, {ti})),
-                    source = indexCast(index, load(id, {si}));
-              for (int a = 0; a < 3; ++a) {
-                if (recovering) {
-                  addWide(target, cx(a), f[a], false);
-                  addWide(source, cx(a), f[a], true);
-                } else {
-                  addWord(words, target, cx(a), f[a]);
-                  addWord(words, source, cx(a), subi(cl(0), f[a]));
-                }
-              }
-              return Values(3, ci(0));
-            });
-        return result;
-      },
-      [&] { return Values(3, wt == i64 ? cl(0) : ci(0)); });
+          return words;
+        },
+        [&] {
+          if (certified && !recovering)
+            return failed();
+          // A blind bonded interaction can exceed i32 before exclusion
+          // replay. Keep its actual word for this stage's direct-only
+          // oracle.
+          Values f = wide();
+          Value target = indexCast(index, load(id, {ti})),
+                source = indexCast(index, load(id, {si}));
+          for (int a = 0; a < 3; ++a) {
+            if (recovering) {
+              addWide(target, cx(a), f[a], false);
+              addWide(source, cx(a), f[a], true);
+            } else {
+              addWord(words, target, cx(a), f[a]);
+              addWord(words, source, cx(a), subi(cl(0), f[a]));
+            }
+          }
+          return Values(3, ci(0));
+        });
+    return result;
+  };
+  if (selectCutoff)
+    return convert();
+  return ifElse({wt, wt, wt}, take, convert,
+                [&] { return Values(3, wt == i64 ? cl(0) : ci(0)); });
 }
 
 // Only lanes of this CTA access the tile. The barriers protect its reuse.
