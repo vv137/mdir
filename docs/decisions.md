@@ -724,6 +724,7 @@ specification follow those made with it.
 | [D426](decisions/D426.md) | Emit the GPU neighbor-matrix build with MLIR builders in the style of the GROUPS build. | 2026-11-21 |
 | [D427](decisions/D427.md) | Build the particle mesh Ewald stages with typed MLIR builders. | 2026-11-22 |
 | [D428](decisions/D428.md) | Particle tower and plate traversal: design for #931, proposed November 22, 2026. | 2026-11-23 |
+| [D429](decisions/D429.md) | Place the reciprocal-stream join at its first dependency. | 2026-11-23 |
 <!-- end decisions-table -->
 
 

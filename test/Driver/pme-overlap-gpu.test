@@ -1,4 +1,4 @@
-# D[overlap-911]. The direct MATRIX loop runs in the reciprocal window of
+# D429. The direct MATRIX loop runs in the reciprocal window of
 # an ordinary step. Compare every checkpoint force and the binary64 H5MD
 # energies from the two deterministic schedules, including observation steps.
 # REQUIRES: cuda, hdf5, h5py

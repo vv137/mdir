@@ -453,7 +453,7 @@ has length $k$, following $n \bmod k$ links gives the initial buffer of
 that result. Composing these permutations proves which force buffers are
 distinct at each iteration. Reads of global radial tables are disjoint
 from live PME allocations. This permits the main stream to traverse TOWERS
-or a pair list before the join (D[overlap-911]). It is off by default: once the kernels of PME became
+or a pair list before the join (D429). It is off by default: once the kernels of PME became
 cheap, sharing the device with the loop over pairs, the longest part of a
 step, lengthened the step.
 
