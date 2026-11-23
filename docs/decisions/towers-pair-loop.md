@@ -1,0 +1,31 @@
+# D[towers-pair-loop]
+
+Recorded at its merge.
+
+**Reduce the work per candidate in the moving TOWERS force loop.**
+The moving traversal specializes the shared table dimensions to the topology's
+type count when the pair region indexes the packed coefficients by particle
+type. Threads copy the entries cooperatively before traversal. The copy
+respects both dimensions of the source descriptor. The pair loop indexes
+the shared table with a fixed row stride. The existing table-size and
+static shared-memory limits bound the specialization.
+
+The binary32 cutoff predicate selects zero scaled components before integer
+conversion. Rejected candidates contribute zero words and zero votes,
+including when speculative arithmetic produces a nonfinite value. A legal
+radius protects radial lookups. The guarded implementation handles regions
+whose addresses depend on the displacement, other non-speculatable
+operations, observation, exclusion cancellation and recovery.
+
+The approximate reciprocal may flush a subnormal squared distance when
+every use raises it to a positive integer power of at least two and the
+cutoff excludes reciprocal underflow. On Cellulose, expanding constant powers removed two unit multiplies but
+reduced throughput from 162.50 to 162.05 ns/day relative to the parent.
+An unconditional population count removed two instructions in mask decoding
+but reduced TIP3P 10k throughput from 2002.65 to 1992.70 ns/day against
+bracketed main. The traversal retains its original power and bit decoding.
+The signed conversion test retains both
+bounds on each component to admit $-2^{31}$ and reject $+2^{31}$ and NaNs.
+A worker tests for a new target only when it advances to the next mask
+record. It carries the cached target and partial words across the remaining
+bits of the current mask.

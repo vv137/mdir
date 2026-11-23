@@ -1317,7 +1317,10 @@ and within one layer the later sorted slot supplies the source. Distinct
 periodic images of these offsets are required for uniqueness.
 
 In TOWERS the owning box maps to a GPU block and imported atoms occupy
-shared memory. The traversal stages whole cells at cutoff scale.
+shared memory. The traversal stages whole cells at cutoff scale. For a small packed
+type-pair coefficient table, the block also copies the coefficients once.
+The two particle types then index a shared-memory row and column
+(D[towers-pair-loop]).
 A lateral distance filter and a quantized tensor-core screen with a
 conservative error margin trim candidates. Masks encode records and
 workers divide their candidate ranks evenly. Newton's opposite forces
@@ -1331,8 +1334,22 @@ It rounds the scaled positions to a lattice and rounds the encoded source
 squared norm downward. A padded distance threshold accounts for the endpoint
 rounding. Each surviving record holds a source mask and a header identifying
 the target, source group and candidate prefix. Dividing the prefix range
-among workers assigns each set bit to one worker. The worker retests the
-distance in binary32 before evaluating the antisymmetric pair region.
+among workers assigns each set bit to one worker. Bits in one record share
+the target coordinates, parameters and partial force. On advancing to another
+record, the worker flushes and reloads these values only if the target changes.
+
+The moving force-only loop compares the binary32 squared distance with the
+squared cutoff. For a pair region that can be evaluated speculatively, a
+select supplies an in-range squared distance for rejected candidates. A
+second select supplies exactly zero for each rejected scaled component before
+the conversion check. Such a candidate adds neither force words nor a failed
+conversion vote. Regions with displacement-dependent addresses, observers,
+the pressure virial and wide replay keep their guarded evaluation.
+For the Lennard-Jones inverse powers, a subnormal squared distance already
+overflows the square of its reciprocal. When all uses take powers of at least
+two and the cutoff bounds the reciprocal away from underflow, the hardware
+reciprocal can flush subnormals. The radial table still uses the original
+in-range squared distance.
 The prefix barrier ends all reads of the screening features and compacted
 target indices. The force planes occupy the same storage afterward. Streaming
 a further stripe regenerates the features before the next screen.
@@ -1359,23 +1376,19 @@ pair goes directly to the two-limb sum. The CPU enumerates owned spans.
 The result fits signed 64-bit output exactly when its high limb equals
 the sign extension of its low limb. A final publication pass ensures that
 an invalid contribution or endpoint preserves the preceding destination
-for every atom. For an excluded pair the replay adds the negatives of the original
-quantized words and subtracts its failed-conversion indicator. The strict
-predicate, endpoint orientation, coefficient expression and rounding agree
-with the blind traversal. The net count therefore counts only failed
-surviving direct conversions and failed physical corrections. Each unique
-excluded pair replaces one direct interaction with at most one physical
-correction per endpoint. The same final-sum bound applies. Wide recovery
-omits the excluded direct evaluation and includes the physical correction
-at every distance.
-
+for every atom. On the moving path, an exclusion block recomputes the blind direct
+contribution with the same cutoff, orientation, coefficients and rounding.
+It cancels the direct words and their conversion vote. Wide recovery skips
+excluded direct pairs. The topology tuple loops add the physical
+corrections.
 
 The rectangular mixed-precision compiler shares the packed positions and
 ownership rule among separately requested force, energy and direct virial
 kernels. The energy kernel rounds each pair energy to Q32 and sums the
 words with signed two-limb arithmetic. The tensor kernel visits physical
 pairs and accumulates the six independent components of the minimum-image
-displacement times the target force in binary64. Moving pressure steps accumulate the binary64 virial in the force traversal.
+displacement times the target force in binary64. On moving pressure steps, the force traversal sums the pair
+region's binary64 virial term and omits excluded direct pairs from this sum.
 The two outputs share the displacement and pair evaluation. Each endpoint
 receives the same quantized force word as in a force-only step. The moving traversal indexes each
 excluded pair by the smaller permanent atom ID. A 32-bit mask resolves

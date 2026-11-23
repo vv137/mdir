@@ -38,7 +38,7 @@ public:
         packedChargeType(shape.packedChargeType), certified(shape.certified),
         movingDispatch(shape.movingDispatch), probe(probe),
         indexedExclusions(shape.indexedExclusions),
-        cartesianPositions(shape.cartesianPositions),
+        cartesianPositions(shape.cartesianPositions), typeCount(shape.typeCount),
         v3(VectorType::get({3}, f32)), v4(VectorType::get({4}, f32)) {}
   LogicalResult emit();
 
@@ -88,6 +88,7 @@ private:
   int panel, stripe, workers, recordCap, residency, groups;
   bool packedChargeType, certified, movingDispatch, probe, indexedExclusions;
   Type cartesianPositions;
+  int64_t typeCount;
   bool recovering = false;
   Value failedConversions, highWords, localVotes;
   bool shortVote() const {
@@ -242,16 +243,32 @@ Value Force::clonePair(Value t, Value s, Value ti, Value si, Value r2, Value d,
   for (auto &op : body.without_terminator()) {
     auto div = dyn_cast<arith::DivFOp>(op);
     if (!g.host && div && div.getType() == f32 &&
-        arith::bitEnumContainsAny(div.getFastmath(),
-                                  arith::FastMathFlags::arcp) &&
         matchPattern(div.getLhs(), m_OneFloat())) {
-      Value r =
-          LLVM::InlineAsmOp::create(
-              b, loc, TypeRange{f32}, ValueRange{inside.lookup(div.getRhs())},
-              "rcp.approx.f32 $0,$1;", "=f,f", false, false,
-              LLVM::TailCallKind::None, LLVM::AsmDialectAttr(), ArrayAttr())
-              .getResult(0);
-      inside.map(div.getResult(), r);
+      bool approximate = arith::bitEnumContainsAny(
+          div.getFastmath(), arith::FastMathFlags::arcp | arith::FastMathFlags::afn);
+      // For the inverse powers in the LJ term, even the largest subnormal
+      // squared distance has a reciprocal whose square overflows. Every
+      // consumer sees +infinity with either reciprocal. The cutoff bounds
+      // the other end so the reciprocal of a normal input cannot underflow.
+      bool ftz = approximate && !physical && div.getRhs() == body.getArgument(0) &&
+                 term.getCutoff().convertToDouble() <= 0x1p63 &&
+                 llvm::all_of(div->getUsers(), [](Operation *user) {
+                   auto power = dyn_cast<math::FPowIOp>(user);
+                   APInt exponent;
+                   return power &&
+                          matchPattern(power.getRhs(), m_ConstantInt(&exponent)) &&
+                          exponent.sge(2);
+                 });
+      if (ftz)
+        inside.map(div.getResult(), NVVM::RcpApproxFtzF32Op::create(b, loc, f32, r2));
+      else if (arith::bitEnumContainsAny(div.getFastmath(), arith::FastMathFlags::arcp))
+        inside.map(div.getResult(), LLVM::InlineAsmOp::create(
+                       b, loc, TypeRange{f32}, ValueRange{inside.lookup(div.getRhs())},
+                       "rcp.approx.f32 $0,$1;", "=f,f", false, false,
+                       LLVM::TailCallKind::None, LLVM::AsmDialectAttr(), ArrayAttr())
+                       .getResult(0));
+      else
+        b.clone(op, inside);
     } else
       b.clone(op, inside);
   }
@@ -271,6 +288,27 @@ Value Force::clonePair(Value t, Value s, Value ti, Value si, Value r2, Value d,
       accumulate();
   }
   return inside.lookupOrDefault(body.getTerminator()->getOperand(physical ? 0 : yieldIndex));
+}
+
+// A rejected pair gets a legal radius, but its displacement still belongs
+// to the original pair. A user region that computes an address from that
+// displacement or has another non-speculatable operation needs the branch.
+static bool canSelectCutoff(Block &body) {
+  llvm::SmallDenseSet<Value> fromDisplacement{body.getArgument(1)};
+  for (Operation &op : body.without_terminator()) {
+    bool depends = llvm::any_of(op.getOperands(), [&](Value operand) {
+      return fromDisplacement.contains(operand);
+    });
+    if (isa<memref::LoadOp, vector::LoadOp>(op)) {
+      if (depends)
+        return false;
+    } else if (!isSpeculatable(&op) || !isMemoryEffectFree(&op)) {
+      return false;
+    }
+    if (depends)
+      fromDisplacement.insert(op.result_begin(), op.result_end());
+  }
+  return true;
 }
 
 Values Force::pair(Value t, Value s, Value ti, Value si,
@@ -294,102 +332,113 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
     });
     return {};
   }
-  return ifElse(
-      {wt, wt, wt}, take,
-      [&] {
-        Value f = clonePair(t, s, ti, si, r2, d, targetParameters, physical);
-        Values scaled;
-        Value narrow = cb(true);
-        for (int a = 0; a < 3; ++a) {
-          Value x = mulf(extract(f, a), wordScale);
-          scaled.push_back(x);
-          narrow = andi(narrow, andi(cmpf(CmpFPredicate::OGE, x, cf(-0x1p31)),
-                                     cmpf(CmpFPredicate::OLT, x, cf(0x1p31))));
-        }
-        auto wide = [&] {
-          Values result;
-          Value valid = cb(true);
+  // The moving force region reads a type table and a radial table. Give a
+  // rejected candidate an in-range radius for the radial lookup. Mask the
+  // scaled components before certification so even a NaN force contributes
+  // zero words and zero failed conversions. Fused virials have side effects.
+  bool selectCutoff = movingDispatch && !fused() && !excluding && !recovering &&
+                      canSelectCutoff(term.getKernel().front());
+  if (selectCutoff)
+    r2 = select(take, r2, mulf(cutoff2, cf(0.5)));
+  auto convert = [&]() -> Values {
+    Value f = clonePair(t, s, ti, si, r2, d, targetParameters, physical);
+    Values scaled;
+    Value narrow = cb(true);
+    for (int a = 0; a < 3; ++a) {
+      Value x = mulf(extract(f, a), wordScale);
+      if (selectCutoff)
+        x = select(take, x, cf(0));
+      scaled.push_back(x);
+      narrow = andi(narrow, andi(cmpf(CmpFPredicate::OGE, x, cf(-0x1p31)),
+                                 cmpf(CmpFPredicate::OLT, x, cf(0x1p31))));
+    }
+    auto wide = [&] {
+      Values result;
+      Value valid = cb(true);
+      for (Value x : scaled) {
+        Value fits = andi(cmpf(CmpFPredicate::OGE, x, cf(-0x1p63)),
+                          cmpf(CmpFPredicate::OLT, x, cf(0x1p63)));
+        valid = andi(valid, fits);
+        Value safe = select(fits, x, cf(0));
+        if (g.host)
+          result.push_back(fptosi(i64, roundeven(safe)));
+        else
+          result.push_back(LLVM::InlineAsmOp::create(
+                               b, loc, TypeRange{i64}, ValueRange{safe},
+                               "cvt.rni.s64.f32 $0, $1;", "=l,f", false,
+                               false, LLVM::TailCallKind::None,
+                               LLVM::AsmDialectAttr(), ArrayAttr())
+                               .getResult(0));
+      }
+      ifThen(notNarrow(valid),
+             [&] { flag(invalid, Fatal, InvalidContribution); });
+      return result;
+    };
+    if ((g.host || excluding) && (recovering || !certified))
+      return wide();
+    auto failed = [&] {
+      Value vote = cl(excluding && !physical ? -1 : 1);
+      if (g.host)
+        store(addi(load(failedConversions, {cx(0)}), vote),
+              failedConversions, {cx(0)});
+      else
+        store(addi(load(localVotes, {}), shortVote() ? trunci(vote) : vote),
+              localVotes, {});
+      return Values(3, g.host ? cl(0) : ci(0));
+    };
+    if (g.host) {
+      Values converted = ifElse(
+          {i64, i64, i64}, narrow,
+          [&] {
+            Values result;
+            for (Value x : scaled)
+              result.push_back(fptosi(i64, roundeven(x)));
+            return result;
+          },
+          failed);
+      return converted;
+    }
+    Values result = ifElse(
+        {i32, i32, i32}, narrow,
+        [&] {
+          Values words;
           for (Value x : scaled) {
-            Value fits = andi(cmpf(CmpFPredicate::OGE, x, cf(-0x1p63)),
-                              cmpf(CmpFPredicate::OLT, x, cf(0x1p63)));
-            valid = andi(valid, fits);
-            Value safe = select(fits, x, cf(0));
-            if (g.host)
-              result.push_back(fptosi(i64, roundeven(safe)));
-            else
-              result.push_back(LLVM::InlineAsmOp::create(
-                                   b, loc, TypeRange{i64}, ValueRange{safe},
-                                   "cvt.rni.s64.f32 $0, $1;", "=l,f", false,
-                                   false, LLVM::TailCallKind::None,
-                                   LLVM::AsmDialectAttr(), ArrayAttr())
-                                   .getResult(0));
+            Value q = LLVM::InlineAsmOp::create(
+                          b, loc, TypeRange{i32}, ValueRange{x},
+                          "cvt.rni.s32.f32 $0, $1;", "=r,f", false, false,
+                          LLVM::TailCallKind::None, LLVM::AsmDialectAttr(),
+                          ArrayAttr())
+                          .getResult(0);
+            words.push_back(q);
           }
-          ifThen(notNarrow(valid),
-                 [&] { flag(invalid, Fatal, InvalidContribution); });
-          return result;
-        };
-        if ((g.host || excluding) && (recovering || !certified))
-          return wide();
-        auto failed = [&] {
-          Value vote = cl(excluding && !physical ? -1 : 1);
-          if (g.host)
-            store(addi(load(failedConversions, {cx(0)}), vote),
-                  failedConversions, {cx(0)});
-          else
-            store(addi(load(localVotes, {}), shortVote() ? trunci(vote) : vote),
-                  localVotes, {});
-          return Values(3, g.host ? cl(0) : ci(0));
-        };
-        if (g.host) {
-          Values converted = ifElse(
-              {i64, i64, i64}, narrow,
-              [&] {
-                Values result;
-                for (Value x : scaled)
-                  result.push_back(fptosi(i64, roundeven(x)));
-                return result;
-              },
-              failed);
-          return converted;
-        }
-        Values result = ifElse(
-            {i32, i32, i32}, narrow,
-            [&] {
-              Values words;
-              for (Value x : scaled) {
-                Value q = LLVM::InlineAsmOp::create(
-                              b, loc, TypeRange{i32}, ValueRange{x},
-                              "cvt.rni.s32.f32 $0, $1;", "=r,f", false, false,
-                              LLVM::TailCallKind::None, LLVM::AsmDialectAttr(),
-                              ArrayAttr())
-                              .getResult(0);
-                words.push_back(q);
-              }
-              return words;
-            },
-            [&] {
-              if (certified && !recovering)
-                return failed();
-              // A blind bonded interaction can exceed i32 before exclusion
-              // replay. Keep its actual word for this stage's direct-only
-              // oracle.
-              Values f = wide();
-              Value target = indexCast(index, load(id, {ti})),
-                    source = indexCast(index, load(id, {si}));
-              for (int a = 0; a < 3; ++a) {
-                if (recovering) {
-                  addWide(target, cx(a), f[a], false);
-                  addWide(source, cx(a), f[a], true);
-                } else {
-                  addWord(words, target, cx(a), f[a]);
-                  addWord(words, source, cx(a), subi(cl(0), f[a]));
-                }
-              }
-              return Values(3, ci(0));
-            });
-        return result;
-      },
-      [&] { return Values(3, wt == i64 ? cl(0) : ci(0)); });
+          return words;
+        },
+        [&] {
+          if (certified && !recovering)
+            return failed();
+          // A blind bonded interaction can exceed i32 before exclusion
+          // replay. Keep its actual word for this stage's direct-only
+          // oracle.
+          Values f = wide();
+          Value target = indexCast(index, load(id, {ti})),
+                source = indexCast(index, load(id, {si}));
+          for (int a = 0; a < 3; ++a) {
+            if (recovering) {
+              addWide(target, cx(a), f[a], false);
+              addWide(source, cx(a), f[a], true);
+            } else {
+              addWord(words, target, cx(a), f[a]);
+              addWord(words, source, cx(a), subi(cl(0), f[a]));
+            }
+          }
+          return Values(3, ci(0));
+        });
+    return result;
+  };
+  if (selectCutoff)
+    return convert();
+  return ifElse({wt, wt, wt}, take, convert,
+                [&] { return Values(3, wt == i64 ? cl(0) : ci(0)); });
 }
 
 // Only lanes of this CTA access the tile. The barriers protect its reuse.
@@ -1458,27 +1507,35 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
       initial.append(cached);
       auto endState =
           forLoop(begin, end, ci(1), initial, [&](Value, ValueRange x) {
+            // All remaining bits of a record use the same target. Carry its
+            // words and fields across those bits; compare slots only on refill.
             auto v = ifElse(
-                {i32, i32, i32}, cmpi(CmpIPredicate::eq, x[2], ci(0)),
+                TypeRange(initial), cmpi(CmpIPredicate::eq, x[2], ci(0)),
                 [&] {
                   Value next = addi(x[0], ci(1));
-                  return Values{next, read(next, 0), read(next, 1)};
+                  Value h = read(next, 0), mask = read(next, 1);
+                  Value prev = targetSlot(x[1]), t = targetSlot(h);
+                  auto state = ifElse(
+                      TypeRange(x.drop_front(3)), cmpi(CmpIPredicate::ne, prev, t),
+                      [&] {
+                        if (!observer())
+                          for (int a = 0; a < 3; ++a)
+                            addWord(accum, prev, cx(a), x[3 + a]);
+                        Values fresh(3, ci(0));
+                        fresh.append(targetValues(t));
+                        return fresh;
+                      },
+                      [&] { return Values(x.drop_front(3)); });
+                  Values refill{next, h, mask};
+                  refill.append(state.begin(), state.end());
+                  return refill;
                 },
-                [&] { return Values{x[0], x[1], x[2]}; });
-            Value prev = targetSlot(x[1]), t = targetSlot(v[1]),
-                  changed = cmpi(CmpIPredicate::ne, prev, t);
-            if (!observer())
-              ifThen(changed, [&] {
-                for (int a = 0; a < 3; ++a) {
-                  addWord(accum, prev, cx(a), x[3 + a]);
-                }
-              });
+                [&] { return Values(x); });
+            Value t = targetSlot(v[1]);
             Value s = indexCast(
                 index, addi(shli(andi(shrui(v[1], ci(10)), ci(15)), ci(5)),
                             math::CountTrailingZerosOp::create(b, loc, v[2])));
-            auto targetData = ifElse(
-                TypeRange(cached), changed, [&] { return targetValues(t); },
-                [&] { return Values(x.drop_front(6)); });
+            ValueRange targetData = v.drop_front(6);
             Values f = pair(targetData[0], load(pos, {s}), t, s,
                             targetData.drop_front());
             Values next{v[0], v[1], andi(v[2], subi(v[2], ci(1)))};
@@ -1496,7 +1553,7 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
             for (int a = 0; a < 3; ++a) {
               biased = ori(biased, addi(f[a], ci(1 << (shift - 1))));
               addWord(accum, s, cx(a), subi(ci(0), f[a]));
-              next.push_back(addi(select(changed, ci(0), x[3 + a]), f[a]));
+              next.push_back(addi(v[3 + a], f[a]));
             }
             ifThen(cmpi(CmpIPredicate::uge, biased, ci(1 << shift)), [&] {
               for (int a = 0; a < 3; ++a) {
@@ -1641,7 +1698,7 @@ void Force::stageParameters(gpu::GPUFuncOp fn) {
   }
   for (Value v : captures) {
     auto t = dyn_cast<MemRefType>(v.getType());
-    if (!t || !t.hasStaticShape() || t.getRank() != 2 || !t.getNumElements())
+    if (!t || t.getRank() != 2)
       continue;
     // Remapping is local to simple loads. A call or a view could require
     // the original address space or memory layout.
@@ -1654,17 +1711,53 @@ void Force::stageParameters(gpu::GPUFuncOp fn) {
     auto scalar = getElementTypeOrSelf(element);
     if (!scalar.isIntOrFloat())
       continue;
-    int64_t bytes = t.getNumElements() * (vec ? vec.getNumElements() : 1) *
+    int64_t rows = t.getDimSize(0), columns = t.getDimSize(1);
+    if (!t.hasStaticShape()) {
+      // Folded LJ coefficients have a dynamic descriptor. Only specialize a
+      // table whose two subscripts come directly from particle type fields.
+      if (!movingDispatch || typeCount <= 0 || typeCount > 32 ||
+          typeParameter < 0 || element != VectorType::get({2}, f32))
+        continue;
+      Block &body = term.getKernel().front();
+      auto fromType = [&](Value index) {
+        auto cast = index.getDefiningOp<arith::IndexCastOp>();
+        if (!cast)
+          return false;
+        Value value = cast.getIn();
+        return value == body.getArgument(2 + 2 * typeParameter) ||
+               value == body.getArgument(3 + 2 * typeParameter);
+      };
+      if (!llvm::all_of(v.getUsers(), [&](Operation *op) {
+            if (!term->isAncestor(op))
+              return true;
+            auto indices = cast<memref::LoadOp>(op).getIndices();
+            return llvm::all_of(indices, fromType);
+          }))
+        continue;
+      rows = columns = typeCount;
+    }
+    int64_t entries = rows * columns;
+    if (!entries)
+      continue;
+    int64_t bytes = entries * (vec ? vec.getNumElements() : 1) *
                     ((scalar.getIntOrFloatBitWidth() + 7) / 8);
     if (bytes > 8192 || fixed + bytes > 48 * 1024)
       continue;
     fixed += bytes;
-    Value src = mapping.lookup(v), dst = shared(fn, t.getShape(), element);
-    forLoop(tid, cx(t.getNumElements()), cx(workers), {},
+    Value src = mapping.lookup(v), dst = shared(fn, {rows, columns}, element);
+    forLoop(tid, cx(entries), cx(workers), {},
             [&](Value i, ValueRange) {
-              Values at{divui(i, cx(t.getDimSize(1))),
-                        remui(i, cx(t.getDimSize(1)))};
-              store(load(src, at), dst, at);
+              Values at{divui(i, cx(columns)),
+                        remui(i, cx(columns))};
+              auto copy = [&] { store(load(src, at), dst, at); };
+              if (t.hasStaticShape())
+                copy();
+              else {
+                Value nr = memref::DimOp::create(b, loc, src, 0);
+                Value nc = memref::DimOp::create(b, loc, src, 1);
+                ifThen(andi(cmpi(CmpIPredicate::ult, at[0], nr),
+                            cmpi(CmpIPredicate::ult, at[1], nc)), copy);
+              }
               return Values{};
             });
     mapping.map(v, dst);
