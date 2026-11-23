@@ -243,16 +243,32 @@ Value Force::clonePair(Value t, Value s, Value ti, Value si, Value r2, Value d,
   for (auto &op : body.without_terminator()) {
     auto div = dyn_cast<arith::DivFOp>(op);
     if (!g.host && div && div.getType() == f32 &&
-        arith::bitEnumContainsAny(div.getFastmath(),
-                                  arith::FastMathFlags::arcp) &&
         matchPattern(div.getLhs(), m_OneFloat())) {
-      Value r =
-          LLVM::InlineAsmOp::create(
-              b, loc, TypeRange{f32}, ValueRange{inside.lookup(div.getRhs())},
-              "rcp.approx.f32 $0,$1;", "=f,f", false, false,
-              LLVM::TailCallKind::None, LLVM::AsmDialectAttr(), ArrayAttr())
-              .getResult(0);
-      inside.map(div.getResult(), r);
+      bool approximate = arith::bitEnumContainsAny(
+          div.getFastmath(), arith::FastMathFlags::arcp | arith::FastMathFlags::afn);
+      // For the inverse powers in the LJ term, even the largest subnormal
+      // squared distance has a reciprocal whose square overflows. Every
+      // consumer sees +infinity with either reciprocal. The cutoff bounds
+      // the other end so the reciprocal of a normal input cannot underflow.
+      bool ftz = approximate && !physical && div.getRhs() == body.getArgument(0) &&
+                 term.getCutoff().convertToDouble() <= 0x1p63 &&
+                 llvm::all_of(div->getUsers(), [](Operation *user) {
+                   auto power = dyn_cast<math::FPowIOp>(user);
+                   APInt exponent;
+                   return power &&
+                          matchPattern(power.getRhs(), m_ConstantInt(&exponent)) &&
+                          exponent.sge(2);
+                 });
+      if (ftz)
+        inside.map(div.getResult(), NVVM::RcpApproxFtzF32Op::create(b, loc, f32, r2));
+      else if (arith::bitEnumContainsAny(div.getFastmath(), arith::FastMathFlags::arcp))
+        inside.map(div.getResult(), LLVM::InlineAsmOp::create(
+                       b, loc, TypeRange{f32}, ValueRange{inside.lookup(div.getRhs())},
+                       "rcp.approx.f32 $0,$1;", "=f,f", false, false,
+                       LLVM::TailCallKind::None, LLVM::AsmDialectAttr(), ArrayAttr())
+                       .getResult(0));
+      else
+        b.clone(op, inside);
     } else
       b.clone(op, inside);
   }
