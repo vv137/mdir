@@ -1,0 +1,18 @@
+# D[overlap-911]. The direct MATRIX loop runs in the reciprocal window of
+# an ordinary step. Compare every checkpoint force and the binary64 H5MD
+# energies from the two deterministic schedules, including observation steps.
+# REQUIRES: cuda, hdf5, h5py
+# RUN: rm -rf %t && mkdir -p %t/serial %t/side
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/pme-settle.test | sed '1d;$d' \
+# RUN:   | sed -e 's|= "opc|= "%S/Inputs/opc/opc|g' -e 's/energy_interval = 50/energy_interval = 5\ntrajectory = "run.h5md"\ntrajectory_interval = 5\ncheckpoint = "state.h5"\ncheckpoint_interval = 20/' -e 's/steps         = 100/steps         = 20/' > %t/serial/run.toml
+# RUN: printf '[execution]\ntarget = "gpu"\nprecision = "mixed"\ndeterministic = true\n' >> %t/serial/run.toml
+# RUN: cp %t/serial/run.toml %t/side/
+# RUN: cd %t/serial && mdir run run.toml > log
+# RUN: cd %t/side && mdir emit run.toml --stage=pipeline | sed 's/md-exec-assign-streams,/md-exec-assign-streams{reciprocal=true},/' > pipeline
+# RUN: cd %t/side && env MDIR_PRINT_AFTER=convert-md-exec-to-gpu sh -c 'MDIR_PIPELINE="$(cat pipeline)" mdir run run.toml' > log 2> ir
+# RUN: awk '/call @mdrtSideEnd\(/{window=1} /call @mdrtSideJoin\(/{window=0} window && /gpu.launch .*module\(@mdir_run_pair_for_/{found=1} END{exit !found}' %t/side/ir
+# RUN: %h5md_python %S/Inputs/compare_h5_contents.py %t/serial/run.h5md %t/side/run.h5md
+# RUN: %h5md_python -c "import h5py,sys; a,b=(h5py.File(p)['particles/all/force/value'][()] for p in sys.argv[1:]); assert a.size and a.dtype == b.dtype and a.shape == b.shape and a.tobytes() == b.tobytes()" %t/serial/state.h5 %t/side/state.h5
+# RUN: mdir checkpoint %t/serial/state.h5 %t/side/state.h5 | FileCheck %s
+# RUN: rm -rf %t
+# CHECK: the states are identical

@@ -447,7 +447,13 @@ ops it is proven independent of, and places the join; the lowering checks
 the window again. The argument for its correctness is that two ops that
 are independent (neither reads what the other changes, by their declared
 memory effects and an alias analysis of the buffers) give the same memory
-in either order. It is off by default: once the kernels of PME became
+in either order. In a nested step schedule, the inner loop can return a
+permutation of its input buffers. If its trip count is $n$ and a cycle
+has length $k$, following $n \bmod k$ links gives the initial buffer of
+that result. Composing these permutations proves which force buffers are
+distinct at each iteration. Reads of global radial tables are disjoint
+from live PME allocations. This permits the main stream to traverse TOWERS
+or a pair list before the join (D[overlap-911]). It is off by default: once the kernels of PME became
 cheap, sharing the device with the loop over pairs, the longest part of a
 step, lengthened the step.
 
