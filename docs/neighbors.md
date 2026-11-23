@@ -125,8 +125,9 @@ atom-to-slot map, the three planes of binary64 input positions and the three
 box lengths. Captured parameters follow the per-atom inputs. Keep the frame,
 maps and topology fixed through publication.
 
-The force grid has one or two source splits per tower (`force-split`),
-followed by enough blocks for one thread per excluded pair. These threads
+The force grid starts with enough blocks for one thread per excluded pair.
+The remaining blocks cover one or two source splits per tower (`force-split`).
+The exclusion threads
 orient the endpoints in the same image and use the original direct region
 to subtract its provisional words and conversion vote. They add the
 independently quantized correction. Wide recovery tests membership before

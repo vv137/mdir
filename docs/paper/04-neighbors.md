@@ -1376,7 +1376,11 @@ pair goes directly to the two-limb sum. The CPU enumerates owned spans.
 The result fits signed 64-bit output exactly when its high limb equals
 the sign extension of its low limb. A final publication pass ensures that
 an invalid contribution or endpoint preserves the preceding destination
-for every atom. On the moving path, an exclusion block recomputes the blind direct
+for every atom. On the moving GPU path, the lowest block indices cover the
+excluded pairs, one pair per thread. Subsequent blocks cover the tower
+splits in their original order (D[towers-excl-tail]). Integer addition lets
+the exclusion and tower blocks contribute in either order. An exclusion
+block recomputes the blind direct
 contribution with the same cutoff, orientation, coefficients and rounding.
 It cancels the direct words and their conversion vote. Wide recovery skips
 excluded direct pairs. The topology tuple loops add the physical

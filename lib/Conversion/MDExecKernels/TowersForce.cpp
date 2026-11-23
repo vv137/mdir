@@ -2035,6 +2035,13 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
   }
   if (fused())
     fusedSum = entry.getArgument(types.size());
+  // Schedule exclusion CTAs first. Keep logical tower and exclusion indices
+  // contiguous for traversal and the per-tower probe.
+  if (exclusions && !singleBlock) {
+    Value prefix = cx(llvm::divideCeil(exclusions, workers));
+    owner = select(cmpi(CmpIPredicate::ult, owner, prefix),
+                   addi(owner, cx(towerBlocks())), subi(owner, prefix));
+  }
   if (observer() || fused())
     startObservation();
   auto evaluate = [&] {
