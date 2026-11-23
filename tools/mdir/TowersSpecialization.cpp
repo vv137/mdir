@@ -50,10 +50,6 @@ mdir::tool::prepareTowersSpecialization(const Control &control,
   auto program = buildProgram(source, system);
   if (!program)
     return program.takeError();
-  compiler::useCudaToolkit();
-  auto options = compiler::getGpuOptions(source, device);
-  if (!options)
-    return options.takeError();
   auto state = std::make_shared<PairModule>();
   auto &context = state->context;
   compiler::shareThreadPool(context);
@@ -83,7 +79,11 @@ mdir::tool::prepareTowersSpecialization(const Control &control,
     return WalkResult::advance();
   });
   if (!term)
-    return fail("no force-only direct pair region");
+    return TowersEmitter{};
+  compiler::useCudaToolkit();
+  auto options = compiler::getGpuOptions(source, device);
+  if (!options)
+    return options.takeError();
   double rc = control.cutoffDistance * units::length;
   TowersCell geometry(system);
   kernels::TowersLayout layout{

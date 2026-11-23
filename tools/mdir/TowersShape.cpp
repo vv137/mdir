@@ -541,22 +541,27 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
                                           maximum->capacity, (*limits)->device);
   if (!emit)
     return emit.takeError();
-  if (setup) {
-    shape = timeCandidates(control, system, **limits, maximum->capacity, *emit,
-                           candidates, result);
-    if (!shape)
-      return shape.takeError();
+  if (!*emit) {
+    result["selection"] = "derived shape (no force-only region)";
+    result["register_check"] = "no force-only region";
   } else {
-    result["selection"] =
-        candidates.size() == 1 ? "single candidate" : "setup trial pending";
+    if (setup) {
+      shape = timeCandidates(control, system, **limits, maximum->capacity, *emit,
+                             candidates, result);
+      if (!shape)
+        return shape.takeError();
+    } else {
+      result["selection"] =
+          candidates.size() == 1 ? "single candidate" : "setup trial pending";
+    }
+    auto image = (*emit)(*shape, nullptr);
+    if (!image)
+      return image.takeError();
+    auto compiled = checkRegisters((*limits)->device, *shape, *image);
+    if (!compiled)
+      return compiled.takeError();
+    result["register_check"] = std::move(*compiled);
   }
-  auto image = (*emit)(*shape, nullptr);
-  if (!image)
-    return image.takeError();
-  auto compiled = checkRegisters((*limits)->device, *shape, *image);
-  if (!compiled)
-    return compiled.takeError();
-  result["register_check"] = std::move(*compiled);
   if (resolved) {
     resolved->launch = *shape;
     resolved->capacity = maximum->capacity;

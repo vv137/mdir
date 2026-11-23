@@ -222,7 +222,8 @@ including full and half target stripes and record budgets. It times nine
 rebuilt certified force calls on private copies of the starting frame and
 remeasures up to five finalists in five shuffled rounds. The lowest median
 wins. The compile cache stores the launch by grid, device, pair specialization
-and candidate set. A complete pin has a single candidate. Preflight lists
+and candidate set. A program without a force-only pair region uses the derived
+launch and skips the trial and its register check. A complete pin has a single candidate. Preflight lists
 the proposals and checks the derived launch. The run log records the
 selected launch and whether setup measured it or reused a cache entry.
 

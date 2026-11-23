@@ -1,5 +1,5 @@
 // Prepare the mixed pair region once and specialize its rectangular launch
-// variants.
+// variants. An empty emitter means the program has no force-only region to time.
 #pragma once
 #include "TowersTrialInputs.h"
 #include "mdir/Driver/System.h"

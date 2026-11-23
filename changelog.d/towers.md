@@ -8,6 +8,7 @@
   The rectangular entry replays excluded pairs and their physical corrections.
   Setup chooses the height from the atom count, cell and cutoff, measures the
   unpinned launch fields at that height, and caches the winning launch.
+  Programs without a force-only region skip the launch trial.
   The compiler also supports fractional triclinic cells and closest-lattice
   physical exclusions. Continuation preserves the saved height and recomputes
   the initial forces when the traversal or height changes.

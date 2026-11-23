@@ -1,0 +1,6 @@
+# REQUIRES: cuda
+# RUN: rm -rf %t && mkdir %t
+# RUN: cp %S/Inputs/towers-one-step.toml %S/../../examples/argon/argon.pdb %t/
+# RUN: mdir run %t/towers-one-step.toml | FileCheck %s
+# CHECK: TOWERS launch shape {{.*}}"selection":"derived shape (no force-only region)"
+# CHECK: INFO: 1 0.0050

@@ -1,0 +1,6 @@
+# REQUIRES: cuda-toolkit
+# RUN: rm -rf %t && mkdir %t
+# RUN: cp %S/Inputs/towers-one-step.toml %S/../../examples/argon/argon.pdb %t/
+# RUN: sh -c 'cc -shared -fPIC -I"$CUDA_ROOT/include" "$1" -o "$2"' sh %S/Inputs/towers_preflight_device.c %t/libcuda.so.1
+# RUN: sh -c 'LD_LIBRARY_PATH="$1:$LD_LIBRARY_PATH" exec mdir check --json "$1/towers-one-step.toml"' sh %t | FileCheck %s
+# CHECK: "selection": "derived shape (no force-only region)"
