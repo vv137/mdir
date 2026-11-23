@@ -1507,27 +1507,35 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
       initial.append(cached);
       auto endState =
           forLoop(begin, end, ci(1), initial, [&](Value, ValueRange x) {
+            // All remaining bits of a record use the same target. Carry its
+            // words and fields across those bits; compare slots only on refill.
             auto v = ifElse(
-                {i32, i32, i32}, cmpi(CmpIPredicate::eq, x[2], ci(0)),
+                TypeRange(initial), cmpi(CmpIPredicate::eq, x[2], ci(0)),
                 [&] {
                   Value next = addi(x[0], ci(1));
-                  return Values{next, read(next, 0), read(next, 1)};
+                  Value h = read(next, 0), mask = read(next, 1);
+                  Value prev = targetSlot(x[1]), t = targetSlot(h);
+                  auto state = ifElse(
+                      TypeRange(x.drop_front(3)), cmpi(CmpIPredicate::ne, prev, t),
+                      [&] {
+                        if (!observer())
+                          for (int a = 0; a < 3; ++a)
+                            addWord(accum, prev, cx(a), x[3 + a]);
+                        Values fresh(3, ci(0));
+                        fresh.append(targetValues(t));
+                        return fresh;
+                      },
+                      [&] { return Values(x.drop_front(3)); });
+                  Values refill{next, h, mask};
+                  refill.append(state.begin(), state.end());
+                  return refill;
                 },
-                [&] { return Values{x[0], x[1], x[2]}; });
-            Value prev = targetSlot(x[1]), t = targetSlot(v[1]),
-                  changed = cmpi(CmpIPredicate::ne, prev, t);
-            if (!observer())
-              ifThen(changed, [&] {
-                for (int a = 0; a < 3; ++a) {
-                  addWord(accum, prev, cx(a), x[3 + a]);
-                }
-              });
+                [&] { return Values(x); });
+            Value t = targetSlot(v[1]);
             Value s = indexCast(
                 index, addi(shli(andi(shrui(v[1], ci(10)), ci(15)), ci(5)),
                             math::CountTrailingZerosOp::create(b, loc, v[2])));
-            auto targetData = ifElse(
-                TypeRange(cached), changed, [&] { return targetValues(t); },
-                [&] { return Values(x.drop_front(6)); });
+            ValueRange targetData = v.drop_front(6);
             Values f = pair(targetData[0], load(pos, {s}), t, s,
                             targetData.drop_front());
             Values next{v[0], v[1], andi(v[2], subi(v[2], ci(1)))};
@@ -1545,7 +1553,7 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
             for (int a = 0; a < 3; ++a) {
               biased = ori(biased, addi(f[a], ci(1 << (shift - 1))));
               addWord(accum, s, cx(a), subi(ci(0), f[a]));
-              next.push_back(addi(select(changed, ci(0), x[3 + a]), f[a]));
+              next.push_back(addi(v[3 + a], f[a]));
             }
             ifThen(cmpi(CmpIPredicate::uge, biased, ci(1 << shift)), [&] {
               for (int a = 0; a < 3; ++a) {
