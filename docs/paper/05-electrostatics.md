@@ -1019,3 +1019,46 @@ Gaussian kernel stays the default. The tiles serve both kernels: with them
 the prolate default took 0.83 to 0.87 times the step without tiles on
 Factor IX, Cellulose, and STMV (RTX 4090), its spreading 72, 209, and
 540 µs a step against 137, 585, and 1640.
+
+**Three continuous derivatives at the direct cutoff (D[pme-c3]).**
+For a compact splitting density write $\chi(x)=\sum_{j=0}^{39}a_jP_{2j}(x)$
+on $[-1,1]$. Parseval's identity expresses the fraction of Fourier power
+inside $[-c,c]$ as $a^T A a/(a^T G a)$. Integrating the Fourier phase over
+this band gives
+$A_{ij}=\int_{-1}^1\int_{-1}^1 P_{2i}(x)\sin(c(x-y))P_{2j}(y)/(\pi(x-y))\,dx\,dy$,
+with diagonal kernel limit $c/\pi$. Orthogonality gives
+$G_{ij}=2\delta_{ij}/(4i+1)$. The value, slope and curvature of
+$P_\ell$ at one give column $j$ of the constraint matrix,
+$(1,\ell(\ell+1)/2,(\ell-1)\ell(\ell+1)(\ell+2)/8)^T$, where
+$\ell=2j$. For a basis $Z$ of its 37-dimensional null space, the leading
+generalized eigenvector of $(Z^TAZ,Z^TGZ)$ maximizes concentration in
+that space. Lift it by $Z$ and normalize its integral on $[0,1]$ to one.
+
+Inside the cutoff, $r\phi(r)=1-\Phi(r/r_c)$. Differentiating $k$ times
+gives $r\phi^{(k)}+k\phi^{(k-1)}=-\chi^{(k-1)}(r/r_c)/r_c^k$.
+Normalization sets $\phi(r_c^-)=0$. Applying the identity successively
+with $k=1,2,3$ shows that the three endpoint constraints match the
+first three derivatives to the exterior zero. Since the density is even
+of degree 78, $\Phi(x)/x$ is exactly a degree-39 polynomial in $2x^2-1$.
+Its Chebyshev representation supplies both the direct potential and its
+force derivative. The reciprocal calculation uses the cosine transform
+of this density with four-point B-spline assignment.
+
+The earlier C² construction imposed only the first two constraints.
+At $r_c=8$ Å, $\chi''(1)\ne0$ gave $\phi'''(r_c^-)=-0.397$ Å⁻⁴,
+with zero on the outside. In Cellulose NVE runs the C² excess drift
+over an equal-error Gaussian was $+39.7\pm6.2$ kcal/mol/ns at 2 fs.
+At 1 fs it was unresolved ($+3.1\pm3.4$), consistent with
+$\Delta t^2$ scaling. The reciprocal force agreed with the negative
+reciprocal energy gradient within binary64 finite-difference sensitivity.
+Neither order-six assignment nor analytic direct evaluation removed the
+excess. With the third constraint, the paired excess at 2 fs fell to
+$+13.4\pm5.7$ kcal/mol/ns (four seeds, mean ± standard error).
+The constraint changes the density inside the cutoff as well, so the
+trajectories do not isolate the endpoint jump's contribution.
+
+At $c=9.5392$ (the $10^{-3}$ tier) both splits first reached
+$\Delta\le10^{-3}$ at $40^3$ on JAC and $160\times80\times80$ on
+Cellulose in the mesh sweep. C³ gave $\Delta=0.000798$ and $0.000848$,
+respectively. At the Cellulose mesh its reciprocal time was 130.20 µs
+against 126.48 µs for C² on RTX 4090 (+2.9%).
