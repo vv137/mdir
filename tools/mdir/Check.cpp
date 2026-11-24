@@ -596,7 +596,7 @@ static void checkCutoffJump(const Control &control, const System &system,
 }
 
 static const char *pmeForcePath(const Control &control) {
-  if (control.target == Target::CPU || control.pmeKernel == PMEKernel::Prolate ||
+  if (control.target == Target::CPU || control.pmeKernel != PMEKernel::Gaussian ||
       control.pmeOrder != 4 || control.pmeInfluence == PMEInfluence::P3M ||
       llvm::any_of(control.pmeGrid, [](int64_t n) { return n && n < 7; }))
     return "current";
@@ -713,9 +713,7 @@ static void describeRun(const Control &control, const System &system,
                   "order %lld\n",
                   control.pmeMaxSpacing,
                   static_cast<long long>(control.pmeOrder));
-    if (control.pmeKernel == PMEKernel::ProlateC3)
-      std::printf("PME kernel:         PROLATE_C3, order 4\n");
-    else if (control.pmeKernel == PMEKernel::Prolate)
+    if (control.pmeKernel == PMEKernel::Prolate)
       std::printf("PME kernel:         PROLATE, tolerance %g\n",
                   control.pmeAlphaTolerance);
     else if (control.pmeAlpha > 0)

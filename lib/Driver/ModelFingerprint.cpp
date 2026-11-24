@@ -209,7 +209,7 @@ Fingerprint mdir::model::getFingerprint(const System &s,
   // (D266).
   if (has(given.system, "pme_kernel"))
     add("physics", "[pme] kernel",
-        getFingerprintString(s.pmeKernel == driver::PMEKernel::ProlateC3 ? "PROLATE_C3" : s.pmeKernel == driver::PMEKernel::Prolate ? "PROLATE" : "GAUSSIAN"));
+        getFingerprintString(s.pmeKernel == driver::PMEKernel::Prolate ? "PROLATE" : "GAUSSIAN"));
   if (has(given.system, "pme_bandwidth"))
     add("physics", "[pme] bandwidth", number(s.pmeBandwidth));
   if (has(given.system, "pme_window_bandwidth"))

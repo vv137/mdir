@@ -1159,15 +1159,13 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
           {"grid", llvm::json::Array{program->pmeGrid[0], program->pmeGrid[1],
                                     program->pmeGrid[2]}},
           {"order", program->pmeOrder},
-          {"kernel", control->pmeKernel == PMEKernel::ProlateC3 ? "PROLATE_C3" : program->pmeProlate ? "PROLATE" : "GAUSSIAN"}};
+          {"kernel", program->pmeProlate ? "PROLATE" : "GAUSSIAN"}};
     // The prolate kernel's own parameters (D266).
     if (program->pme && program->pmeProlate) {
       llvm::json::Object &object = *pme.getAsObject();
       object["bandwidth"] = program->pmeBandwidth;
-      if (control->pmeKernel == PMEKernel::Prolate) {
-        object["window_bandwidth"] = program->pmeWindowBandwidth;
-        object["aliasing_estimate"] = program->pmeAliasing;
-      }
+      object["window_bandwidth"] = program->pmeWindowBandwidth;
+      object["aliasing_estimate"] = program->pmeAliasing;
     }
     llvm::json::Object effective{
         {"seed", std::to_string(control->seed)}, {"time_step_ps", control->timestep},
@@ -1498,9 +1496,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                  count, static_cast<long long>(control->numSteps),
                  control->timestep);
   // The parameters that the prolate kernel derives (D266).
-  if (control->pmeKernel == PMEKernel::ProlateC3)
-    output.log.print("MDIR: constrained cubic PME, bandwidth %.6g\n", program->pmeBandwidth);
-  else if (program->pmeProlate)
+  if (program->pmeProlate)
     output.log.print("MDIR: the prolate kernel of PME: c = %.6g, c1 = %.6g, "
                      "%lld points of the window, a grid of %lld x %lld x "
                      "%lld, the aliasing estimate %.2g\n",

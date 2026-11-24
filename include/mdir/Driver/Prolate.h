@@ -25,9 +25,7 @@ namespace prolate {
 class Function {
 public:
   /// ψ₀ᶜ of bandwidth `c` > 0.
-  explicit Function(double c, bool constrained = false);
-  double endpointDerivative(int derivative) const;
-  std::vector<double> squaredDistanceSeries() const;
+  explicit Function(double c);
 
   double bandwidth() const { return c; }
   /// ψ(x), for |x| ≤ 1.
@@ -95,7 +93,6 @@ struct Window {
   std::vector<double> transformNodes, transformWeights;
 };
 Window getWindow(double c1, int64_t points);
-Window getCubicWindow();
 
 /// The spectral factor of the splitting, χ̂(k) = λ₀ ψ₀ᶜ(k/c) / (2C₀) for
 /// k ≤ c and 0 beyond, with χ̂(0) = 1 [Liang2026, eq. 5], and k χ̂'(k),
@@ -105,7 +102,6 @@ struct Influence {
   std::vector<double> value, slope;
 };
 Influence getInfluence(const Function &psi);
-Influence getC3Influence(const Function &psi);
 
 /// The parts of the splitting that the pair terms take, as functions of
 /// x = r / r_c on [0, 1] (1 beyond): `Far`, 1 − Φ(x), which multiplies

@@ -279,8 +279,7 @@ PYBIND11_MODULE(_core, m) {
   // function of Ewald summation with prolates (D266).
   py::enum_<driver::PMEKernel>(m, "PMEKernel")
     .value("Gaussian", driver::PMEKernel::Gaussian)
-    .value("Prolate", driver::PMEKernel::Prolate)
-    .value("ProlateC3", driver::PMEKernel::ProlateC3);
+    .value("Prolate", driver::PMEKernel::Prolate);
   // `[barostat] coupling` and `work` (D247).
   py::enum_<model::BarostatCoupling>(m, "BarostatCoupling")
     .value("Isotropic", model::BarostatCoupling::Isotropic)
@@ -951,10 +950,6 @@ PYBIND11_MODULE(_core, m) {
     // race version capture. GIL release belongs to persistent execution.
     // The prolate kernel's own defaults of the order and the spacing, where
     // they were not set (D266).
-    if (system->value.pmeKernel == driver::PMEKernel::ProlateC3)
-      for (const char *field : {"pme_alpha", "pme_influence", "pme_window_bandwidth"})
-        if (system->given.count(field))
-          throw InputError(std::string(field) + " conflicts with PROLATE_C3");
     system->value.pmeOrderGiven = system->given.count("pme_order") != 0;
     system->value.pmeSpacingGiven = system->given.count("pme_spacing") != 0;
     auto prepared = unwrap(model::prepare(system->value, state->value, integrator->value,

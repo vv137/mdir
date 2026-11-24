@@ -3,13 +3,10 @@
 # of the integral operator by Gauss-Legendre in mpmath at 40 digits
 # (scripts/benchmarks/prolate-ewald/pswf_reference.py), to 1e-12 of psi(0);
 # the bandwidths of Table 2 of Liang et al. (2026) to their printed digits.
-# RUN: mdir-prolate-test > %t
-# RUN: FileCheck %s < %t
+# RUN: mdir-prolate-test | FileCheck %s
 # CHECK-NOT: FAIL
 # CHECK: c 9.5392 lambda
 # CHECK: c 14.4712 lambda
 # CHECK: epsilon 1e-05 bandwidth 14.471
 # CHECK: series of (1 - Phi)/(1 - x) at epsilon 1e-05: 23 terms, {{.*}} ok
-# CHECK: C3 cutoff at c 9.5392: {{.*}} ok
-# CHECK: C3 cutoff at c 14.471: {{.*}} ok
 # CHECK: 0 failures

@@ -92,19 +92,6 @@ template void DevicePME::emitSplineStages<true>(bool, bool, int64_t, bool);
 
 void DevicePME::emitProlate(bool listed, int64_t tiles) {
   emitBlocks("mdrt_gpu_pme_prolate_blocks");
-  if (order == 4) {
-    auto cubic = [&](auto orientation) {
-      constexpr bool tilted = decltype(orientation)::value;
-      auto name = [](StringRef stage) {
-        return ("mdrt_gpu_pme_prolate_" + stage + (tilted ? "_triclinic" : "")).str();
-      };
-      emitTables<Window::Prolate, Splitting::Radial, tilted>(name("tables_ordered"), true);
-      emitScale<Window::Prolate, Splitting::Radial, tilted>(name("influence"), true);
-      emitScale<Window::Prolate, Splitting::Radial, tilted>(name("cached_scale"), false, true);
-    };
-    cubic(std::false_type{});
-    cubic(std::true_type{});
-  }
   emitCoefficients("mdrt_gpu_pme_prolate_coefficients");
   emitPlaces<false>("mdrt_gpu_pme_prolate_places");
   emitPlaces<true>("mdrt_gpu_pme_prolate_places_triclinic");

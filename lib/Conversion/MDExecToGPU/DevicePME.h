@@ -157,7 +157,7 @@ private:
   template <Splitting splitting, bool tilted>
   void emitConvolve(StringRef symbol);
   template <Window window, Splitting splitting, bool tilted>
-  void emitScale(StringRef symbol, bool storeFactors = false, bool loadFactors = false);
+  void emitScale(StringRef symbol, bool storeFactors = false);
   template <bool tilted, bool useList, bool potentialOnly, bool cachedWeights>
   void emitGather(StringRef symbol, bool ordered = false, int orderedLanes = 4);
   template <bool useList, int tileEdge> void emitBin(StringRef symbol);
