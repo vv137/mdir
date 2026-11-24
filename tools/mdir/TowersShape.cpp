@@ -678,7 +678,7 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
     if (candidates.empty())
       return refusal("no launch satisfies the supplied pins and device limits");
     if (candidates.size() == 1) {
-      shape = candidates.front();
+      *shape = candidates.front();
       result["selection"] = "single candidate";
       result["winner"] = fields(*shape, false);
       result["cells"] = llvm::json::Array{
