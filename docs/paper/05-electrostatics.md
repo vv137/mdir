@@ -433,7 +433,10 @@ of the even and odd subsequences are $(r+s)/2$ and $(r-s)/(2i)$.
 Consequently the forward Z pass writes $[r+s-iW_{K_3}^k(r-s)]/2$,
 with $\Re\hat u_0-\Im\hat u_0$ in the Nyquist slot. The last inverse pass
 recombines the two subsequences with the conjugate phase and omits the
-half in their reconstruction. Its unnormalized $M_z$-point inverse then
+half in their reconstruction. For a tilted cell, the radial factor can differ
+between transverse conjugate partners on a Nyquist plane. After inverse X
+and Y, the real inverse uses the real parts of the Z endpoints at zero and
+Nyquist when reconstructing the packed zero frequency. Its unnormalized $M_z$-point inverse then
 has the required gain $K_3$. The logical half-spectrum has $H_z=M_z+1$
 columns. Row $(x,y)$ starts at complex slot $(xK_2+y)P_z$, where
 $P_z=4\lceil H_z/4\rceil$. Padding never enters a transform or a sum.

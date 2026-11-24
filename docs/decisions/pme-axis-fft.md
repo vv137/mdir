@@ -54,7 +54,8 @@ B-spline window and the radial spectrum of the constrained density. After
 pass its own pointwise operation to `emitAxisConvolution` for MATRIX. Reuse
 `DevicePME::radialInfluence` with the prepared prolate table buffer. Its
 first three axis blocks provide the signed modes and the inverse squared
-window transforms. Their product $T$ includes the Coulomb/volume prefactor
+window transforms. For the cubic window, each axis correction is $[\sin(x)/x]^{-8}$
+with $x=\pi n/N$ and unit value at zero. Their product $T$ includes the Coulomb/volume prefactor
 on X. The radial data follow those blocks, with metadata and two arrays
 of transform values and scaled slopes. The finite-basis evaluator uses
 cubic Hermite interpolation at low arguments and endpoint coefficients
@@ -80,3 +81,14 @@ virial against cell-strain energy differences, and time complete steps in
 both backend orders. Gaussian runs on these grid sizes validate the FFT
 and layout. The radial evaluator and its strain derivative require their
 own qualification.
+
+### Gaussian validation on the folding inputs
+
+Both inputs use their original tilted cells, order-four Gaussian PME, and MATRIX traversal. CHARMM36m has 6,545 atoms and ff19SB+OPC has 8,602. The two smaller meshes use the Gaussian multiplier at the grid sizes planned for prolate. Each error triple gives relative force L2, absolute relative reciprocal energy, and relative L2 of the six independent virials. The CPU double reference spreads the input charges, transforms the mesh, and gathers the force independently. Each RTX 4090 timing covers the last 10,000 of 20,000 steps at 2 fs, with energy every 1,000 steps and a 14.5 Å pair list. A runs cuFFT first on each grid. B reverses both grid and backend order.
+
+| System | Mesh | Axis vs mixed cuFFT | Axis vs independent double | A cuFFT / axis (µs) | B cuFFT / axis (µs) |
+| --- | --- | --- | --- | ---: | ---: |
+| CHARMM36m | 28 × 28 × 30 | 1.62e-06 / 1.91e-07 / 2.09e-07 | 1.18e-05 / 1.62e-06 / 8.92e-07 | 116 / 111 | 117 / 110 |
+| CHARMM36m | 18 × 20 × 20 | 1.72e-06 / 4.02e-07 / 5.44e-07 | 1.14e-05 / 9.71e-07 / 7.37e-07 | 118 / 112 | 117 / 114 |
+| ff19SB+OPC | 32 × 32 × 32 | 2.07e-06 / 2.73e-07 / 1.79e-07 | 1.27e-05 / 1.18e-06 / 3.28e-06 | 144 / 137 | 145 / 138 |
+| ff19SB+OPC | 22 × 24 × 24 | 1.39e-06 / 2.89e-07 / 1.76e-07 | 1.28e-05 / 1.09e-06 / 2.31e-06 | 143 / 137 | 144 / 138 |
