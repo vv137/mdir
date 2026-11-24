@@ -8,6 +8,7 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Matchers.h"
+#include <array>
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
 namespace prolate = mdir::prolate;
@@ -308,10 +309,64 @@ static mlir::Value buildLJPMEDirect(mlir::OpBuilder &builder,
   return arith::AddFOp::create(builder, loc, operands[4], correction);
 }
 
+/// Direct potential for the eight-term primitive H(u) = Phi(x)/x, u = 1-x².
+static mlir::Value buildSmallProlate(mlir::OpBuilder &builder, mlir::Value r,
+                                     mlir::Value x, mlir::Value inverseCutoff,
+                                     llvm::ArrayRef<double> series, int k) {
+  // Taylor coefficients of T_n(1-2u) from the Chebyshev differential equation.
+  std::array<double, 8> power{};
+  for (int n = 0; n < 8; ++n) {
+    double a = series[n];
+    for (int j = 0; j <= n; ++j) {
+      power[j] += a;
+      a *= -2.0 * (n * n - j * j) / ((j + 1) * (2 * j + 1));
+    }
+  }
+  using namespace mlir;
+  Location loc = builder.getUnknownLoc();
+  auto constant = [&](double c) -> Value {
+    return arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(c));
+  };
+  auto mul = [&](Value a, Value b) -> Value {
+    return arith::MulFOp::create(builder, loc, a, b);
+  };
+  auto sub = [&](Value a, Value b) -> Value {
+    return arith::SubFOp::create(builder, loc, a, b);
+  };
+  auto horner = [&](Value v, llvm::ArrayRef<double> coefficients) {
+    Value result = constant(coefficients.back());
+    for (double c : llvm::reverse(coefficients.drop_back()))
+      result = arith::AddFOp::create(builder, loc, constant(c), mul(v, result));
+    return result;
+  };
+  Value one = constant(1);
+  Value u = sub(one, mul(x, x));
+  Value tail = horner(u, llvm::ArrayRef<double>(power).drop_front(k + 1));
+
+  // The first k+1 coefficients equal those of (1-u)^(-1/2). Subtracting
+  // that Taylor sum from 1/x gives (1-x)^(k+1) A_k(x)/x. The rows below
+  // are A_k. Evaluate its pole as 1/r and factor the same power of 1-x
+  // out of u^(k+1) times the Horner tail.
+  constexpr double remainder[4][4] = {
+      {1}, {1, 0.5}, {1, 1.125, 0.375}, {1, 1.8125, 1.25, 0.3125}};
+  Value regular = k ? horner(x, llvm::ArrayRef<double>(remainder[k] + 1, k))
+                    : constant(0);
+  Value left = sub(one, x), right = arith::AddFOp::create(builder, loc, one, x);
+  Value h = left, y = right;
+  for (int j = 0; j < k; ++j) {
+    h = mul(h, left);
+    y = mul(y, right);
+  }
+  Value correction = mul(inverseCutoff, sub(regular, mul(y, tail)));
+  Value pole = arith::DivFOp::create(builder, loc, one, r);
+  return mul(h, arith::AddFOp::create(builder, loc, pole, correction));
+}
+
 struct DirectCoulombIRConfig {
   bool scalesCoulomb = false, pme = false, prolate = false;
   bool polynomialSplit = false, prolateSeries = false, shift = false, reactionField = false;
   bool shiftsAtCutoff = false;
+  int continuity = 0;
   std::vector<double> farSeries;
   double beta = 0.0, cutoff = 0.0;
   std::pair<double, double> reaction;
@@ -365,9 +420,15 @@ static mlir::Value buildDirectCoulomb(mlir::OpBuilder &builder,
     Value xr = mul(rq, inverse);
     if (config.polynomialSplit) {
       Value one = constant(1);
-      Value t = sub(mul(constant(2), mul(xr, xr)), one);
-      Value far = mdir::md::emitChebyshev(builder, loc, t, farSeries);
-      Value direct = sub(div(one, rq), mul(far, inverse));
+      Value direct;
+      if (farSeries.size() == 8) {
+        direct = buildSmallProlate(builder, rq, xr, inverse, farSeries,
+                                   config.continuity);
+      } else {
+        Value t = sub(mul(constant(2), mul(xr, xr)), one);
+        Value far = mdir::md::emitChebyshev(builder, loc, t, farSeries);
+        direct = sub(div(one, rq), mul(far, inverse));
+      }
       Value inside = arith::CmpFOp::create(builder, loc,
                                            arith::CmpFPredicate::OLT, xr, one);
       return mul(fqq, arith::SelectOp::create(builder, loc, inside, direct,
@@ -2070,6 +2131,7 @@ public:
         spec.polynomialSplit = control.pmeBasisTerms > 0;
         spec.prolateSeries =
             !spec.polynomialSplit && takesProlateSeries(control) && !scalesCoulomb;
+        spec.continuity = control.pmeContinuity;
         spec.farSeries = program.pmeFarSeries;
         spec.beta = program.pmeBeta;
         spec.shift = control.pmeShift || shiftsAtCutoff;

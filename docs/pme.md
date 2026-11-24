@@ -1398,16 +1398,18 @@ reject explicit `beta` and `influence`.
 
 Below N = 8 the bandwidth must rise by 21–24% for the same leakage.
 
-The primitive of the even density, divided by $x$, is a polynomial of degree $N-1$ in squared distance. The pair region evaluates its Chebyshev series by Clenshaw recurrence. MATRIX, GROUPS and TOWERS consume this same region. The reciprocal multiplier and its derivative use the cosine transform of the same normalized density.
+The primitive of the even density, divided by $x$, is a polynomial $H(u)$ of degree $N-1$ in $u=1-x^2$. With eight terms, the pair builder converts the Chebyshev coefficients to powers of $u$ in binary64. Since $1-\Phi(x)$ vanishes to order $k+1$ at one, the first $k+1$ Taylor coefficients of $H(u)$ equal those of $(1-u)^{-1/2}$. The builder subtracts these terms analytically and evaluates the remaining coefficients by Horner's rule. Taking $(1-x)^{k+1}$ outside the difference preserves the endpoint zeros during force differentiation. MATRIX, GROUPS and TOWERS share the pair region. Its arithmetic uses the pair precision. Other explicit basis sizes use Clenshaw recurrence. The reciprocal multiplier and its derivative use the cosine transform of the same normalized density.
 
-At $r_c=8$ Å and $c=9.5392$, the binary32 Clenshaw evaluation and its
-differentiated recurrence were compared with the binary64 recurrence at
-8192 successive binary32 values of $r/r_c$ immediately below one.
-For $(k,N)=(2,8),(2,40),(3,8)$, the largest absolute differences were
-$2.99\times10^{-8}$ Å⁻¹ for the direct potential per unit Coulomb
-prefactor and $9.76\times10^{-9}$ Å⁻² for its slope. This check used
-separate multiply and add operations. The mixed-precision force oracle
-also exercises the compiled recurrence.
+At $N=8$, $r_c=8$ Å and $c=9.5392$, the table gives maximum absolute errors per unit Coulomb prefactor against the binary64 Legendre primitive and density. The scalar comparison used separate binary32 multiplies and adds at all 2,097,153 binary32 distances from 7 through 8 Å, taking the interior limit at the endpoint.
+
+| $k$ | Clenshaw energy (Å⁻¹) | Horner with endpoint factor (Å⁻¹) | Clenshaw radial force (Å⁻²) | Differentiated Horner (Å⁻²) | Same energy, force from $\chi=u^k Q(u)$ (Å⁻²) |
+|---:|---:|---:|---:|---:|---:|
+| 0 | 3.53e−8 | 4.07e−9 | 8.60e−9 | 4.36e−9 | 5.61e−10 |
+| 1 | 3.79e−8 | 6.62e−10 | 1.07e−8 | 1.41e−9 | 2.48e−10 |
+| 2 | 3.29e−8 | 1.51e−10 | 1.24e−8 | 4.66e−10 | 2.26e−10 |
+| 3 | 3.41e−8 | 3.03e−11 | 9.93e−9 | 1.22e−10 | 1.73e−10 |
+
+Storing a separate factored density improves the radial force for $k=0,1,2$. The implementation differentiates the endpoint-factored energy, which also gives the smaller force error for $k=3$. For $k=2$, plain Horner without the endpoint factor gave energy and force errors of 1.87e−8 Å⁻¹ and 3.79e−9 Å⁻². In the moving force-only Cellulose kernel on RTX 4090, the D430 common path took 186 SASS instructions per candidate with Clenshaw, 155 with plain Horner, and 180 with the endpoint factor. The corresponding static loop sizes were 226, 195 and 220 instructions. Gaussian used 106 on the D430 common path.
 
 ### Prototype measurements
 

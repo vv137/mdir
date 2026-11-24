@@ -1088,8 +1088,10 @@ Normalization sets $\phi(r_c^-)=0$. Applying the identity successively
 up to the requested order shows that the endpoint constraints match the
 corresponding derivatives to the exterior zero. Since the density is even
 of degree $2N_b-2$, $\Phi(x)/x$ is exactly a degree-$(N_b-1)$ polynomial in $2x^2-1$.
-Its Chebyshev representation supplies both the direct potential and its
-force derivative. The reciprocal calculation uses the cosine transform
+For eight terms the pair region evaluates the polynomial by Horner's rule
+in $1-x^2$ with the factor $(1-x)^{k+1}$ extracted from the direct
+potential. Differentiation then preserves the cutoff zeros. Other basis
+sizes use the Chebyshev recurrence. The reciprocal calculation uses the cosine transform
 of this density. The default assignment for positive continuity is a four-point B-spline.
 
 The public cuPotential theory documentation describes a compact C² prolate

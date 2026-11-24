@@ -23,3 +23,9 @@ spaced points. For an explicit 40-term basis, the largest absolute
 differences were $7.13\times10^{-12}$, $5.06\times10^{-10}$, and
 $5.19\times10^{-8}$. Finite-basis diagonalization therefore remains opt-in
 at zero continuity.
+
+For eight terms the shared pair region evaluates the degree-seven polynomial
+in squared distance by Horner's rule with the analytic cutoff factor. The
+force follows by differentiation of the same energy. Other explicit basis
+sizes retain Clenshaw evaluation. The [cutoff comparison](../pme.md#cutoff-continuity-of-the-prolate-splitting)
+gives the binary32 errors and the TOWERS instruction counts.
