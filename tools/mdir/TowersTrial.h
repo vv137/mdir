@@ -12,8 +12,12 @@ llvm::Expected<TrialFrame> createTowersTrial(int device,
                                              const driver::System &system,
                                              int cells, int reach, int capacity,
                                              const TowersBuffers &parameters);
-llvm::Expected<float> measureTowersTrial(TowersTrial &frame,
-                                         const std::string &image,
-                                         const driver::TowersShape &shape,
-                                         bool pressure);
+struct TowersTiming {
+  float pairUs = 0, rebuildUs = 0;
+  int64_t stripeRetries = 0;
+  double total() const { return double(pairUs) + rebuildUs; }
+};
+llvm::Expected<TowersTiming>
+measureTowersTrial(TowersTrial &frame, const std::string &image,
+                   const driver::TowersShape &shape, bool pressure);
 } // namespace mdir::tool

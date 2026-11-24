@@ -236,6 +236,7 @@ mdir::tool::prepareTowersSpecialization(const Control &control,
             exclusions,
             int(shape.split)};
         launch.movingDispatch = true;
+        launch.emitRetryCounter = true;
         launch.indexedExclusions = exclusions != 0;
         launch.typeCount = typeCount;
         launch.virialYield = virialYield;

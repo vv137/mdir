@@ -29,7 +29,7 @@ struct Api {
   ENTRY(cuEventCreate)
   ENTRY(cuEventDestroy)
   ENTRY(cuEventElapsedTime)
-  ENTRY(cuEventRecord)
+  ENTRY(cuEventRecordWithFlags)
   ENTRY(cuEventSynchronize)
   ENTRY(cuFuncSetAttribute)
   ENTRY(cuGetErrorName)
@@ -60,7 +60,7 @@ struct Api {
            cuCtxSynchronize && cuCtxPopCurrent && cuCtxPushCurrent &&
            cuDevicePrimaryCtxRelease && cuDevicePrimaryCtxRetain &&
            cuEventCreate && cuEventDestroy && cuEventElapsedTime &&
-           cuEventRecord && cuEventSynchronize && cuFuncSetAttribute &&
+           cuEventRecordWithFlags && cuEventSynchronize && cuFuncSetAttribute &&
            cuGetErrorName && cuGraphDestroy && cuGraphExecDestroy &&
            cuGraphInstantiateWithFlags && cuGraphLaunch && cuLaunchKernel &&
            cuMemAlloc && cuMemFree && cuMemcpyDtoH && cuMemcpyHtoD &&
@@ -84,11 +84,13 @@ struct TowersTrial {
   bool cartesian = false;
   CUcontext context{};
   CUstream stream{};
-  CUevent start{}, stop{};
+  static constexpr int iterations = 9;
+  CUevent boundaries[2 * iterations + 1]{};
   CUdeviceptr positions{}, edgesBox{}, raw{}, box{}, charge{}, types{}, map{},
       counts{}, rebuildStatus{}, geometry{}, keys{}, local{}, packed{},
       packedTypes{}, ids{}, inverse{}, spans{}, state{}, failed{}, words{},
-      low{}, high{}, bonds{}, index{}, arrivals{}, virial{}, output{};
+      low{}, high{}, bonds{}, index{}, arrivals{}, virial{}, output{},
+      retries{};
   std::vector<CUdeviceptr> allocations, parameters;
   std::string error;
 
@@ -135,6 +137,9 @@ struct TowersTrial {
     size_t n = atoms, c = cells, slots = c * capacity + n;
     size_t entries = c * (5 + 2 * reach);
     fields = buffers.fields;
+    for (auto &event : boundaries)
+      if (!check(api().cuEventCreate(&event, 0), "create trial boundary"))
+        return false;
     int cooperative = 0;
     if (!check(
             api().cuDeviceGetAttribute(
@@ -146,8 +151,7 @@ struct TowersTrial {
                 "query cooperative grid size")) ||
         !check(api().cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING),
                "cuStreamCreate") ||
-        !check(api().cuEventCreate(&start, 0), "cuEventCreate") ||
-        !check(api().cuEventCreate(&stop, 0), "cuEventCreate") ||
+        !allocate(retries, 2 * c * sizeof(int64_t)) ||
         !allocate(positions, 24 * n, system.positions.data()) ||
         !allocate(edgesBox, cell.triclinic ? 48 : 24, cellEdges.data()) ||
         !allocate(raw, 24 * n) ||
@@ -185,7 +189,16 @@ struct Sample {
   CUmodule module{};
   CUgraph graph{};
   CUgraphExec exec{};
-  enum Kernel { Setup, Inputs, Insert, Pack, Force, Finish, Size };
+  enum Kernel {
+    Setup,
+    Inputs,
+    Insert,
+    Pack,
+    Force,
+    Finish,
+    CountRetries,
+    Size
+  };
   CUfunction fn[Size]{};
   int threads, shared, split;
   bool capturing = false, pressure = false;
@@ -228,7 +241,7 @@ struct Sample {
                    &f.packedTypes, &f.ids, &f.inverse, &f.spans,
                    &f.rebuildStatus});
   }
-  bool step() {
+  bool pair(bool count = false) {
     float scale = 262144;
     std::vector<void *> args{&f.spans, &f.packed, &f.ids, &f.geometry,
                              &f.words, &f.state,  &scale, &f.failed};
@@ -244,13 +257,15 @@ struct Sample {
     auto n = f.atoms;
     auto blocks =
         kernels::towersForceBlocks(f.cells, split, f.exclusions, threads);
-    if (!rebuild())
-      return false;
     if (pressure) {
       args.push_back(&f.virial);
       if (!f.check(api().cuMemsetD8Async(f.virial, 0, 72, f.stream),
                    "clear virial"))
         return false;
+    }
+    if (count) {
+      args.push_back(&f.retries);
+      return launch(CountRetries, blocks, threads, args, shared);
     }
     if (!launch(Force, blocks, threads, args, shared))
       return false;
@@ -267,21 +282,22 @@ struct Sample {
                                                    f.stream, args.data()),
                    "launch towers_finish");
   }
-  bool measure(const void *image, float &us) {
+  bool measure(const void *image, bool canRetry, TowersTiming &timing) {
     const char *names[] = {"towers_setup",
                            "towers_trial_inputs",
                            "towers_insert",
                            "towers_pack",
                            pressure ? "towers_force_virial" : "towers_force",
-                           "towers_finish"};
+                           "towers_finish",
+                           "towers_count_stripe_retries"};
     if (!f.check(api().cuModuleLoadData(&module, image),
                  "load trial specialization"))
       return false;
-    for (int k = 0; k < Size; ++k)
+    for (int k = 0; k < (canRetry ? Size : CountRetries); ++k)
       if (!f.check(api().cuModuleGetFunction(&fn[k], module, names[k]),
                    names[k]))
         return false;
-    for (auto k : {Force, Finish})
+    for (int k = Force; k < (canRetry ? Size : CountRetries); ++k)
       if (!f.check(api().cuFuncSetAttribute(
                        fn[k], CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
                        shared),
@@ -306,8 +322,15 @@ struct Sample {
                  "begin trial graph"))
       return false;
     capturing = true;
-    for (int i = 0; i < 9; ++i)
-      if (!step())
+    auto mark = [&](int i) {
+      return f.check(api().cuEventRecordWithFlags(f.boundaries[i], f.stream,
+                                                  CU_EVENT_RECORD_EXTERNAL),
+                     "record trial boundary");
+    };
+    if (!mark(0))
+      return false;
+    for (int i = 0; i < f.iterations; ++i)
+      if (!rebuild() || !mark(2 * i + 1) || !pair() || !mark(2 * i + 2))
         return false;
     capturing = false;
     if (!f.check(api().cuStreamEndCapture(f.stream, &graph),
@@ -315,13 +338,8 @@ struct Sample {
         !f.check(api().cuGraphInstantiateWithFlags(&exec, graph, 0),
                  "instantiate trial graph") ||
         !f.check(api().cuGraphLaunch(exec, f.stream), "warm trial graph") ||
-        !f.check(api().cuEventRecord(f.start, f.stream),
-                 "record trial start") ||
         !f.check(api().cuGraphLaunch(exec, f.stream), "launch trial graph") ||
-        !f.check(api().cuEventRecord(f.stop, f.stream), "record trial stop") ||
-        !f.check(api().cuEventSynchronize(f.stop), "wait for trial") ||
-        !f.check(api().cuEventElapsedTime(&us, f.start, f.stop),
-                 "read elapsed time"))
+        !f.check(api().cuStreamSynchronize(f.stream), "wait for trial"))
       return false;
     int fatal = 0;
     if (!f.check(api().cuMemcpyDtoH(&fatal, f.state, 4),
@@ -332,7 +350,29 @@ struct Sample {
           "trial failed force certification, status " + std::to_string(fatal);
       return false;
     }
-    us *= 1000.0f / 9;
+    for (int i = 0; i < 2 * f.iterations; ++i) {
+      float ms;
+      if (!f.check(api().cuEventElapsedTime(&ms, f.boundaries[i],
+                                            f.boundaries[i + 1]),
+                   "read trial interval"))
+        return false;
+      (i % 2 ? timing.pairUs : timing.rebuildUs) +=
+          ms * (1000.0f / f.iterations);
+    }
+    if (canRetry) {
+      std::vector<int64_t> counts(size_t(f.cells) * split);
+      size_t bytes = counts.size() * sizeof(int64_t);
+      if (!f.check(api().cuMemsetD8Async(f.retries, 0, bytes, f.stream),
+                   "clear retry counts") ||
+          !rebuild() || !pair(true) ||
+          !f.check(api().cuStreamSynchronize(f.stream),
+                   "wait for retry count") ||
+          !f.check(api().cuMemcpyDtoH(counts.data(), f.retries, bytes),
+                   "read stripe retries"))
+        return false;
+      for (auto count : counts)
+        timing.stripeRetries += count;
+    }
     return true;
   }
 };
@@ -361,10 +401,9 @@ llvm::Expected<TrialFrame> createTowersTrial(int device,
   return f;
 }
 
-llvm::Expected<float> measureTowersTrial(TowersTrial &f,
-                                         const std::string &image,
-                                         const driver::TowersShape &shape,
-                                         bool pressure) {
+llvm::Expected<TowersTiming>
+measureTowersTrial(TowersTrial &f, const std::string &image,
+                   const driver::TowersShape &shape, bool pressure) {
   if (!f.check(api().cuCtxPushCurrent(f.context), "enter trial context"))
     return llvm::createStringError("towers_shape: %s", f.error.c_str());
   auto restore = llvm::scope_exit([] {
@@ -376,8 +415,9 @@ llvm::Expected<float> measureTowersTrial(TowersTrial &f,
   sample.threads = shape.threads;
   sample.shared = 8 * shape.records;
   sample.split = shape.split;
-  float us;
-  if (!sample.measure(image.data(), us))
+  TowersTiming us;
+  if (!sample.measure(image.data(),
+                      shape.records < shape.stripe * (shape.panel / 32), us))
     return llvm::createStringError("towers_shape: %s", f.error.c_str());
   return us;
 }
@@ -388,10 +428,9 @@ void DropTowersTrial::operator()(TowersTrial *f) const {
         api().cuStreamSynchronize(f->stream);
       for (auto ptr : f->allocations)
         api().cuMemFree(ptr);
-      if (f->start)
-        api().cuEventDestroy(f->start);
-      if (f->stop)
-        api().cuEventDestroy(f->stop);
+      for (auto event : f->boundaries)
+        if (event)
+          api().cuEventDestroy(event);
       if (f->stream)
         api().cuStreamDestroy(f->stream);
       CUcontext old;

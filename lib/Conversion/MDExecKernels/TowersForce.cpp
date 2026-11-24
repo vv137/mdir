@@ -39,7 +39,8 @@ public:
         packedChargeType(shape.packedChargeType), certified(shape.certified),
         movingDispatch(shape.movingDispatch), probe(probe),
         indexedExclusions(shape.indexedExclusions),
-        cartesianPositions(shape.cartesianPositions), typeCount(shape.typeCount),
+        cartesianPositions(shape.cartesianPositions),
+        typeCount(shape.typeCount), emitRetryCounter(shape.emitRetryCounter),
         v3(VectorType::get({3}, f32)), v4(VectorType::get({4}, f32)) {}
   LogicalResult emit();
 
@@ -90,6 +91,8 @@ private:
   bool packedChargeType, certified, movingDispatch, probe, indexedExclusions;
   Type cartesianPositions;
   int64_t typeCount;
+  bool emitRetryCounter, counting = false;
+  Value retryCounts;
   bool recovering = false;
   Value failedConversions, highWords, localVotes;
   bool shortVote() const {
@@ -1643,6 +1646,12 @@ void Force::traversal(Value block) {
         stage(starts, counts, sb, sc, true);
         stage(starts, counts, tb, tc, false);
         Value fits = visitTile(sc, tc, sb, tb, counts[0], lower, last);
+        if (counting)
+          ifThen(andi(cmpi(CmpIPredicate::eq, tid, cx(0)), notNarrow(fits)),
+                 [&] {
+                   store(addi(load(retryCounts, {block}), cl(1)), retryCounts,
+                         {block});
+                 });
         Value advance = andi(fits, lastStripe);
         return Values{select(advance, nextSource, sb),
                       select(advance, cx(0), select(fits, nextTarget, tb)),
@@ -1963,7 +1972,8 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
   OpBuilder::InsertionGuard guard(b);
   tileParameters.clear();
   StringRef entryName =
-      observer()    ? (recovering ? (singleBlock ? "towers_energy_recover_once"
+      counting      ? "towers_count_stripe_retries"
+      : observer()  ? (recovering ? (singleBlock ? "towers_energy_recover_once"
                                                  : "towers_energy_recover")
                                   : observerName())
       : singleBlock ? (movingDispatch ? "towers_finish" : "towers_recover_once")
@@ -2009,6 +2019,8 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
     coarse = view(3 * slots, {3, slots}, i32);
   }
   bind(entry.getArguments());
+  if (counting)
+    retryCounts = entry.getArguments().back();
   records = LLVM::AddressOfOp::create(b, loc, recordsGlobal);
   tid = gpu::ThreadIdOp::create(b, loc, gpu::Dimension::x);
   lane = andi(indexCast(i32, tid), ci(31));
@@ -2352,6 +2364,15 @@ LogicalResult Force::emit() {
       device(recordsGlobal, fusedTypes);
     } else
       device(recordsGlobal, types);
+    if (emitRetryCounter && recordCap < groups * stripe) {
+      auto diagnosticTypes = types;
+      if (fused())
+        diagnosticTypes.push_back(mem({virialComponents()}, f64));
+      diagnosticTypes.push_back(mem({towerBlocks()}, i64));
+      counting = true;
+      device(recordsGlobal, diagnosticTypes);
+      counting = false;
+    }
     if (energy()) {
       recovering = true;
       auto replay = types;

@@ -45,7 +45,16 @@ for height in ["HALF", "FULL"]:
     assert first["effective"] == min(finalists, key=lambda x: x["median_us"])["shape"]
     assert {x["shape"]["records"] for x in finalists} == {16, 32}
     assert all(x["shape"]["cell_height"] == height for x in finalists)
+    for cell in first["cells"]:
+        for row, key in [(cell, "median_us"), *((c, "initial_us") for c in cell["candidates"]),
+                         *((c, "median_us") for c in finalists)]:
+            assert row["pair_us"] > 0 and row["rebuild_us"] > 0
+            assert row[key] == row["pair_us"] + row["rebuild_us"]
+            assert isinstance(row["stripe_retries"], int) and row["stripe_retries"] >= 0
+            if row["shape"]["records"] == 32:
+                assert row["stripe_retries"] == 0
     second = run(height)
+    assert second["cells"] == first["cells"]
     assert second["selection"] == "grid cache" and second["effective"] == first["effective"]
 
 auto = run()

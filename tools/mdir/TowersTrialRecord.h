@@ -9,7 +9,7 @@
 namespace mdir::tool {
 inline llvm::json::Object
 towersTrialRecord(llvm::json::Array cells,
-                  std::vector<std::array<float, 5>> times) {
+                  std::vector<std::array<double, 5>> times) {
   std::vector<size_t> order(times.size());
   std::iota(order.begin(), order.end(), 0);
   for (size_t i : order) {

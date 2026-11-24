@@ -373,7 +373,7 @@ timeCandidates(const Control &control, const System &system,
   // feasible proposals. Frames on the same grid can reuse the winning launch.
   std::string key = compiler::getCacheSalt();
   llvm::raw_string_ostream os(key);
-  os << "\ntowers-moving-fixed-height-v1 " << limits.uuid << " "
+  os << "\ntowers-moving-split-timing-v2 " << limits.uuid << " "
      << limits.driver << " " << compiler::getCacheEntryName(*firstImage, "")
      << " " << spans.cells << " "
      << llvm::format_hex(llvm::bit_cast<uint64_t>(cutoff), 18);
@@ -414,8 +414,8 @@ timeCandidates(const Control &control, const System &system,
   struct Candidate {
     unsigned index;
     std::string image;
-    float initial;
-    std::array<float, 5> repeat{};
+    TowersTiming initial;
+    std::array<TowersTiming, 5> repeat{};
   };
   std::vector<Candidate> trials;
   std::string firstRefusal;
@@ -423,7 +423,7 @@ timeCandidates(const Control &control, const System &system,
                                  spans.capacity, parameters);
   if (!frame)
     return frame.takeError();
-  auto measure = [&](const Candidate &c, float &us) -> llvm::Error {
+  auto measure = [&](const Candidate &c, TowersTiming &us) -> llvm::Error {
     auto result = measureTowersTrial(**frame, c.image, candidates[c.index],
                                      control.barostat);
     if (!result)
@@ -447,13 +447,22 @@ timeCandidates(const Control &control, const System &system,
             s.blocksPerSM));
       continue;
     }
-    Candidate trial{unsigned(idx), std::move(*image), 0};
+    Candidate trial{unsigned(idx), std::move(*image), {}};
     if (auto err = measure(trial, trial.initial))
       return std::move(err);
     trials.push_back(std::move(trial));
   }
   if (trials.empty())
     return llvm::createStringError("%s", firstRefusal.c_str());
+  auto measurement = [&](const TowersTiming &t, const TowersShape &shape,
+                         llvm::StringRef totalKey) {
+    Object record{{"shape", fields(shape, false)},
+                  {"pair_us", t.pairUs},
+                  {"rebuild_us", t.rebuildUs},
+                  {"stripe_retries", t.stripeRetries}};
+    record[totalKey] = t.total();
+    return record;
+  };
   int64_t timed = trials.size();
   std::map<int, Object> splits;
   for (auto &trial : trials) {
@@ -462,12 +471,12 @@ timeCandidates(const Control &control, const System &system,
     if (!group.getArray("candidates"))
       group["candidates"] = llvm::json::Array{};
     group.getArray("candidates")
-        ->push_back(Object{{"shape", fields(shape, false)},
-                           {"initial_us", double(trial.initial)}});
+        ->push_back(measurement(trial.initial, shape, "initial_us"));
   }
-  std::stable_sort(
-      trials.begin(), trials.end(),
-      [](const auto &a, const auto &b) { return a.initial < b.initial; });
+  std::stable_sort(trials.begin(), trials.end(),
+                   [](const auto &a, const auto &b) {
+                     return a.initial.total() < b.initial.total();
+                   });
   // Report a repeated measurement for each feasible split. If the five
   // fastest all share a split, retain the fastest launch of the other split.
   size_t keep = std::min<size_t>(5, trials.size());
@@ -496,22 +505,26 @@ timeCandidates(const Control &control, const System &system,
   llvm::json::Array finalists;
   std::map<int, const Candidate *> winners;
   for (auto &c : trials) {
-    llvm::sort(c.repeat);
+    llvm::stable_sort(c.repeat,
+                      [](auto &a, auto &b) { return a.total() < b.total(); });
     const auto &shape = candidates[c.index];
-    finalists.push_back(Object{{"shape", fields(shape, false)},
-                               {"median_us", double(c.repeat[2])}});
+    finalists.push_back(measurement(c.repeat[2], shape, "median_us"));
     auto &best = winners[shape.split];
-    if (!best || c.repeat[2] < best->repeat[2])
+    if (!best || c.repeat[2].total() < best->repeat[2].total())
       best = &c;
   }
   llvm::json::Array records;
-  std::vector<std::array<float, 5>> times;
+  std::vector<std::array<double, 5>> times;
   std::vector<unsigned> indices;
   for (auto [split, best] : winners) {
     auto &group = splits.at(split);
-    group["shape"] = fields(candidates[best->index], false);
+    for (auto &kv :
+         measurement(best->repeat[2], candidates[best->index], "median_us"))
+      group[kv.first] = std::move(kv.second);
     records.push_back(std::move(group));
-    times.push_back(best->repeat);
+    auto &totals = times.emplace_back();
+    llvm::transform(best->repeat, totals.begin(),
+                    [](auto &sample) { return sample.total(); });
     indices.push_back(best->index);
   }
   Object summary = towersTrialRecord(std::move(records), std::move(times));
