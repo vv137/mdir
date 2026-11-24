@@ -1,9 +1,10 @@
+#include "TowersShape.h"
 #include "Commands.h"
 #include "TowersCell.h"
 #include "TowersHeight.h"
-#include "TowersShape.h"
 #include "TowersSpecialization.h"
 #include "TowersTrial.h"
+#include "TowersTrialRecord.h"
 #include "mdir/Compiler/CompileCache.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
@@ -14,6 +15,7 @@
 #include "llvm/Support/Path.h"
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <map>
@@ -154,7 +156,7 @@ llvm::Expected<Object> checkRegisters(int device, const TowersShape &shape,
 using Cell = std::array<int, 3>;
 struct FrameSpans {
   int64_t column = 1, plate = 1;
-  int capacity = 32;
+  int capacity = 32, cells = 1;
 };
 
 llvm::Expected<FrameSpans> measureSpans(const System &system, double cutoff,
@@ -202,6 +204,16 @@ llvm::Expected<FrameSpans> measureSpans(const System &system, double cutoff,
     maximum.plate = std::max(maximum.plate, entry.second[1]);
   }
   maximum.capacity = llvm::alignTo(maximum.capacity, 8);
+  // Slot offsets, including the growth pool, are signed 32-bit indices.
+  int64_t limit =
+      (INT32_MAX - int64_t(system.getNumParticles())) / maximum.capacity;
+  for (int bins : dims) {
+    if (maximum.cells > limit / bins) {
+      maximum.cells = 0;
+      break;
+    }
+    maximum.cells *= bins;
+  }
   return maximum;
 }
 
@@ -330,59 +342,22 @@ Object fields(const TowersShape &s, bool provenance) {
   return result;
 }
 #if MDIR_HAS_CUDA
-llvm::Expected<TowersShape>
-timeCandidates(const Control &control, const System &system,
-               const Limits &limits, int capacity,
-               const mdir::tool::TowersEmitter &emit,
-               const std::vector<TowersShape> &candidates, Object &report) {
-  using namespace mdir;
-  using namespace mdir::tool;
-  if (candidates.empty())
-    return refusal("no launch satisfies the supplied pins and device limits");
-  if (candidates.size() == 1) {
-    report["selection"] = "single candidate";
-    return candidates.front();
-  }
-  const auto &first = candidates.front();
-  TowersBuffers parameters;
-  auto firstImage = emit(first, &parameters);
-  if (!firstImage)
-    return firstImage.takeError();
-  double cutoff = control.cutoffDistance * units::length;
-  int reach = first.cellHeight == "HALF" ? 2 : 1;
-  TowersCell geometry(system);
-  int64_t cells = 1;
-  for (int a = 0; a < 3; ++a)
-    cells *= int64_t(geometry.bins(a, reach, cutoff, control.barostat));
-  // Include the compiled pair body, the device identity, the box and the
-  // feasible proposals. Frames on the same grid can reuse the winning launch.
-  std::string key = compiler::getCacheSalt();
-  llvm::raw_string_ostream os(key);
-  os << "\ntowers-moving-v2 " << limits.uuid << " " << limits.driver << " "
-     << compiler::getCacheEntryName(*firstImage, "") << " " << cells << " "
-     << llvm::format_hex(llvm::bit_cast<uint64_t>(cutoff), 18);
-  for (double length : system.box)
-    os << " " << llvm::format_hex(llvm::bit_cast<uint64_t>(length), 18);
-  for (double tilt : system.tilt)
-    os << " " << llvm::format_hex(llvm::bit_cast<uint64_t>(tilt), 18);
-  for (const auto &s : candidates)
-    os << "\n" << Value(fields(s, false));
-  auto cache = compiler::CompileCacheConfig::fromEnvironment();
-  auto name = compiler::getCacheEntryName(key, ".shape");
-  if (cache && cache->opened) {
-    double seconds = 0;
-    bool rejected = false;
-    auto hit = compiler::readCacheEntry(*cache->opened, "gpu", name, key,
-                                        seconds, rejected);
-    unsigned index;
-    if (hit && !hit->getBuffer().getAsInteger(10, index) &&
-        index < candidates.size()) {
-      compiler::touchCacheEntry(*cache->opened, "gpu", name);
-      report["selection"] = "grid cache";
-      return candidates[index];
-    }
-  }
+struct CellTrial {
+  std::vector<TowersShape> candidates;
+  mdir::tool::TowersEmitter emit;
+  mdir::tool::TrialFrame *frame = nullptr;
+  std::string firstImage;
+  int cells, reach, capacity;
+  unsigned winner = 0;
+  std::string winnerImage, refusal;
+  std::array<float, 5> steps{};
+  Object report;
+};
 
+llvm::Error rankCell(const Control &control, const System &system,
+                     const Limits &limits, CellTrial &cell) {
+  using namespace mdir::tool;
+  const auto &candidates = cell.candidates;
   struct Candidate {
     unsigned index;
     std::string image;
@@ -391,12 +366,8 @@ timeCandidates(const Control &control, const System &system,
   };
   std::vector<Candidate> trials;
   std::string firstRefusal;
-  auto frame = createTowersTrial(limits.device, system, int(cells), reach,
-                                 capacity, parameters);
-  if (!frame)
-    return frame.takeError();
   auto measure = [&](const Candidate &c, float &us) -> llvm::Error {
-    auto result = measureTowersTrial(**frame, c.image, candidates[c.index],
+    auto result = measureTowersTrial(**cell.frame, c.image, candidates[c.index],
                                      control.barostat);
     if (!result)
       return result.takeError();
@@ -404,7 +375,9 @@ timeCandidates(const Control &control, const System &system,
     return llvm::Error::success();
   };
   for (auto [idx, s] : llvm::enumerate(candidates)) {
-    auto image = idx == 0 ? std::move(firstImage) : emit(s, nullptr);
+    llvm::Expected<std::string> image =
+        idx == 0 ? llvm::Expected<std::string>(std::move(cell.firstImage))
+                 : cell.emit(s, nullptr);
     if (!image)
       return image.takeError();
     auto registers =
@@ -424,9 +397,17 @@ timeCandidates(const Control &control, const System &system,
       return std::move(err);
     trials.push_back(std::move(trial));
   }
-  if (trials.empty())
-    return llvm::createStringError("%s", firstRefusal.c_str());
-  report["timed_candidates"] = int64_t(trials.size());
+  if (trials.empty()) {
+    cell.refusal = firstRefusal;
+    return llvm::Error::success();
+  }
+  cell.report["timed_candidates"] = int64_t(trials.size());
+  llvm::json::Array initial;
+  for (const auto &candidate : trials)
+    initial.push_back(
+        Object{{"shape", fields(candidates[candidate.index], false)},
+               {"initial_us", double(candidate.initial)}});
+  cell.report["candidates"] = std::move(initial);
   std::stable_sort(
       trials.begin(), trials.end(),
       [](const auto &a, const auto &b) { return a.initial < b.initial; });
@@ -449,18 +430,132 @@ timeCandidates(const Control &control, const System &system,
   auto best = std::min_element(
       trials.begin(), trials.end(),
       [](const auto &a, const auto &b) { return a.repeat[2] < b.repeat[2]; });
-  report["finalists"] = std::move(finalists);
-  report["selection"] = "setup trial";
+  cell.report["finalists"] = std::move(finalists);
+  cell.winner = best->index;
+  cell.winnerImage = std::move(best->image);
+  return llvm::Error::success();
+}
+
+llvm::Expected<TowersShape>
+timeCells(const Control &control, const System &system, const Limits &limits,
+          std::vector<CellTrial> &cells, Object &report) {
+  using namespace mdir;
+  auto start = std::chrono::steady_clock::now();
+  std::string key = compiler::getCacheSalt();
+  llvm::raw_string_ostream os(key);
+  os << "\ntowers-moving-v2 " << limits.uuid << " " << limits.driver;
+  for (double x : system.box)
+    os << " " << llvm::format_hex(llvm::bit_cast<uint64_t>(x), 18);
+  for (double x : system.tilt)
+    os << " " << llvm::format_hex(llvm::bit_cast<uint64_t>(x), 18);
+  std::map<int, mdir::tool::TowersBuffers> inputs;
+  for (auto &cell : cells) {
+    bool first = !inputs.count(cell.reach);
+    auto image = cell.emit(cell.candidates.front(),
+                           first ? &inputs[cell.reach] : nullptr);
+    if (!image)
+      return image.takeError();
+    cell.firstImage = std::move(*image);
+    os << " " << compiler::getCacheEntryName(cell.firstImage, "");
+    for (const auto &s : cell.candidates)
+      os << "\n" << Value(fields(s, false));
+  }
+  auto cache = compiler::CompileCacheConfig::fromEnvironment();
+  auto name = compiler::getCacheEntryName(key, ".shape");
+  if (cache && cache->opened) {
+    double seconds = 0;
+    bool rejected = false;
+    auto hit = compiler::readCacheEntry(*cache->opened, "gpu", name, key,
+                                        seconds, rejected);
+    if (hit) {
+      auto data = llvm::json::parse(hit->getBuffer());
+      if (!data)
+        llvm::consumeError(data.takeError());
+      else if (auto *saved = data->getAsObject()) {
+        auto cell = saved->getInteger("cache_cell");
+        auto index = saved->getInteger("winner_index");
+        if (cell && index && size_t(*cell) < cells.size() &&
+            size_t(*index) < cells[*cell].candidates.size() &&
+            saved->getArray("cells")) {
+          compiler::touchCacheEntry(*cache->opened, "gpu", name);
+          for (auto &kv : *saved)
+            report[kv.first] = std::move(kv.second);
+          report["selection"] = "grid cache";
+          double originalCost = report.getNumber("trial_cost_ms").value_or(0);
+          report["recorded_trial_cost_ms"] = originalCost;
+          report["trial_cost_ms"] = 0.0;
+          return cells[*cell].candidates[*index];
+        }
+      }
+    }
+  }
+  std::map<int, tool::TrialFrame> frames;
+  std::vector<size_t> feasible;
+  for (auto [i, cell] : llvm::enumerate(cells)) {
+    if (!frames.count(cell.reach)) {
+      auto frame =
+          tool::createTowersTrial(limits.device, system, cell.cells, cell.reach,
+                                  cell.capacity, inputs.at(cell.reach));
+      if (!frame)
+        return frame.takeError();
+      frames[cell.reach] = std::move(*frame);
+      inputs.erase(cell.reach);
+    }
+    cell.frame = &frames.at(cell.reach);
+    if (auto error = rankCell(control, system, limits, cell))
+      return std::move(error);
+    if (cell.refusal.empty())
+      feasible.push_back(i);
+  }
+  if (feasible.empty())
+    return refusal(cells.front().refusal);
+  // Compare the cell winners in fresh shuffled rounds after compilation.
+  std::vector<size_t> order = feasible;
+  std::mt19937 shuffle(1);
+  for (unsigned rep = 0; rep < 5; ++rep) {
+    std::shuffle(order.begin(), order.end(), shuffle);
+    for (size_t i : order) {
+      auto &cell = cells[i];
+      auto us = tool::measureTowersTrial(**cell.frame, cell.winnerImage,
+                                         cell.candidates[cell.winner],
+                                         control.barostat);
+      if (!us)
+        return us.takeError();
+      cell.steps[rep] = *us;
+    }
+  }
+  llvm::json::Array records;
+  std::vector<std::array<float, 5>> times;
+  int64_t total = 0;
+  for (size_t i : feasible) {
+    auto &cell = cells[i];
+    total += *cell.report.getInteger("timed_candidates");
+    cell.report["shape"] = fields(cell.candidates[cell.winner], false);
+    records.push_back(std::move(cell.report));
+    times.push_back(cell.steps);
+  }
+  Object summary = tool::towersTrialRecord(std::move(records), times);
+  size_t best = feasible[*summary.getInteger("winner_cell")];
+  auto &winner = cells[best];
+  summary["cache_cell"] = int64_t(best);
+  summary["winner_index"] = int64_t(winner.winner);
+  summary["timed_candidates"] = total;
+  summary["trial_cost_ms"] = std::chrono::duration<double, std::milli>(
+                                 std::chrono::steady_clock::now() - start)
+                                 .count();
   if (cache && cache->opened) {
     uint64_t bytes = 0;
-    if (auto err =
-            compiler::writeCacheEntry(*cache->opened, "gpu", name, key,
-                                      std::to_string(best->index), 0, &bytes))
+    std::string data = llvm::formatv("{0}", Value(Object(summary))).str();
+    if (auto err = compiler::writeCacheEntry(*cache->opened, "gpu", name, key,
+                                             data, 0, &bytes))
       report["cache_error"] = llvm::toString(std::move(err));
     else
       compiler::noteCacheStores(*cache->opened, bytes, cache->maxBytes);
   }
-  return candidates[best->index];
+  for (auto &kv : summary)
+    report[kv.first] = std::move(kv.second);
+  report["selection"] = "setup trial";
+  return winner.candidates[winner.winner];
 }
 #endif
 } // namespace
@@ -491,10 +586,8 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
   if (!checkpointHeight.empty()) {
     if (checkpointHeight != "FULL" && checkpointHeight != "HALF")
       return refusal("checkpoint tower height must be FULL or HALF");
-    if (given.cellHeight.empty()) {
-      given.cellHeight = checkpointHeight.str();
-      (*result.getObject("source"))["cell_height"] = "checkpoint";
-    }
+    given.cellHeight = checkpointHeight.str();
+    (*result.getObject("source"))["cell_height"] = "checkpoint";
   }
   double cutoff = control.cutoffDistance * units::length;
   int reach = given.cellHeight == "HALF" ? 2 : 1;
@@ -502,36 +595,61 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
     reach = selectTowersReach(geometry.heights.data(), cutoff,
                               system.getNumParticles());
   }
+  auto choices = towersCells(geometry.heights.data(), cutoff, given.cellHeight,
+                             given.split);
+  llvm::json::Array planned;
+  for (auto cell : choices)
+    planned.push_back(Object{{"cell_height", cell.reach == 1 ? "FULL" : "HALF"},
+                             {"split", cell.split}});
+  result["candidate_cells"] = std::move(planned);
+  if (choices.empty())
+    return refusal("cell height is unsupported for this box and cutoff");
   if (!*limits) {
     if (setup)
       return refusal(
           "a visible CUDA device is required to resolve launch resources");
-    for (int a = 0; a < 3; ++a) {
-      int k = a == 2 ? reach : 1;
-      if (std::floor(geometry.heights[a] * k / cutoff) < 2 * k + 1)
-        return refusal("cell height is unsupported for this box and cutoff");
-    }
     TowersShape partial = given;
     partial.cellHeight = reach == 1 ? "FULL" : "HALF";
     result["effective"] = fields(partial, false);
     result["register_check"] = "register check runs at setup";
     return result;
   }
-  auto maximum = measureSpans(system, cutoff, reach, control.barostat);
-  if (!maximum)
-    return maximum.takeError();
-  auto candidates = launchCandidates(given, system, reach, *maximum, **limits);
+  std::map<int, FrameSpans> spans;
+  std::vector<TowersShape> candidates;
   llvm::json::Array proposals;
-  for (const auto &candidate : candidates)
-    proposals.push_back(fields(candidate, false));
+  for (auto cell : choices) {
+    if (!spans.count(cell.reach)) {
+      auto maximum = measureSpans(system, cutoff, cell.reach, control.barostat);
+      if (!maximum)
+        return maximum.takeError();
+      spans[cell.reach] = *maximum;
+    }
+    if (!spans.at(cell.reach).cells)
+      continue;
+    TowersShape pins = given;
+    pins.split = cell.split;
+    for (auto &s : launchCandidates(pins, system, cell.reach, spans[cell.reach],
+                                    **limits)) {
+      proposals.push_back(fields(s, false));
+      candidates.push_back(s);
+    }
+  }
   result["launch_candidates"] = std::move(proposals);
-  auto shape = derive(given, system, reach, *maximum, **limits);
+  if (!spans.count(reach) || !spans.at(reach).cells) {
+    auto feasible = llvm::find_if(
+        spans, [](const auto &entry) { return entry.second.cells > 0; });
+    if (feasible == spans.end())
+      return refusal("tower grid exceeds the signed 32-bit slot range");
+    reach = feasible->first;
+  }
+  auto shape = derive(given, system, reach, spans[reach], **limits);
   if (!shape && !candidates.empty()) {
     llvm::consumeError(shape.takeError());
     shape = candidates.front();
   }
   if (!shape)
     return shape.takeError();
+  reach = shape->cellHeight == "HALF" ? 2 : 1;
 #if MDIR_HAS_CUDA
   llvm::SmallString<256> deviceLibrary(getCudaToolkitRoot());
   llvm::sys::path::append(deviceLibrary, "nvvm", "libdevice",
@@ -541,24 +659,58 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
     result["register_check"] = "register check runs at setup";
     return result;
   }
-  auto emit = prepareTowersSpecialization(control, system, reach,
-                                          maximum->capacity, (*limits)->device);
-  if (!emit)
-    return emit.takeError();
-  if (!*emit) {
+  std::map<int, TowersEmitter> emitters;
+  for (auto &[r, maximum] : spans) {
+    if (!maximum.cells || (!setup && r != reach))
+      continue;
+    auto emit = prepareTowersSpecialization(
+        control, system, r, maximum.capacity, (*limits)->device);
+    if (!emit)
+      return emit.takeError();
+    emitters[r] = std::move(*emit);
+  }
+  if (!emitters[reach]) {
     result["selection"] = "derived shape (no force-only region)";
     result["register_check"] = "no force-only region";
   } else {
-    if (setup) {
-      shape = timeCandidates(control, system, **limits, maximum->capacity,
-                             *emit, candidates, result);
+    result["force_kernel"] =
+        control.barostat ? "towers_force_virial" : "towers_force";
+    if (candidates.empty())
+      return refusal("no launch satisfies the supplied pins and device limits");
+    if (candidates.size() == 1) {
+      shape = candidates.front();
+      result["selection"] = "single candidate";
+      result["winner"] = fields(*shape, false);
+      result["cells"] = llvm::json::Array{
+          Object{{"shape", fields(*shape, false)}, {"median_us", nullptr}}};
+      result["margin_us"] = nullptr;
+      result["below_noise"] = nullptr;
+      result["trial_cost_ms"] = 0.0;
+    } else if (setup) {
+      std::vector<CellTrial> cells;
+      for (auto choice : choices) {
+        CellTrial cell;
+        cell.reach = choice.reach;
+        cell.cells = spans.at(cell.reach).cells;
+        if (!cell.cells)
+          continue;
+        cell.capacity = spans.at(cell.reach).capacity;
+        cell.emit = emitters[cell.reach];
+        for (auto &s : candidates)
+          if (s.split == choice.split &&
+              (s.cellHeight == "HALF") == (cell.reach == 2))
+            cell.candidates.push_back(s);
+        if (!cell.candidates.empty())
+          cells.push_back(std::move(cell));
+      }
+      shape = timeCells(control, system, **limits, cells, result);
       if (!shape)
         return shape.takeError();
     } else {
-      result["selection"] =
-          candidates.size() == 1 ? "single candidate" : "setup trial pending";
+      result["selection"] = "setup trial pending";
     }
-    auto image = (*emit)(*shape, nullptr);
+    reach = shape->cellHeight == "HALF" ? 2 : 1;
+    auto image = emitters[reach](*shape, nullptr);
     if (!image)
       return image.takeError();
     auto compiled =
@@ -569,7 +721,7 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
   }
   if (resolved) {
     resolved->launch = *shape;
-    resolved->capacity = maximum->capacity;
+    resolved->capacity = spans[reach].capacity;
     for (int a = 0; a < 3; ++a)
       resolved->bins[a] =
           int(geometry.bins(a, reach, cutoff, control.barostat));
