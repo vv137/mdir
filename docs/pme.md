@@ -1301,24 +1301,33 @@ call), ms a step:
 
 ## Five-pass Gaussian convolution on a device
 
-D[pme-axis-fft] generates five kernels for a mixed-precision orthorhombic
+D[pme-axis-fft] generates five kernels for a mixed-precision
 Gaussian mesh. Z packs adjacent real points into complex pairs. Y transforms
 adjacent half-spectrum slots in a tile. The X pass transforms the remaining
-axis, applies the Gaussian multiplier from the three prepared axis tables,
+axis, calls the pointwise operation supplied by the PME lowering,
 and immediately inverts X. Inverse Y and Z produce the real potential for
 the existing force gather. An energy or virial request adds a block reduction
 in X and a final f64 reduction. Charge derivatives use cuFFT.
 
+For Gaussian PME, the orthorhombic hook combines the three prepared
+axis factors. The triclinic hook evaluates the Gaussian at the squared
+length of the Cartesian wave vector. The planned prolate MATRIX hook
+for #951 combines the three window corrections with the radial cosine
+transform of the continuity-two, eight-term density. Its value scales the
+coefficient and weights the energy. Its radial slope also enters the virial.
+The integration and validation criteria are in the
+[decision record](decisions/pme-axis-fft.md#trp-cage-and-the-prolate-split).
+
 The real mesh is compact. For even Z, each complex row contains Z/2 + 1
 valid frequencies and occupies a multiple of four complex slots. X, Y and
 Z/2 must each factor into two register transforms of at most 32 points.
-The accepted prime radices are 2, 3, 5, and 7. Register stages embed roots
+The accepted prime radices are 2, 3, 5, 7, and 11. Register stages embed roots
 rounded from double precision. The exchange and real-fold phases use f32
 device sine and cosine. Unoccupied lanes skip the loads and products but
 reach every block barrier.
 
 On the `sm_89` target, non-deterministic mixed TOWERS runs select the
-emitter for order-four Gaussian meshes of 40³, 64³, and 144 × 84 × 80.
+emitter for orthorhombic order-four Gaussian meshes of 40³, 64³, and 144 × 84 × 80.
 These three grids passed the independent full-chain reference and improved
 whole-step throughput in both RTX 4090 runs. Other meshes default to cuFFT.
 Use `MDIR_PME_AXIS_FFT=off` to pin cuFFT or `on` to measure the emitter on
