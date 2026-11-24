@@ -4,6 +4,7 @@
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Matchers.h"
 
 using namespace mlir;
@@ -105,6 +106,44 @@ struct TableCell {
   }
 };
 } // namespace
+
+MemRefType mdir::tool::getTowersTableType(const Program &program, Value table) {
+  auto type = dyn_cast<MemRefType>(table.getType());
+  if (!type || type.getRank() != 2)
+    return {};
+  if (type.hasStaticShape())
+    return type;
+  auto alloc = table.getDefiningOp<gpu::AllocOp>();
+  if (!alloc)
+    return {};
+  SmallVector<int64_t, 2> shape(type.getShape());
+  unsigned firstTable = 3 + program.takesForces + program.fields.size();
+  for (auto [axis, extent] : llvm::enumerate(shape)) {
+    if (!ShapedType::isDynamic(extent))
+      continue;
+    Value size = alloc.getDynamicSizes()[type.getDynamicDimIndex(axis)];
+    if (auto constant = getConstantIntValue(size)) {
+      extent = *constant;
+      continue;
+    }
+    // The canonicalized initializer (including a folded or narrowed copy)
+    // takes this extent from the original host table argument.
+    auto dim = size.getDefiningOp<memref::DimOp>();
+    if (!dim)
+      return {};
+    auto arg = dyn_cast<BlockArgument>(dim.getSource());
+    auto index = dim.getConstantIndex();
+    if (!arg || !arg.getOwner()->isEntryBlock() ||
+        !isa<func::FuncOp>(arg.getOwner()->getParentOp()) || !index ||
+        (*index != 0 && *index != 1) ||
+        arg.getArgNumber() - firstTable >= program.tables.size())
+      return {};
+    const auto &backing = program.tables[arg.getArgNumber() - firstTable];
+    extent = *index == 0 ? backing.count : backing.getColumns();
+  }
+  return MemRefType::get(shape, type.getElementType(), type.getLayout(),
+                         type.getMemorySpace());
+}
 
 llvm::Expected<mdir::tool::TowersBuffers>
 mdir::tool::bindTowersTrialInputs(const Program &program, ValueRange fields,
