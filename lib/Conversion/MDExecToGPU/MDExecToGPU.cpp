@@ -5788,21 +5788,30 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   func::CallOp convolve;
   auto pitch = op->getAttrOfType<IntegerAttr>("md_exec.fft_pitch");
   bool forceOnly = op.getEnergy().use_empty() && op.getVirial().use_empty();
-  if (pitch && pitch.getInt() == axisFFTPitch(grid[2]) && supportsAxisFFT(grid)
-      && narrowGrid && !tilted && !fixedPoint && !op.getPotential() && !op.getGatherAll()
-      && !op.getDispersion() && !op.getP3m() && forceOnly) {
-    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_tables" + tabled),
-                         ValueRange{op.getModuli(), tables, box, beta, coulomb,
-                                    k1, k2, k3});
+  if (pitch && pitch.getInt() == axisFFTPitch(grid[2]) &&
+      supportsAxisFFT(grid) && narrowGrid && !tilted && !fixedPoint &&
+      !op.getPotential() && !op.getGatherAll() && !op.getDispersion() &&
+      !op.getP3m() && (forceOnly || (grid[2] / 2 + 8) / 8 <= grid[0])) {
+    func::CallOp::create(
+        builder, loc, instance("mdrt_gpu_pme_tables" + tabled),
+        ValueRange{op.getModuli(), tables, box, beta, coulomb, k1, k2, k3});
     std::string name = "mdrt_gpu_pme_axis_fft_" + std::to_string(grid[0]) +
-                       "x" + std::to_string(grid[1]) + "x" + std::to_string(grid[2]);
+                       "x" + std::to_string(grid[1]) + "x" +
+                       std::to_string(grid[2]);
+    if (!forceOnly)
+      name += "_observed";
     auto fn = module.lookupSymbol<func::FuncOp>(name);
     if (!fn) {
       OpBuilder stages(module.getContext());
-      DevicePME emitter(stages, module, position, charge, force, op.getOrder(), 32);
-      fn = emitter.emitAxisFFT(name, grid, pitch.getInt());
+      DevicePME emitter(stages, module, position, charge, force, op.getOrder(),
+                        32);
+      fn = emitter.emitAxisFFT(name, grid, pitch.getInt(), !forceOnly);
     }
-    func::CallOp::create(builder, loc, fn, ValueRange{real, complex, tables});
+    if (forceOnly)
+      func::CallOp::create(builder, loc, fn, ValueRange{real, complex, tables});
+    else
+      convolve = func::CallOp::create(
+          builder, loc, fn, ValueRange{real, complex, tables, rows, beta});
   } else {
     Type wide = builder.getI64Type();
     SmallVector<Value> sizes;

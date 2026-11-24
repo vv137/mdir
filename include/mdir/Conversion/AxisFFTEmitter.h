@@ -36,10 +36,14 @@ struct FFTCoefficient {
 };
 using FFTPointwise = llvm::function_ref<FFTCoefficient(
     mlir::OpBuilder &, mlir::Value x, mlir::Value y, mlir::Value z,
-    FFTCoefficient)>;
+    FFTCoefficient, llvm::MutableArrayRef<mlir::Value> sums)>;
+using FFTPartial =
+    llvm::function_ref<void(mlir::Value block, mlir::ValueRange sums)>;
 
-void emitAxisConvolution(mlir::OpBuilder &builder, mlir::Location loc,
-                         llvm::ArrayRef<int64_t> grid, int64_t pitch,
-                         mlir::Value real, mlir::Value spectrum,
-                         FFTPointwise pointwise);
+// Returns the number of X block partials.
+int emitAxisConvolution(mlir::OpBuilder &builder, mlir::Location loc,
+                        llvm::ArrayRef<int64_t> grid, int64_t pitch,
+                        mlir::Value real, mlir::Value spectrum,
+                        FFTPointwise pointwise, int sumCount,
+                        FFTPartial partial);
 } // namespace mdir::kernels

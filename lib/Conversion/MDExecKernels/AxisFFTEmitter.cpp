@@ -3,6 +3,7 @@
 // axis [Tolmachev2023].
 #include "mdir/Conversion/AxisFFTEmitter.h"
 #include "KernelCode.h"
+#include "mdir/Conversion/ReductionEmitter.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -24,13 +25,13 @@ public:
         spectrum(spectrum), axis(axis), inverse(inverse),
         n(axis == 2 ? grid[2] / 2 : grid[axis]), f(*factorAxis(n)) {}
 
-  void emit(FFTPointwise pointwise) {
+  int emit(FFTPointwise pointwise, int count, FFTPartial partial) {
     const bool z = axis == 2;
     const int h = grid[2] / 2 + 1;
     int lines = 8;
     const int exchange = f.first * (f.second + (f.second % 2 == 0));
     const int sharedPerLine = exchange + (z && !inverse ? n : 0);
-    while (lines * sharedPerLine * 8 > 48 * 1024)
+    while (lines * sharedPerLine * 8 > (count ? 47 : 48) * 1024)
       lines /= 2;
     const int tiles = (h + lines - 1) / lines;
     int blocks = z ? (grid[0] * grid[1] + lines - 1) / lines
@@ -39,10 +40,18 @@ public:
                                             gpu::AddressSpace::Workgroup);
     Type shared = MemRefType::get({2 * lines * sharedPerLine}, b.getF32Type(),
                                   MemRefLayoutAttrInterface(), space);
+    SmallVector<Type> sharedTypes{shared};
+    int digits = f.second;
+    if (count) {
+      digits = llvm::alignTo(digits, 32 / lines);
+      sharedTypes.push_back(
+          MemRefType::get({digits * lines / 32 * count}, b.getF64Type(),
+                          MemRefLayoutAttrInterface(), space));
+    }
     auto launch = gpu::LaunchOp::create(
         b, loc, idx(blocks), idx(1), idx(1), idx(z ? f.second : lines),
-        idx(z ? lines : f.second), idx(1), nullptr, nullptr, ValueRange{},
-        TypeRange{shared});
+        idx(z ? lines : digits), idx(1), nullptr, nullptr, ValueRange{},
+        sharedTypes);
     launch->setAttr("mdir.fft_stage",
                     b.getStringAttr(z           ? (inverse ? "z_c2r" : "z_r2c")
                                     : axis == 0 ? "x_convolve"
@@ -80,7 +89,7 @@ public:
     auto rotate = [&](C v, int p, bool backward) {
       return p ? product(v, phase(muli(digit, idx(p)), n, backward)) : v;
     };
-    when(valid, [&] {
+    when(count ? andi(valid, less(digit, f.second)) : valid, [&] {
       Line reg;
       for (int a = 0; a < f.first; ++a) {
         Value k = digitIndex(f.second, a);
@@ -100,7 +109,15 @@ public:
         write(scratch, slot(idx(p), digit), rotate(reg[p], p, inverse));
     });
     gpu::BarrierOp::create(b, loc);
-    when(andi(valid, less(digit, f.first)), [&] {
+    SmallVector<Value> zeros(count, constant(0));
+    auto second =
+        scf::IfOp::create(b, loc, TypeRange(zeros),
+                          andi(valid, less(digit, f.first)), true, count != 0);
+    {
+      OpBuilder::InsertionGuard stage(b);
+      b.setInsertionPointToStart(second.thenBlock());
+      SmallVector<Value> sums(zeros);
+
       Line reg;
       for (int j = 0; j < f.second; ++j)
         reg.push_back(read(scratch, slot(digit, idx(j))));
@@ -108,7 +125,7 @@ public:
       for (int q = 0; q < f.second; ++q) {
         Value k = digitIndex(f.first, q);
         if (axis == 0)
-          reg[q] = pointwise(b, k, plane, line, reg[q]);
+          reg[q] = pointwise(b, k, plane, line, reg[q], sums);
         else if (!z)
           write(spectrum, address(k), reg[q]);
         else if (inverse)
@@ -121,10 +138,22 @@ public:
         for (int j = 0; j < f.second; ++j)
           write(scratch, slot(digit, idx(j)), reg[j]);
       }
-    });
+      scf::YieldOp::create(b, loc, sums);
+      if (count) {
+        b.setInsertionPointToStart(second.elseBlock());
+        scf::YieldOp::create(b, loc, zeros);
+      }
+    }
+    if (count) {
+      Value tid = addi(muli(digit, idx(lines)), lane);
+      auto totals = emitBlockReduce(b, loc, second.getResults(), tid,
+                                    launch.getWorkgroupAttributionBBArgs()[1],
+                                    Combiner::Add, digits * lines);
+      when(equal(tid, idx(0)), [&] { partial(block, totals); });
+    }
     if (axis == 0 || (z && !inverse)) {
       gpu::BarrierOp::create(b, loc);
-      when(valid, [&] {
+      when(count ? andi(valid, less(digit, f.second)) : valid, [&] {
         if (axis == 0) {
           Line reg;
           for (int p = 0; p < f.first; ++p)
@@ -151,6 +180,7 @@ public:
       });
     }
     gpu::TerminatorOp::create(b, loc);
+    return blocks;
   }
 
 private:
@@ -242,11 +272,18 @@ private:
 };
 } // namespace
 
-void mdir::kernels::emitAxisConvolution(OpBuilder &b, Location loc,
-                                        ArrayRef<int64_t> grid, int64_t pitch,
-                                        Value real, Value spectrum,
-                                        FFTPointwise pointwise) {
-  for (int pass = 0; pass < 5; ++pass)
-    Axis(b, loc, grid, pitch, real, spectrum, std::abs(2 - pass), pass > 2)
-        .emit(pointwise);
+int mdir::kernels::emitAxisConvolution(OpBuilder &b, Location loc,
+                                       ArrayRef<int64_t> grid, int64_t pitch,
+                                       Value real, Value spectrum,
+                                       FFTPointwise pointwise, int count,
+                                       FFTPartial partial) {
+  int xBlocks = 0;
+  for (int pass = 0; pass < 5; ++pass) {
+    int blocks =
+        Axis(b, loc, grid, pitch, real, spectrum, std::abs(2 - pass), pass > 2)
+            .emit(pointwise, pass == 2 ? count : 0, partial);
+    if (pass == 2)
+      xBlocks = blocks;
+  }
+  return xBlocks;
 }
