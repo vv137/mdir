@@ -355,7 +355,7 @@ Used for: the L2 access policy window measured and not adopted in #434
 ### CuFFTDxExamples
 
 NVIDIA, *cuFFTDx Examples*, "3D Convolution Examples," entry
-`convolution_3d_r2c`. [NVIDIA documentation](https://docs.nvidia.com/cuda/cufftdx/examples.html#d-convolution-examples)
+`convolution_3d_r2c`. [NVIDIA documentation](https://docs.nvidia.com/cuda/cufftdx/examples.html)
 
 Used for: the axis order of a real three-dimensional convolution.
 

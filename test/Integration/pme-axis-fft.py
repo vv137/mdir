@@ -22,7 +22,7 @@ def run(grid, mixed, axis, force_only=False):
         gaussian.emit(mixed=mixed, force_only=force_only)
     args = [mdir_opt, str(source), "--md-inline", "--canonicalize",
             "--convert-md-to-md-exec", "--md-exec-assign-algebra",
-            "--md-exec-assign-storage=memory=device pme-axis-fft=" + str(axis).lower(),
+            "--md-exec-assign-storage=memory=device pme-axis-fft=" + ("on" if axis else "off"),
             "--convert-md-exec-to-gpu", "--md-alg-transform-collections",
             "--convert-md-alg-to-gpu", "--symbol-dce"]
     ir = subprocess.check_output(args)

@@ -751,18 +751,22 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       module->lookupSymbol("_mlir_ciface_mdrtCudaFFTGaussianBackwardF32");
   const char *pmeForceProduct = hasFusedInverse ? "inverse_load" : "separate";
   llvm::json::Array fftPlans;
-  if (auto plans = (*module)->getAttrOfType<mlir::ArrayAttr>(kernels::kAxisFFTPlans)) {
+  if (auto plans =
+          (*module)->getAttrOfType<mlir::ArrayAttr>(kernels::kAxisFFTPlans)) {
     for (mlir::Attribute plan : plans) {
       llvm::json::Object record;
-      for (mlir::NamedAttribute field : mlir::cast<mlir::DictionaryAttr>(plan)) {
+      for (mlir::NamedAttribute field :
+           mlir::cast<mlir::DictionaryAttr>(plan)) {
         StringRef key = field.getName().getValue();
-        if (auto array = mlir::dyn_cast<mlir::DenseI64ArrayAttr>(field.getValue())) {
+        if (auto array =
+                mlir::dyn_cast<mlir::DenseI64ArrayAttr>(field.getValue())) {
           llvm::json::Array values;
           for (int64_t value : array.asArrayRef())
             values.push_back(value);
           record[key] = std::move(values);
         } else {
-          record[key] = mlir::cast<mlir::StringAttr>(field.getValue()).getValue().str();
+          record[key] =
+              mlir::cast<mlir::StringAttr>(field.getValue()).getValue().str();
         }
       }
       fftPlans.push_back(std::move(record));
@@ -772,7 +776,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   std::string fftPlanLine;
   if (!fftPlans.empty())
     fftPlanLine = llvm::formatv("MDIR: PME FFT plans {0}\n",
-                                llvm::json::Value(llvm::json::Array(fftPlans))).str();
+                                llvm::json::Value(llvm::json::Array(fftPlans)))
+                      .str();
 
   // The profile map of the lowered program, which names the source of each
   // parallel region of the host (D398).

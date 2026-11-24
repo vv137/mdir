@@ -402,17 +402,24 @@ std::string mdir::compiler::getPipeline(const Control &control,
     os << "md-exec-choose-scatter{" << archOption << getScatterOptions(control)
        << "},";
     // Kernels in f32 look their tables up in f32.
-    const char *axisFFT = std::getenv("MDIR_PME_AXIS_FFT");
-    os << "md-exec-assign-storage{memory=device"
-       << (StringRef(axisFFT ? axisFFT : "") == "on" ? " pme-axis-fft=true" : "")
-       << (control.precision == Precision::Double ? "" : " tables=f32")
+    const char *fftOverride = std::getenv("MDIR_PME_AXIS_FFT");
+    StringRef fftChoice = fftOverride && *fftOverride ? fftOverride : "auto";
+    bool measuredTarget =
+        arch == "sm_89" && control.precision == Precision::Mixed &&
+        control.neighborStructure == NeighborStructure::Towers && program.pme &&
+        !control.deterministic;
+    os << "md-exec-assign-storage{memory=device";
+    if (fftChoice == "on" || (fftChoice == "auto" && measuredTarget))
+      os << " pme-axis-fft=" << fftChoice;
+    os << (control.precision == Precision::Double ? "" : " tables=f32")
        << "},md-exec-assign-streams,"
        // The batched bodies of models in stages (D293).
        << (control.stagedModels.empty() ? "" : getStageBodiesPass(arch))
        // The loops over pairs over groups become md_alg.traverse_pairs
        // (D415).
        << "convert-md-exec-to-md-alg,"
-       << "convert-md-exec-to-gpu{" << archOption
+       << "convert-md-exec-to-gpu{"
+       << archOption
        // In the deterministic mode the arithmetic of a step does not
        // depend on what else the step computes. LLVM contracts a product
        // into a fused multiply-add only where it has one use, and the
@@ -423,8 +430,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // the kernels that join the constraints with the loops over
        // particles around them (D110) take the displacements of the tuples
        // as the kernels of the constraints alone do (#102).
-       << (control.deterministic ? "deterministic=true explicit-fma=true "
-                                 : "")
+       << (control.deterministic ? "deterministic=true explicit-fma=true " : "")
        // The renumbered tuples and their incidence structures are the
        // runtime's, in a store of the program that runs the code: the
        // entry of an embedding front end runs in activations, which begin

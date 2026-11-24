@@ -1038,8 +1038,8 @@ def AssignStorage : Pass<"md-exec-assign-storage", "::mlir::ModuleOp"> {
     layout, is decided on the result of this pass.
   }];
   let options = [
-    Option<"axisFFT", "pme-axis-fft", "bool", "false",
-           "Prepare a pitched half-spectrum for Gaussian PME axis transforms">,
+    Option<"axisFFT", "pme-axis-fft", "std::string", "\"off\"",
+           "Prepare Gaussian PME axis transforms: auto, on, or off">,
     Option<"memory", "memory", "std::string", /*default=*/"\"host\"",
            "Where the buffers are: host or device">,
     Option<"tables", "tables", "std::string", /*default=*/"\"f64\"",

@@ -29,9 +29,16 @@ and finish the partial sums in f64. Force-only kernels omit those sums.
 
 Selection follows the rule category of #952. Record the grid, factor pairs,
 line tile sizes, physical pitch, phase evaluation, and influence source in
-the generated IR, the setup log, and the manifest. Choose balanced supported factor pairs and limit the tile
+the generated IR, the setup log, and the manifest. Choose balanced supported
+factor pairs and limit the tile
 by shared memory and thread count. Use f64-computed constants for register
 butterflies, f32 trigonometry for inter-factor phases, and prepared axis
 tables for the influence. Pad rows to a multiple of four complex values for
 aligned tiles. These rules require no setup timing. Qualification compares
 the complete step in both orders against cuFFT on the same device.
+
+The initial automatic rule on `sm_89` covers order-four mixed TOWERS
+Gaussian meshes of 40³, 64³, and 144 × 84 × 80. The RTX 4090 runs
+qualify those shapes against an independent double reference and paired
+whole-step measurements. Other geometries default to cuFFT. A compilation
+override can pin cuFFT or request an experimental supported plan.

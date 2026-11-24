@@ -1317,12 +1317,39 @@ rounded from double precision. The exchange and real-fold phases use f32
 device sine and cosine. Unoccupied lanes skip the loads and products but
 reach every block barrier.
 
+On the `sm_89` target, non-deterministic mixed TOWERS runs select the
+emitter for order-four Gaussian meshes of 40³, 64³, and 144 × 84 × 80.
+These three grids passed the independent full-chain reference and improved
+whole-step throughput in both RTX 4090 runs. Other meshes default to cuFFT.
+Use `MDIR_PME_AXIS_FFT=off` to pin cuFFT or `on` to measure the emitter on
+other supported order-four meshes. Unsupported paths still use cuFFT.
+
 The setup log and the manifest's `effective.pme.fft_plans` report the
 backend and reason for each requested evaluation. Each stage of a generated
 plan records its two factors, lines per block, and physical complex pitch
 in that order. Floating-point evaluation order differs between cuFFT and the
 generated transform. The derivation and method references are in
 [Section 5.3](paper/05-electrostatics.md#five-pass-gaussian-convolution-dpme-axis-fft).
+
+On the RTX 4090, the two whole-step runs gave the following results for
+Gaussian TOWERS. Entries give µs/step / ns/day over the final 1,000 of
+2,000 steps at 2 fs, with observables every 100 steps. Run A took cuFFT
+first. Run B reversed both system and backend order. Positive savings
+mean that the generated path took fewer microseconds per step.
+
+| Input | A cuFFT | A axis | A saving (µs) | B cuFFT | B axis | B saving (µs) |
+| --- | --- | --- | --- | --- | --- | --- |
+| T10 | 99 / 1742.9 | 88 / 1968.6 | +11 | 100 / 1734.1 | 89 / 1936.3 | +11 |
+| T20 | 125 / 1383.4 | 112 / 1541.6 | +13 | 117 / 1479.5 | 118 / 1459.6 | -1 |
+| JAC | 129 / 1339.4 | 127 / 1358.2 | +2 | 121 / 1422.8 | 121 / 1432.4 | +0 |
+| Factor IX | 277 / 623.9 | 275 / 628.1 | +2 | 279 / 619.3 | 278 / 622.2 | +1 |
+| Cellulose | 1055 / 163.7 | 1062 / 162.7 | -7 | 1055 / 163.8 | 1064 / 162.4 | -9 |
+| STMV | 3057 / 56.5 | 3014 / 57.3 | +43 | 3060 / 56.5 | 3013 / 57.4 | +47 |
+
+The T20 whole-step difference changed sign. Cellulose slowed down in both
+orders. Both mixed backends exceeded the $3\times10^{-5}$ relative force
+tolerance against an independent double reference on Cellulose and STMV.
+The automatic rule keeps cuFFT on all three.
 
 ## The axes of the grid
 

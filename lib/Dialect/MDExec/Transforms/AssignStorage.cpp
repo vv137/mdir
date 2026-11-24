@@ -130,7 +130,7 @@ struct Scope {
 
 class Assignment {
 public:
-  Assignment(ModuleOp module, bool onDevice, bool narrowTables, bool axisFFT)
+  Assignment(ModuleOp module, bool onDevice, bool narrowTables, StringRef axisFFT)
       : module(module), context(module.getContext()), onDevice(onDevice),
         narrowTables(narrowTables), axisFFT(axisFFT) {}
 
@@ -244,7 +244,7 @@ private:
   bool onDevice;
   /// Whether tables are copied to the device in f32.
   bool narrowTables;
-  bool axisFFT;
+  StringRef axisFFT;
 
   /// Host buffers that the program was given and has copied to the device.
   /// They take what is copied back.
@@ -1441,17 +1441,23 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   ScatterAttr scatter = op.getScatterAttr();
   bool tiled = scatter && scatter.isTile();
   bool fixedOrder = algebra::getAlgebra(op, 0) == Algebra::FixedOrder;
-  bool pitched = axisFFT && onDevice && gridType.isF32() &&
-                 cast<MemRefType>(positions.getType()).getElementType().isF64() &&
-                 !fixedOrder &&
-                 !op.getPotential() && !op.getP3m() &&
-                 !op.getProlate() && !op.getDispersion() &&
-                 kernels::supportsAxisFFT(grid);
+  // These order-four meshes passed the full-chain accuracy gate and
+  // benefited from five passes on the measured TOWERS target (#961).
+  bool measuredMesh =
+      (grid[0] == grid[1] && grid[1] == grid[2] &&
+       (grid[0] == 40 || grid[0] == 64)) ||
+      (grid[0] == 144 && grid[1] == 84 && grid[2] == 80);
+  bool requestAxis = axisFFT == "on" || (axisFFT == "auto" && measuredMesh);
+  bool pitched =
+      requestAxis && onDevice && gridType.isF32() &&
+      cast<MemRefType>(positions.getType()).getElementType().isF64() &&
+      op.getOrder() == 4 && !fixedOrder && !op.getPotential() && !op.getP3m() &&
+      !op.getProlate() && !op.getDispersion() && kernels::supportsAxisFFT(grid);
   if (pitched)
     half = grid[0] * grid[1] * kernels::axisFFTPitch(grid[2]);
-  SmallVector<Value> scratch = {
-      allocate(IntegerType::get(context, 64), points),
-      allocate(gridType, points), allocate(gridType, 2 * half)};
+  SmallVector<Value> scratch = {allocate(IntegerType::get(context, 64), points),
+                                allocate(gridType, points),
+                                allocate(gridType, 2 * half)};
   // On the host, the factors of the influence function along the edges,
   // three for each point of each edge (D104), five with `p3m`
   // (D304), after the transform.
@@ -1550,13 +1556,13 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       moduli, out, scratch, listed, op.getGridAttr(), op.getOrderAttr(),
       op.getBetaAttr(), op.getCoulombAttr(), op.getDispersionAttr(),
       op.getPotentialAttr(), op.getProlateAttr(), op.getP3mAttr(),
-      op.getGatherAllAttr(),
-      onDevice ? op.getScatterAttr() : ScatterAttr());
-  if (axisFFT && onDevice)
-    created->setAttr("md_exec.fft_requested", scope.builder.getUnitAttr());
+      op.getGatherAllAttr(), onDevice ? op.getScatterAttr() : ScatterAttr());
+  if (axisFFT != "off" && onDevice)
+    created->setAttr("md_exec.fft_requested",
+                     scope.builder.getStringAttr(axisFFT));
   if (pitched)
     created->setAttr("md_exec.fft_pitch", scope.builder.getI64IntegerAttr(
-                                             kernels::axisFFTPitch(grid[2])));
+                                              kernels::axisFFTPitch(grid[2])));
   algebra::carry(op, created);
   mapping.map(op.getEnergy(), created.getEnergy());
   mapping.map(op.getVirial(), created.getVirial());
@@ -2714,6 +2720,10 @@ public:
           << "expected the memory 'host' or 'device', got '" << memory << "'";
       return signalPassFailure();
     }
+    if (axisFFT != "on" && axisFFT != "off" && axisFFT != "auto") {
+      getOperation().emitError("expected pme-axis-fft to be auto, on, or off");
+      return signalPassFailure();
+    }
     if (tables != "f64" && tables != "f32") {
       getOperation()->emitError()
           << "expected the tables 'f64' or 'f32', got '" << tables << "'";
@@ -2723,7 +2733,7 @@ public:
       getOperation().emitError("derivative checking requires the CPU lowering");
       return signalPassFailure();
     }
-    if (failed(Assignment(getOperation(), memory == "device", tables == "f32", axisFFT)
+    if (failed(Assignment(getOperation(), memory == "device", tables == "f32", axisFFT.getValue())
                    .run()))
       signalPassFailure();
     else

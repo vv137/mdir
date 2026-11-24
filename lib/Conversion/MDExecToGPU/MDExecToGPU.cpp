@@ -5576,7 +5576,8 @@ LogicalResult Lowering::lowerLinearTransform(md_exec::LinearTransformOp op) {
 // consume this record after lowering, including paths that kept cuFFT.
 static void recordFFTPlan(ModuleOp module, md_exec::ReciprocalOp op,
                           StringRef reason, func::FuncOp generated = {}) {
-  if (!op->hasAttr("md_exec.fft_requested"))
+  auto requested = op->getAttrOfType<StringAttr>("md_exec.fft_requested");
+  if (!requested)
     return;
   Builder b(module.getContext());
   NamedAttrList fields;
@@ -5584,18 +5585,19 @@ static void recordFFTPlan(ModuleOp module, md_exec::ReciprocalOp op,
     fields.set(key, b.getStringAttr(value));
   };
   text("category", "rule");
-  text("requested", "axis");
+  text("requested", requested.getValue());
   text("backend", generated ? "axis" : "cufft");
   text("reason", reason);
   text("evaluation", op.getEnergy().use_empty() && op.getVirial().use_empty()
-                         ? "forces" : "observed");
+                         ? "forces"
+                         : "observed");
   fields.set("grid", b.getDenseI64ArrayAttr(op.getGrid()));
   if (generated) {
     text("twiddles", "f64-rounded butterfly constants, f32 SFU cross phases");
     text("influence", "prepared axis tables");
     generated.walk([&](gpu::LaunchOp launch) {
       if (auto stage = launch->getAttrOfType<StringAttr>("mdir.fft_stage"))
-        fields.set(stage.getValue(),launch->getAttr("mdir.fft_layout"));
+        fields.set(stage.getValue(), launch->getAttr("mdir.fft_layout"));
     });
   }
   SmallVector<Attribute> plans;
@@ -5828,6 +5830,8 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   StringRef fallback;
   if (!narrowGrid || !position.isF64())
     fallback = "requires mixed precision";
+  else if (op.getOrder() != 4)
+    fallback = "unqualified spline order";
   else if (tilted || op.getDispersion() || op.getP3m())
     fallback = "requires orthorhombic Gaussian influence";
   else if (op.getPotential())
@@ -5837,8 +5841,8 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   else if (!supportsAxisFFT(grid))
     fallback = "unsupported axis length";
   else if (!pitch || pitch.getInt() != axisFFTPitch(grid[2]))
-    fallback = "compact spectrum";
-  else if (!forceOnly && (grid[2]/2 + 8)/8 > grid[0])
+    fallback = "no pitched plan for this mesh";
+  else if (!forceOnly && (grid[2] / 2 + 8) / 8 > grid[0])
     fallback = "insufficient block partial storage";
   if (fallback.empty()) {
     func::CallOp::create(
@@ -5856,14 +5860,14 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                         32);
       fn = emitter.emitAxisFFT(name, grid, pitch.getInt(), !forceOnly);
     }
-    recordFFTPlan(module,op,"supported mixed-radix mesh",fn);
+    recordFFTPlan(module, op, "supported mixed-radix mesh", fn);
     if (forceOnly)
       func::CallOp::create(builder, loc, fn, ValueRange{real, complex, tables});
     else
       convolve = func::CallOp::create(
           builder, loc, fn, ValueRange{real, complex, tables, rows, beta});
   } else {
-    recordFFTPlan(module,op,fallback);
+    recordFFTPlan(module, op, fallback);
     Type wide = builder.getI64Type();
     SmallVector<Value> sizes;
     for (int64_t points : grid)
@@ -5886,7 +5890,6 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_tables" + tabled),
                          ValueRange{op.getModuli(), tables, box, beta, coulomb,
                                     k1, k2, k3});
-    bool scaleOnly = op.getEnergy().use_empty() && op.getVirial().use_empty();
     bool fuse = false;
 #ifdef MDIR_PME_CALLBACK
     // The callback indexes three table rows per axis with unsigned offsets.
@@ -5900,7 +5903,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
       return n == 1;
     };
     // A charge derivative can have a separate potential sum at these positions.
-    fuse = scaleOnly && narrow && position.isF64() && !tilted &&
+    fuse = forceOnly && narrow && position.isF64() && !tilted &&
            !op.getDispersion() && llvm::all_of(grid, supportsCallback) &&
            grid[0] <= UINT32_MAX / grid[1] / (grid[2] / 2 + 1) &&
            llvm::none_of(op->getBlock()->getOps<md_exec::ReciprocalOp>(),
@@ -5918,7 +5921,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
           builder, loc, inverse,
           ValueRange{complex, real, tables, sizes[0], sizes[1], sizes[2]});
     } else {
-      if (scaleOnly)
+      if (forceOnly)
         func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_scale" + kind),
                              ValueRange{complex, tables, box, beta, coulomb, k1,
                                         k2, k3});
