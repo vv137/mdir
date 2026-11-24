@@ -105,7 +105,8 @@ func::FuncOp DevicePME::emitAxisFFT(StringRef name, ArrayRef<int64_t> grid,
   };
   int blocks = emitAxisConvolution(b, loc, grid, pitch, entry->getArgument(0),
                                    entry->getArgument(1), pointwise,
-                                   observed ? 7 : 0, partial);
+                                   observed ? 7 : 0, partial,
+                                   /*preservesEndPlaneSymmetry=*/!tilted);
   if (observed)
     finishConvolution(rows, arith::ConstantIndexOp::create(b, loc, blocks));
   else

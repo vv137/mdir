@@ -25,7 +25,8 @@ public:
         spectrum(spectrum), axis(axis), inverse(inverse),
         n(axis == 2 ? grid[2] / 2 : grid[axis]), f(*factorAxis(n)) {}
 
-  int emit(FFTPointwise pointwise, int count, FFTPartial partial) {
+  int emit(FFTPointwise pointwise, int count, FFTPartial partial,
+           bool preservesEndPlaneSymmetry) {
     const bool z = axis == 2;
     const int h = grid[2] / 2 + 1;
     int lines = 8;
@@ -103,7 +104,7 @@ public:
           // After inverse X and Y, a triclinic multiplier can leave an
           // imaginary part on the two end planes. A real inverse uses
           // only their real parts for the packed zero frequency.
-          if (a == 0) {
+          if (a == 0 && !preservesEndPlaneSymmetry) {
             Value end = equal(k, idx(0));
             r.im = select(end, constant(0), r.im);
             s.im = select(end, constant(0), s.im);
@@ -284,12 +285,13 @@ int mdir::kernels::emitAxisConvolution(OpBuilder &b, Location loc,
                                        ArrayRef<int64_t> grid, int64_t pitch,
                                        Value real, Value spectrum,
                                        FFTPointwise pointwise, int count,
-                                       FFTPartial partial) {
+                                       FFTPartial partial,
+                                       bool preservesEndPlaneSymmetry) {
   int xBlocks = 0;
   for (int pass = 0; pass < 5; ++pass) {
     int blocks =
         Axis(b, loc, grid, pitch, real, spectrum, std::abs(2 - pass), pass > 2)
-            .emit(pointwise, pass == 2 ? count : 0, partial);
+            .emit(pointwise, pass == 2 ? count : 0, partial, preservesEndPlaneSymmetry);
     if (pass == 2)
       xBlocks = blocks;
   }

@@ -43,10 +43,13 @@ using FFTPointwise = llvm::function_ref<FFTCoefficient(
 using FFTPartial =
     llvm::function_ref<void(mlir::Value block, mlir::ValueRange sums)>;
 
+// A multiplier preserving transverse conjugate symmetry on the two end
+// planes can use the original packed inverse there. Other multipliers
+// require projection onto the real part after inverse X and Y.
 // Returns the number of X block partials.
 int emitAxisConvolution(mlir::OpBuilder &builder, mlir::Location loc,
                         llvm::ArrayRef<int64_t> grid, int64_t pitch,
                         mlir::Value real, mlir::Value spectrum,
                         FFTPointwise pointwise, int sumCount,
-                        FFTPartial partial);
+                        FFTPartial partial, bool preservesEndPlaneSymmetry);
 } // namespace mdir::kernels
