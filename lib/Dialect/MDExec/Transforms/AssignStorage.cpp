@@ -1441,7 +1441,9 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   ScatterAttr scatter = op.getScatterAttr();
   bool tiled = scatter && scatter.isTile();
   bool fixedOrder = algebra::getAlgebra(op, 0) == Algebra::FixedOrder;
-  bool pitched = axisFFT && onDevice && gridType.isF32() && !fixedOrder &&
+  bool pitched = axisFFT && onDevice && gridType.isF32() &&
+                 cast<MemRefType>(positions.getType()).getElementType().isF64() &&
+                 !fixedOrder &&
                  !op.getPotential() && !op.getGatherAll() && !op.getP3m() &&
                  !op.getProlate() && !op.getDispersion() &&
                  kernels::supportsAxisFFT(grid);
@@ -1550,6 +1552,8 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       op.getPotentialAttr(), op.getProlateAttr(), op.getP3mAttr(),
       op.getGatherAllAttr(),
       onDevice ? op.getScatterAttr() : ScatterAttr());
+  if (axisFFT && onDevice)
+    created->setAttr("md_exec.fft_requested", scope.builder.getUnitAttr());
   if (pitched)
     created->setAttr("md_exec.fft_pitch", scope.builder.getI64IntegerAttr(
                                              kernels::axisFFTPitch(grid[2])));

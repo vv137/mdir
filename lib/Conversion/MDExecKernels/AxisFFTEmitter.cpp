@@ -5,7 +5,7 @@
 #include "KernelCode.h"
 #include "mdir/Conversion/ReductionEmitter.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
-#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include <cmath>
 
@@ -228,8 +228,8 @@ private:
   C phase(Value k, int length, bool backward) {
     Value angle = mulf(sitofp(b.getF32Type(), indexCast(b.getI32Type(), k)),
                        constant((backward ? tau : -tau) / length));
-    return {math::CosOp::create(b, loc, angle),
-            math::SinOp::create(b, loc, angle)};
+    return {NVVM::CosOp::create(b, loc, angle),
+            NVVM::SinOp::create(b, loc, angle)};
   }
   C root(C v, int k, int length, bool backward) {
     k %= length;

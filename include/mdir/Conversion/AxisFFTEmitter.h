@@ -6,6 +6,7 @@
 #include <optional>
 
 namespace mdir::kernels {
+inline constexpr llvm::StringLiteral kAxisFFTPlans = "mdir.pme_fft_plans";
 struct AxisFactors {
   int first, second;
 };

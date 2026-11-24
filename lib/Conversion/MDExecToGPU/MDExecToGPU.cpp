@@ -5572,6 +5572,42 @@ LogicalResult Lowering::lowerLinearTransform(md_exec::LinearTransformOp op) {
   return success();
 }
 
+// Record each distinct resolved plan once. Both the log and the manifest
+// consume this record after lowering, including paths that kept cuFFT.
+static void recordFFTPlan(ModuleOp module, md_exec::ReciprocalOp op,
+                          StringRef reason, func::FuncOp generated = {}) {
+  if (!op->hasAttr("md_exec.fft_requested"))
+    return;
+  Builder b(module.getContext());
+  NamedAttrList fields;
+  auto text = [&](StringRef key, StringRef value) {
+    fields.set(key, b.getStringAttr(value));
+  };
+  text("category", "rule");
+  text("requested", "axis");
+  text("backend", generated ? "axis" : "cufft");
+  text("reason", reason);
+  text("evaluation", op.getEnergy().use_empty() && op.getVirial().use_empty()
+                         ? "forces" : "observed");
+  fields.set("grid", b.getDenseI64ArrayAttr(op.getGrid()));
+  if (generated) {
+    text("twiddles", "f64-rounded butterfly constants, f32 SFU cross phases");
+    text("influence", "prepared axis tables");
+    generated.walk([&](gpu::LaunchOp launch) {
+      if (auto stage = launch->getAttrOfType<StringAttr>("mdir.fft_stage"))
+        fields.set(stage.getValue(),launch->getAttr("mdir.fft_layout"));
+    });
+  }
+  SmallVector<Attribute> plans;
+  if (auto existing = module->getAttrOfType<ArrayAttr>(kAxisFFTPlans))
+    llvm::append_range(plans, existing);
+  Attribute entry = fields.getDictionary(b.getContext());
+  if (!llvm::is_contained(plans, entry)) {
+    plans.push_back(entry);
+    module->setAttr(kAxisFFTPlans, b.getArrayAttr(plans));
+  }
+}
+
 LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   if (!op.isStorageForm() || !isDeviceType(op.getPositions().getType()))
     return op->emitOpError()
@@ -5674,6 +5710,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
         ValueRange());
   // The prolate kernel has kernels of its own (D266).
   if (op.getProlate()) {
+    recordFFTPlan(module,op,"prolate window");
     if (failed(addProlateKernels(position, charge, force, op.getOrder(),
                                    static_cast<bool>(listed), tiles)))
       return failure();
@@ -5788,10 +5825,22 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   func::CallOp convolve;
   auto pitch = op->getAttrOfType<IntegerAttr>("md_exec.fft_pitch");
   bool forceOnly = op.getEnergy().use_empty() && op.getVirial().use_empty();
-  if (pitch && pitch.getInt() == axisFFTPitch(grid[2]) &&
-      supportsAxisFFT(grid) && narrowGrid && !tilted && !fixedPoint &&
-      !op.getPotential() && !op.getGatherAll() && !op.getDispersion() &&
-      !op.getP3m() && (forceOnly || (grid[2] / 2 + 8) / 8 <= grid[0])) {
+  StringRef fallback;
+  if (!narrowGrid || !position.isF64())
+    fallback = "requires mixed precision";
+  else if (tilted || op.getDispersion() || op.getP3m())
+    fallback = "requires orthorhombic Gaussian influence";
+  else if (op.getPotential() || op.getGatherAll())
+    fallback = "charge derivative";
+  else if (fixedPoint)
+    fallback = "fixed-order evaluation";
+  else if (!supportsAxisFFT(grid))
+    fallback = "unsupported axis length";
+  else if (!pitch || pitch.getInt() != axisFFTPitch(grid[2]))
+    fallback = "compact spectrum";
+  else if (!forceOnly && (grid[2]/2 + 8)/8 > grid[0])
+    fallback = "insufficient block partial storage";
+  if (fallback.empty()) {
     func::CallOp::create(
         builder, loc, instance("mdrt_gpu_pme_tables" + tabled),
         ValueRange{op.getModuli(), tables, box, beta, coulomb, k1, k2, k3});
@@ -5807,12 +5856,14 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                         32);
       fn = emitter.emitAxisFFT(name, grid, pitch.getInt(), !forceOnly);
     }
+    recordFFTPlan(module,op,"supported mixed-radix mesh",fn);
     if (forceOnly)
       func::CallOp::create(builder, loc, fn, ValueRange{real, complex, tables});
     else
       convolve = func::CallOp::create(
           builder, loc, fn, ValueRange{real, complex, tables, rows, beta});
   } else {
+    recordFFTPlan(module,op,fallback);
     Type wide = builder.getI64Type();
     SmallVector<Value> sizes;
     for (int64_t points : grid)

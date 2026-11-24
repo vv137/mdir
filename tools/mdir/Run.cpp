@@ -9,6 +9,7 @@
 #include "Manifest.h"
 
 #include "mdir/Conversion/GPUToBinary.h"
+#include "mdir/Conversion/AxisFFTEmitter.h"
 #include "mdir/Conversion/MDAlgLowering.h"
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Dialect/Dyn/DynDialect.h"
@@ -749,6 +750,29 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   bool hasFusedInverse =
       module->lookupSymbol("_mlir_ciface_mdrtCudaFFTGaussianBackwardF32");
   const char *pmeForceProduct = hasFusedInverse ? "inverse_load" : "separate";
+  llvm::json::Array fftPlans;
+  if (auto plans = (*module)->getAttrOfType<mlir::ArrayAttr>(kernels::kAxisFFTPlans)) {
+    for (mlir::Attribute plan : plans) {
+      llvm::json::Object record;
+      for (mlir::NamedAttribute field : mlir::cast<mlir::DictionaryAttr>(plan)) {
+        StringRef key = field.getName().getValue();
+        if (auto array = mlir::dyn_cast<mlir::DenseI64ArrayAttr>(field.getValue())) {
+          llvm::json::Array values;
+          for (int64_t value : array.asArrayRef())
+            values.push_back(value);
+          record[key] = std::move(values);
+        } else {
+          record[key] = mlir::cast<mlir::StringAttr>(field.getValue()).getValue().str();
+        }
+      }
+      fftPlans.push_back(std::move(record));
+    }
+    (*module)->removeAttr(kernels::kAxisFFTPlans);
+  }
+  std::string fftPlanLine;
+  if (!fftPlans.empty())
+    fftPlanLine = llvm::formatv("MDIR: PME FFT plans {0}\n",
+                                llvm::json::Value(llvm::json::Array(fftPlans))).str();
 
   // The profile map of the lowered program, which names the source of each
   // parallel region of the host (D398).
@@ -1175,6 +1199,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
           {"order", program->pmeOrder},
           {"force_only_product_rule", pmeForceProduct},
           {"kernel", program->pmeProlate ? "PROLATE" : "GAUSSIAN"}};
+    if (program->pme && !fftPlans.empty())
+      (*pme.getAsObject())["fft_plans"] = std::move(fftPlans);
     // The prolate kernel's own parameters (D266).
     if (program->pme && program->pmeProlate) {
       llvm::json::Object &object = *pme.getAsObject();
@@ -1637,6 +1663,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   }
   output.log.print("MDIR: compiled in %.2f s\n", compileTime);
   output.log.print("%s", cacheLine.c_str());
+  output.log.print("%s", fftPlanLine.c_str());
   output.log.print("%s", algPolicyLine.c_str());
   if (output.models)
     output.log.print("%s", output.models->describe().c_str());
