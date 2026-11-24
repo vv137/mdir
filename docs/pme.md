@@ -377,6 +377,24 @@ listed kernels, the potential gather, and the kernels for a particular tile
 edge according to the sum. The symbol table supplies the instance suffix. The host emitter selects
 the FFT runtime entry points for the force precision.
 
+On an orthorhombic cell, a mixed-precision GPU evaluation that needs only
+the Gaussian Coulomb forces applies the influence function as cuFFT loads
+the complex input of its inverse transform (D[pme-fused-convolution]).
+The callback reads the same per-axis tables, sets the zero mode to zero,
+and scales both components in f32. This saves one read and one write per
+stored frequency. A different FFT plan can change force rounding.
+Energy, virial, and charge-derivative evaluations keep their separate
+product. The rule also applies in deterministic mode.
+
+The callback requires a CUDA 13 or later build with nvcc, at most
+$2^{32}-1$ stored frequencies, and grid dimensions whose prime factors
+are all smaller than 127. Other grids and builds use the separate pass.
+cuFFT loads NVRTC and nvJitLink when it creates the callback plan.
+See the [cuFFT callback requirements](https://docs.nvidia.com/cuda/archive/13.2.0/cufft/index.html#cufft-callback-routines).
+The setup log and the manifest field `effective.pme.force_only_product_rule`
+record `inverse_load` when the compiled program contains the callback,
+or `separate` otherwise. There is no control key.
+
 The device lowering unrolls the loops over the order and promotes the
 B-spline arrays to values
 (`sroa`, `mem2reg`); left as loops, the arrays were in local memory, and
@@ -437,7 +455,7 @@ threads, in every mode:
 |---|---|
 | Spreading | A particle an iteration (`pme_spread_one`, a function of its own so that its weights are on its own stack); its 64 values (order 4) are added to the i64 grid by `memref.atomic_rmw addi`, a `lock add` on x86. An integer sum does not depend on the order of the threads (D70). The grid is zeroed and converted to the floating-point grid by parallel loops. The first point along each edge is taken within the grid once, so a point wraps around by a subtraction, not a division |
 | FFT | pocketfft [[Reinecke2019]](references.md#reinecke2019) in `runtime/mdrt_fft.c`, called for blocks of lines from a parallel loop over each of the three passes: the real lines along $z$ a plane of $x$ a block; the complex lines along $y$ and along $x$ in tiles of 8 neighboring columns of $z$, which are copied to contiguous lines, transformed, and copied back, so that the strided lines are read by cache lines. The plans are made before the loops (`mdrtFFTPrepare`); pocketfft reads a plan and allocates its own scratch, so the threads share them. Each line is transformed by the same code whatever thread takes it, and nothing is summed across lines. The arithmetic of a line is in f64; a grid in f32 is converted where the line is copied |
-| Product | A row of the grid ($k_1 k_2$ rows of $k_3/2 + 1$ points) an iteration. The Gaussian influence function of a rectangular cell from the factors of its edges (D104): $m_a$, $m_a^2$, and $\exp(-\pi^2 m_a^2/\beta^2)$ times the factor of the B-splines (along $x$ also $f/(\pi V)$), computed in f64 once an evaluation, $k_1 + k_2 + k_3$ exponentials, and rounded once to the type of the grid. A triclinic cell, the dispersion (D162), and the prolate kernel (D266) compute the influence of each point in f64 (`pme_influence`) and round it once. The energy and the virial of a row are summed in the type of the grid and returned in f64, and the rows in the fixed partition of D171. A step that writes neither calls `pme_scale`, which only multiplies, as on a device |
+| Product | A row of the grid ($k_1 k_2$ rows of $k_3/2 + 1$ points) an iteration. The Gaussian influence function of a rectangular cell from the factors of its edges (D104): $m_a$, $m_a^2$, and $\exp(-\pi^2 m_a^2/\beta^2)$ times the factor of the B-splines (along $x$ also $f/(\pi V)$), computed in f64 once an evaluation, $k_1 + k_2 + k_3$ exponentials, and rounded once to the type of the grid. A triclinic cell, the dispersion (D162), and the prolate kernel (D266) compute the influence of each point in f64 (`pme_influence`) and round it once. The energy and the virial of a row are summed in the type of the grid and returned in f64, and the rows in the fixed partition of D171. A step that writes neither calls `pme_scale`, which only multiplies |
 | Places | In f64 on the host: the fraction along the cell, the point of the grid, and the fraction within it, which is rounded once to the type of the grid for the B-splines. A device takes the point and the fraction within it in the type of the forces (D78), so the mixed modes of the two differ in this step |
 | Gathering | A particle an iteration, its sums in the type of the grid, its force from them in f64 |
 
@@ -583,7 +601,8 @@ sum moved before the test of a neighbor structure (D113) may cross a sum
 that moves with it.
 
 The plans of cuFFT were already one per grid, direction, and precision
-for the process (`runtime/mdrt_cuda.c`). Measured on an RTX 4090 (1,000
+for the process (`runtime/mdrt_cuda.c`). A fused inverse also keys its plan on
+the address of the axis tables, which the callback reads on every execution. Measured on an RTX 4090 (1,000
 steps, NPT, 4 fs, mixed): the device peak of STMV from 3,665 to 2,567
 MiB, of STMV ×7 from 22,883 to 15,367 MiB, and STMV ×11 (11,738,045
 atoms) runs in 22,789 MiB, with the deterministic mode unchanged to the
