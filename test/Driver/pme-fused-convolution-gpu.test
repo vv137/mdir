@@ -1,4 +1,5 @@
 # REQUIRES: python-api, cuda, pme-callback
+# RUN: rm -rf %t
 # RUN: %mdir_python %S/Inputs/pme_force_product.py GPU %t
 # The rule in the run log and manifest comes from the compiled program.
 # RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t

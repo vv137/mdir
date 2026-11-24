@@ -1,2 +1,3 @@
 # REQUIRES: python-api
+# RUN: rm -rf %t
 # RUN: %mdir_python %S/Inputs/pme_force_product.py CPU %t
