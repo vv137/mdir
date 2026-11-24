@@ -72,7 +72,19 @@ struct TableCell {
         return {};
       operands.push_back(a);
     }
-    if (isa<arith::TruncFOp>(op)) {
+    if (auto trunc = dyn_cast<arith::TruncFOp>(op);
+        trunc && !trunc.getRoundingmode()) {
+      // The dialect folder may decline inexact truncation without a rounding
+      // mode. Match the host table initializer's nearest-even conversion.
+      if (auto type = dyn_cast<FloatType>(value.getType())) {
+        if (auto scalar = dyn_cast<FloatAttr>(operands.front())) {
+          APFloat rounded = scalar.getValue();
+          bool losesInfo;
+          rounded.convert(type.getFloatSemantics(), APFloat::rmNearestTiesToEven,
+                          &losesInfo);
+          return FloatAttr::get(type, rounded);
+        }
+      }
       auto type = dyn_cast<VectorType>(value.getType());
       auto vector = dyn_cast<DenseFPElementsAttr>(operands.front());
       if (type && type.getElementType().isF32() && vector) {
