@@ -8,6 +8,11 @@
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/cmap.test | sed '1d;$d' > %t/run.toml
 # RUN: printf '[execution]\ntarget = "gpu"\nprecision = "mixed"\n' >> %t/run.toml
 # RUN: mdir run %t/run.toml | FileCheck %s
+# RUN: sed -E 's/^(steps|energy_interval) +.*/\1 = 1/' %t/run.toml > %t/words.toml
+# RUN: env MDIR_TUPLE_SUMS=workunits-check mdir run %t/words.toml > %t/words.log 2>&1
+# RUN: FileCheck %s --check-prefix=WORDS < %t/words.log
+
+# WORDS: 0 word mismatches, 0 outside bound
 
 # CHECK: MDIR:   CMAP                           0.0963
 # CHECK: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value

@@ -2,18 +2,17 @@
 
 Recorded at its merge.
 
-Evaluate atom-local valence work units in an offline experiment. Build
-`bonded-partition` and give it the same control file as the simulation.
-A term is repeated once per distinct owning interval it touches. Each
-member's owner takes its force, and the first member's owner takes the
-term energy and virial. The experiment checks the packed local indices
-and both ownership rules for each term. The companion target
-`bonded-device-check` verifies shared position staging and signed integer
-payloads against a direct CPU oracle with zero tolerance.
+Use the moving TOWERS force representation for atom-local bonded work
+units on a GPU. Round each Cartesian force contribution to the nearest
+signed 64-bit word, ties to even, at $2^{18}$ words per kJ mol⁻¹ nm⁻¹.
+Check the conversion, the shared sum and the global sum. A failed check
+ends the run before integration consumes the force. Term energies and
+virials retain their physical units and use ordered binary64 reductions.
 
-At 128 atoms per interval the extra valence evaluations range from 5.62%
-to 6.55% on the four benchmark systems. A shared integer force accumulator
-would require a force scale and a policy for overflow, as well as a
-numerical contract for comparisons with floating-point tuple forces.
-The mixed kernel on the device sums in floating point. Deterministic
-evaluation walks ordered rows. [Partition and costs](../device-tuples.md#12-topology-order-work-units)
+Partition bonds, angles, dihedrals, CMAP and 1–4 pairs in topology order.
+An interval takes only its members' forces. The owner of the first slot
+records energy and virial at the original term index. The experimental
+GPU strategy is selected with `MDIR_TUPLE_SUMS=workunits`. Two
+opposite-order timing runs found longer steps on all four benchmark
+systems, so the existing direct/shared-hash selector remains the default.
+[Implementation and measurements](../device-tuples.md#12-topology-order-work-units)

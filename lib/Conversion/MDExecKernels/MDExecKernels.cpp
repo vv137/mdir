@@ -977,6 +977,37 @@ void kernels::emitAtomicAdd(OpBuilder &b, Location loc, Value value,
   }
 }
 
+SmallVector<Value>
+kernels::emitWorkUnitTuple(OpBuilder &b, md_exec::TupleForOp op, Value tuple,
+                           ValueRange localMembers, Value positions,
+                           Value liveIds, Value box, Value inverse) {
+  Location loc = op.getLoc();
+  Block &kernel = op.getKernel().front();
+  Type computed = getElementTypeOrSelf(kernel.getArgument(0).getType());
+  EvaluatedTuple evaluated;
+  evaluated.tuple = tuple;
+  llvm::append_range(evaluated.members, localMembers);
+  auto load = [&](OpBuilder &at, Value buffer, Value member, Type narrowed,
+                  bool position) {
+    Value value;
+    if (position) {
+      value = loadElement(at, loc, positions, member);
+    } else {
+      Value id = memref::LoadOp::create(at, loc, liveIds, member);
+      value = loadElement(at, loc, buffer, id);
+    }
+    return narrowed
+               ? arith::TruncFOp::create(at, loc, narrowed, value).getResult()
+               : value;
+  };
+  evaluateMembers(b, op, evaluated, convertReal(b, loc, box, computed),
+                  convertReal(b, loc, inverse, computed), IRMapping(), load);
+  SmallVector<Value> results;
+  for (Value v : kernel.getTerminator()->getOperands())
+    results.push_back(evaluated.inside.lookupOrDefault(v));
+  return results;
+}
+
 void kernels::emitTupleOnce(OpBuilder &builder, md_exec::TupleForOp op,
                             Value members, Value tuple, Value box,
                             Value inverse, IRMapping &local,

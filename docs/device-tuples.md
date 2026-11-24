@@ -526,9 +526,9 @@ terms touching an owned atom, including atoms outside the interval. Each
 term appears once in each touching interval. Only the owning interval
 exports a given member's force, and the interval of slot zero takes the
 energy and virial. The packer checks both rules against every original
-term slot. Particle reordering in a simulation would require translating
-the import and export lists through the current inverse permutation
-(Section 2). The offline target uses file-order positions.
+term slot. The simulation translates the import and export lists through
+the current inverse permutation (Section 2). The offline target uses
+file-order positions.
 
 Each instruction starts with a 32-bit index in the original term table.
 The following one or two words pack the local atom indices in slot order,
@@ -592,3 +592,97 @@ path. Each launch uses 128 threads per block and can admit 10 blocks per
 multiprocessor, giving 83.33% theoretical occupancy. JAC's 432 blocks
 limit its device-wide ceiling to 28.125%. The logical byte counts exclude
 position and charge loads and cache traffic.
+
+### Physical evaluation and failure handling
+
+With `MDIR_TUPLE_SUMS=workunits`, the compiler clones the differentiated
+tuple region for each interaction family. A block imports positions
+through the current inverse particle permutation, then evaluates terms
+using those positions and the original per-term parameters. Consecutive
+force-only loops sharing the same destination and cell can share a block.
+The packed directory records a count per family. A complemented atom
+index identifies a border import. Intervals normally own up to 128 atoms.
+If an interval needs more than 256 imports, the builder divides its
+instructions into consecutive batches that fit shared memory. Each batch
+flushes once per owned component. The runtime caches directories by the
+tuple sets and instruction format.
+
+The force quantum is $2^{-18}$ kJ mol⁻¹ nm⁻¹. A slot contributes at most
+$2^{-19}$ kJ mol⁻¹ nm⁻¹ of absolute rounding error per component. The
+signed range is $[-2^{45},2^{45}-2^{-18}]$ in these units. Conversion and
+both levels of addition are checked. On failure the GPU traps and the
+simulation stops. On a successful evaluation, the integer sum is
+independent of thread order. Slot-zero owners write each energy or virial
+component once, and the reduction reads fixed term indices in binary64.
+[Derivation and comparison bound](paper/08-gpu.md)
+
+For a controlled comparison, `unpacked` uses one local index per 32-bit
+word with the same partition and arithmetic. `integer-direct` additionally
+sends each owned slot to the global word array. The latter two modes
+isolate instruction packing and shared accumulation, respectively.
+
+Moving TOWERS can retain its certified force words for subsequent work
+units that add to the same destination. Its PME exclusion correction
+then participates as another tuple family. The last consumer converts the
+combined word array once. A consumer that requires the floating-point
+destination ends that sharing window. The diagnostic strategy uses a
+separate zero-initialized plane to compare just the tuple contributions.
+
+### Fixed frames, dynamics, and timing
+
+On three evaluations of the same JAC frame, both mixed and deterministic
+execution reproduced every one of 70,674 force components, the energy,
+and all nine virial entries. Three fresh processes compiling the same
+frame with the compile cache disabled also produced identical force,
+energy and virial bytes within each mode. The packed work units alone left 48,261
+components different on the first mixed repeat. The mixed fixed-frame
+entry therefore also orders the remaining reductions while keeping mixed
+per-term arithmetic. The direct integer oracle had zero word mismatches
+on JAC. The largest absolute deviation from the original floating-point
+tuple reductions was 0.000244140625 kJ mol⁻¹ nm⁻¹, within the
+component-specific comparison bound above. On the CMAP input, the
+mixed work-unit interpolation disables implicit contraction. Separate
+evaluation of the original and work-unit slot values supplied the
+per-slot difference in the bound. All 37,866 components passed both
+checks in mixed and deterministic modes. Binary64 checks also passed
+on JAC and the CMAP input.
+
+For a paired 1,000-step JAC NVE run with a 2 fs step and seed 314159, the
+initial total energy was −58,134.1522 kcal/mol. The original path ended at
+−58,134.4663 and packed work units at −58,136.7972 kcal/mol. The absolute
+relative changes over 2 ps were 5.403 × 10⁻⁶ and 4.550 × 10⁻⁵,
+respectively. Across the 21 saved energies, the largest excursions from
+the start were 5.3502 and 5.7045 kcal/mol. This pair measures one short
+window.
+
+Two RTX 4090 jobs ran the four inputs and four strategies in opposite
+orders. A ran JAC, Factor IX, Cellulose and STMV, with the default,
+integer-direct, unpacked and packed strategies on each. B reversed both
+orders. For all 16 system/strategy combinations, the frozen timing
+executable and the final compiler emitted byte-identical lowered modules
+for the trace controls. Each cell below gives tuple time in µs and unprofiled step time
+in ms, except the single packed physical-kernel column (µs). Tuple time
+sums the recurring force-only launches, including the exclusion
+correction, clearing, and publication. The 250-step traces contain 249
+ordinary force-only launches for each NVE kernel. For STMV the two
+recurring NPT branches are weighted by their 207 and 23 occurrences.
+Step time covers steps 1,250–2,500 of a separate run. The baseline uses
+the default selector from main, including its direct atomics below the
+shared-hash threshold. Positive differences mean longer execution.
+
+| System | Order | Main | Packed | Physical kernel | Packed − main | Shared − direct, unpacked | Packed − unpacked, shared |
+|---|---|---:|---:|---:|---:|---:|---:|
+| JAC | A | 10.8 / 0.134 | 512.9 / 0.701 | 504.3 | +502.1 / +0.567 | +42.7 / +0.018 | -12.8 / +0.056 |
+| Factor IX | A | 17.7 / 0.291 | 1021.7 / 1.315 | 1005.9 | +1004.1 / +1.024 | +4.0 / -0.038 | +15.4 / +0.023 |
+| Cellulose | A | 90.4 / 1.115 | 12886.6 / 14.011 | 12822.3 | +12796.1 / +12.896 | +3224.5 / +3.357 | -52.5 / -0.076 |
+| STMV | A | 204.2 / 3.637 | 61697.0 / 66.073 | 61522.0 | +61492.8 / +62.436 | +48498.7 / +6.791 | -1347.4 / +40.008 |
+| JAC | B | 11.1 / 0.134 | 515.6 / 0.824 | 506.8 | +504.5 / +0.690 | +100.9 / +0.119 | -383.5 / -0.056 |
+| Factor IX | B | 17.6 / 0.285 | 1019.2 / 1.332 | 1002.9 | +1001.6 / +1.047 | -461.9 / +0.116 | +42.8 / -0.019 |
+| Cellulose | B | 91.0 / 1.099 | 12784.3 / 13.836 | 12720.6 | +12693.3 / +12.737 | +2984.9 / +2.907 | -12.6 / +0.090 |
+| STMV | B | 202.6 / 3.596 | 22791.2 / 25.922 | 22617.2 | +22588.6 / +22.326 | +7049.7 / +7.314 | +92.7 / -0.361 |
+
+Shared integer accumulation increased the whole-step time for Cellulose
+and STMV in both orders. Packing had no consistent whole-step benefit.
+The STMV packed step varied from 25.922 to 66.073 ms between jobs, so
+the two measurements are reported individually. The default remains the
+existing selector.

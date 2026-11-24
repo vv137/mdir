@@ -538,7 +538,7 @@ structure.
 **Partitioning the atoms of a tuple calculation (D[bonded-workunits]).**
 Cerutti et al. assign interacting atoms to overlapping valence work units,
 which can import positions and share intermediate results within a block
-(Section IV B, Figures 3–6). The offline experiment here partitions atoms
+(Section IV B, Figures 3–6). The work-unit kernel partitions atoms
 in topology order. The owner of atom $i$ is the interval containing $i$.
 Each distinct interval touched by a term imports all its members and
 evaluates the term. Each interval keeps the force only for its own members.
@@ -551,21 +551,45 @@ dihedrals, CMAP terms, and 1–4 pairs. JAC has only 20 nonempty intervals
 for these terms. Including the reciprocal-space exclusion correction
 increases this to 185. [[Cerutti2024]](references.md#cerutti2024)
 
-To accumulate forces in shared memory in fixed point, each evaluation
-would first round a component to $z_k=\mathrm{round}(S_F v_k)$. Integer
-additions of those same words in shared memory and in global memory give
-identical sums when the signed sums are representable. Unscaling divides
-by $S_F$ in both cases. A device check exercises these additions with
-signed integer payloads derived from the position bits. It stages each
-distinct position once per block and adds each owned component once to
-global memory. The results agree bitwise with a direct walk on the host
-for four interval widths on the four suite inputs and a smaller TIP3P
-input. This establishes the property for the integer inputs. The tuple evaluator in mixed precision adds
-floating-point contributions, and its deterministic rows round after
-each addition. Quantization, switching the grouping of those additions,
-and changing the reduction tree of energies or virials can each change
-the output bits. Designating a single energy owner settles multiplicity
-only. [Work-unit measurements](../device-tuples.md#12-topology-order-work-units)
+For a Cartesian component $v_k$ of $-\nabla_i U_t$, the work unit forms
+$z_k=\mathrm{roundEven}(S_F v_k)$ with $S_F=2^{18}$ words per
+kJ mol⁻¹ nm⁻¹. Since the integer endpoints are $-2^{63}$ and $2^{63}-1$,
+the decoded endpoints are $-2^{45}$ and $2^{45}-2^{-18}$ kJ mol⁻¹ nm⁻¹.
+The multiplication by a power of two preserves the significand.
+An ordered comparison against $[-2^{63},2^{63})$ rejects nonfinite and
+out-of-range scaled inputs before conversion. In binary32 and binary64
+there is no representable value just below the upper limit that rounds to
+$2^{63}$. Shared and global atomic additions test the old word and the sum.
+When two operands of the same sign give a sum of the opposite sign, a
+device trap ends the run before the next kernel can publish or integrate
+the force. This also rejects an overflowing intermediate sum followed by
+cancellation.
+
+For $n$ contributions to one component, the triangle inequality gives
+$\lvert\sum_k z_k/S_F-\sum_k v_k\rvert\le n/(2S_F)$.
+For comparison with a floating-point accumulation of the same slot
+values, add $\gamma_n\sum_k\lvert v_k\rvert$, with
+$\gamma_n=n\mathsf u/(1-n\mathsf u)$ for $n\mathsf u<1$, and the rounding
+error of publishing the decoded result in its destination type. These
+bounds apply to a fixed frame. For CMAP, implicit multiply-add contraction
+can change the rounding of the interpolated force with instruction layout.
+The mixed work unit fixes the rounding of those products. If $v_k^0$
+is the original per-slot value with contraction enabled, comparison with
+that path adds $\sum_k |v_k-v_k^0|$ and uses
+$\gamma_n\sum_k |v_k^0|$ for its floating-point sum. The diagnostic
+evaluates both slot expressions on the same coordinates before testing
+the final component. Integration changes subsequent positions
+and hence the values being summed.
+
+The work unit imports each distinct position once into block memory.
+Slots outside its interval participate in the coordinate arithmetic. Only
+owned slots add to the three shared integer components of their atoms.
+Each owned component is exported with one checked global integer addition
+per block. The owner of slot zero writes the term energy $U_t$ and the
+virial $\mathsf W_t$ at the original term index. An ordered
+binary64 reduction over these entries avoids introducing force units or a
+second quantization scale into the observables.
+[Device implementation](../device-tuples.md#12-topology-order-work-units)
 
 **The algebra as a stated fact (D301).** Which of these
 forms a sum may take is a property of the sum, and the IR states it for

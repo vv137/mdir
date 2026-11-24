@@ -265,6 +265,12 @@ void emitIntegrationThread(
                             llvm::ArrayRef<mlir::Value>)>
         storeAfter);
 
+/// Evaluate the same differentiated term body using staged positions.
+llvm::SmallVector<mlir::Value>
+emitWorkUnitTuple(mlir::OpBuilder &b, md_exec::TupleForOp op, mlir::Value tuple,
+                  mlir::ValueRange localMembers, mlir::Value positions,
+                  mlir::Value liveIds, mlir::Value box, mlir::Value inverse);
+
 /// Emits what a loop over tuples does for the tuple `tuple` alone, on a
 /// device, where each tuple is evaluated once: the members from `members`,
 /// a buffer of a row of members for each tuple, the kernel, and the values

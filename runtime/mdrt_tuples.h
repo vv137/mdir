@@ -124,6 +124,7 @@ struct MdrtTuples {
   int device, ordered, ownsSet, deviceValid, building;
   int64_t order;
   void *deviceFile, *deviceRenumbered;
+  struct BondedDirectory *bondedPlans;
 };
 
 struct MdrtTupleStore {

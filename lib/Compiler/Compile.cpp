@@ -318,6 +318,20 @@ static std::string getFusedPruningOptions(llvm::StringRef gpuOptions) {
          std::to_string(value == "always" ? 0 : groups) + " ";
 }
 
+static int bondedUnitsMode() {
+  const char *value = std::getenv("MDIR_TUPLE_SUMS");
+  StringRef mode = value ? value : "";
+  if (mode == "workunits")
+    return 1;
+  if (mode == "unpacked")
+    return 2;
+  if (mode == "integer-direct")
+    return 3;
+  if (mode == "workunits-check")
+    return 4;
+  return 0;
+}
+
 std::string mdir::compiler::getPairRegionPipeline(const Control &control,
                                const Program &program) {
   std::string pipeline;
@@ -377,8 +391,11 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
   // The algebra of every sum, from the mode (D301): in the
   // deterministic mode a floating-point sum is `fixed_order`, otherwise
   // `any_order`. The strategies and the lowerings read it, not the mode.
+  bool fixedFrame =
+      control.frames && control.target == Target::GPU && bondedUnitsMode();
   os << "md-exec-assign-algebra"
-     << (control.deterministic ? "{deterministic=true}" : "") << ",";
+     << (control.deterministic || fixedFrame ? "{deterministic=true}" : "")
+     << ",";
 
   return pipeline;
 }
@@ -410,7 +427,8 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // The loops over pairs over groups become md_alg.traverse_pairs
        // (D415).
        << "convert-md-exec-to-md-alg,"
-       << "convert-md-exec-to-gpu{" << archOption
+       << "convert-md-exec-to-gpu{"
+       << archOption
        // In the deterministic mode the arithmetic of a step does not
        // depend on what else the step computes. LLVM contracts a product
        // into a fused multiply-add only where it has one use, and the
@@ -421,8 +439,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // the kernels that join the constraints with the loops over
        // particles around them (D110) take the displacements of the tuples
        // as the kernels of the constraints alone do (#102).
-       << (control.deterministic ? "deterministic=true explicit-fma=true "
-                                 : "")
+       << (control.deterministic ? "deterministic=true explicit-fma=true " : "")
        // The renumbered tuples and their incidence structures are the
        // runtime's, in a store of the program that runs the code: the
        // entry of an embedding front end runs in activations, which begin
@@ -433,6 +450,9 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // ... and builds them on the device where it does not take them
        // (D257).
        << "device-tuples=true "
+       << (bondedUnitsMode()
+               ? "bonded-units=" + std::to_string(bondedUnitsMode()) + " "
+               : "")
        // A check of the pruning of the dual lists, for tests
        // (D268).
        << (std::getenv("MDIR_CHECK_PRUNING") ? "check-pruning=true " : "")

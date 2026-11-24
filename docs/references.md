@@ -273,7 +273,8 @@ simulations," *J. Chem. Phys.* **161**, 032501 (2024).
 [doi:10.1063/5.0211032](https://doi.org/10.1063/5.0211032)
 
 Used for: atom-local valence work units, overlapping imports, and single-owner
-energy accounting (Section IV B, Figures 3–6 and Tables IV–V).
+energy accounting (Section IV B, Figures 3–6 and Tables IV–V). Section 8 derives
+the MDIR bonded force scale and range.
 
 ### Chaitin1982
 

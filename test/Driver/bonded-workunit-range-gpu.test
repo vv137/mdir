@@ -1,0 +1,6 @@
+# REQUIRES: cuda
+# RUN: %python %S/Inputs/bonded_words.py mdir %t | FileCheck %s
+# CHECK: ties passed
+# CHECK: component overflow passed
+# CHECK: shared sum overflow passed
+# CHECK: global sum overflow passed

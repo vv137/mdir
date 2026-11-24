@@ -3,10 +3,12 @@
 // Every op of md_exec becomes ops of the upstream gpu dialect, where the op
 // is. See docs/ops.md, Section 10.8.
 
-#include "TowersDispatch.h"
-#include "mdir/Conversion/Passes.h"
 #include "DevicePME.h"
+#include "TowersDispatch.h"
+#include "mdir/Conversion/BondedUnits.h"
+#include "mdir/Conversion/Passes.h"
 #include "mdir/Runtime/GroupsABI.h"
+#include "mdir/Support/ForceWords.h"
 
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Conversion/CompactionEmitter.h"
@@ -356,8 +358,37 @@ public:
   /// loops, which evaluate each tuple once; this is the module-wide form of
   /// `evaluatesOnce`, which the mode decided before D301.
   bool tuplesMayReorder = true;
+  int bondedUnits = 0;
 
 private:
+  struct BondedPlan {
+    Value handle, place, members, words;
+    Operation *setup;
+  };
+  DenseMap<Value, BondedPlan> bondedPlans;
+  DenseMap<Operation *, SmallVector<Operation *>> towerConsumers;
+  struct TowerPublication {
+    Value words;
+    bool last, overwrite;
+  };
+  DenseMap<Operation *, TowerPublication> bondedTowerWords;
+  DenseMap<std::pair<Block *, Value>, std::pair<Value, Value>> bondedStorage;
+  bool usesBondedUnits(md_exec::TupleForOp op) {
+    if (!bondedUnits || !deviceTuples || op.getArity() > 5 ||
+        op.getOuts().size() != 1)
+      return false;
+    if (!op->hasAttr("mdir.bonded_force"))
+      return false;
+    auto out = cast<MemRefType>(op.getOuts()[0].getType());
+    return out.getRank() == 2 && out.getDimSize(1) == 3 &&
+           llvm::none_of(op.getReduce(),
+                         [](Value v) { return v.getType().isInteger(1); });
+  }
+  LogicalResult lowerBondedUnits(ArrayRef<md_exec::TupleForOp> loops);
+  LogicalResult checkBondedUnits(ArrayRef<md_exec::TupleForOp> loops,
+                                 OpBuilder &at, OpBuilder &setup, Value box,
+                                 Value inverse, Value size);
+
   /// An entry of the runtime's store for a tuple set built on the device:
   /// its handle, whether the code builds it, and its buffers on the device.
   struct DeviceTuples {
@@ -647,8 +678,8 @@ private:
 
   /// Launches a kernel with one thread for each of `count` items. `body`
   /// emits what the thread of an item does.
-  void launchOver(OpBuilder &builder, Location loc, Value count,
-                  function_ref<void(OpBuilder &, Value)> body);
+  gpu::LaunchOp launchOver(OpBuilder &builder, Location loc, Value count,
+                           function_ref<void(OpBuilder &, Value)> body);
 
   /// Launches a kernel with a group of threads for each of `count`
   /// particles, which share its row (RowLanes). With `order`, the order of
@@ -1077,8 +1108,9 @@ void Lowering::bringIn(gpu::LaunchOp launch) {
   });
 }
 
-void Lowering::launchOver(OpBuilder &builder, Location loc, Value count,
-                          function_ref<void(OpBuilder &, Value)> body) {
+gpu::LaunchOp
+Lowering::launchOver(OpBuilder &builder, Location loc, Value count,
+                     function_ref<void(OpBuilder &, Value)> body) {
   Value one = createIndex(builder, loc, 1);
   Value block = createIndex(builder, loc, blockSize);
   Value grid = createGroups(builder, loc, count, blockSize);
@@ -1100,6 +1132,7 @@ void Lowering::launchOver(OpBuilder &builder, Location loc, Value count,
   });
   gpu::TerminatorOp::create(kernel, loc);
   bringIn(launch);
+  return launch;
 }
 
 Cell Lowering::getResults(Type element, Location loc) {
@@ -1712,9 +1745,9 @@ void Lowering::findCenterFusions(func::FuncOp function) {
 void Lowering::findOnceRuns(func::FuncOp function) {
   auto isOnceLoop = [&](Operation *op) {
     auto tuple = dyn_cast<md_exec::TupleForOp>(op);
-    return tuple && !inRows.contains(op) && evaluatesOnce(tuple) &&
-           tuple.getReduce().empty() &&
-           !op->hasAttr(md_exec::kSideAttrName);
+    return tuple && !inRows.contains(op) &&
+           (usesBondedUnits(tuple) || evaluatesOnce(tuple)) &&
+           tuple.getReduce().empty() && !op->hasAttr(md_exec::kSideAttrName);
   };
   auto finish = [&](SmallVector<md_exec::TupleForOp> &run) {
     // A loop whose kernel computes the sums of a term over centers is a
@@ -1756,6 +1789,11 @@ void Lowering::findOnceRuns(func::FuncOp function) {
                    loop.getPositions() == run.front().getPositions() &&
                    loop.getCellMutable().get() ==
                        run.front().getCellMutable().get();
+      if (joins && (usesBondedUnits(loop) || usesBondedUnits(run.front())))
+        joins = usesBondedUnits(loop) && usesBondedUnits(run.front()) &&
+                run.size() < 5 &&
+                loop.getOuts()[0] == run.front().getOuts()[0] &&
+                !loop.overwrites(0) && !run.front().overwrites(0);
       ValueRange outs = loop.getOuts();
       if (joins)
         for (Value operand : op.getOperands())
@@ -1997,6 +2035,8 @@ LogicalResult Lowering::lowerScatterAdd(md_exec::ScatterAddOp op) {
 
 LogicalResult Lowering::lowerOnceRun(ArrayRef<md_exec::TupleForOp> run) {
   md_exec::TupleForOp first = run.front();
+  if (usesBondedUnits(first))
+    return lowerBondedUnits(run);
   Location loc = first.getLoc();
   setPurpose(run.back());
   OpBuilder builder(run.back());
@@ -2235,8 +2275,8 @@ void Lowering::findRows(func::FuncOp function) {
   // (D278).
   auto isRowLoop = [&](Operation *op) {
     if (auto tuple = dyn_cast<md_exec::TupleForOp>(op))
-      return !tuple.getDisjoint() && !evaluatesOnce(tuple) &&
-             !hasFlags(tuple);
+      return !usesBondedUnits(tuple) && !tuple.getDisjoint() &&
+             !evaluatesOnce(tuple) && !hasFlags(tuple);
     // A loop that takes each pair once runs over groups, not rows (D89). A
     // loop over the rows of a domain is lowered alone (D290), and so is a
     // loop of batched stages (D293).
@@ -3794,7 +3834,9 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
     Neighbors tower;
     if (failed(getNeighbors(op, op.getNeighbors(), tower)))
       return failure();
-    return lowerTowersPair(
+    Value words;
+    auto consumers = towerConsumers.find(op);
+    auto result = lowerTowersPair(
         op, refresh ? refresh.getPositions() : Value(), bool(tower.excluded),
         numKernels++,
         [&](OpBuilder &at, Location l, Value count, auto body) {
@@ -3802,7 +3844,14 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
         },
         [&](OpBuilder &at, Location l, Value to, Value from) {
           createTransfer(at, l, to, from);
-        });
+        },
+        consumers != towerConsumers.end() ? &words : nullptr);
+    if (succeeded(result) && consumers != towerConsumers.end()) {
+      for (Operation *consumer : consumers->second)
+        bondedTowerWords[consumer] = {
+            words, consumer == consumers->second.back(), op.overwrites(0)};
+    }
+    return result;
   }
 
   Neighbors structure;
@@ -4560,9 +4609,202 @@ LogicalResult Lowering::lowerTupleForWithFlags(md_exec::TupleForOp op) {
   return success();
 }
 
+LogicalResult Lowering::checkBondedUnits(ArrayRef<md_exec::TupleForOp> loops,
+                                         OpBuilder &at, OpBuilder &setup,
+                                         Value box, Value inverse, Value size) {
+  auto last = loops.back();
+  Location loc = last.getLoc();
+  Value dest = last.getOuts()[0];
+  auto type = cast<MemRefType>(dest.getType());
+  Value count = arith::IndexCastOp::create(at, loc, at.getI64Type(), size);
+  Value check = callRuntime(at, loc, "mdrtBondedCheckBegin", {count},
+                            at.getI64Type(), false);
+  Value scale = createReal(at, loc, at.getF64Type(), forceWordScale);
+  auto buffer = [&](MemRefType type, Value rows) {
+    Value v = createDeviceBuffer(setup, loc, type, {rows});
+    freeDeviceAtEndOfBlock(bondedPlans.lookup(last.getIncidence()).setup, v);
+    return v;
+  };
+  auto dynamic = [&](Value v) -> Value {
+    Type elem = cast<MemRefType>(v.getType()).getElementType();
+    return memref::CastOp::create(
+        at, loc,
+        getDeviceType({ShapedType::kDynamic, ShapedType::kDynamic}, elem), v);
+  };
+  auto &plan = bondedPlans.find(last.getIncidence())->second;
+  Value shadow = buffer(type, createSize(setup, loc, plan.words));
+  launchOver(at, loc, size, [&](OpBuilder &b, Value atom) {
+    storeElement(
+        b, loc, createZero(b, loc, VectorType::get({3}, type.getElementType())),
+        shadow, atom);
+  });
+  // The direct evaluator reads the renumbered global relation. Save the
+  // unrounded force of every slot for an independent host integer sum.
+  for (auto loop : loops) {
+    auto &p = bondedPlans.find(loop.getIncidence())->second;
+    Value terms = createSize(setup, loc, p.members);
+    auto evaluateSlots = [&](bool fixedRounding) {
+      Value slots = buffer(
+          getDeviceType({ShapedType::kDynamic, int64_t(3 * loop.getArity())},
+                        at.getF64Type()),
+          terms);
+      auto direct = launchOver(at, loc, terms, [&](OpBuilder &b, Value t) {
+        IRMapping local;
+        int slot = 0;
+        emitTupleOnce(
+            b, loop, p.members, t, box, inverse, local,
+            [&](OpBuilder &body, unsigned, Value, Value vector) {
+              Value wide = convertReal(body, loc, vector, body.getF64Type());
+              for (int c = 0; c < 3; ++c) {
+                Value v = vector::ExtractOp::create(body, loc, wide, c);
+                memref::StoreOp::create(body, loc, v, slots,
+                                        {t, createIndex(body, loc, slot++)});
+              }
+            });
+      });
+      if (fixedRounding)
+        direct->setAttr("mdir.fixed_slot_rounding", at.getUnitAttr());
+      return dynamic(slots);
+    };
+    bool cmap = loop->hasAttr("mdir.bonded_cmap");
+    Value fixed = evaluateSlots(cmap);
+    Value original = cmap ? evaluateSlots(false) : fixed;
+    callRuntime(at, loc, "mdrtBondedCheckTerms",
+                {check, p.handle, fixed, original, scale}, Type(), true);
+  }
+  // Run the existing floating-point lowering into a zeroed shadow field.
+  for (auto loop : loops) {
+    loop.getOutsMutable().assign(shadow);
+    loop->removeAttr("mdir.bonded_force");
+  }
+  if (evaluatesOnce(last)) {
+    if (failed(lowerOnceRun(loops)))
+      return failure();
+  } else {
+    for (auto loop : loops)
+      launchRows(at, loc, size,
+                 [&](OpBuilder &b, Value i, const RowLanes &sharing) {
+                   IRMapping local;
+                   emitTupleKernel(b, loop, loop.getIncidence(), box, inverse,
+                                   i, local, &sharing);
+                 });
+  }
+  for (auto loop : loops) {
+    loop->setAttr("mdir.bonded_force", at.getUnitAttr());
+    loop.getOutsMutable().assign(dest);
+  }
+  callRuntime(at, loc,
+              type.getElementType().isF32() ? "mdrtBondedCheckF32"
+                                            : "mdrtBondedCheckF64",
+              {check, dynamic(plan.words), dynamic(shadow), scale}, Type(),
+              true);
+  return success();
+}
+
+LogicalResult Lowering::lowerBondedUnits(ArrayRef<md_exec::TupleForOp> loops) {
+  auto op = loops.back();
+  setPurpose(op);
+  auto found = bondedPlans.find(op.getIncidence());
+  if (found == bondedPlans.end())
+    return op.emitOpError("missing the topology's bonded work-unit directory");
+  const BondedPlan &plan = found->second;
+  Operation *last = plan.setup;
+  SmallVector<Value> handles;
+  for (auto loop : loops) {
+    const auto &p = bondedPlans.find(loop.getIncidence())->second;
+    if (p.setup->getBlock() != last->getBlock() || p.place != plan.place)
+      return loop.emitOpError("inconsistent permutation in bonded work units");
+    if (last->isBeforeInBlock(p.setup))
+      last = p.setup;
+    handles.push_back(p.handle);
+  }
+  Location loc = op.getLoc();
+  OpBuilder at(op), setup(last);
+  int mode = bondedUnits == 4 ? 1 : bondedUnits;
+  handles.resize(5, createZero(setup, loc, setup.getI64Type()));
+  handles.insert(handles.begin(),
+                 arith::ConstantIntOp::create(setup, loc, mode != 1, 32));
+  Value handle = callRuntime(setup, loc, "mdrtBondedDirectory", handles,
+                             setup.getI64Type(), false);
+  Value directory = callRuntime(
+      setup, loc, "mdrtBondedWords", {handle},
+      getDeviceType({ShapedType::kDynamic}, setup.getI32Type()), true);
+  Value blocks = callRuntime(setup, loc, "mdrtBondedBlockCount", {handle},
+                             setup.getI64Type(), false);
+  blocks = arith::IndexCastOp::create(setup, loc, setup.getIndexType(), blocks);
+
+  Value size = createSize(at, loc, op.getPositions());
+  Value terms = createSize(setup, loc, plan.members);
+  SmallVector<Value> observerTerms;
+  for (unsigned i = 0; i < op.getNumResults(); ++i) {
+    auto type = cast<MemRefType>(op.getScratch()[2 * i].getType());
+    Value buffer = createDeviceBuffer(setup, loc, type, {terms});
+    freeDeviceAtEndOfBlock(plan.setup, buffer);
+    observerTerms.push_back(buffer);
+  }
+  Value dest = op.getOuts()[0];
+  Type real = cast<MemRefType>(op.getPositions().getType()).getElementType();
+  Value box = convertReal(at, loc, op.getCellMutable().get(), real);
+  Value inverse = createInverse(at, loc, box);
+  TowerPublication tower = bondedTowerWords.lookup(op);
+  Value words = tower.words ? tower.words : plan.words;
+  if (!tower.words)
+    launchOver(at, loc, size, [&](OpBuilder &body, Value atom) {
+      for (int c = 0; c < 3; ++c)
+        memref::StoreOp::create(body, loc,
+                                createZero(body, loc, body.getI64Type()), words,
+                                ValueRange{atom, createIndex(body, loc, c)});
+    });
+  auto launch = emitBondedUnits(at, loops, blocks, directory, plan.place, box,
+                                inverse, words, observerTerms, mode);
+  bringIn(launch);
+  if (bondedUnits == 4 &&
+      failed(checkBondedUnits(loops, at, setup, box, inverse, size)))
+    return failure();
+  // Publication follows the kernel that traps on failed conversion or addition.
+  if (!tower.words || tower.last)
+    launchOver(at, loc, size, [&](OpBuilder &body, Value atom) {
+      Type type = cast<MemRefType>(dest.getType()).getElementType();
+      for (int c = 0; c < 3; ++c) {
+        SmallVector<Value> idx{atom, createIndex(body, loc, c)};
+        Value word = memref::LoadOp::create(body, loc, words, idx);
+        Value force = arith::SIToFPOp::create(body, loc, type, word);
+        force = arith::MulFOp::create(
+            body, loc, force,
+            createReal(body, loc, type, 1.0 / forceWordScale));
+        if (!(tower.words ? tower.overwrite : op.overwrites(0)))
+          force = arith::AddFOp::create(
+              body, loc, memref::LoadOp::create(body, loc, dest, idx), force);
+        memref::StoreOp::create(body, loc, force, dest, idx);
+      }
+    });
+  if (observerTerms.empty())
+    return success();
+  Value rows = arith::MinUIOp::create(at, loc, size, terms);
+  launchOver(at, loc, rows, [&](OpBuilder &body, Value row) {
+    SmallVector<Value> zeros;
+    for (Type type : op.getResultTypes())
+      zeros.push_back(createZero(body, loc, type));
+    auto loop = scf::ForOp::create(
+        body, loc, row, terms, rows, zeros,
+        [&](OpBuilder &b, Location, Value t, ValueRange partials) {
+          SmallVector<Value> next;
+          for (auto [i, buffer] : llvm::enumerate(observerTerms))
+            next.push_back(arith::AddFOp::create(
+                b, loc, partials[i], loadElement(b, loc, buffer, t)));
+          scf::YieldOp::create(b, loc, next);
+        });
+    for (auto [i, v] : llvm::enumerate(loop.getResults()))
+      storeElement(body, loc, v, op.getScratch()[2 * i], row);
+  });
+  return finishSums(op, at, op.getReduce(), op.getScratch(), rows);
+}
+
 LogicalResult Lowering::lowerTupleFor(md_exec::TupleForOp op) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
+  if (usesBondedUnits(op))
+    return lowerBondedUnits({op});
   if (hasFlags(op))
     return lowerTupleForWithFlags(op);
   if (failed(checkScratch(op, op.getReduce().size(), op.getScratch().size())))
@@ -5066,6 +5308,34 @@ void Lowering::buildOnDevice(md_exec::BuildIncidenceOp op,
     result = memref::CastOp::create(builder, loc, type, structure);
   op.getResult().replaceAllUsesWith(result);
 
+  if (bondedUnits && llvm::any_of(result.getUsers(), [&](Operation *user) {
+        auto tuple = dyn_cast<md_exec::TupleForOp>(user);
+        return tuple && usesBondedUnits(tuple);
+      })) {
+    auto &storage =
+        bondedStorage[{op->getBlock(), tuples.ids ? tuples.ids : particles}];
+    auto &[place, words] = storage;
+    if (!words) {
+      if (tuples.ids) {
+        place = createDeviceBuffer(builder, loc, device1, {particles});
+        freeDeviceAtEndOfBlock(op, place);
+        launchOver(builder, loc, particles, [&](OpBuilder &at, Value current) {
+          Value file = memref::LoadOp::create(at, loc, tuples.ids, current);
+          Value atom =
+              arith::IndexCastOp::create(at, loc, at.getIndexType(), file);
+          Value index =
+              arith::IndexCastOp::create(at, loc, at.getI32Type(), current);
+          memref::StoreOp::create(at, loc, index, place, atom);
+        });
+      }
+      words = createDeviceBuffer(
+          builder, loc,
+          getDeviceType({ShapedType::kDynamic, 3}, builder.getI64Type()),
+          {particles});
+      freeDeviceAtEndOfBlock(op, words);
+    }
+    bondedPlans[result] = {tuples.handle, place, renumbered, words, op};
+  }
   // The members for the loops that evaluate each tuple once: the renumbered
   // members on the device, written before on the same stream.
   auto hostType = cast<MemRefType>(op.getRelation().getType());
@@ -11103,6 +11373,54 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   findRows(function);
   findCenterFusions(function);
   findOnceRuns(function);
+  // Delay floating-point publication only while the force destination has
+  // no intervening reader or writer. Other memory effects retain their order.
+  if (bondedUnits && bondedUnits != 4 && module->hasAttr("mdir.towers_grid"))
+    function.walk([&](md_exec::PairForOp pair) {
+      if (pair.getOuts().size() != 1 || pair->hasAttr(md_exec::kSideAttrName))
+        return;
+      Value dest = pair.getOuts().front();
+      SmallVector<Operation *> consumers;
+      for (Operation *next = pair->getNextNode(); next;
+           next = next->getNextNode()) {
+        if (auto loop = dyn_cast<md_exec::TupleForOp>(next)) {
+          if (usesBondedUnits(loop) && loop.getOuts()[0] == dest &&
+              !loop.overwrites(0) && !loop->hasAttr(md_exec::kSideAttrName) &&
+              !aliases.mayAlias(dest, loop.getPositions()) &&
+              llvm::none_of(
+                  llvm::concat<Value>(loop.getIns(), loop.getParameters(),
+                                      loop.getScratch()),
+                  [&](Value v) { return aliases.mayAlias(dest, v); }) &&
+              !loop.getKernel()
+                   .walk([&](Operation *nested) {
+                     for (Value v : nested->getOperands())
+                       if (isa<MemRefType>(v.getType()) &&
+                           !loop.getKernel().isAncestor(v.getParentRegion()) &&
+                           aliases.mayAlias(dest, v))
+                         return WalkResult::interrupt();
+                     return WalkResult::advance();
+                   })
+                   .wasInterrupted()) {
+            consumers.push_back(loop);
+            continue;
+          }
+        }
+        if (next->hasAttr(md_exec::kSideAttrName) ||
+            isa<md_exec::PairForOp>(next) ||
+            next->hasTrait<OpTrait::IsTerminator>())
+          break;
+        if (next->getNumRegions() == 0 && isMemoryEffectFree(next))
+          continue;
+        if (isa<gpu::AllocOp, gpu::WaitOp>(next))
+          continue;
+        if (!isa<gpu::MemsetOp, md_exec::ReciprocalOp, md_exec::ParticleForOp>(
+                next) ||
+            !md_exec::areIndependent(next, pair, aliases))
+          break;
+      }
+      if (!consumers.empty())
+        towerConsumers[pair] = std::move(consumers);
+    });
   for (Operation *op : ops) {
     Operation *parent = op->getParentOp();
     if (isa<md_exec::ParticleForOp, md_exec::PairForOp, md_exec::TupleForOp,
@@ -11148,6 +11466,10 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   rows.clear();
   integrations.clear();
   inRows.clear();
+  bondedPlans.clear();
+  bondedStorage.clear();
+  towerConsumers.clear();
+  bondedTowerWords.clear();
   onceRuns.clear();
   inOnceRuns.clear();
   fusionOfSums.clear();
@@ -11325,6 +11647,20 @@ public:
       return signalPassFailure();
     if (getOperation()->hasAttr("mdir.towers_grid"))
       markTowersExclusions(getOperation());
+    if (bondedUnits) {
+      getOperation().walk([&](md_exec::TupleForOp op) {
+        auto set = op->getAttrOfType<FlatSymbolRefAttr>("md_exec.tuple_set");
+        if (set && set.getValue() == "cmap")
+          op->setAttr("mdir.bonded_cmap", UnitAttr::get(&getContext()));
+        if (set && ((getOperation()->hasAttr("mdir.towers_grid") &&
+                     set.getValue() == "excluded") ||
+                    llvm::is_contained(ArrayRef<StringRef>{"bonds", "angles",
+                                                           "dihedrals", "cmap",
+                                                           "pairs14"},
+                                       set.getValue())))
+          op->setAttr("mdir.bonded_force", UnitAttr::get(&getContext()));
+      });
+    }
     if (failed(md_exec::eraseStorageSets(getOperation())))
       return signalPassFailure();
     if (getOperation()->hasAttr("md.derivative_check")) {
@@ -11377,6 +11713,7 @@ public:
     lowering.groupsColumnParticles = groupsColumnParticles > 0
                                          ? double(groupsColumnParticles)
                                          : policy.groups.columnParticles;
+    lowering.bondedUnits = bondedUnits;
     lowering.tuplesMayReorder = tuplesMayReorder;
     lowering.keptTuples = keptTuples;
     lowering.deviceTuples = keptTuples && deviceTuples;
@@ -11394,18 +11731,28 @@ public:
     // Products and sums in the kernels may become fused multiply-adds, as
     // nvcc makes them by default: the backend fuses only what is marked.
     if (contract)
-      forEachKernelRegion(getOperation(), /*skipHostArithmetic=*/true,
-                          [](Region &kernel) {
-        kernel.walk([](arith::ArithFastMathInterface op) {
-          arith::FastMathFlags flags = arith::FastMathFlags::none;
-          if (arith::FastMathFlagsAttr given = op.getFastMathFlagsAttr())
-            flags = given.getValue();
-          op->setAttr(op.getFastMathAttrName(),
-                      arith::FastMathFlagsAttr::get(
-                          op->getContext(),
-                          flags | arith::FastMathFlags::contract));
-        });
-      });
+      forEachKernelRegion(
+          getOperation(), /*skipHostArithmetic=*/true, [](Region &kernel) {
+            kernel.walk([](arith::ArithFastMathInterface op) {
+              // CMAP interpolation can put a force on a word boundary. The
+              // instruction layout must not select the rounding of its
+              // products.
+              for (Operation *parent = op->getParentOp(); parent;
+                   parent = parent->getParentOp()) {
+                if (parent->hasAttr("mdir.fixed_slot_rounding"))
+                  return;
+                if (isa<gpu::LaunchOp>(parent))
+                  break;
+              }
+              arith::FastMathFlags flags = arith::FastMathFlags::none;
+              if (arith::FastMathFlagsAttr given = op.getFastMathFlagsAttr())
+                flags = given.getValue();
+              op->setAttr(op.getFastMathAttrName(),
+                          arith::FastMathFlagsAttr::get(
+                              op->getContext(),
+                              flags | arith::FastMathFlags::contract));
+            });
+          });
     // Explicit fused multiply-adds (#102): every sum or difference with a
     // product as an operand becomes one, by a rule of the formula alone.
     // LLVM contracts only a product with one use, so the further uses

@@ -109,9 +109,6 @@ D. S. Cerutti, R. Wiewiora, S. Boothroyd, W. Sherman,
 simulations," *J. Chem. Phys.* **161**, 032501 (2024).
 [doi:10.1063/5.0211032](https://doi.org/10.1063/5.0211032)
 
-Used for: atom-local valence work units, overlapping imports, and single-owner
-energy accounting (Section IV B, Figures 3–6 and Tables IV–V).
-
 ### Chaitin1982
 
 G. J. Chaitin, "Register allocation & spilling via graph coloring,"

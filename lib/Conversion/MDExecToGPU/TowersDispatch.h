@@ -13,5 +13,6 @@ using TowersTransfer = llvm::function_ref<void(
 mlir::LogicalResult lowerTowersPair(md_exec::PairForOp pair,
                                     mlir::Value positions, bool masked,
                                     unsigned ordinal, TowersRowLoop rows,
-                                    TowersTransfer transfer);
+                                    TowersTransfer transfer,
+                                    mlir::Value *forceWords = nullptr);
 } // namespace mdir::kernels
