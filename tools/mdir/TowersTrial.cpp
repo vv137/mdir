@@ -79,7 +79,7 @@ const Api &api() {
 namespace mdir::tool {
 struct TowersTrial {
   int device, atoms, cells, reach, capacity, exclusions;
-  int sms = 0;
+  int sms = 1;
   size_t fields = 0;
   bool cartesian = false;
   CUcontext context{};
@@ -135,9 +135,15 @@ struct TowersTrial {
     size_t n = atoms, c = cells, slots = c * capacity + n;
     size_t entries = c * (5 + 2 * reach);
     fields = buffers.fields;
-    if (!check(api().cuDeviceGetAttribute(
-                   &sms, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, device),
-               "query cooperative grid size") ||
+    int cooperative = 0;
+    if (!check(
+            api().cuDeviceGetAttribute(
+                &cooperative, CU_DEVICE_ATTRIBUTE_COOPERATIVE_LAUNCH, device),
+            "query cooperative launch support") ||
+        (cooperative &&
+         !check(api().cuDeviceGetAttribute(
+                    &sms, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, device),
+                "query cooperative grid size")) ||
         !check(api().cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING),
                "cuStreamCreate") ||
         !check(api().cuEventCreate(&start, 0), "cuEventCreate") ||
@@ -254,6 +260,8 @@ struct Sample {
     args.insert(args.end(), {&f.high, &f.words, &f.arrivals, &f.output});
     int grid =
         std::min<int64_t>(f.sms, kernels::towersFinishBlocks(n, threads));
+    if (grid == 1)
+      return launch(Finish, 1, threads, args, shared);
     return f.check(api().cuLaunchCooperativeKernel(fn[Finish], grid, 1, 1,
                                                    threads, 1, 1, shared,
                                                    f.stream, args.data()),
