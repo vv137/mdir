@@ -125,8 +125,13 @@ atom-to-slot map, the three planes of binary64 input positions and the three
 box lengths. Captured parameters follow the per-atom inputs. Keep the frame,
 maps and topology fixed through publication.
 
-The force grid has one or two source splits per tower (`force-split`),
-followed by enough blocks for one thread per excluded pair. These threads
+The GPU force grid has one or two source splits per tower (`force-split`).
+Small exclusion lists follow the towers, one pair per lane. When the list
+fills at least 128 blocks at four pairs per lane, each exclusion block reads
+up to four consecutive block-width slices. The compact group starts after
+at least half the tower blocks, leaving up to four tower blocks per
+exclusion block to overlap its completion (D[towers-excl-tail]).
+The exclusion threads
 orient the endpoints in the same image and use the original direct region
 to subtract its provisional words and conversion vote. They add the
 independently quantized correction. Wide recovery tests membership before

@@ -17,6 +17,12 @@ struct TowersForceShape {
   bool movingDispatch = false;
   mlir::Type cartesianPositions = {};
   int64_t typeCount = 0;
+
+  // Compact only lists that can fill 128 four-row blocks. Smaller lists
+  // need the parallelism of one thread per pair (D[towers-excl-tail]).
+  int exclusionRowsPerThread() const {
+    return exclusions >= 128 * 4 * workers ? 4 : 1;
+  }
 };
 
 mlir::LogicalResult emitTowersForce(mlir::ModuleOp module, TowersLayout layout,

@@ -437,8 +437,9 @@ LogicalResult Dispatch::run(Value positions) {
     llvm::append_range(args, fields);
     args.push_back(packedTypes);
     llvm::append_range(args, captures);
+    int exclusionWidth = shape.exclusionRowsPerThread() * shape.workers;
     int64_t blocks = int64_t(g.cells()) * shape.split +
-                     llvm::divideCeil(shape.exclusions, shape.workers);
+                     llvm::divideCeil(shape.exclusions, exclusionWidth);
     int shared = 8 * shape.records;
     if (force && shape.virialYield >= 0) {
       bool full =
