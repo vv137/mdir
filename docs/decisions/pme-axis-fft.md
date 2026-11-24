@@ -29,7 +29,7 @@ and finish the partial sums in f64. Force-only kernels omit those sums.
 
 Selection follows the rule category of #952. Record the grid, factor pairs,
 line tile sizes, physical pitch, phase evaluation, and influence source in
-the generated IR. Choose balanced supported factor pairs and limit the tile
+the generated IR, the setup log, and the manifest. Choose balanced supported factor pairs and limit the tile
 by shared memory and thread count. Use f64-computed constants for register
 butterflies, f32 trigonometry for inter-factor phases, and prepared axis
 tables for the influence. Pad rows to a multiple of four complex values for

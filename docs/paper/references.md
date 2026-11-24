@@ -131,6 +131,11 @@ pass of `cub::DeviceScan` with decoupled look-back
 [github.com/NVIDIA/cccl](https://github.com/NVIDIA/cccl) (read 2026-10-18,
 against the headers of CUDA 13.2).
 
+### CuFFTDxExamples
+
+NVIDIA, *cuFFTDx Examples*, "3D Convolution Examples," entry
+`convolution_3d_r2c`. [NVIDIA documentation](https://docs.nvidia.com/cuda/cufftdx/examples.html#d-convolution-examples)
+
 ### CurtisPowellReid1974
 
 A. R. Curtis, M. J. D. Powell, J. K. Reid, "On the estimation of sparse
@@ -212,6 +217,14 @@ J. Gómez-Luna, J. M. González-Linares, J. I. Benavides Benítez, N. Guil
 Mata, "Performance modeling of atomic additions on GPU scratchpad memory,"
 *IEEE Trans. Parallel Distrib. Syst.* **24**(11), 2273–2282 (2013).
 [doi:10.1109/TPDS.2012.319](https://doi.org/10.1109/TPDS.2012.319)
+
+### Govindaraju2008
+
+N. K. Govindaraju, B. Lloyd, Y. Dotsenko, B. Smith, J. Manferdelli,
+"High Performance Discrete Fourier Transforms on Graphics Processors,"
+*SC 2008, International Conference for High Performance Computing,
+Networking, Storage and Analysis*, 1–12 (2008).
+[doi:10.1109/SC.2008.5213922](https://doi.org/10.1109/SC.2008.5213922)
 
 ### Graefe1993
 
@@ -766,6 +779,12 @@ values of the fundamental physical constants: 2018," *Rev. Mod. Phys.*
 Historical source for values used before D394.
 The current defining constants are those of BIPM2019, with the CODATA
 2022 vacuum permittivity from Mohr2025.
+
+### Tolmachev2023
+
+D. Tolmachev, "VkFFT-A Performant, Cross-Platform and Open-Source GPU
+FFT Library," *IEEE Access* **11**, 12039–12058 (2023).
+[doi:10.1109/ACCESS.2023.3242240](https://doi.org/10.1109/ACCESS.2023.3242240)
 
 ### Tuckerman1999
 

@@ -1299,6 +1299,31 @@ call), ms a step:
   (4.54 to 5.04 s) and on TIP3P 103k (2.45 to 2.91 s), the search for two
   tables, and by less than 0.1 s on the others.
 
+## Five-pass Gaussian convolution on a device
+
+D[pme-axis-fft] generates five kernels for a mixed-precision orthorhombic
+Gaussian mesh. Z packs adjacent real points into complex pairs. Y transforms
+adjacent half-spectrum slots in a tile. The X pass transforms the remaining
+axis, applies the Gaussian multiplier from the three prepared axis tables,
+and immediately inverts X. Inverse Y and Z produce the real potential for
+the existing force gather. An energy or virial request adds a block reduction
+in X and a final f64 reduction. Charge derivatives use cuFFT.
+
+The real mesh is compact. For even Z, each complex row contains Z/2 + 1
+valid frequencies and occupies a multiple of four complex slots. X, Y and
+Z/2 must each factor into two register transforms of at most 32 points.
+The accepted prime radices are 2, 3, 5, and 7. Register stages embed roots
+rounded from double precision. The exchange and real-fold phases use f32
+device sine and cosine. Unoccupied lanes skip the loads and products but
+reach every block barrier.
+
+The setup log and the manifest's `effective.pme.fft_plans` report the
+backend and reason for each requested evaluation. Each stage of a generated
+plan records its two factors, lines per block, and physical complex pitch
+in that order. Floating-point evaluation order differs between cuFFT and the
+generated transform. The derivation and method references are in
+[Section 5.3](paper/05-electrostatics.md#five-pass-gaussian-convolution-dpme-axis-fft).
+
 ## The axes of the grid
 
 Planned, from the roadmap (#603). TODO: the longest edge as the contiguous axis of the grid, along which the real-to-complex transform runs: cuFFT on an RTX 3090 takes 277 µs for the pair of transforms of 126 × 126 × 270 against 292 for 270 × 126 × 126 (Cellulose; 255 against 275 for 128 × 128 × 256). The spreading, the weights, the tables of D104, the products, and the gathering then take the axes permuted; nothing for a cubic cell (STMV)
