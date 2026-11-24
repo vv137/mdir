@@ -130,7 +130,7 @@ Small exclusion lists follow the towers, one pair per lane. When the list
 fills at least 128 blocks at four pairs per lane, each exclusion block reads
 up to four consecutive block-width slices. The compact group starts after
 at least half the tower blocks, leaving up to four tower blocks per
-exclusion block to overlap its completion (D[towers-excl-tail]).
+exclusion block to overlap its completion (D431).
 The exclusion threads
 orient the endpoints in the same image and use the original direct region
 to subtract its provisional words and conversion vote. They add the

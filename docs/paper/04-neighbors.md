@@ -1380,7 +1380,7 @@ for every atom. On the moving GPU path, short exclusion lists follow the tower s
 one pair per lane. When four pairs per lane fill at least 128 blocks, each
 exclusion block reads up to four block-width slices. These blocks start
 after at least half the tower splits, with up to four tower splits per
-exclusion block left to run (D[towers-excl-tail]). This ordering allows
+exclusion block left to run (D431). This ordering allows
 exclusion and tower work to overlap at the end of the grid. Integer addition
 permits either order. An exclusion block recomputes the blind direct
 contribution with the same cutoff, orientation, coefficients and rounding.
