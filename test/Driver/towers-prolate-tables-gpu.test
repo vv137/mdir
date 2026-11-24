@@ -1,0 +1,49 @@
+# REQUIRES: cuda, hdf5
+# RUN: rm -rf %t && mkdir %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t/
+# RUN: sed -n '/^\[input\]/,$p' %s > %t/pinned.toml
+# RUN: mdir check --json %t/pinned.toml | FileCheck %s --check-prefix=PIN
+# RUN: sed 's/, records=16//' %t/pinned.toml > %t/trial.toml
+# RUN: cd %t && env MDIR_COMPILE_CACHE=on MDIR_COMPILE_CACHE_DIR=%t/cache mdir run trial.toml > towers.log
+# RUN: FileCheck %s --check-prefix=TRIAL < %t/towers.log
+# RUN: sed -e '/^towers_shape/d' -e 's/"TOWERS"/"MATRIX"/' -e 's/towers.h5/matrix.h5/' %t/pinned.toml > %t/matrix.toml
+# RUN: cd %t && mdir run matrix.toml > matrix.log
+# RUN: mdir checkpoint --print=forces %t/towers.h5 > %t/towers.forces
+# RUN: mdir checkpoint --print=forces %t/matrix.h5 > %t/matrix.forces
+# RUN: %python %S/Inputs/compare_forces_rms.py %t/towers.forces %t/matrix.forces 1.4e-5 | FileCheck %s --check-prefix=FORCES
+# PIN: "registers_per_thread": {{[1-9][0-9]*}}
+# PIN: "resident_blocks": {{[1-9][0-9]*}}
+# PIN: "selection": "single candidate"
+# TRIAL: "selection":"setup trial"
+# TRIAL-SAME: "timed_candidates":2
+# FORCES: relative difference {{.*}} ok
+
+[input]
+format = "AMBER"
+topology = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+[output]
+energy_interval = 4
+checkpoint = "towers.h5"
+checkpoint_interval = 4
+[energy]
+cutoff = 8.0
+electrostatics = "PME"
+[pme]
+kernel = "PROLATE"
+grid = [32, 32, 32]
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step = 0.000001
+steps = 4
+seed = 314159
+[ensemble]
+ensemble = "NVE"
+temperature = 0.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target = "GPU"
+precision = "MIXED"
+neighbor_structure = "TOWERS"
+towers_shape = {threads=128, blocks_per_sm=1, panel=64, stripe=64, records=16, split=1, cell_height="FULL"}

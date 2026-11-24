@@ -10,7 +10,7 @@
 #include <cstring>
 
 int main(int argc, char **argv) {
-  if (argc != 2)
+  if (argc != 2 && !(argc == 3 && llvm::StringRef(argv[2]) == "--table-types"))
     return 1;
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::func::FuncDialect,
@@ -20,6 +20,18 @@ int main(int argc, char **argv) {
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(argv[1], &context);
   if (!module)
     return 1;
+  if (argc == 3) {
+    mdir::driver::Program program;
+    program.tables = {{"lj", 9, {}}, {"prolate", 128, {}, 4}};
+    auto result = module->walk([&](mlir::gpu::AllocOp alloc) {
+      auto type = mdir::tool::getTowersTableType(program, alloc.getMemref());
+      if (!type)
+        return mlir::WalkResult::interrupt();
+      llvm::outs() << type << "\n";
+      return mlir::WalkResult::advance();
+    });
+    return result.wasInterrupted();
+  }
   llvm::SmallVector<mlir::Value> captures;
   module->walk(
       [&](mlir::gpu::MemcpyOp copy) { captures.push_back(copy.getDst()); });
