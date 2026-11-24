@@ -1,4 +1,4 @@
-"""Check pinned, cached, and cross-cell TOWERS setup records."""
+"""Check pinned, cached, and AUTO TOWERS split records."""
 
 import json
 import os
@@ -51,7 +51,7 @@ for height in ["HALF", "FULL"]:
 auto = run()
 cells = auto["cells"]
 assert {(c["shape"]["cell_height"], c["shape"]["split"]) for c in cells} == {
-    (height, split) for height in ("FULL", "HALF") for split in (1, 2)
+    ("FULL", split) for split in (1, 2)
 }
 ranked = sorted(cells, key=lambda cell: cell["median_us"])
 assert auto["winner"] == auto["effective"] == ranked[0]["shape"]

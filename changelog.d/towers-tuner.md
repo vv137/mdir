@@ -1,5 +1,5 @@
 ### Execution
 
-TOWERS setup compares feasible cell heights and splits using the moving-step
-force and cooperative finish. The setup log and manifest record each cell's
-time, the winning launch, the margin and the trial cost (D[towers-tuner]).
+TOWERS setup times the moving-step rebuild, force and cooperative finish
+at the height selected by the existing rule. The setup log and manifest
+record the split times, winning launch, margin and trial cost (D[towers-tuner]).

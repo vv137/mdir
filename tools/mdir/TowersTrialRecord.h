@@ -26,7 +26,6 @@ towersTrialRecord(llvm::json::Array cells,
   auto &winner = *cells[best].getAsObject();
   llvm::json::Object record{{"winner_cell", int64_t(best)},
                             {"winner", winner["shape"]},
-                            {"finalists", winner["finalists"]},
                             {"margin_us", nullptr},
                             {"below_noise", nullptr}};
   if (order.size() > 1) {

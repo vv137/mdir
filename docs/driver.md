@@ -395,11 +395,12 @@ For periodic TOWERS preflight, `[execution] towers_shape` accepts an
 inline table such as `{threads = 512, blocks_per_sm = 2, panel = 352,
 stripe = 384, records = 1536, split = 1, cell_height = "HALF"}` on one
 TOML line. The device limits and packed frame determine the available
-tile sizes. AUTO enumerates feasible FULL and HALF heights using perpendicular
-face heights. Within each height and split, setup measures feasible launches
-on a private copy of the initial frame. Five fresh shuffled rounds compare
-the best launches by ordinary steps, including the rebuild, direct force
-(or force and virial for a pressure-coupled run), and cooperative finish.
+tile sizes. AUTO chooses FULL or HALF from the perpendicular face heights, cutoff and
+atom count. At that height, it times feasible launches on a private copy of
+the initial frame, including the rebuild, direct force (or force and virial
+for a pressure-coupled run), and cooperative finish. It repeats the fastest
+five launches in shuffled order, including the best launch of the other split
+if all five share one split. The smallest median wins.
 An explicit field fixes its axis. A continuation takes the checkpoint height.
 The log and the manifest's `effective.towers_shape` record the cell medians
 in microseconds, winning shape, margin over the runner-up, whether the

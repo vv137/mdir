@@ -2,17 +2,24 @@
 
 Recorded at its merge.
 
-TOWERS setup ranks the launch fields within each feasible combination of
-FULL or HALF cell height and split 1 or 2. Explicit fields restrict the
-candidates, and continuation uses the checkpoint height. The private frame
-uses the moving-step rebuild, the production exclusion grid (D431), the
-direct force entry and its cooperative finish. Pressure-coupled runs use
-the fused virial entry. The finish replays only on a failed certificate.
+The existing height rule and launch trial selected the fastest height and
+split on all eight validation systems. Two RTX 4090 timing runs pinned the
+launches in opposite orders, covering four cells per large benchmark and
+two on each small protein. A trial comparing all feasible heights agreed
+with the old cell choice eight times. Setup therefore retains the D428
+height rule and omits the extra cross-height trial.
 
-Five fresh rounds in shuffled order compare the best launches from the
-feasible cells. The smallest median wins. The margin is the difference
-between the two smallest medians. Overlap of their interquartile ranges
-marks the difference as below noise. With only one timed cell both comparison
-fields are null. The setup log and manifest retain the measurements and
-the wall time spent on the trial. A matching cache entry retains the
-original measurements and identifies the choice as cached.
+At the resolved height, each candidate rebuilds a private frame and runs
+the moving force and cooperative finish. Pressure-coupled runs time the
+fused virial. The finish recovers only on a failed certificate. Production
+and trial share the rebuild row and the D431 exclusion grid.
+
+After one measurement per feasible launch, the fastest five receive five
+more measurements in shuffled order. If they all share a split, the fastest
+candidate of the other feasible split also receives five measurements.
+The smallest median wins. Each split's record gives its best median.
+The margin is the difference between the two split medians. Overlapping
+interquartile ranges mark the margin as below noise. For a single split
+both comparison fields are null. The log and manifest retain the timings,
+winning control fields and trial cost. Explicit pins restrict their axes,
+and a continuation uses the saved height.
