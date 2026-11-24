@@ -19,8 +19,11 @@ COULOMB = 138.935
 GRID = reference.GRID
 
 
-def inputs():
-    x, h, q, *_ = next(reference.data())
+def inputs(tilted=False):
+    frames = reference.data()
+    x, h, q, *_ = next(frames)
+    if tilted:
+        x, h, q, *_ = next(frames)
     moduli = np.ones((3, max(GRID)))
     for axis, extent in enumerate(GRID):
         k = np.arange(extent)
@@ -70,7 +73,7 @@ def expected(evaluator=False):
     return 2.5*values if evaluator else values
 
 
-def emit(evaluator=False, mixed=False, force_only=False, listed=False):
+def emit(evaluator=False, mixed=False, force_only=False, listed=False, tilted=False):
     force_element = 'f32' if mixed else 'f64'
     x_type = '!md.field<@atoms, 3 x f64>'
     force_type = f'!md.field<@atoms, 3 x {force_element}>'
@@ -130,13 +133,16 @@ def emit(evaluator=False, mixed=False, force_only=False, listed=False):
                       f'  {value} = mdrt.from_buffer {cast} : {dynamic} to {result_type}'])
         return value, result_type
 
-    x, h, q, moduli = inputs()
+    x, h, q, moduli = inputs(tilted)
     positions, position_type = buffer(x, 'field')
     charges, charge_type = buffer(q, 'field')
     table, table_type = buffer(moduli, 'table')
     lengths = [number(h[i, i]) for i in range(3)]
     cell = name()
-    lines.append(f'  {cell} = md.orthorhombic_cell {", ".join(lengths)}')
+    if tilted:
+        lengths.extend(number(h[i, j]) for i, j in ((1, 0), (2, 0), (2, 1)))
+    kind = 'triclinic' if tilted else 'orthorhombic'
+    lines.append(f'  {cell} = md.{kind}_cell {", ".join(lengths)}')
     energy, force, virial, potential = (name() for _ in range(4))
     if mixed:
         subset = ''

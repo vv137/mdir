@@ -15,11 +15,11 @@ work = Path(directory)
 work.mkdir(parents=True, exist_ok=True)
 
 
-def run(grid, mixed, axis, force_only=False):
+def run(grid, mixed, axis, force_only=False, tilted=False):
     gaussian.GRID = gaussian.reference.GRID = grid
     source = work / "input.mlir"
     with source.open("w") as out, contextlib.redirect_stdout(out):
-        gaussian.emit(mixed=mixed, force_only=force_only)
+        gaussian.emit(mixed=mixed, force_only=force_only, tilted=tilted)
     args = [mdir_opt, str(source), "--md-inline", "--canonicalize",
             "--convert-md-to-md-exec", "--md-exec-assign-algebra",
             "--md-exec-assign-storage=memory=device pme-axis-fft=" + ("on" if axis else "off"),
@@ -59,3 +59,13 @@ for grid in ((15, 7, 10), (8, 9, 12)):
     compare("axis / mixed cuFFT", emitter, baseline, 3e-5)
     np.testing.assert_allclose(force_only, reference[1:10], rtol=0,
                                atol=3e-5 * np.max(np.abs(reference[1:10])))
+
+# The Trp-cage cells are tilted. Check their mesh sizes with the Gaussian
+# split, including the 11-point register stage in the last X transform.
+for grid in ((28, 28, 30), (32, 32, 32), (18, 20, 20), (22, 24, 24)):
+    print("triclinic mesh", grid)
+    emitter = run(grid, True, True, tilted=True)
+    baseline = run(grid, True, False, tilted=True)
+    double = run(grid, False, False, tilted=True)[:19]
+    compare("axis / double cuFFT", emitter, double, 3e-5)
+    compare("axis / mixed cuFFT", emitter, baseline, 3e-5)
