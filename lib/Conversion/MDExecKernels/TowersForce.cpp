@@ -32,7 +32,8 @@ public:
       : NeighborBuildCode(b, term.getLoc()), g(g), term(term),
         correction(correction), output(shape.output),
         yieldIndex(shape.yieldIndex), virialYield(shape.virialYield),
-        exclusions(shape.exclusions), split(shape.split), panel(shape.panel),
+        exclusions(shape.exclusions), split(shape.split),
+        exclusionRows(shape.exclusionRowsPerThread()), panel(shape.panel),
         stripe(shape.stripe), workers(shape.workers), recordCap(shape.records),
         residency(shape.residency), groups(panel / 32),
         packedChargeType(shape.packedChargeType), certified(shape.certified),
@@ -77,7 +78,7 @@ private:
   void flushObservation();
   Value warpDown(Value v, int d);
   void observationEntries();
-  int exclusions, split;
+  int exclusions, split, exclusionRows;
   int64_t towerBlocks() const { return int64_t(g.cells()) * split; }
   Value bonds, inverse, raw, box, exclusionIndex;
   bool excluding = false;
@@ -2035,12 +2036,19 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
   }
   if (fused())
     fusedSum = entry.getArgument(types.size());
-  // Schedule exclusion CTAs first. Keep logical tower and exclusion indices
-  // contiguous for traversal and the per-tower probe.
-  if (exclusions && !singleBlock) {
-    Value prefix = cx(llvm::divideCeil(exclusions, workers));
-    owner = select(cmpi(CmpIPredicate::ult, owner, prefix),
-                   addi(owner, cx(towerBlocks())), subi(owner, prefix));
+  // Begin with tower work to warm the packed positions. Insert the compact
+  // exclusion grid before the last group of towers so both can finish together.
+  if (exclusionRows > 1 && !singleBlock) {
+    int64_t groups = llvm::divideCeil(exclusions, exclusionRows * workers);
+    int64_t first = towerBlocks() - std::min(towerBlocks() / 2, 4 * groups);
+    // Unsigned subtraction also puts blocks before first outside the interval.
+    Value after = subi(owner, cx(first));
+    Value shifted = select(cmpi(CmpIPredicate::ult, after, cx(groups)),
+                           addi(cx(towerBlocks()), after),
+                           subi(owner, cx(groups)));
+    Value middle =
+        cmpi(CmpIPredicate::ult, after, cx(towerBlocks() + groups - first));
+    owner = select(middle, shifted, owner);
   }
   if (observer() || fused())
     startObservation();
@@ -2056,9 +2064,19 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
     auto globalMapping = mapping;
     ifThenElse(cmpi(CmpIPredicate::ult, owner, cx(towerBlocks())), tower, [&] {
       mapping = globalMapping;
-      Value row = addi(muli(subi(owner, cx(towerBlocks())), cx(workers)), tid);
-      ifThen(cmpi(CmpIPredicate::ult, row, cx(exclusions)),
-             [&] { exclusion(row); });
+      int width = exclusionRows * workers;
+      Value first = muli(subi(owner, cx(towerBlocks())), cx(width));
+      Value row = addi(first, tid);
+      if (exclusionRows == 1) {
+        ifThen(cmpi(CmpIPredicate::ult, row, cx(exclusions)),
+               [&] { exclusion(row); });
+      } else {
+        Value end = minui(addi(first, cx(width)), cx(exclusions));
+        forLoop(row, end, cx(workers), {}, [&](Value i, ValueRange) {
+          exclusion(i);
+          return Values{};
+        });
+      }
     });
   };
   if (recovering) {

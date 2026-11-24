@@ -2,7 +2,12 @@
 
 Recorded at its merge.
 
-**Assign the lowest block indices in the TOWERS force grid to excluded pairs.**
-Each exclusion thread retains its input pair. The following blocks cover
-the tower splits in their existing order. The grid size and quantization
-rules are the same, and per-tower probe rows keep their logical tower indices.
+**Compact large GPU exclusion lists and place them among the tower splits.**
+When at least 128 four-row blocks can be filled, each lane processes up to
+four pairs, a block width apart. The grid reserves the smaller of half the
+tower splits and four splits per exclusion block for the final tower work.
+The remaining tower splits precede the exclusion group. The threshold keeps
+parallelism for smaller lists, which retain the tower-first, one-row layout.
+The threshold and spacing are empirical choices for the benchmarked GPU.
+Logical tower indices, fixed-point contributions, and replay rules are
+independent of the physical block order.

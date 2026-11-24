@@ -1,3 +1,3 @@
 ### Changed
 
-- The TOWERS force grid assigns the lowest block indices to exclusion corrections (D[towers-excl-tail], #949).
+- The TOWERS force grid batches large exclusion lists at up to four pairs per lane and schedules them before the final tower splits (D[towers-excl-tail], #949).

@@ -27,7 +27,7 @@ closest periodic image. Setup chooses the height from the system, times
 force-only launches at that height and caches the winner. Programs without
 a force-only region use the derived shape. Moving-step dispatch indexes topology exclusions once per run.
 Moving pressure steps accumulate direct force and virial in one traversal.
-Ordinary steps certify and publish the force in one cooperative launch. The force loop reuses the target within each record and selects zero contributions outside the cutoff when its pair region permits (D430). The force grid assigns exclusions the lowest block indices (D[towers-excl-tail]). TOWERS remains an explicit choice. Double precision is tracked in #937.
+Ordinary steps certify and publish the force in one cooperative launch. The force loop reuses the target within each record and selects zero contributions outside the cutoff when its pair region permits (D430). The force grid compacts large exclusion lists and schedules them among the tower splits (D[towers-excl-tail]). TOWERS remains an explicit choice. Double precision is tracked in #937.
 
 Physical constants (#805): D394 centralizes C/C++
 definitions and derives native and expression coefficients from the exact
