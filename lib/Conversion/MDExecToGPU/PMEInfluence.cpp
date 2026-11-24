@@ -1,4 +1,5 @@
 #include "DevicePME.h"
+#include "mdir/Conversion/PMEC3Spectrum.h"
 
 using namespace mlir;
 using namespace mdir;
@@ -16,48 +17,60 @@ DevicePME::Influence DevicePME::radialInfluence(Value tables, Value pe,
   Value pn = indexCast(idxType, pn_i);
   Value pmabs = math::SqrtOp::create(b, loc, msqr);
   Value px = mulf(pscale, pmabs);
-  Value px2 = mulf(px, px);
   Value ptwo = arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 2.0));
-  Value p2x2 = mulf(ptwo, px2);
-  Value py = subf(p2x2, rone);
-  Value py2 = addf(py, py);
-  Value pvb0 = arith::ConstantIndexOp::create(b, loc, 3);
-  Value pvbase = addi(pe, pvb0);
-  Value psbase = addi(pvbase, pn);
   Value pz = arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 0.0));
-  auto pb1Op = scf::ForOp::create(
-      b, loc, cc1, pn, cc1, ValueRange{pz, pz, pz, pz},
-      [&](OpBuilder &b, Location, Value pr, ValueRange carried) {
-        Value pp1 = carried[0];
-        Value pp2 = carried[1];
-        Value pq1 = carried[2];
-        Value pq2 = carried[3];
-        Value pk = subi(pn, pr);
-        Value pva = addi(pvbase, pk);
-        Value psa = addi(psbase, pk);
-        Value pa = load(tables, {pva});
-        Value pas = load(tables, {psa});
-        Value pm1 = mulf(py2, pp1);
-        Value ps1 = subf(pm1, pp2);
-        Value pn1 = addf(ps1, pa);
-        Value pm2 = mulf(py2, pq1);
-        Value ps2 = subf(pm2, pq2);
-        Value pn2 = addf(ps2, pas);
-        scf::YieldOp::create(b, loc, ValueRange{pn1, pp1, pn2, pq1});
-      });
-  Value pb1 = pb1Op.getResult(0);
-  Value pb2 = pb1Op.getResult(1);
-  Value pc1 = pb1Op.getResult(2);
-  Value pc2 = pb1Op.getResult(3);
-  Value pa0 = load(tables, {pvbase});
-  Value pas0 = load(tables, {psbase});
-  Value pm01 = mulf(py, pb1);
-  Value ps01 = subf(pm01, pb2);
-  Value pchi = addf(ps01, pa0);
-  Value pm02 = mulf(py, pc1);
-  Value ps02 = subf(pm02, pc2);
-  Value pgchi = addf(ps02, pas0);
-  Value pband = cmpf(arith::CmpFPredicate::OLT, px, rone);
+  Value pchi, pgchi, pband;
+  if (order == 4) {
+    Value start = addi(pe, arith::ConstantIndexOp::create(b, loc, 3));
+    Value k = arith::NegFOp::create(b, loc, px);
+    std::tie(pchi, pgchi) =
+        mdir::prolate::emitC3Spectrum(b, loc, k, [&](bool derivative, Value i) {
+          Value at = addi(start, i);
+          return load(tables, {derivative ? addi(at, pn) : at});
+        });
+    pband = arith::ConstantOp::create(b, loc, b.getBoolAttr(true));
+  } else {
+    Value px2 = mulf(px, px);
+    Value p2x2 = mulf(ptwo, px2);
+    Value py = subf(p2x2, rone);
+    Value py2 = addf(py, py);
+    Value pvb0 = arith::ConstantIndexOp::create(b, loc, 3);
+    Value pvbase = addi(pe, pvb0);
+    Value psbase = addi(pvbase, pn);
+    auto pb1Op = scf::ForOp::create(
+        b, loc, cc1, pn, cc1, ValueRange{pz, pz, pz, pz},
+        [&](OpBuilder &b, Location, Value pr, ValueRange carried) {
+          Value pp1 = carried[0];
+          Value pp2 = carried[1];
+          Value pq1 = carried[2];
+          Value pq2 = carried[3];
+          Value pk = subi(pn, pr);
+          Value pva = addi(pvbase, pk);
+          Value psa = addi(psbase, pk);
+          Value pa = load(tables, {pva});
+          Value pas = load(tables, {psa});
+          Value pm1 = mulf(py2, pp1);
+          Value ps1 = subf(pm1, pp2);
+          Value pn1 = addf(ps1, pa);
+          Value pm2 = mulf(py2, pq1);
+          Value ps2 = subf(pm2, pq2);
+          Value pn2 = addf(ps2, pas);
+          scf::YieldOp::create(b, loc, ValueRange{pn1, pp1, pn2, pq1});
+        });
+    Value pb1 = pb1Op.getResult(0);
+    Value pb2 = pb1Op.getResult(1);
+    Value pc1 = pb1Op.getResult(2);
+    Value pc2 = pb1Op.getResult(3);
+    Value pa0 = load(tables, {pvbase});
+    Value pas0 = load(tables, {psbase});
+    Value pm01 = mulf(py, pb1);
+    Value ps01 = subf(pm01, pb2);
+    pchi = addf(ps01, pa0);
+    Value pm02 = mulf(py, pc1);
+    Value ps02 = subf(pm02, pc2);
+    pgchi = addf(ps02, pas0);
+    pband = cmpf(arith::CmpFPredicate::OLT, px, rone);
+  }
   Value pnonzero = cmpf(arith::CmpFPredicate::OGT, msqr, pz);
   Value pin = andi(pband, pnonzero);
   Value psafe = select(pnonzero, msqr, rone);

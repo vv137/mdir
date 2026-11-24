@@ -11,6 +11,7 @@
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/Algebra.h"
+#include "mdir/Driver/ProlateC3.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDExec/StorageSet.h"
 #include "mdir/Dialect/MDExec/Transfers.h"
@@ -1486,7 +1487,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
     scratch.push_back(
         allocate(gridType, (op.getP3m() ? 5 : 3) *
                                    (grid[0] + grid[1] + grid[2]) +
-                               (op.getProlate() ? 1280 : 0)));
+                               (op.getProlate() ? (op.getOrder() == 4 ? prolate::C3DeviceTableWords : 1280) : 0)));
     // Bricks are used only by the non-tiled f32 spreading of order 4, or
     // by the non-tiled prolate spreading. The tiled and fixed-order paths
     // never read them (D108, D282, D301).

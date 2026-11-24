@@ -1,0 +1,39 @@
+--- a/lib/Driver/TermNonbonded.cpp
++++ b/lib/Driver/TermNonbonded.cpp
+@@ -366,8 +366,19 @@
+     Value xr = mul(rq, inverse);
+     if (config.c2) {
+       Value one = constant(1);
+-      Value far = buildProlateSplitting(builder, values.back(), mul(xr, xr),
+-                                        prolate::C2PairCells, 4);
++      // L(t) is exactly a polynomial of degree 39. Evaluate its global
++      // Chebyshev expansion directly so the diagnostic has no cell lookup.
++      Value t = sub(mul(constant(2), mul(xr, xr)), one);
++      Value twice = mul(constant(2), t);
++      Value next = constant(0), after = next;
++      for (int j = static_cast<int>(farSeries.size()) - 1; j >= 1; --j) {
++        Value here = arith::AddFOp::create(builder, loc,
++            sub(mul(twice, next), after), constant(farSeries[j]));
++        after = next;
++        next = here;
++      }
++      Value far = arith::AddFOp::create(builder, loc, sub(mul(t, next), after),
++                                         constant(farSeries[0]));
+       Value direct = sub(div(one, rq), mul(far, inverse));
+       Value inside = arith::CmpFOp::create(builder, loc,
+                                            arith::CmpFPredicate::OLT, xr, one);
+@@ -933,7 +944,13 @@
+     program.tables.push_back(std::move(split));
+   }
+
+-  if (!c2)
++  if (c2) {
++    program.pmeFarSeries = prolate::getChebyshevSeries([&](double y) {
++      double x = std::sqrt((y + 1) / 2);
++      return psi.integral(x) / (x * psi.halfIntegral());
++    }, 0);
++    program.pmeFarSeries.resize(prolate::C2Basis);
++  } else
+     program.pmeFarSeries = prolate::getFarSeries(psi);
+   program.pmeProlate = true;
+   program.pmeBandwidth = c;

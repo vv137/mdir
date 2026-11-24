@@ -1,4 +1,5 @@
 #include "HostPME.h"
+#include "mdir/Conversion/PMEC3Spectrum.h"
 
 using namespace mlir;
 using namespace mdir::kernels;
@@ -351,19 +352,39 @@ void HostPME::emitInfluence() {
     Value p_scale = load(moduli, {p_r4, p_c3});
     Value p_mabs = math::SqrtOp::create(b, loc, msq);
     Value p_x = arith::MulFOp::create(b, loc, p_scale, p_mabs);
-    Value p_x2 = arith::MulFOp::create(b, loc, p_x, p_x);
-    Value p_2x2 = arith::MulFOp::create(b, loc, two, p_x2);
-    Value p_y = arith::SubFOp::create(b, loc, p_2x2, one);
-    Value p_y2 = arith::MulFOp::create(b, loc, two, p_y);
-    Value p_at = arith::AddIOp::create(b, loc, p_r4, p_terms);
-    Value p_ch =
-        func::CallOp::create(b, loc, "mdrt.pme_clenshaw", TypeRange{f64Type},
-                             ValueRange{moduli, p_r4, p_r4, p_terms, p_y2, p_y})
-            .getResult(0);
-    Value p_gch =
-        func::CallOp::create(b, loc, "mdrt.pme_clenshaw", TypeRange{f64Type},
-                             ValueRange{moduli, p_r4, p_at, p_terms, p_y2, p_y})
-            .getResult(0);
+    Value constrained =
+        arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT, p_scale, zero);
+    auto spectrum =
+        scf::IfOp::create(b, loc, TypeRange{f64Type, f64Type}, constrained, true);
+    {
+      OpBuilder::InsertionGuard guard(b);
+      b.setInsertionPointToStart(spectrum.thenBlock());
+      Value k = arith::NegFOp::create(b, loc, p_x);
+      auto [v, slope] = mdir::prolate::emitC3Spectrum(
+          b, loc, k, [&](bool derivative, Value i) {
+            Value col = arith::AddIOp::create(b, loc, p_r4, i);
+            if (derivative)
+              col = arith::AddIOp::create(b, loc, col, p_terms);
+            return load(moduli, {p_r4, col});
+          });
+      scf::YieldOp::create(b, loc, ValueRange{v, slope});
+      b.setInsertionPointToStart(spectrum.elseBlock());
+      Value p_x2 = arith::MulFOp::create(b, loc, p_x, p_x);
+      Value p_2x2 = arith::MulFOp::create(b, loc, two, p_x2);
+      Value p_y = arith::SubFOp::create(b, loc, p_2x2, one);
+      Value p_y2 = arith::MulFOp::create(b, loc, two, p_y);
+      Value p_at = arith::AddIOp::create(b, loc, p_r4, p_terms);
+      Value p_ch = func::CallOp::create(
+                       b, loc, "mdrt.pme_clenshaw", TypeRange{f64Type},
+                       ValueRange{moduli, p_r4, p_r4, p_terms, p_y2, p_y})
+                       .getResult(0);
+      Value p_gch = func::CallOp::create(
+                        b, loc, "mdrt.pme_clenshaw", TypeRange{f64Type},
+                        ValueRange{moduli, p_r4, p_at, p_terms, p_y2, p_y})
+                        .getResult(0);
+      scf::YieldOp::create(b, loc, ValueRange{p_ch, p_gch});
+    }
+    Value p_ch = spectrum.getResult(0), p_gch = spectrum.getResult(1);
     Value p_pm = arith::MulFOp::create(b, loc, prefactor, mods);
     Value p_pmi = arith::MulFOp::create(b, loc, p_pm, inverse);
     Value p_bc0 = arith::MulFOp::create(b, loc, p_pmi, p_ch);

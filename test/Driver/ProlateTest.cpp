@@ -186,6 +186,27 @@ int main() {
                 epsilon, series.size(), worst, atEdge, atEdge / edge, worstSlope,
                 ok ? "ok" : "FAIL");
   }
+  for (double c : {9.5392, 12.024, 14.471}) {
+    Function split(c, true);
+    auto polynomial = split.squaredDistanceSeries();
+    llvm::SmallVector<double> series(polynomial.begin(), polynomial.end());
+    double derivatives[4];
+    for (int i = 0; i < 4; ++i) {
+      derivatives[i] = mdir::md::evaluateChebyshev(series, 1);
+      series = mdir::md::getChebyshevDerivative(series);
+    }
+    // Interior limits of 1/r - L(2(r/rc)^2-1)/rc at rc = 8 angstrom.
+    constexpr double rc = 8;
+    auto [v, d, dd, ddd] = derivatives;
+    double jumps[] = {(1 - v) / rc, (-1 - 4 * d) / (rc * rc),
+                      (2 - 4 * d - 16 * dd) / std::pow(rc, 3),
+                      (-6 - 48 * dd - 64 * ddd) / std::pow(rc, 4)};
+    bool ok = std::abs(jumps[0]) < 1e-14 && std::abs(jumps[1]) < 1e-13 &&
+              std::abs(jumps[2]) < 1e-12 && std::abs(jumps[3]) < 1e-10;
+    failures += !ok;
+    std::printf("C3 cutoff at c %g: %.2e %.2e %.2e %.2e %s\n",
+                c, jumps[0], jumps[1], jumps[2], jumps[3], ok ? "ok" : "FAIL");
+  }
   std::printf("%d failures\n", failures);
   return failures ? 1 : 0;
 }

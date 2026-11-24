@@ -258,12 +258,16 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   // The orders of the control file, with its words.
   // What belongs to the other kernel is refused, with the words of the
   // control file (D266).
+  bool c3 = s.pmeKernel == driver::PMEKernel::ProlateC3;
+  if (c3 && (s.pmeOrder != 4 || s.pmeAlpha != 0 || s.pmeWindowBandwidth != 0 ||
+             s.pmeInfluence != PMEInfluence::SPME))
+    return input("PROLATE_C3 requires order 4 and conflicts with beta, window_bandwidth and explicit influence");
   bool prolate = s.pmeKernel == driver::PMEKernel::Prolate;
   if (prolate && s.pmeAlpha != 0)
     return input("'beta' is for kernel = \"GAUSSIAN\"; the prolate kernel takes 'bandwidth' and 'window_bandwidth'");
   if (prolate && s.pmeInfluence != PMEInfluence::SPME)
     return input("'influence' is for kernel = \"GAUSSIAN\"; the prolate kernel takes 'bandwidth' and 'window_bandwidth'");
-  if (!prolate && (s.pmeBandwidth != 0 || s.pmeWindowBandwidth != 0))
+  if (!prolate && !c3 && (s.pmeBandwidth != 0 || s.pmeWindowBandwidth != 0))
     return input("'bandwidth' and 'window_bandwidth' are for kernel = \"PROLATE\"");
   if (!(s.pmeBandwidth >= 0) || !(s.pmeWindowBandwidth >= 0))
     return input("invalid PME settings");
@@ -325,7 +329,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.pmeKernel = s.pmeKernel;
   c.pmeBandwidth = s.pmeBandwidth;
   c.pmeWindowBandwidth = s.pmeWindowBandwidth;
-  if (prolate && !s.pmeSpacingGiven) c.pmeMaxSpacing = 0.0;
+  if ((prolate || c3) && !s.pmeSpacingGiven) c.pmeMaxSpacing = 0.0;
   c.pmeInfluence = s.pmeInfluence == PMEInfluence::Optimal ? driver::PMEInfluence::Optimal
                    : s.pmeInfluence == PMEInfluence::P3M   ? driver::PMEInfluence::P3M
                                                            : driver::PMEInfluence::SPME;
