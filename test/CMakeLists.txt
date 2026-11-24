@@ -80,6 +80,13 @@ llvm_update_compile_flags(mdir-towers-height-test)
 target_link_libraries(mdir-towers-height-test PRIVATE MDIRDriver)
 target_include_directories(mdir-towers-height-test PRIVATE ${PROJECT_SOURCE_DIR}/tools/mdir)
 
+add_llvm_executable(mdir-towers-trial-inputs-test Driver/TowersTrialInputsTest.cpp
+  ${PROJECT_SOURCE_DIR}/tools/mdir/TowersTrialInputs.cpp)
+llvm_update_compile_flags(mdir-towers-trial-inputs-test)
+target_link_libraries(mdir-towers-trial-inputs-test PRIVATE
+  MDIRDriver MLIRGPUDialect MLIRParser)
+target_include_directories(mdir-towers-trial-inputs-test PRIVATE ${PROJECT_SOURCE_DIR}/tools/mdir)
+
 add_llvm_executable(mdir-device-policy-test Driver/DevicePolicyTest.cpp)
 llvm_update_compile_flags(mdir-device-policy-test)
 target_link_libraries(mdir-device-policy-test PRIVATE MDIRMDExec)
@@ -113,6 +120,7 @@ set(MDIR_TEST_DEPENDS
   mdir-kind-pairs-test
   mdir-device-policy-test
   mdir-towers-height-test
+  mdir-towers-trial-inputs-test
   mdir
   mdir-opt
   mdrt
