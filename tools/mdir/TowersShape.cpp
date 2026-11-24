@@ -4,6 +4,7 @@
 #include "TowersHeight.h"
 #include "TowersSpecialization.h"
 #include "TowersTrial.h"
+#include "TowersTrialRecord.h"
 #include "mdir/Compiler/CompileCache.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
@@ -14,6 +15,7 @@
 #include "llvm/Support/Path.h"
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <map>
@@ -101,7 +103,7 @@ llvm::Error occupancyRefusal(int registers, int blocks, int64_t resident) {
       registers, blocks, static_cast<long long>(resident));
 }
 llvm::Expected<Object> checkRegisters(int device, const TowersShape &shape,
-                                      const std::string &image,
+                                      const std::string &image, bool pressure,
                                       bool require = true) {
   auto lib = llvm::sys::DynamicLibrary::getPermanentLibrary("libcuda.so.1");
 #define LOAD(name, api, symbol)                                                \
@@ -134,7 +136,9 @@ llvm::Expected<Object> checkRegisters(int device, const TowersShape &shape,
   auto cleanup = llvm::scope_exit([&] { unload(module); });
   CUfunction pair;
   int registers, blocks;
-  if (function(&pair, module, "towers_force") != CUDA_SUCCESS ||
+  if (function(&pair, module,
+               pressure ? "towers_force_virial" : "towers_force") !=
+          CUDA_SUCCESS ||
       attribute(&registers, CU_FUNC_ATTRIBUTE_NUM_REGS, pair) != CUDA_SUCCESS ||
       configure(pair, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
                 8 * shape.records) != CUDA_SUCCESS ||
@@ -152,7 +156,7 @@ llvm::Expected<Object> checkRegisters(int device, const TowersShape &shape,
 using Cell = std::array<int, 3>;
 struct FrameSpans {
   int64_t column = 1, plate = 1;
-  int capacity = 32;
+  int capacity = 32, cells = 1;
 };
 
 llvm::Expected<FrameSpans> measureSpans(const System &system, double cutoff,
@@ -200,6 +204,16 @@ llvm::Expected<FrameSpans> measureSpans(const System &system, double cutoff,
     maximum.plate = std::max(maximum.plate, entry.second[1]);
   }
   maximum.capacity = llvm::alignTo(maximum.capacity, 8);
+  // Slot offsets, including the growth pool, are signed 32-bit indices.
+  int64_t limit =
+      (INT32_MAX - int64_t(system.getNumParticles())) / maximum.capacity;
+  for (int bins : dims) {
+    if (maximum.cells > limit / bins) {
+      maximum.cells = 0;
+      break;
+    }
+    maximum.cells *= bins;
+  }
   return maximum;
 }
 
@@ -330,15 +344,22 @@ Object fields(const TowersShape &s, bool provenance) {
 #if MDIR_HAS_CUDA
 llvm::Expected<TowersShape>
 timeCandidates(const Control &control, const System &system,
-               const Limits &limits, int capacity,
+               const Limits &limits, const FrameSpans &spans,
                const mdir::tool::TowersEmitter &emit,
                const std::vector<TowersShape> &candidates, Object &report) {
   using namespace mdir;
   using namespace mdir::tool;
+  auto start = std::chrono::steady_clock::now();
   if (candidates.empty())
     return refusal("no launch satisfies the supplied pins and device limits");
   if (candidates.size() == 1) {
     report["selection"] = "single candidate";
+    report["winner"] = fields(candidates.front(), false);
+    report["cells"] = llvm::json::Array{Object{
+        {"shape", fields(candidates.front(), false)}, {"median_us", nullptr}}};
+    report["margin_us"] = nullptr;
+    report["below_noise"] = nullptr;
+    report["trial_cost_ms"] = 0.0;
     return candidates.front();
   }
   const auto &first = candidates.front();
@@ -348,17 +369,13 @@ timeCandidates(const Control &control, const System &system,
     return firstImage.takeError();
   double cutoff = control.cutoffDistance * units::length;
   int reach = first.cellHeight == "HALF" ? 2 : 1;
-  TowersCell geometry(system);
-  int64_t cells = 1;
-  for (int a = 0; a < 3; ++a)
-    cells *= int64_t(
-        geometry.bins(a, reach, cutoff, control.barostat));
   // Include the compiled pair body, the device identity, the box and the
   // feasible proposals. Frames on the same grid can reuse the winning launch.
   std::string key = compiler::getCacheSalt();
   llvm::raw_string_ostream os(key);
-  os << "\ntowers-v1 " << limits.uuid << " " << limits.driver << " "
-     << compiler::getCacheEntryName(*firstImage, "") << " " << cells << " "
+  os << "\ntowers-moving-split-timing-v2 " << limits.uuid << " "
+     << limits.driver << " " << compiler::getCacheEntryName(*firstImage, "")
+     << " " << spans.cells << " "
      << llvm::format_hex(llvm::bit_cast<uint64_t>(cutoff), 18);
   for (double length : system.box)
     os << " " << llvm::format_hex(llvm::bit_cast<uint64_t>(length), 18);
@@ -373,29 +390,42 @@ timeCandidates(const Control &control, const System &system,
     bool rejected = false;
     auto hit = compiler::readCacheEntry(*cache->opened, "gpu", name, key,
                                         seconds, rejected);
-    unsigned index;
-    if (hit && !hit->getBuffer().getAsInteger(10, index) &&
-        index < candidates.size()) {
-      compiler::touchCacheEntry(*cache->opened, "gpu", name);
-      report["selection"] = "grid cache";
-      return candidates[index];
+    if (hit) {
+      auto data = llvm::json::parse(hit->getBuffer());
+      if (!data)
+        llvm::consumeError(data.takeError());
+      else if (auto *saved = data->getAsObject()) {
+        auto index = saved->getInteger("winner_index");
+        if (index && size_t(*index) < candidates.size() &&
+            saved->getArray("cells")) {
+          compiler::touchCacheEntry(*cache->opened, "gpu", name);
+          double cost = saved->getNumber("trial_cost_ms").value_or(0);
+          for (auto &kv : *saved)
+            report[kv.first] = std::move(kv.second);
+          report["selection"] = "grid cache";
+          report["recorded_trial_cost_ms"] = cost;
+          report["trial_cost_ms"] = 0.0;
+          return candidates[*index];
+        }
+      }
     }
   }
 
   struct Candidate {
     unsigned index;
     std::string image;
-    float initial;
-    std::array<float, 5> repeat{};
+    TowersTiming initial;
+    std::array<TowersTiming, 5> repeat{};
   };
   std::vector<Candidate> trials;
   std::string firstRefusal;
-  auto frame = createTowersTrial(limits.device, system, int(cells), reach,
-                                 capacity, parameters);
+  auto frame = createTowersTrial(limits.device, system, spans.cells, reach,
+                                 spans.capacity, parameters);
   if (!frame)
     return frame.takeError();
-  auto measure = [&](const Candidate &c, float &us) -> llvm::Error {
-    auto result = measureTowersTrial(**frame, c.image, candidates[c.index]);
+  auto measure = [&](const Candidate &c, TowersTiming &us) -> llvm::Error {
+    auto result = measureTowersTrial(**frame, c.image, candidates[c.index],
+                                     control.barostat);
     if (!result)
       return result.takeError();
     us = *result;
@@ -405,7 +435,8 @@ timeCandidates(const Control &control, const System &system,
     auto image = idx == 0 ? std::move(firstImage) : emit(s, nullptr);
     if (!image)
       return image.takeError();
-    auto registers = checkRegisters(limits.device, s, *image, false);
+    auto registers =
+        checkRegisters(limits.device, s, *image, control.barostat, false);
     if (!registers)
       return registers.takeError();
     int blocks = registers->getInteger("resident_blocks").value();
@@ -416,18 +447,52 @@ timeCandidates(const Control &control, const System &system,
             s.blocksPerSM));
       continue;
     }
-    Candidate trial{unsigned(idx), std::move(*image), 0};
+    Candidate trial{unsigned(idx), std::move(*image), {}};
     if (auto err = measure(trial, trial.initial))
       return std::move(err);
     trials.push_back(std::move(trial));
   }
   if (trials.empty())
     return llvm::createStringError("%s", firstRefusal.c_str());
-  report["timed_candidates"] = int64_t(trials.size());
-  std::stable_sort(
-      trials.begin(), trials.end(),
-      [](const auto &a, const auto &b) { return a.initial < b.initial; });
-  trials.resize(std::min<size_t>(5, trials.size()));
+  auto measurement = [&](const TowersTiming &t, const TowersShape &shape,
+                         llvm::StringRef totalKey) {
+    Object record{{"shape", fields(shape, false)},
+                  {"pair_us", t.pairUs},
+                  {"rebuild_us", t.rebuildUs},
+                  {"stripe_retries", t.stripeRetries}};
+    record[totalKey] = t.total();
+    return record;
+  };
+  int64_t timed = trials.size();
+  std::map<int, Object> splits;
+  for (auto &trial : trials) {
+    const auto &shape = candidates[trial.index];
+    auto &group = splits[shape.split];
+    if (!group.getArray("candidates"))
+      group["candidates"] = llvm::json::Array{};
+    group.getArray("candidates")
+        ->push_back(measurement(trial.initial, shape, "initial_us"));
+  }
+  std::stable_sort(trials.begin(), trials.end(),
+                   [](const auto &a, const auto &b) {
+                     return a.initial.total() < b.initial.total();
+                   });
+  // Report a repeated measurement for each feasible split. If the five
+  // fastest all share a split, retain the fastest launch of the other split.
+  size_t keep = std::min<size_t>(5, trials.size());
+  auto split = [&](const Candidate &c) { return candidates[c.index].split; };
+  if (splits.size() == 2 &&
+      llvm::all_of(llvm::ArrayRef(trials).take_front(keep),
+                   [&](const Candidate &c) {
+                     return split(c) == split(trials.front());
+                   })) {
+    auto other = llvm::find_if(trials, [&](const Candidate &c) {
+      return split(c) != split(trials.front());
+    });
+    std::iter_swap(trials.begin() + keep, other);
+    ++keep;
+  }
+  trials.resize(keep);
   std::vector<unsigned> order(trials.size());
   std::iota(order.begin(), order.end(), 0);
   std::mt19937 shuffle(0);
@@ -438,26 +503,51 @@ timeCandidates(const Control &control, const System &system,
         return std::move(err);
   }
   llvm::json::Array finalists;
+  std::map<int, const Candidate *> winners;
   for (auto &c : trials) {
-    llvm::sort(c.repeat);
-    finalists.push_back(Object{{"shape", fields(candidates[c.index], false)},
-                               {"median_us", double(c.repeat[2])}});
+    llvm::stable_sort(c.repeat,
+                      [](auto &a, auto &b) { return a.total() < b.total(); });
+    const auto &shape = candidates[c.index];
+    finalists.push_back(measurement(c.repeat[2], shape, "median_us"));
+    auto &best = winners[shape.split];
+    if (!best || c.repeat[2].total() < best->repeat[2].total())
+      best = &c;
   }
-  auto best = std::min_element(
-      trials.begin(), trials.end(),
-      [](const auto &a, const auto &b) { return a.repeat[2] < b.repeat[2]; });
-  report["finalists"] = std::move(finalists);
-  report["selection"] = "setup trial";
+  llvm::json::Array records;
+  std::vector<std::array<double, 5>> times;
+  std::vector<unsigned> indices;
+  for (auto [split, best] : winners) {
+    auto &group = splits.at(split);
+    for (auto &kv :
+         measurement(best->repeat[2], candidates[best->index], "median_us"))
+      group[kv.first] = std::move(kv.second);
+    records.push_back(std::move(group));
+    auto &totals = times.emplace_back();
+    llvm::transform(best->repeat, totals.begin(),
+                    [](auto &sample) { return sample.total(); });
+    indices.push_back(best->index);
+  }
+  Object summary = towersTrialRecord(std::move(records), std::move(times));
+  unsigned best = indices[*summary.getInteger("winner_cell")];
+  summary["winner_index"] = int64_t(best);
+  summary["finalists"] = std::move(finalists);
+  summary["timed_candidates"] = timed;
+  summary["trial_cost_ms"] = std::chrono::duration<double, std::milli>(
+                                 std::chrono::steady_clock::now() - start)
+                                 .count();
   if (cache && cache->opened) {
     uint64_t bytes = 0;
-    if (auto err =
-            compiler::writeCacheEntry(*cache->opened, "gpu", name, key,
-                                      std::to_string(best->index), 0, &bytes))
+    if (auto err = compiler::writeCacheEntry(
+            *cache->opened, "gpu", name, key,
+            llvm::formatv("{0}", Value(Object(summary))).str(), 0, &bytes))
       report["cache_error"] = llvm::toString(std::move(err));
     else
       compiler::noteCacheStores(*cache->opened, bytes, cache->maxBytes);
   }
-  return candidates[best->index];
+  for (auto &kv : summary)
+    report[kv.first] = std::move(kv.second);
+  report["selection"] = "setup trial";
+  return candidates[best];
 }
 #endif
 } // namespace
@@ -478,7 +568,8 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
                                   : Value("AUTO")},
                 {"source", fields(given, true)}};
   if (*limits && !(**limits).supportsTowers) {
-    constexpr auto reason = "TOWERS requires mma.sync m16n8k8 f16 (sm_75 or newer)";
+    constexpr auto reason =
+        "TOWERS requires mma.sync m16n8k8 f16 (sm_75 or newer)";
     if (control.neighborStructure == NeighborStructure::Towers)
       return refusal(reason);
     result["selection"] = reason;
@@ -487,10 +578,8 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
   if (!checkpointHeight.empty()) {
     if (checkpointHeight != "FULL" && checkpointHeight != "HALF")
       return refusal("checkpoint tower height must be FULL or HALF");
-    if (given.cellHeight.empty()) {
-      given.cellHeight = checkpointHeight.str();
-      (*result.getObject("source"))["cell_height"] = "checkpoint";
-    }
+    given.cellHeight = checkpointHeight.str();
+    (*result.getObject("source"))["cell_height"] = "checkpoint";
   }
   double cutoff = control.cutoffDistance * units::length;
   int reach = given.cellHeight == "HALF" ? 2 : 1;
@@ -498,15 +587,19 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
     reach = selectTowersReach(geometry.heights.data(), cutoff,
                               system.getNumParticles());
   }
+  auto choices = towersCells(geometry.heights.data(), cutoff,
+                             reach == 1 ? "FULL" : "HALF", given.split);
+  llvm::json::Array planned;
+  for (auto cell : choices)
+    planned.push_back(Object{{"cell_height", cell.reach == 1 ? "FULL" : "HALF"},
+                             {"split", cell.split}});
+  result["candidate_cells"] = std::move(planned);
+  if (choices.empty())
+    return refusal("cell height is unsupported for this box and cutoff");
   if (!*limits) {
     if (setup)
       return refusal(
           "a visible CUDA device is required to resolve launch resources");
-    for (int a = 0; a < 3; ++a) {
-      int k = a == 2 ? reach : 1;
-      if (std::floor(geometry.heights[a] * k / cutoff) < 2 * k + 1)
-        return refusal("cell height is unsupported for this box and cutoff");
-    }
     TowersShape partial = given;
     partial.cellHeight = reach == 1 ? "FULL" : "HALF";
     result["effective"] = fields(partial, false);
@@ -516,6 +609,8 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
   auto maximum = measureSpans(system, cutoff, reach, control.barostat);
   if (!maximum)
     return maximum.takeError();
+  if (!maximum->cells)
+    return refusal("tower grid exceeds the signed 32-bit slot range");
   auto candidates = launchCandidates(given, system, reach, *maximum, **limits);
   llvm::json::Array proposals;
   for (const auto &candidate : candidates)
@@ -545,8 +640,10 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
     result["selection"] = "derived shape (no force-only region)";
     result["register_check"] = "no force-only region";
   } else {
+    result["force_kernel"] =
+        control.barostat ? "towers_force_virial" : "towers_force";
     if (setup) {
-      shape = timeCandidates(control, system, **limits, maximum->capacity, *emit,
+      shape = timeCandidates(control, system, **limits, *maximum, *emit,
                              candidates, result);
       if (!shape)
         return shape.takeError();
@@ -557,7 +654,8 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
     auto image = (*emit)(*shape, nullptr);
     if (!image)
       return image.takeError();
-    auto compiled = checkRegisters((*limits)->device, *shape, *image);
+    auto compiled =
+        checkRegisters((*limits)->device, *shape, *image, control.barostat);
     if (!compiled)
       return compiled.takeError();
     result["register_check"] = std::move(*compiled);
@@ -566,7 +664,8 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
     resolved->launch = *shape;
     resolved->capacity = maximum->capacity;
     for (int a = 0; a < 3; ++a)
-      resolved->bins[a] = int(geometry.bins(a, reach, cutoff, control.barostat));
+      resolved->bins[a] =
+          int(geometry.bins(a, reach, cutoff, control.barostat));
   }
 #endif
   result["effective"] = fields(*shape, false);

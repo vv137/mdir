@@ -5,7 +5,10 @@
 #include "mlir/IR/ValueRange.h"
 
 namespace mdir::tool {
-using TowersBuffers = std::vector<std::vector<char>>;
+struct TowersBuffers {
+  std::vector<std::vector<char>> values;
+  size_t fields = 0;
+};
 llvm::Expected<TowersBuffers>
 bindTowersTrialInputs(const driver::Program &program, mlir::ValueRange fields,
                       llvm::ArrayRef<mlir::Value> captures);

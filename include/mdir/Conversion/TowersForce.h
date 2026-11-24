@@ -2,6 +2,7 @@
 #pragma once
 
 #include "mdir/Conversion/TowersBuild.h"
+#include "mdir/Conversion/TowersLaunch.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 
 namespace mdir::kernels {
@@ -17,11 +18,12 @@ struct TowersForceShape {
   bool movingDispatch = false;
   mlir::Type cartesianPositions = {};
   int64_t typeCount = 0;
+  bool emitRetryCounter = false;
 
   // Compact only lists that can fill 128 four-row blocks. Smaller lists
   // need the parallelism of one thread per pair (D431).
   int exclusionRowsPerThread() const {
-    return exclusions >= 128 * 4 * workers ? 4 : 1;
+    return towersExclusionRows(exclusions, workers);
   }
 };
 

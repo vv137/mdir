@@ -25,7 +25,7 @@ int main(int argc, char **argv) {
       [&](mlir::gpu::MemcpyOp copy) { captures.push_back(copy.getDst()); });
   llvm::ExitOnError take;
   auto buffers = take(mdir::tool::bindTowersTrialInputs({}, {}, captures));
-  for (const auto &buffer : buffers) {
+  for (const auto &buffer : buffers.values) {
     uint32_t bits;
     if (buffer.size() != sizeof(bits))
       return 1;

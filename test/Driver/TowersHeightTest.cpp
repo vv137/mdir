@@ -1,5 +1,7 @@
 // Perpendicular heights of rectangular and triclinic frames, in nm.
 #include "TowersHeight.h"
+#include "TowersTrialRecord.h"
+#include "mdir/Conversion/TowersLaunch.h"
 #include "mdir/Driver/Checkpoint.h"
 #include "llvm/Support/Error.h"
 #include <algorithm>
@@ -21,6 +23,40 @@ int main(int argc, char **argv) {
   if (argc == 3)
     return writeCheckpointVariants(argv[1], argv[2]);
 
+  using namespace mdir::tool;
+  const double cube[] = {4, 4, 4}, flat[] = {4, 4, 2.75};
+  for (const auto &height : {"", "FULL", "HALF"})
+    for (int pin : {0, 1, 2}) {
+      auto cells = towersCells(cube, 1, height, pin);
+      if (cells.size() != size_t((*height ? 1 : 2) * (pin ? 1 : 2)))
+        return 1;
+      for (auto cell : cells)
+        if ((pin && pin != cell.split) ||
+            (*height && cell.reach != (std::string(height) == "FULL" ? 1 : 2)))
+          return 1;
+    }
+  auto cells = towersCells(flat, 1, "", 0);
+  if (cells.size() != 2 || cells[0].reach != 2 || cells[1].reach != 2 ||
+      !towersCells(flat, 1, "FULL", 0).empty())
+    return 1;
+
+  auto record = [](float offset) {
+    return towersTrialRecord(
+        llvm::json::Array{llvm::json::Object{{"shape", "a"}},
+                          llvm::json::Object{{"shape", "b"}}},
+        {{5, 1, 4, 2, 3},
+         {5 + offset, 1 + offset, 4 + offset, 2 + offset, 3 + offset}});
+  };
+  for (float offset : {-8.f, 1.f}) {
+    auto comparison = record(offset);
+    if (comparison.getNumber("margin_us") != std::abs(offset) ||
+        comparison.getBoolean("below_noise") != (offset == 1) ||
+        comparison.getString("winner") != (offset == 1 ? "a" : "b"))
+      return 1;
+  }
+  if (mdir::kernels::towersForceBlocks(13, 2, 65535, 128) != 26 + 512 ||
+      mdir::kernels::towersForceBlocks(13, 2, 65536, 128) != 26 + 128)
+    return 1;
   struct Frame {
     const char *name;
     double heights[3], cutoff;

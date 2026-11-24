@@ -2,6 +2,7 @@
 // The geometry is fixed at setup. All positions and memberships are rebuilt.
 #include "mdir/Conversion/TowersBuild.h"
 #include "NeighborBuildCode.h"
+#include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Conversion/TowersForce.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
@@ -544,6 +545,107 @@ void mdir::kernels::emitTowersInsertRow(OpBuilder &b, Location loc,
                                         Value keys, Value local) {
   TowersBuild(b, loc, g).insert(atom, atom, xyzq, binGeometry, lattice, counts,
                                 keys, local);
+}
+
+SmallVector<Value> mdir::kernels::towersMovingBinGeometry(OpBuilder &b,
+                                                          Location loc,
+                                                          TowersLayout g,
+                                                          Value cell) {
+  auto dbl = b.getF64Type();
+  SmallVector<Value> binsInfo;
+  if (g.cells() <= g.atoms) {
+    for (auto [a, bins] : llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
+      Value length =
+          g.triclinic ? createReal(b, loc, dbl, 1)
+                      : vector::ExtractOp::create(b, loc, cell, a).getResult();
+      Value width =
+          arith::DivFOp::create(b, loc, length, createReal(b, loc, dbl, bins));
+      binsInfo.push_back(length);
+      binsInfo.push_back(width);
+      binsInfo.push_back(
+          arith::DivFOp::create(b, loc, createReal(b, loc, dbl, 4), width));
+    }
+  }
+  return binsInfo;
+}
+
+void mdir::kernels::TowersMovingRow::emit(OpBuilder &k, Location loc, Value i,
+                                          ValueRange binsInfo,
+                                          ValueRange fields) const {
+  Type dbl = k.getF64Type(), real = k.getF32Type(), narrow = k.getI32Type(),
+       wide = k.getI64Type();
+  auto axis = [&](int a) { return createIndex(k, loc, a); };
+  if (initialWords) {
+    for (int axisIndex = 0; axisIndex < 3; ++axisIndex)
+      memref::StoreOp::create(k, loc, createZero(k, loc, wide), initialWords,
+                              ValueRange{i, axis(axisIndex)});
+    scf::IfOp::create(
+        k, loc,
+        arith::CmpIOp::create(k, loc, arith::CmpIPredicate::eq, i, axis(0)),
+        [&](OpBuilder &at, Location l) {
+          Value zero = createIndex(at, l, 0);
+          for (auto [dest, slot] :
+               {std::pair{initialState, 0}, std::pair{initialState, 1},
+                std::pair{arrivals, 0}})
+            memref::StoreOp::create(at, l, createZero(at, l, narrow), dest,
+                                    ValueRange{createIndex(at, l, slot)});
+          memref::StoreOp::create(at, l, createZero(at, l, wide), initialFailed,
+                                  ValueRange{zero});
+          scf::YieldOp::create(at, l);
+        });
+  }
+  SmallVector<Value> xyz, lattice;
+  for (int a = 0; a < 3; ++a)
+    xyz.push_back(
+        memref::LoadOp::create(k, loc, positions, ValueRange{i, axis(a)}));
+  auto edge = [&](int a) {
+    return vector::ExtractOp::create(k, loc, cell, a).getResult();
+  };
+  if (g.triclinic) {
+    Value zero = createReal(k, loc, dbl, 0);
+    lattice = {edge(0), zero,    zero,    edge(3), edge(1),
+               zero,    edge(4), edge(5), edge(2)};
+    for (int a = 2; a >= 0; --a) {
+      for (int j = 2; j > a; --j)
+        xyz[a] = arith::SubFOp::create(
+            k, loc, xyz[a],
+            arith::MulFOp::create(k, loc, xyz[j], lattice[3 * j + a]));
+      xyz[a] = arith::DivFOp::create(k, loc, xyz[a], lattice[3 * a + a]);
+    }
+  } else
+    lattice = {edge(0), edge(1), edge(2)};
+  auto first =
+      arith::CmpIOp::create(k, loc, arith::CmpIPredicate::eq, i, axis(0));
+  scf::IfOp::create(k, loc, first, [&](OpBuilder &at, Location l) {
+    for (auto [j, v] : llvm::enumerate(lattice))
+      memref::StoreOp::create(at, l, v, box, ValueRange{createIndex(at, l, j)});
+    if (g.cells() <= g.atoms)
+      emitTowersGeometry(at, l, g, box, status, geometry);
+    scf::YieldOp::create(at, l);
+  });
+  if (!cartesianPositions)
+    for (int a = 0; a < 3; ++a)
+      memref::StoreOp::create(k, loc, xyz[a], raw, ValueRange{axis(a), i});
+  Value chargeValue, typeValue;
+  for (Value from : fields) {
+    Value v = memref::LoadOp::create(k, loc, from, ValueRange{i});
+    if (!chargeValue && v.getType() == real)
+      chargeValue = v;
+    if (!typeValue && v.getType() == narrow)
+      typeValue = v;
+  }
+  if (!chargeValue)
+    chargeValue = createZero(k, loc, real);
+  if (g.cells() > g.atoms)
+    memref::StoreOp::create(k, loc, chargeValue, charge, ValueRange{i});
+  memref::StoreOp::create(k, loc,
+                          typeValue ? typeValue : createZero(k, loc, narrow),
+                          types, ValueRange{i});
+  if (g.cells() <= g.atoms) {
+    xyz.push_back(chargeValue);
+    emitTowersInsertRow(k, loc, g, i, xyz, binsInfo, lattice, counts, keys,
+                        local);
+  }
 }
 
 void mdir::kernels::emitTowersEntry(

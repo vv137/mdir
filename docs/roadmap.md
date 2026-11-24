@@ -23,9 +23,10 @@ TOWERS (#931, D428) rebuilds rectangular and fractional triclinic
 grids and evaluates mixed-precision force, energy and direct virial
 through compiler entries. The certified path checks narrow sums and
 recovers into two limbs before publication. Exclusion replay uses the
-closest periodic image. Setup chooses the height from the system, times
-force-only launches at that height and caches the winner. Programs without
-a force-only region use the derived shape. Moving-step dispatch indexes topology exclusions once per run.
+closest periodic image. Setup retains the system-based height rule. At that height it measures launch
+shapes with the moving force and finish entries and caches the measurements
+(D[towers-tuner]).
+Programs without an eligible direct region use the derived shape. Moving-step dispatch indexes topology exclusions once per run.
 Moving pressure steps accumulate direct force and virial in one traversal.
 Ordinary steps certify and publish the force in one cooperative launch. The force loop reuses the target within each record and selects zero contributions outside the cutoff when its pair region permits (D430). The force grid compacts large exclusion lists and schedules them among the tower splits (D431). TOWERS remains an explicit choice. Double precision is tracked in #937.
 

@@ -395,11 +395,26 @@ For periodic TOWERS preflight, `[execution] towers_shape` accepts an
 inline table such as `{threads = 512, blocks_per_sm = 2, panel = 352,
 stripe = 384, records = 1536, split = 1, cell_height = "HALF"}` on one
 TOML line. The device limits and packed frame determine the available
-tile sizes. AUTO chooses the cell height from the system geometry and atom
-count before resolving the launch parameters. For a triclinic box the
-selector uses perpendicular face heights. Setup times a rebuilt force on a
-private copy of the starting frame. If the program has no force-only pair
-region, setup uses the shape derived from the frame, device limits and control pins. An explicit TOWERS run then rebuilds from the current positions at each direct evaluation and certifies the forces before integration. Pressure steps accumulate direct force and virial together. On force-only steps, eligible moving pair loops select zero words outside the cutoff (D430).
+tile sizes. AUTO chooses FULL or HALF from the perpendicular face heights, cutoff and
+atom count. At that height, it times feasible launches on a private copy of
+the initial frame, including the rebuild, direct force (or force and virial
+for a pressure-coupled run), and cooperative finish. It repeats the fastest
+five launches in shuffled order, including the best launch of the other split
+if all five share one split. For each sample, setup adds the insert/pack
+rebuild time (`rebuild_us`) to the force/finish time (`pair_us`). The smallest
+median sum wins. Candidate records give the initial components. Finalists and
+cells give both components from the sample with the median sum.
+`stripe_retries` counts capacity overflows on one untimed diagnostic traversal
+of the input frame. Each overflow halves the target stripe and retries at the
+same position. More records use eight additional shared-memory bytes per
+record and can reduce the number of resident blocks. AUTO tries the existing
+full and reduced capacities within each split.
+An explicit field fixes its axis. A continuation takes the checkpoint height.
+The log and the manifest's `effective.towers_shape` record the cell medians
+in microseconds, winning shape, margin over the runner-up, whether the
+interquartile ranges overlap, and trial cost in milliseconds. A grid-cache
+hit reuses that record. A single feasible launch skips the trial. A program
+without an eligible pair region uses the derived shape. An explicit TOWERS run then rebuilds from the current positions at each direct evaluation and certifies the forces before integration. Pressure steps accumulate direct force and virial together. On force-only steps, eligible moving pair loops select zero words outside the cutoff (D430).
 For a topology with exclusions, setup allocates eight bytes per atom for the
 physical-pair exclusion index used in pressure evaluation and wide replay.
 The effective manifest and checkpoint reserve `towers_cell_height` for the

@@ -3,8 +3,34 @@
 
 #include <cmath>
 #include <cstdint>
+#include <string_view>
+#include <vector>
 
 namespace mdir::tool {
+struct TowersCellChoice {
+  int reach, split;
+};
+inline std::vector<TowersCellChoice> towersCells(const double heights[3],
+                                                 double cutoff,
+                                                 std::string_view height,
+                                                 int pinnedSplit) {
+  std::vector<TowersCellChoice> cells;
+  for (int reach : {1, 2}) {
+    if (!height.empty() && height != (reach == 1 ? "FULL" : "HALF"))
+      continue;
+    bool feasible = true;
+    for (int a = 0; a < 3; ++a) {
+      int radius = a == 2 ? reach : 1;
+      double bins = std::floor(heights[a] * radius / cutoff);
+      feasible &= bins >= 2 * radius + 1 && bins < INT32_MAX / 4;
+    }
+    if (feasible)
+      for (int split : {1, 2})
+        if (!pinnedSplit || split == pinnedSplit)
+          cells.push_back({reach, split});
+  }
+  return cells;
+}
 inline int selectTowersReach(const double heights[3], double cutoff,
                              int64_t atoms) {
   const double nx = std::floor(heights[0] / cutoff);

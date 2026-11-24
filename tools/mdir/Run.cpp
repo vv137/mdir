@@ -538,7 +538,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   StringRef previousTowersHeight =
       isRestart ? StringRef(checkpoint->towersCellHeight) : StringRef();
   bool usesTowers = control->neighborStructure == NeighborStructure::Towers;
-  std::string towersShapeReport;
+  llvm::json::Value towersShapeReport = nullptr;
   std::string towersCellHeight;
   if (control->towersShapeGiven || usesTowers) {
     auto shape =
@@ -550,8 +550,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     if (usesTowers)
       towersCellHeight =
           shape->getObject("effective")->getString("cell_height")->str();
-    towersShapeReport =
-        llvm::formatv("{0}", llvm::json::Value(std::move(*shape))).str();
+    towersShapeReport = std::move(*shape);
   }
   // The stored forces use the writer's strict pair predicate. Rebuild
   // them at the restored positions if the requested traversal or its
@@ -1209,6 +1208,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         {"buffer_precision", llvm::json::Object{{"state", element(program->state)},
             {"force", element(program->force)}, {"mass", element(program->mass)},
             {"parameter", element(program->parameter)}}}, {"pme", std::move(pme)}};
+    if (towersShapeReport.getAsObject())
+      effective["towers_shape"] = towersShapeReport;
     if (!towersCellHeight.empty())
       effective["towers_cell_height"] = towersCellHeight;
     llvm::json::Object metadata{
@@ -1552,8 +1553,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     output.log.print(
                  "MDIR: the velocities are those of the file of "
                  "coordinates\n");
-  if (!towersShapeReport.empty())
-    output.log.print("MDIR: TOWERS launch shape %s\n", towersShapeReport.c_str());
+  if (towersShapeReport.getAsObject())
+    output.log.print("MDIR: TOWERS launch shape %s\n",
+                     llvm::formatv("{0}", towersShapeReport).str().c_str());
   for (const std::string &note : notes)
     output.log.print("MDIR: note: %s\n", note.c_str());
   // The structure that `AUTO` took, and why (D261); a
