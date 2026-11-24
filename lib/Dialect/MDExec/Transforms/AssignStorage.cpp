@@ -4,6 +4,7 @@
 // form: it gives every field a buffer and makes the loops update the buffers
 // where they are. See docs/ops.md, Section 10.
 
+#include "mdir/Conversion/AxisFFTEmitter.h"
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 
 #include "mdir/Dialect/MD/MDDialect.h"
@@ -129,9 +130,9 @@ struct Scope {
 
 class Assignment {
 public:
-  Assignment(ModuleOp module, bool onDevice, bool narrowTables)
+  Assignment(ModuleOp module, bool onDevice, bool narrowTables, bool axisFFT)
       : module(module), context(module.getContext()), onDevice(onDevice),
-        narrowTables(narrowTables) {}
+        narrowTables(narrowTables), axisFFT(axisFFT) {}
 
   LogicalResult run();
 
@@ -243,6 +244,7 @@ private:
   bool onDevice;
   /// Whether tables are copied to the device in f32.
   bool narrowTables;
+  bool axisFFT;
 
   /// Host buffers that the program was given and has copied to the device.
   /// They take what is copied back.
@@ -1439,6 +1441,12 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   ScatterAttr scatter = op.getScatterAttr();
   bool tiled = scatter && scatter.isTile();
   bool fixedOrder = algebra::getAlgebra(op, 0) == Algebra::FixedOrder;
+  bool pitched = axisFFT && onDevice && gridType.isF32() && !fixedOrder &&
+                 !op.getPotential() && !op.getGatherAll() && !op.getP3m() &&
+                 !op.getProlate() && !op.getDispersion() &&
+                 kernels::supportsAxisFFT(grid);
+  if (pitched)
+    half = grid[0] * grid[1] * kernels::axisFFTPitch(grid[2]);
   SmallVector<Value> scratch = {
       allocate(IntegerType::get(context, 64), points),
       allocate(gridType, points), allocate(gridType, 2 * half)};
@@ -1542,6 +1550,9 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       op.getPotentialAttr(), op.getProlateAttr(), op.getP3mAttr(),
       op.getGatherAllAttr(),
       onDevice ? op.getScatterAttr() : ScatterAttr());
+  if (pitched)
+    created->setAttr("md_exec.fft_pitch", scope.builder.getI64IntegerAttr(
+                                             kernels::axisFFTPitch(grid[2])));
   algebra::carry(op, created);
   mapping.map(op.getEnergy(), created.getEnergy());
   mapping.map(op.getVirial(), created.getVirial());
@@ -2708,7 +2719,7 @@ public:
       getOperation().emitError("derivative checking requires the CPU lowering");
       return signalPassFailure();
     }
-    if (failed(Assignment(getOperation(), memory == "device", tables == "f32")
+    if (failed(Assignment(getOperation(), memory == "device", tables == "f32", axisFFT)
                    .run()))
       signalPassFailure();
     else

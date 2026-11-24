@@ -402,7 +402,9 @@ std::string mdir::compiler::getPipeline(const Control &control,
     os << "md-exec-choose-scatter{" << archOption << getScatterOptions(control)
        << "},";
     // Kernels in f32 look their tables up in f32.
+    const char *axisFFT = std::getenv("MDIR_PME_AXIS_FFT");
     os << "md-exec-assign-storage{memory=device"
+       << (StringRef(axisFFT ? axisFFT : "") == "on" ? " pme-axis-fft=true" : "")
        << (control.precision == Precision::Double ? "" : " tables=f32")
        << "},md-exec-assign-streams,"
        // The batched bodies of models in stages (D293).
