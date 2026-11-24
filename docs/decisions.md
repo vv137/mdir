@@ -727,6 +727,7 @@ specification follow those made with it.
 | [D429](decisions/D429.md) | Place the reciprocal-stream join at its first dependency. | 2026-11-23 |
 | [D430](decisions/D430.md) | Reduce the work per candidate in the moving TOWERS force loop. | 2026-11-23 |
 | [D431](decisions/D431.md) | Compact large GPU exclusion lists and place them among the tower splits. | 2026-11-24 |
+| [D432](decisions/D432.md) | The existing height rule and launch trial selected the fastest height and split on all eight validation systems. | 2026-11-24 |
 <!-- end decisions-table -->
 
 
