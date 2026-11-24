@@ -2020,7 +2020,7 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
   }
   bind(entry.getArguments());
   if (counting)
-    retryCounts = entry.getArguments().back();
+    retryCounts = entry.getArgument(entryTypes.size() - 1);
   records = LLVM::AddressOfOp::create(b, loc, recordsGlobal);
   tid = gpu::ThreadIdOp::create(b, loc, gpu::Dimension::x);
   lane = andi(indexCast(i32, tid), ci(31));
