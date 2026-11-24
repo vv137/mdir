@@ -70,7 +70,7 @@ def expected(evaluator=False):
     return 2.5*values if evaluator else values
 
 
-def emit(evaluator=False, mixed=False, force_only=False):
+def emit(evaluator=False, mixed=False, force_only=False, listed=False):
     force_element = 'f32' if mixed else 'f64'
     x_type = '!md.field<@atoms, 3 x f64>'
     force_type = f'!md.field<@atoms, 3 x {force_element}>'
@@ -139,7 +139,13 @@ def emit(evaluator=False, mixed=False, force_only=False):
     lines.append(f'  {cell} = md.orthorhombic_cell {", ".join(lengths)}')
     energy, force, virial, potential = (name() for _ in range(4))
     if mixed:
-        lines.append(f'  {energy}, {virial}, {force} = md_exec.reciprocal {positions}, {charges}, {cell}, {table} grid({list(GRID)}) order(4) beta({BETA}) coulomb({COULOMB}) : {position_type}, {charge_type}, {table_type} -> f64, vector<9xf64>, {force_type}')
+        subset = ''
+        if listed:
+            indices = name()
+            ids = '!md.field<@atoms, i32>'
+            lines.append(f'  {indices} = md_exec.nonzero {charges} : {charge_type} -> {ids}')
+            subset = f' listed({indices} : {ids}) gather_all'
+        lines.append(f'  {energy}, {virial}, {force} = md_exec.reciprocal {positions}, {charges}, {cell}, {table} grid({list(GRID)}) order(4) beta({BETA}) coulomb({COULOMB}){subset} : {position_type}, {charge_type}, {table_type} -> f64, vector<9xf64>, {force_type}')
     else:
         lines.append(f'  {energy}, {force}, {virial}, {potential} = md.call @evaluate({positions}, {charges}, {cell}, {table}) : ({position_type}, {charge_type}, !md.cell, {table_type}) -> (f64, {position_type}, vector<9xf64>, {charge_type})')
     if not force_only:
@@ -194,9 +200,10 @@ if __name__ == '__main__':
     parser.add_argument('--evaluator', action='store_true',
                         help='check the non-unit-weighted potential evaluator')
     parser.add_argument('--mixed', action='store_true')
+    parser.add_argument('--listed', action='store_true')
     parser.add_argument('--force-only', action='store_true')
     parser.add_argument('--grid', nargs=3, type=int)
     args = parser.parse_args()
     if args.grid:
         GRID = reference.GRID = tuple(args.grid)
-    emit(args.evaluator, args.mixed, args.force_only) if args.command == 'emit' else check(args.evaluator)
+    emit(args.evaluator, args.mixed, args.force_only, args.listed) if args.command == 'emit' else check(args.evaluator)

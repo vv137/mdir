@@ -1444,7 +1444,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   bool pitched = axisFFT && onDevice && gridType.isF32() &&
                  cast<MemRefType>(positions.getType()).getElementType().isF64() &&
                  !fixedOrder &&
-                 !op.getPotential() && !op.getGatherAll() && !op.getP3m() &&
+                 !op.getPotential() && !op.getP3m() &&
                  !op.getProlate() && !op.getDispersion() &&
                  kernels::supportsAxisFFT(grid);
   if (pitched)

@@ -5830,7 +5830,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     fallback = "requires mixed precision";
   else if (tilted || op.getDispersion() || op.getP3m())
     fallback = "requires orthorhombic Gaussian influence";
-  else if (op.getPotential() || op.getGatherAll())
+  else if (op.getPotential())
     fallback = "charge derivative";
   else if (fixedPoint)
     fallback = "fixed-order evaluation";
