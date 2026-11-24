@@ -400,7 +400,15 @@ atom count. At that height, it times feasible launches on a private copy of
 the initial frame, including the rebuild, direct force (or force and virial
 for a pressure-coupled run), and cooperative finish. It repeats the fastest
 five launches in shuffled order, including the best launch of the other split
-if all five share one split. The smallest median wins.
+if all five share one split. For each sample, setup adds the insert/pack
+rebuild time (`rebuild_us`) to the force/finish time (`pair_us`). The smallest
+median sum wins. Candidate records give the initial components. Finalists and
+cells give both components from the sample with the median sum.
+`stripe_retries` counts capacity overflows on one untimed diagnostic traversal
+of the input frame. Each overflow halves the target stripe and retries at the
+same position. More records use eight additional shared-memory bytes per
+record and can reduce the number of resident blocks. AUTO tries the existing
+full and reduced capacities within each split.
 An explicit field fixes its axis. A continuation takes the checkpoint height.
 The log and the manifest's `effective.towers_shape` record the cell medians
 in microseconds, winning shape, margin over the runner-up, whether the

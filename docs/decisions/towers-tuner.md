@@ -17,7 +17,14 @@ and trial share the rebuild row and the D431 exclusion grid.
 After one measurement per feasible launch, the fastest five receive five
 more measurements in shuffled order. If they all share a split, the fastest
 candidate of the other feasible split also receives five measurements.
-The smallest median wins. Each split's record gives its best median.
+CUDA events bracket the rebuild and the pair kernels within each of nine
+consecutive moving steps. The sample is the sum of the two mean intervals.
+The smallest median sum wins. Every timed candidate records both intervals.
+Each finalist and cell reports the two intervals from its median-sum sample.
+An untimed force entry counts stripe halvings across tower blocks on one
+rebuild of the input frame. Full worst-case capacity implies zero retries.
+The search includes reduced record capacities because each record occupies
+eight bytes of shared memory and can affect residency. Each split's record gives its best median.
 The margin is the difference between the two split medians. Overlapping
 interquartile ranges mark the margin as below noise. For a single split
 both comparison fields are null. The log and manifest retain the timings,
