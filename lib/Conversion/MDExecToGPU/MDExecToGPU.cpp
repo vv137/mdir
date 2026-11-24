@@ -5807,16 +5807,47 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                        ValueRange{op.getModuli(), tables, box, beta, coulomb,
                                   k1, k2, k3});
   func::CallOp convolve;
-  if (op.getEnergy().use_empty() && op.getVirial().use_empty())
-    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_scale" + kind),
-                         ValueRange{complex, tables, box, beta, coulomb, k1,
-                                    k2, k3});
-  else
-    convolve = func::CallOp::create(
-        builder, loc, instance("mdrt_gpu_pme_convolve" + tabled),
-        ValueRange{complex, tables, rows, box, beta, coulomb, k1, k2, k3});
-  func::CallOp::create(builder, loc, backward,
-                       ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});
+  bool scaleOnly = op.getEnergy().use_empty() && op.getVirial().use_empty();
+  bool fuse = false;
+#ifdef MDIR_PME_CALLBACK
+  // cuFFT callbacks require every prime factor of each dimension to be < 127.
+  auto supportsCallback = [](int64_t n) {
+    for (int factor = 2; factor < 127 && n > 1; ++factor)
+      while (n % factor == 0)
+        n /= factor;
+    return n == 1;
+  };
+  // A charge derivative can have a separate potential sum at these positions.
+  int64_t frequencies = grid[0] * grid[1] * (grid[2] / 2 + 1);
+  fuse = scaleOnly && narrow && position.isF64() && !tilted &&
+         !op.getDispersion() && frequencies <= UINT32_MAX &&
+         llvm::all_of(grid, supportsCallback) &&
+         llvm::none_of(op->getBlock()->getOps<md_exec::ReciprocalOp>(),
+                       [&](auto sum) {
+                         return sum.getPotential() &&
+                                sum.getPositions() == positions;
+                       });
+#endif
+  if (fuse) {
+    auto inverse = getOrDeclare(
+        "mdrtCudaFFTGaussianBackwardF32",
+        builder.getFunctionType({buffer, buffer, buffer, wide, wide, wide}, {}));
+    inverse->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+    func::CallOp::create(
+        builder, loc, inverse,
+        ValueRange{complex, real, tables, sizes[0], sizes[1], sizes[2]});
+  } else {
+    if (scaleOnly)
+      func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_scale" + kind),
+                           ValueRange{complex, tables, box, beta, coulomb, k1,
+                                      k2, k3});
+    else
+      convolve = func::CallOp::create(
+          builder, loc, instance("mdrt_gpu_pme_convolve" + tabled),
+          ValueRange{complex, tables, rows, box, beta, coulomb, k1, k2, k3});
+    func::CallOp::create(builder, loc, backward,
+                         ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});
+  }
   // The gathering takes the places of the particles from the weights
   // where it has them (D102). With a list, it takes the listed particles,
   // or with `gather_all` every particle, as without a list: there most
@@ -5867,7 +5898,8 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
 static bool isAuditedNotToAllocate(StringRef name) {
   return name == "mdrtCudaFFTForward3D" || name == "mdrtCudaFFTBackward3D" ||
          name == "mdrtCudaFFTForward3DF32" ||
-         name == "mdrtCudaFFTBackward3DF32";
+         name == "mdrtCudaFFTBackward3DF32" ||
+         name == "mdrtCudaFFTGaussianBackwardF32";
 }
 
 bool Lowering::allocates(Operation *op) {

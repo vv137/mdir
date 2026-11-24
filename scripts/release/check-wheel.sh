@@ -63,8 +63,8 @@ for wheel in "$@"; do
   grep -qx "Version: $version" "$tree"/mdir-*.dist-info/METADATA \
     || complain "$name: METADATA does not say Version: $version"
   extra=$(sed -n 's/^Requires-Dist: \(.*\); extra == "cuda"$/\1/p' "$tree"/mdir-*.dist-info/METADATA | sort | tr '\n' ' ')
-  [[ "$extra" == "nvidia-cublas<14,>=13.0 nvidia-cuda-nvcc<14,>=13.0 nvidia-cufft<13,>=12.0 " ]] \
-    || complain "$name: the extra cuda requires '$extra', not nvidia-cublas<14,>=13.0, nvidia-cuda-nvcc<14,>=13.0, and nvidia-cufft<13,>=12.0"
+  [[ "$extra" == "nvidia-cublas<14,>=13.0 nvidia-cuda-nvcc<14,>=13.0 nvidia-cuda-nvrtc<14,>=13.0 nvidia-cufft<13,>=12.0 " ]] \
+    || complain "$name: the extra cuda requires '$extra', not nvidia-cublas<14,>=13.0, nvidia-cuda-nvcc<14,>=13.0, nvidia-cuda-nvrtc<14,>=13.0, and nvidia-cufft<13,>=12.0"
   while IFS= read -r -d '' f; do
     file "$f" | grep -q ELF || continue
     base=$(basename "$f")

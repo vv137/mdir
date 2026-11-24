@@ -509,6 +509,9 @@
                 {
                   "type": "object",
                   "properties": {
+                    "force_only_product_rule": {
+                      "enum": ["inverse_load", "separate"]
+                    },
                     "beta_inverse_angstrom": {
                       "type": "number",
                       "minimum": 0
