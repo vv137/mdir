@@ -5594,7 +5594,9 @@ static void recordFFTPlan(ModuleOp module, md_exec::ReciprocalOp op,
   fields.set("grid", b.getDenseI64ArrayAttr(op.getGrid()));
   if (generated) {
     text("twiddles", "f64-rounded butterfly constants, f32 SFU cross phases");
-    text("influence", "prepared axis tables");
+    text("influence", isTriclinic(op.getCellMutable().get())
+                          ? "axis tables and triclinic Gaussian"
+                          : "prepared axis tables");
     generated.walk([&](gpu::LaunchOp launch) {
       if (auto stage = launch->getAttrOfType<StringAttr>("mdir.fft_stage"))
         fields.set(stage.getValue(), launch->getAttr("mdir.fft_layout"));
@@ -5832,8 +5834,11 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     fallback = "requires mixed precision";
   else if (op.getOrder() != 4)
     fallback = "unqualified spline order";
-  else if (tilted || op.getDispersion() || op.getP3m())
-    fallback = "requires orthorhombic Gaussian influence";
+  else if (op.getDispersion() || op.getP3m())
+    fallback = "requires Gaussian influence";
+  else if (tilted && op->getAttrOfType<StringAttr>("md_exec.fft_requested") !=
+                         builder.getStringAttr("on"))
+    fallback = "unqualified triclinic mesh";
   else if (op.getPotential())
     fallback = "charge derivative";
   else if (fixedPoint)
@@ -5851,6 +5856,8 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     std::string name = "mdrt_gpu_pme_axis_fft_" + std::to_string(grid[0]) +
                        "x" + std::to_string(grid[1]) + "x" +
                        std::to_string(grid[2]);
+    if (tilted)
+      name += "_triclinic";
     if (!forceOnly)
       name += "_observed";
     auto fn = module.lookupSymbol<func::FuncOp>(name);
@@ -5858,14 +5865,19 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
       OpBuilder stages(module.getContext());
       DevicePME emitter(stages, module, position, charge, force, op.getOrder(),
                         32);
-      fn = emitter.emitAxisFFT(name, grid, pitch.getInt(), !forceOnly);
+      fn = emitter.emitAxisFFT(name, grid, pitch.getInt(), !forceOnly, tilted);
     }
     recordFFTPlan(module, op, "supported mixed-radix mesh", fn);
-    if (forceOnly)
-      func::CallOp::create(builder, loc, fn, ValueRange{real, complex, tables});
-    else
-      convolve = func::CallOp::create(
-          builder, loc, fn, ValueRange{real, complex, tables, rows, beta});
+    SmallVector<Value> args{real, complex, tables};
+    if (!forceOnly)
+      args.push_back(rows);
+    if (!forceOnly || tilted)
+      args.push_back(beta);
+    if (tilted)
+      args.push_back(box);
+    auto call = func::CallOp::create(builder, loc, fn, args);
+    if (!forceOnly)
+      convolve = call;
   } else {
     recordFFTPlan(module, op, fallback);
     Type wide = builder.getI64Type();

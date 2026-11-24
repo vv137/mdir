@@ -6,13 +6,17 @@ using namespace mlir;
 using namespace mdir::kernels;
 
 func::FuncOp DevicePME::emitAxisFFT(StringRef name, ArrayRef<int64_t> grid,
-                                    int64_t pitch, bool observed) {
+                                    int64_t pitch, bool observed, bool tilted) {
   auto buffer = globalMem({ShapedType::kDynamic}, realType);
   SmallVector<Type> inputs{buffer, buffer, buffer}, results;
   if (observed) {
-    inputs.append({globalMem({ShapedType::kDynamic}, f64Type), f64Type});
+    inputs.push_back(globalMem({ShapedType::kDynamic}, f64Type));
     results.append({f64Type, VectorType::get({9}, f64Type)});
   }
+  if (observed || tilted)
+    inputs.push_back(f64Type);
+  if (tilted)
+    inputs.push_back(VectorType::get({6}, f64Type));
   auto fn =
       func::FuncOp::create(b, loc, name, b.getFunctionType(inputs, results));
   fn.setPrivate();
@@ -20,17 +24,27 @@ func::FuncOp DevicePME::emitAxisFFT(StringRef name, ArrayRef<int64_t> grid,
   b.setInsertionPointToStart(entry);
   Value tables = entry->getArgument(2);
   Value rows, gauss;
-  if (observed) {
+  if (observed)
     rows = entry->getArgument(3);
-    Value beta = entry->getArgument(4);
+  if (observed || tilted) {
+    Value beta = entry->getArgument(observed ? 4 : 3);
     Value pi2 =
         arith::ConstantOp::create(b, loc, b.getF64FloatAttr(9.869604401089358));
     gauss = convert(realType, divf(pi2, mulf(beta, beta)));
   }
+  SmallVector<Value, 6> inverseBox;
+  if (tilted) {
+    Value box = entry->getArguments().back();
+    auto [xx, yx, yy, zx, zy, zz] =
+        inverseCell(box, extract(box, 0), extract(box, 1), extract(box, 2));
+    for (Value v : {xx, yx, yy, zx, zy, zz})
+      inverseBox.push_back(convert(realType, v));
+  }
   auto pointwise = [&](OpBuilder &, Value x, Value y, Value z, FFTCoefficient c,
                        llvm::MutableArrayRef<Value> sums) {
     SmallVector<Value, 3> wave;
-    Value square, factor;
+    Value square;
+    SmallVector<Value, 3> factors;
     int64_t offset = 0;
     Value indices[] = {x, y, z};
     for (auto [k, length] : llvm::zip(indices, grid)) {
@@ -39,18 +53,31 @@ func::FuncOp DevicePME::emitAxisFFT(StringRef name, ArrayRef<int64_t> grid,
             arith::ConstantIndexOp::create(b, loc, offset + field * length);
         return load(tables, {addi(start, k)});
       };
-      if (observed)
+      if (observed || tilted)
         wave.push_back(component(0));
-      Value s = component(1), d = component(2);
-      square = square ? addf(square, s) : s;
-      factor = factor ? mulf(factor, d) : d;
+      if (!tilted) {
+        Value s = component(1);
+        square = square ? addf(square, s) : s;
+      }
+      factors.push_back(component(2));
       offset += 3 * length;
     }
     Value zero = arith::ConstantOp::create(b, loc, b.getF32FloatAttr(0));
     Value one = arith::ConstantOp::create(b, loc, b.getF32FloatAttr(1));
-    Value origin = cmpf(arith::CmpFPredicate::OEQ, square, zero);
-    Value inverse = divf(one, select(origin, one, square));
-    Value influence = select(origin, zero, mulf(factor, inverse));
+    if (tilted) {
+      auto [i, j, k] = std::make_tuple(wave[0], wave[1], wave[2]);
+      wave[0] = mulf(inverseBox[0], i);
+      wave[1] = addf(mulf(inverseBox[1], i), mulf(inverseBox[2], j));
+      wave[2] = addf(addf(mulf(inverseBox[3], i), mulf(inverseBox[4], j)),
+                     mulf(inverseBox[5], k));
+      for (Value v : wave)
+        square = square ? addf(square, mulf(v, v)) : mulf(v, v);
+    }
+    Influence mode = tilted
+        ? gaussianInfluenceTriclinic(square, zero, one, factors[0], factors[1],
+                                     factors[2], gauss)
+        : gaussianInfluence(square, zero, one, factors[0], factors[1], factors[2]);
+    Value influence = mode.factor;
     if (observed) {
       Value last = arith::ConstantIndexOp::create(b, loc, grid[2] / 2);
       Value first = arith::ConstantIndexOp::create(b, loc, 0);
@@ -60,7 +87,7 @@ func::FuncOp DevicePME::emitAxisFFT(StringRef name, ArrayRef<int64_t> grid,
       Value e = mulf(mulf(select(edge, half, one), influence),
                      addf(mulf(c.re, c.re), mulf(c.im, c.im)));
       sums[0] = addf(sums[0], e);
-      Value h = addf(inverse, gauss);
+      Value h = addf(mode.virialTerm, gauss);
       Value eh = mulf(e, addf(h, h));
       int col = 1;
       for (int i = 0; i < 3; ++i)
