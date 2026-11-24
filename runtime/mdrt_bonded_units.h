@@ -185,7 +185,7 @@ int64_t mdrtBondedBlockCount(int64_t handle) {
 struct BondedCheck {
   size_t n;
   __int128 *sum;
-  long double *magnitude, *termDifference;
+  long double *magnitude, *termDifference, *continuous;
   uint64_t *degree;
 };
 int64_t mdrtBondedCheckBegin(int64_t particles) {
@@ -196,9 +196,10 @@ int64_t mdrtBondedCheckBegin(int64_t particles) {
   c->sum = calloc(3 * particles, sizeof(*c->sum));
   c->magnitude = calloc(3 * particles, sizeof(*c->magnitude));
   c->termDifference = calloc(3 * particles, sizeof(*c->termDifference));
+  c->continuous = calloc(3 * particles, sizeof(*c->continuous));
   c->degree = calloc(particles, sizeof(*c->degree));
-  if (particles &&
-      (!c->sum || !c->magnitude || !c->termDifference || !c->degree))
+  if (particles && (!c->sum || !c->magnitude || !c->termDifference ||
+                    !c->continuous || !c->degree))
     abort();
   return (int64_t)(intptr_t)c;
 }
@@ -230,6 +231,7 @@ void _mlir_ciface_mdrtBondedCheckTerms(int64_t checkHandle, int64_t setHandle,
     ++c->degree[atom];
     for (int a = 0; a < 3; ++a) {
       double f = values[3 * k + a];
+      c->continuous[3 * atom + a] += f;
       double scaled = nearbyint(f * scale);
       if (!(scaled >= -0x1p63 && scaled < 0x1p63))
         abort();
@@ -257,7 +259,8 @@ static void checkBondedResult(int64_t handle, struct MdrtMemref2 *units,
   tuplesToHost(reference, (char *)floating->aligned + floating->offset * bytes,
                n * bytes);
   long double maxError = 0, maxRatio = 0;
-  size_t mismatches = 0, outside = 0;
+  size_t mismatches = 0, outside = 0, active = 0;
+  long double squares = 0;
   uint64_t digest = 14695981039346656037ULL;
   const long double u = single ? 0x1p-24L : 0x1p-53L;
   for (size_t i = 0; i < n; ++i) {
@@ -265,6 +268,11 @@ static void checkBondedResult(int64_t handle, struct MdrtMemref2 *units,
     digest = (digest ^ (uint64_t)words[i]) * 1099511628211ULL;
     uint64_t degree = c->degree[i / 3];
     long double decoded = (long double)words[i] / scale;
+    if (degree) {
+      long double delta = decoded - c->continuous[i];
+      squares += delta * delta;
+      ++active;
+    }
     double published = single ? (double)(float)decoded : (double)decoded;
     double main = single ? ((float *)reference)[i] : ((double *)reference)[i];
     long double difference = fabsl((long double)main - published);
@@ -286,6 +294,9 @@ static void checkBondedResult(int64_t handle, struct MdrtMemref2 *units,
           "%zu outside bound, max error %.9Lg, max ratio %.9Lg, hash %016llx\n",
           n, mismatches, outside, maxError, maxRatio,
           (unsigned long long)digest);
+  fprintf(stderr, "bonded rounding: %zu incident components, Q18 RMS %.9Lg\n",
+          active, active ? sqrtl(squares / active) : 0.L);
+  free(c->continuous);
   free(reference);
   free(words);
   free(c->termDifference);

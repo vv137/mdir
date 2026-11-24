@@ -595,7 +595,7 @@ position and charge loads and cache traffic.
 
 ### Physical evaluation and failure handling
 
-With `MDIR_TUPLE_SUMS=workunits`, the compiler clones the differentiated
+For mixed GPU dynamics with `MDIR_TUPLE_SUMS=workunits`, the compiler clones the differentiated
 tuple region for each interaction family. A block imports positions
 through the current inverse particle permutation, then evaluates terms
 using those positions and the original per-term parameters. Consecutive
@@ -612,8 +612,11 @@ $2^{-19}$ kJ mol⁻¹ nm⁻¹ of absolute rounding error per component. The
 signed range is $[-2^{45},2^{45}-2^{-18}]$ in these units. Conversion and
 both levels of addition are checked. On failure the GPU traps and the
 simulation stops. On a successful evaluation, the integer sum is
-independent of thread order. Slot-zero owners write each energy or virial
-component once, and the reduction reads fixed term indices in binary64.
+independent of thread order. Slot-zero owners add Q32 energy words
+directly to a checked int64 total for each bonded energy output. They
+write virial components once per term for ordered binary64 reduction.
+Frame analysis, derivative programs and double precision use the original
+floating-point evaluator.
 [Derivation and comparison bound](paper/08-gpu.md)
 
 For a controlled comparison, `unpacked` uses one local index per 32-bit
@@ -630,32 +633,53 @@ separate zero-initialized plane to compare just the tuple contributions.
 
 ### Fixed frames, dynamics, and timing
 
-On three evaluations of the same JAC frame, both mixed and deterministic
-execution reproduced every one of 70,674 force components, the energy,
-and all nine virial entries. Three fresh processes compiling the same
-frame with the compile cache disabled also produced identical force,
-energy and virial bytes within each mode. The packed work units alone left 48,261
-components different on the first mixed repeat. The mixed fixed-frame
-entry therefore also orders the remaining reductions while keeping mixed
-per-term arithmetic. The direct integer oracle had zero word mismatches
-on JAC. The largest absolute deviation from the original floating-point
-tuple reductions was 0.000244140625 kJ mol⁻¹ nm⁻¹, within the
-component-specific comparison bound above. On the CMAP input, the
-mixed work-unit interpolation disables implicit contraction. Separate
-evaluation of the original and work-unit slot values supplied the
-per-slot difference in the bound. All 37,866 components passed both
-checks in mixed and deterministic modes. Binary64 checks also passed
-on JAC and the CMAP input.
+The integer oracle compares each bonded force plane with direct evaluation
+of its slots on the same coordinates. It also compares the published plane
+with the original floating-point evaluator using the component bound above.
+Three independently compiled mixed runs on JAC and on the solvated CMAP
+peptide gave identical initial JAC force-word hashes and identical CMAP
+case hashes across runs. Including one deterministic mixed run per input,
+3,776,208 component comparisons had zero integer mismatches and zero
+violations of the floating-point bound. Across the three ordinary JAC
+runs the largest published-force difference was 0.000244140625
+kJ mol⁻¹ nm⁻¹ and the largest ratio to its bound was 0.973. Comparing
+decoded words with the wide sum of the same unrounded slots isolates
+quantization. The largest JAC RMS over incident components of a single
+bonded force plane was $3.412 \times 10^{-6}$ kJ mol⁻¹ nm⁻¹. Other terms
+in a mixed MD step can still use unordered floating-point sums.
 
-For a paired 1,000-step JAC NVE run with a 2 fs step and seed 314159, the
-initial total energy was −58,134.1522 kcal/mol. The original path ended at
-−58,134.4663 and packed work units at −58,136.7972 kcal/mol. The absolute
-relative changes over 2 ps were 5.403 × 10⁻⁶ and 4.550 × 10⁻⁵,
-respectively. Across the 21 saved energies, the largest excursions from
-the start were 5.3502 and 5.7045 kcal/mol. This pair measures one short
-window.
+Two dyadic springs each supplied 1.5 Q32 words of energy. The mixed MD
+evaluator returned four words, while the continuous mixed and double
+evaluators returned three. The isolated mixed evaluation reproduced force,
+potential energy and virial bits over three runs. A force-loss VJP on the
+dipeptide gave identical parameter gradients and Hessian-vector products
+with and without the work-unit request.
 
-Two RTX 4090 jobs ran the four inputs and four strategies in opposite
+The original force-only quantization experiment measured relative endpoint
+changes of $5.403 \times 10^{-6}$ on the default path and
+$4.550 \times 10^{-5}$ with Q18 on JAC over 1,000 steps of 2 fs.
+The largest excursions across 21 saved energies were 5.3502 and
+5.7045 kcal/mol. The fixed-coordinate RMS model describes one force sum.
+Trajectory endpoints also depend on integration, constraints, floating-point
+reduction order and the divergence of subsequent coordinates. One endpoint
+pair cannot isolate a systematic drift due to quantization.
+
+With Q18 forces and Q32 energies, three JAC pairs used the same seed
+within each pair. Each trajectory covered 1,000 mixed NVE steps at 2 fs.
+The maximum excursion uses all 21 saved total energies and is in kcal/mol.
+
+| Seed | Absolute relative endpoint change, default | Q18/Q32 | Maximum excursion, default | Q18/Q32 |
+|---:|---:|---:|---:|---:|
+| 314159 | 3.723e-5 | 8.159e-5 | 5.2172 | 5.2547 |
+| 314160 | 8.451e-5 | 4.064e-5 | 6.0834 | 5.3046 |
+| 314161 | 8.802e-5 | 5.395e-5 | 6.3036 | 5.2982 |
+
+A second default run with seed 314159 gave $7.083 \times 10^{-5}$ and
+5.4613 kcal/mol. The sign of the difference between algorithms changes
+across seeds, and a single algorithm spans much of the same range on a
+same-seed repeat. These short runs do not establish a long-time drift rate.
+
+Before the Q32 energy change, two RTX 4090 jobs ran the four inputs and four strategies in opposite
 orders. A ran JAC, Factor IX, Cellulose and STMV, with the default,
 integer-direct, unpacked and packed strategies on each. B reversed both
 orders. For all 16 system/strategy combinations, the frozen timing

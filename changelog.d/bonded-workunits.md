@@ -1,4 +1,4 @@
-- Add an experimental GPU work-unit kernel for bonded forces, with shared
-  positions, checked signed 64-bit force sums at the moving TOWERS scale,
-  and ordered energy and virial reductions.
+- Add opt-in bonded work units for mixed-precision GPU dynamics with
+  checked Q18 force and Q32 energy sums and an ordered binary64 virial.
+  Double precision and derivative and analysis entries use continuous forces.
   [D[bonded-workunits]](docs/decisions/bonded-workunits.md)

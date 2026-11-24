@@ -18,9 +18,9 @@ struct UnitKernel : NeighborBuildCode {
                                 LLVM::AsmDialectAttr(), ArrayAttr());
     });
   }
-  Value quantize(Value value) {
+  Value quantize(Value value, double scale) {
     Type type = value.getType();
-    Value scaled = mulf(value, createReal(b, loc, type, forceWordScale));
+    Value scaled = mulf(value, createReal(b, loc, type, scale));
     Value fits = andi(
         cmpf(CmpFPredicate::OGE, scaled, createReal(b, loc, type, -0x1p63)),
         cmpf(CmpFPredicate::OLT, scaled, createReal(b, loc, type, 0x1p63)));
@@ -28,10 +28,9 @@ struct UnitKernel : NeighborBuildCode {
     return fptosi(i64,
                   roundeven(select(fits, scaled, createReal(b, loc, type, 0))));
   }
-  void addWord(Value dest, Value atom, int c, Value value) {
-    Value old =
-        memref::AtomicRMWOp::create(b, loc, arith::AtomicRMWKind::addi, value,
-                                    dest, ValueRange{atom, cx(c)});
+  void addWord(Value dest, ValueRange indices, Value value) {
+    Value old = memref::AtomicRMWOp::create(b, loc, arith::AtomicRMWKind::addi,
+                                            value, dest, indices);
     Value sum = addi(old, value);
     failIf(cmpi(CmpIPredicate::slt, andi(xori(sum, old), xori(sum, value)),
                 cl(0)));
@@ -104,13 +103,20 @@ struct UnitKernel : NeighborBuildCode {
             Value row = mode == 3 ? load(liveIds, {slots[j]}) : slots[j];
             for (int c = 0; c < 3; ++c)
               addWord(
-                  dest, row, c,
+                  dest, {row, cx(c)},
                   quantize(convertReal(
-                      b, loc, vector::ExtractOp::create(b, loc, yields[j], c),
-                      getElementTypeOrSelf(op.getOuts()[0].getType()))));
+                               b, loc,
+                               vector::ExtractOp::create(b, loc, yields[j], c),
+                               getElementTypeOrSelf(op.getOuts()[0].getType())),
+                           forceWordScale));
             if (j == 0)
-              for (auto [i, buffer] : llvm::enumerate(outputs))
-                storeElement(b, loc, yields[arity + i], buffer, t);
+              for (auto [i, buffer] : llvm::enumerate(outputs)) {
+                Value v = yields[arity + i];
+                if (isa<FloatType>(v.getType()))
+                  addWord(buffer, {cx(0)}, quantize(v, bondedEnergyScale));
+                else
+                  storeElement(b, loc, v, buffer, t);
+              }
           });
       });
       if (op->hasAttr("mdir.bonded_cmap"))
@@ -123,7 +129,7 @@ struct UnitKernel : NeighborBuildCode {
         ifThen(isOwned(i), [&] {
           Value atom = load(liveIds, {i});
           for (int c = 0; c < 3; ++c)
-            addWord(global, atom, c, load(forces, {i, cx(c)}));
+            addWord(global, {atom, cx(c)}, load(forces, {i, cx(c)}));
         });
       });
     }

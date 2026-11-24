@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-binary, directory = sys.argv[1:]
+binary, directory = sys.argv[1:3]
 work = Path(directory)
 work.mkdir(parents=True, exist_ok=True)
 (work / "atoms.gro").write_text(
@@ -49,18 +49,78 @@ chain 1
 2 AR 1 AR AR 2 0.0 39.948
 3 AR 1 AR AR 3 0.0 39.948
 [ bonds ]
-1 2 1 0.125 {k}
-1 3 1 0.375 {k}
+1 2 1 {r1} {k}
+1 3 1 {r2} {k}
 [ system ]
 Springs
 [ molecules ]
 chain 1
 '''
-for name, k, mode in (("ties", 12 * 2**-18, "workunits-check"),
-                      ("component overflow", 2**48, "workunits"),
-                      ("shared sum overflow", 2**47, "workunits"),
-                      ("global sum overflow", 2**47, "integer-direct")):
-    (work / "atoms.top").write_text(topology.format(k=k))
+def springs(k, stretch):
+    (work / "atoms.top").write_text(topology.format(
+        k=k, r1=0.25 - stretch, r2=0.5 - stretch))
+
+
+if sys.argv[3:] == ["energy"]:
+    import mdir
+    import numpy as np
+
+    # Each spring carries 1.5 energy words. Rounding each term gives 4
+    # words in total, whereas rounding after summation would give 3.
+    springs(3 * 2**-26, 0.125)
+    loaded = mdir.load_gromacs(str(work / "atoms.top"), str(work / "atoms.gro"))
+    system, state = loaded.make_system(), loaded.make_state()
+    system.cutoff, system.pairlist_distance = 0.8, 1.0
+    run = mdir.Execution()
+    run.target = mdir.Target.GPU
+    forces = []
+    for precision, mode, words in (
+        (mdir.Precision.Mixed, "workunits-check", 4),
+        (mdir.Precision.Mixed, "", 3),
+        (mdir.Precision.Double, "workunits-check", 3),
+    ):
+        os.environ["MDIR_TUPLE_SUMS"] = mode
+        run.precision = precision
+        program = mdir.compile(system, state, mdir.Integrator(), mdir.Ensemble(),
+                               run, mdir.Schedule())
+        assert ("bonded-units=" in program.pipeline) == (words == 4)
+        sim = mdir.Simulation(program)
+        sim.run(0, energy=True)
+        first = sim.state()
+        forces.append(np.array(first.forces))
+        if words == 4:
+            for _ in range(2):
+                repeated = mdir.Simulation(program)
+                repeated.run(0, energy=True)
+                at = repeated.state()
+                assert at.forces.tobytes() == first.forces.tobytes()
+                for observable in ("potential", "virial"):
+                    assert at.energies[observable].hex() == first.energies[observable].hex()
+        actual = first.energies["potential"] * 2**32
+        assert abs(actual - words) < 1e-5, (actual, words)
+        print("energy words", words)
+    # The two outer atoms have one slot and the middle of the two bonds
+    # (atom zero in file order) has two. The continuous spring forces are
+    # nonzero even though each rounds to zero on the Q18 grid.
+    delta = np.abs(forces[0] - forces[1])
+    assert delta.max() > 0
+    assert np.all(delta <= np.array([[2], [1], [1]]) * 2**-19)
+    print("mixed bonded force, energy and virial identical across three runs")
+    sys.exit(0)
+
+# A short stretch isolates force overflow: even the largest spring here
+# has energy 2^28 kJ/mol, within the Q32 range.
+for name, k, stretch, mode in (
+        ("ties", 12 * 2**-18, 0.125, "workunits-check"),
+        ("wide component", 2**17, 0.125, "workunits-check"),
+        ("component overflow", 2**61, 2**-16, "workunits"),
+        ("shared sum overflow", 2**60, 2**-16, "workunits"),
+        ("global sum overflow", 2**60, 2**-16, "integer-direct"),
+        ("infinite contribution", 2**130, 0.125, "workunits"),
+        ("NaN contribution", 2**130, 0.0, "workunits"),
+        ("energy term overflow", 2**38, 0.125, "workunits"),
+        ("energy sum overflow", 2**37, 0.125, "workunits")):
+    springs(k, stretch)
     env = dict(os.environ, MDIR_TUPLE_SUMS=mode, MDRT_WAIT="1")
     run = subprocess.run([binary, "run", "run.toml"], cwd=work, env=env,
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)

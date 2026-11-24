@@ -380,9 +380,11 @@ private:
     if (!op->hasAttr("mdir.bonded_force"))
       return false;
     auto out = cast<MemRefType>(op.getOuts()[0].getType());
-    return out.getRank() == 2 && out.getDimSize(1) == 3 &&
-           llvm::none_of(op.getReduce(),
-                         [](Value v) { return v.getType().isInteger(1); });
+    Type slot = op.getKernel().front().getArgument(0).getType();
+    return getElementTypeOrSelf(slot).isF32() && out.getRank() == 2 &&
+           out.getDimSize(1) == 3 && llvm::none_of(op.getReduce(), [](Value v) {
+             return v.getType().isInteger(1);
+           });
   }
   LogicalResult lowerBondedUnits(ArrayRef<md_exec::TupleForOp> loops);
   LogicalResult checkBondedUnits(ArrayRef<md_exec::TupleForOp> loops,
@@ -4738,7 +4740,18 @@ LogicalResult Lowering::lowerBondedUnits(ArrayRef<md_exec::TupleForOp> loops) {
   SmallVector<Value> observerTerms;
   for (unsigned i = 0; i < op.getNumResults(); ++i) {
     auto type = cast<MemRefType>(op.getScratch()[2 * i].getType());
-    Value buffer = createDeviceBuffer(setup, loc, type, {terms});
+    // In mixed MD these scalar sums are the potential and per-term
+    // energies. The strain channels are vectors.
+    bool energy = isa<FloatType>(op.getResult(i).getType());
+    if (energy)
+      type = getDeviceType({ShapedType::kDynamic}, at.getI64Type());
+    Value buffer = createDeviceBuffer(
+        setup, loc, type, {energy ? createIndex(setup, loc, 1) : terms});
+    if (energy)
+      launchOver(at, loc, createIndex(at, loc, 1), [&](OpBuilder &b, Value i) {
+        memref::StoreOp::create(b, loc, createZero(b, loc, b.getI64Type()),
+                                buffer, ValueRange{i});
+      });
     freeDeviceAtEndOfBlock(plan.setup, buffer);
     observerTerms.push_back(buffer);
   }
@@ -4789,13 +4802,31 @@ LogicalResult Lowering::lowerBondedUnits(ArrayRef<md_exec::TupleForOp> loops) {
         body, loc, row, terms, rows, zeros,
         [&](OpBuilder &b, Location, Value t, ValueRange partials) {
           SmallVector<Value> next;
-          for (auto [i, buffer] : llvm::enumerate(observerTerms))
+          for (auto [i, buffer] : llvm::enumerate(observerTerms)) {
+            if (isa<FloatType>(op.getResult(i).getType())) {
+              next.push_back(partials[i]);
+              continue;
+            }
             next.push_back(arith::AddFOp::create(
                 b, loc, partials[i], loadElement(b, loc, buffer, t)));
+          }
           scf::YieldOp::create(b, loc, next);
         });
-    for (auto [i, v] : llvm::enumerate(loop.getResults()))
-      storeElement(body, loc, v, op.getScratch()[2 * i], row);
+    for (auto [i, v] : llvm::enumerate(loop.getResults())) {
+      Value contribution = v;
+      if (isa<FloatType>(v.getType())) {
+        Value zero = createIndex(body, loc, 0);
+        Value word = memref::LoadOp::create(body, loc, observerTerms[i], zero);
+        Value decoded = arith::SIToFPOp::create(body, loc, v.getType(), word);
+        decoded = arith::MulFOp::create(
+            body, loc, decoded,
+            createReal(body, loc, v.getType(), 1.0 / bondedEnergyScale));
+        Value first = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq,
+                                            row, zero);
+        contribution = arith::SelectOp::create(body, loc, first, decoded, v);
+      }
+      storeElement(body, loc, contribution, op.getScratch()[2 * i], row);
+    }
   });
   return finishSums(op, at, op.getReduce(), op.getScratch(), rows);
 }

@@ -56,7 +56,7 @@ if(MDIR_CUDA_FOUND)
   # The products of the bodies of neural stages take cuBLAS
   # (D302).
   target_link_libraries(mdrt_cuda PRIVATE CUDA::cuda_driver CUDA::cufft
-    CUDA::cublas)
+    CUDA::cublas m)
   set_target_properties(mdrt_cuda PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
     C_VISIBILITY_PRESET default

@@ -2,17 +2,30 @@
 
 Recorded at its merge.
 
-Use the moving TOWERS force representation for atom-local bonded work
-units on a GPU. Round each Cartesian force contribution to the nearest
-signed 64-bit word, ties to even, at $2^{18}$ words per kJ mol⁻¹ nm⁻¹.
-Check the conversion, the shared sum and the global sum. A failed check
-ends the run before integration consumes the force. Term energies and
-virials retain their physical units and use ordered binary64 reductions.
+Use checked fixed-point sums for bonded terms in mixed-precision GPU MD.
+Round each force component directly to signed int64, ties to even, at
+$2^{18}$ words per kJ mol⁻¹ nm⁻¹ (D428). A 10,000 kJ mol⁻¹ nm⁻¹ spring force
+exceeds the 8,192 limit of a signed 32-bit intermediate but fits the
+64-bit force range of approximately $3.52 \times 10^{13}$.
+For energy, round each term to signed int64 at $2^{32}$ words per kJ mol⁻¹
+and add the words for each bonded energy output. Its range is
+$[-2^{31},2^{31}-2^{-32}]$ kJ mol⁻¹. Reject nonfinite or out-of-range
+contributions and signed addition overflow before publication. The slot-zero
+owner accumulates energy once and writes the continuous strain derivative
+at the original term index for ordered binary64 virial reduction.
+
+Differentiate the continuous potential at compile time. Quantization is
+a final accumulation choice for dynamics. Frame analysis, JAX VJPs and
+higher derivatives, parameter gradients of force losses, finite-difference
+Hessians and normal modes use continuous forces. Double precision uses
+the existing f64 evaluator. At 50 incident slots, independent uniform Q18
+rounding errors give about $7.8 \times 10^{-6}$ RMS per component, below
+the typical mixed term-evaluation error of $10^{-5}$–$10^{-4}$ but well
+above the roughly $10^{-13}$ double error.
 
 Partition bonds, angles, dihedrals, CMAP and 1–4 pairs in topology order.
-An interval takes only its members' forces. The owner of the first slot
-records energy and virial at the original term index. The experimental
-GPU strategy is selected with `MDIR_TUPLE_SUMS=workunits`. Two
-opposite-order timing runs found longer steps on all four benchmark
-systems, so the existing direct/shared-hash selector remains the default.
+An interval takes only its members' forces. Select the experimental
+path with `MDIR_TUPLE_SUMS=workunits`. Two opposite-order timing runs of
+the original force kernel found longer steps on all four benchmark systems,
+so the existing direct/shared-hash selector remains the default.
 [Implementation and measurements](../device-tuples.md#12-topology-order-work-units)

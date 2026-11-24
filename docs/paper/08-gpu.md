@@ -555,7 +555,10 @@ For a Cartesian component $v_k$ of $-\nabla_i U_t$, the work unit forms
 $z_k=\mathrm{roundEven}(S_F v_k)$ with $S_F=2^{18}$ words per
 kJ mol⁻¹ nm⁻¹. Since the integer endpoints are $-2^{63}$ and $2^{63}-1$,
 the decoded endpoints are $-2^{45}$ and $2^{45}-2^{-18}$ kJ mol⁻¹ nm⁻¹.
-The multiplication by a power of two preserves the significand.
+A spring stretched 0.05 nm at $2 \times 10^5$ kJ mol⁻¹ nm⁻² gives
+10,000 kJ mol⁻¹ nm⁻¹. The bonded kernel converts directly to int64,
+so the 8,192 kJ mol⁻¹ nm⁻¹ positive limit of a Q18 int32 intermediate
+does not restrict this force. Power-of-two scaling preserves the significand.
 An ordered comparison against $[-2^{63},2^{63})$ rejects nonfinite and
 out-of-range scaled inputs before conversion. In binary32 and binary64
 there is no representable value just below the upper limit that rounds to
@@ -567,6 +570,12 @@ cancellation.
 
 For $n$ contributions to one component, the triangle inequality gives
 $\lvert\sum_k z_k/S_F-\sum_k v_k\rvert\le n/(2S_F)$.
+If the rounding residuals are independent and uniform within half a
+quantum, their variances add. The RMS is $\sqrt{n/12}\,2^{-18}$, or
+$7.79 \times 10^{-6}$ kJ mol⁻¹ nm⁻¹ at $n=50$. Typical f32 term-evaluation
+errors of order $10^{-5}$–$10^{-4}$ exceed this estimate. Q18 would
+dominate a double term error of order $10^{-13}$.
+
 For comparison with a floating-point accumulation of the same slot
 values, add $\gamma_n\sum_k\lvert v_k\rvert$, with
 $\gamma_n=n\mathsf u/(1-n\mathsf u)$ for $n\mathsf u<1$, and the rounding
@@ -579,16 +588,31 @@ that path adds $\sum_k |v_k-v_k^0|$ and uses
 $\gamma_n\sum_k |v_k^0|$ for its floating-point sum. The diagnostic
 evaluates both slot expressions on the same coordinates before testing
 the final component. Integration changes subsequent positions
-and hence the values being summed.
+and hence the values being summed. In three paired 2 ps JAC trajectories,
+the absolute relative endpoint changes ranged from $3.72 \times 10^{-5}$ to
+$8.80 \times 10^{-5}$ on the original mixed path and from $4.06 \times 10^{-5}$ to
+$8.16 \times 10^{-5}$ with fixed-point accumulation. The fixed-point change exceeded its paired control
+in one of the three runs.
 
 The work unit imports each distinct position once into block memory.
 Slots outside its interval participate in the coordinate arithmetic. Only
 owned slots add to the three shared integer components of their atoms.
 Each owned component is exported with one checked global integer addition
-per block. The owner of slot zero writes the term energy $U_t$ and the
-virial $\mathsf W_t$ at the original term index. An ordered
-binary64 reduction over these entries avoids introducing force units or a
-second quantization scale into the observables.
+per block. The slot-zero owner rounds $2^{32}U_t$ to the nearest signed
+int64, ties to even. Each energy output sums those words with the same
+overflow check and decodes its total once. Dividing the int64 endpoints
+by $2^{32}$ gives $[-2^{31},2^{31}-2^{-32}]$ kJ mol⁻¹. The absolute
+rounding error is at most $2^{-33}$ kJ mol⁻¹ per term before publication.
+The owner writes the continuous strain derivative $\mathsf W_t$ at the
+original term index. Its ordered binary64 sum preserves the virial used
+for pressure without an additional tensor rounding error.
+
+This accumulation applies only to mixed-precision MD. The compiler takes
+derivatives of the continuous expression before lowering any force to an
+integer. Double precision, frame analysis, JAX VJPs and higher derivatives,
+parameter gradients of force-based losses, and finite-difference Hessians
+or normal modes use the unquantized evaluator. Differencing rounded
+forces would divide a force rounding error by the displacement.
 [Device implementation](../device-tuples.md#12-topology-order-work-units)
 
 **The algebra as a stated fact (D301).** Which of these
