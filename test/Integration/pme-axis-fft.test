@@ -1,4 +1,5 @@
 # REQUIRES: python-api
+# RUN: rm -f %t
 # RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --grid 15 7 10 > %t
 # RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=on" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --implicit-check-not=mdrtCudaFFT
 # RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --force-only --listed --grid 15 7 10 > %t
