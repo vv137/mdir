@@ -388,7 +388,8 @@ product. The rule also applies in deterministic mode.
 
 The callback requires a CUDA 13 or later build with nvcc, at most
 $2^{32}-1$ stored frequencies, and grid dimensions whose prime factors
-are all smaller than 127. Other grids and builds use the separate pass.
+are all smaller than 127. The three rows of each axis table must also fit
+in a 32-bit unsigned offset. Other grids and builds use the separate pass.
 cuFFT loads NVRTC and nvJitLink when it creates the callback plan.
 See the [cuFFT callback requirements](https://docs.nvidia.com/cuda/archive/13.2.0/cufft/index.html#cufft-callback-routines).
 The setup log and the manifest field `effective.pme.force_only_product_rule`

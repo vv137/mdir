@@ -5810,18 +5810,20 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   bool scaleOnly = op.getEnergy().use_empty() && op.getVirial().use_empty();
   bool fuse = false;
 #ifdef MDIR_PME_CALLBACK
-  // cuFFT callbacks require every prime factor of each dimension to be < 127.
+  // The callback indexes three table rows per axis with unsigned offsets.
+  // cuFFT requires every prime factor of each dimension to be < 127.
   auto supportsCallback = [](int64_t n) {
+    if (n > UINT32_MAX / 3)
+      return false;
     for (int factor = 2; factor < 127 && n > 1; ++factor)
       while (n % factor == 0)
         n /= factor;
     return n == 1;
   };
   // A charge derivative can have a separate potential sum at these positions.
-  int64_t frequencies = grid[0] * grid[1] * (grid[2] / 2 + 1);
   fuse = scaleOnly && narrow && position.isF64() && !tilted &&
-         !op.getDispersion() && frequencies <= UINT32_MAX &&
-         llvm::all_of(grid, supportsCallback) &&
+         !op.getDispersion() && llvm::all_of(grid, supportsCallback) &&
+         grid[0] <= UINT32_MAX / grid[1] / (grid[2] / 2 + 1) &&
          llvm::none_of(op->getBlock()->getOps<md_exec::ReciprocalOp>(),
                        [&](auto sum) {
                          return sum.getPotential() &&

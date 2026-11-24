@@ -77,3 +77,16 @@ func.func @unsupported_grid(%x: !pos, %q: !scalar, %cell: !md.cell, %m: !mod,
     : !pos, !scalar, !mod -> f64, vector<9xf64>
   return
 }
+
+// CHECK-LABEL: func.func @wide_grid(
+// CHECK: call @mdrt_gpu_pme_scale
+// CHECK: call @mdrtCudaFFTBackward3DF32
+func.func @wide_grid(%x: !pos, %q: !scalar, %cell: !md.cell, %m: !mod,
+     %f: !frc, %p: !scalar, %s0: memref<?xi64, 1>, %s1: !scalar, %s2: !scalar,
+     %s3: memref<?xf64, 1>, %s4: !scalar, %s5: !scalar) {
+  %e, %w = md_exec.reciprocal %x, %q, %cell, %m outs(%f : !frc)
+    scratch(%s0, %s1, %s2, %s3, %s4, %s5 : memref<?xi64, 1>, !scalar, !scalar, memref<?xf64, 1>, !scalar, !scalar)
+    grid([65536, 65536, 8]) order(4) beta(3.0) coulomb(138.9)
+    : !pos, !scalar, !mod -> f64, vector<9xf64>
+  return
+}
