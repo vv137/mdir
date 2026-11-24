@@ -1,0 +1,2 @@
+# REQUIRES: python-api
+# RUN: %mdir_python %S/Inputs/pme_force_product.py CPU %t
