@@ -62,6 +62,8 @@ for grid in ((15, 7, 10), (8, 9, 12)):
 
 # The Trp-cage cells are tilted. Check their mesh sizes with the Gaussian
 # split, including the 11-point register stage in the last X transform.
+# Keep the Nyquist modes appreciable to exercise the real inverse end planes.
+gaussian.BETA = 6.0
 for grid in ((28, 28, 30), (32, 32, 32), (18, 20, 20), (22, 24, 24)):
     print("triclinic mesh", grid)
     emitter = run(grid, True, True, tilted=True)

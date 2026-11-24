@@ -100,6 +100,14 @@ public:
         else {
           C r = read(spectrum, address(k));
           C s = conjugate(read(spectrum, address(subi(idx(n), k))));
+          // After inverse X and Y, a triclinic multiplier can leave an
+          // imaginary part on the two end planes. A real inverse uses
+          // only their real parts for the packed zero frequency.
+          if (a == 0) {
+            Value end = equal(k, idx(0));
+            r.im = select(end, constant(0), r.im);
+            s.im = select(end, constant(0), s.im);
+          }
           C d = product(phase(k, 2 * n, true), minus(r, s));
           reg.push_back(plus(plus(r, s), timesI(d)));
         }
