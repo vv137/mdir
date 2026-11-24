@@ -66,8 +66,9 @@ struct Dispatch {
     Value dynamic =
         shared ? Value(arith::ConstantIntOp::create(b, loc, shared, 32))
                : Value{};
-    Value blocks = idx(llvm::divideCeil(items, int64_t(block)));
     bool cooperative = name == "towers_finish";
+    Value blocks = idx(cooperative ? towersFinishBlocks(items, block)
+                                   : llvm::divideCeil(items, int64_t(block)));
     if (cooperative) {
       StringRef query = "mdrtCooperativeGridSize";
       if (!module.lookupSymbol(query)) {
@@ -193,24 +194,9 @@ struct Dispatch {
       counts.getDefiningOp()->setAttr("mdir.initialized", init.getUnitAttr());
     }
     auto cell = op.getCellMutable().get();
-    SmallVector<Value> binsInfo;
-    if (g.cells() <= g.atoms) {
-      for (auto [a, bins] : llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
-        Value length =
-            g.triclinic
-                ? createReal(b, loc, dbl, 1)
-                : vector::ExtractOp::create(b, loc, cell, a).getResult();
-        Value width = arith::DivFOp::create(b, loc, length,
-                                            createReal(b, loc, dbl, bins));
-        binsInfo.push_back(length);
-        binsInfo.push_back(width);
-        binsInfo.push_back(
-            arith::DivFOp::create(b, loc, createReal(b, loc, dbl, 4), width));
-      }
-      if (!g.triclinic) {
-        raw = positions;
-      }
-    }
+    auto binsInfo = towersMovingBinGeometry(b, loc, g, cell);
+    if (shape.cartesianPositions)
+      raw = positions;
     Value initialWords, initialState, initialFailed, arrivals;
     if (!op.getOuts().empty()) {
       arrivals = buffer("certificate arrivals", mem({1}, narrow));
@@ -218,80 +204,12 @@ struct Dispatch {
       initialState = buffer("certificate", mem({2}, narrow));
       initialFailed = buffer("failed conversions", mem({1}, wide));
     }
+    TowersMovingRow input{g, bool(shape.cartesianPositions), positions, cell,
+                          raw, box, geometry, status, charge, types, counts,
+                          keys, local, initialWords, initialState, initialFailed,
+                          arrivals};
     rows(b, loc, idx(g.atoms), [&](OpBuilder &k, Value i) {
-      auto axis = [&](int a) { return createIndex(k, loc, a); };
-      if (initialWords) {
-        for (int axisIndex = 0; axisIndex < 3; ++axisIndex)
-          memref::StoreOp::create(k, loc, createZero(k, loc, wide),
-                                  initialWords, ValueRange{i, axis(axisIndex)});
-        scf::IfOp::create(
-            k, loc,
-            arith::CmpIOp::create(k, loc, arith::CmpIPredicate::eq, i, axis(0)),
-            [&](OpBuilder &at, Location l) {
-              Value zero = createIndex(at, l, 0);
-              for (auto [dest, slot] :
-                   {std::pair{initialState, 0}, std::pair{initialState, 1},
-                    std::pair{arrivals, 0}})
-                memref::StoreOp::create(at, l, createZero(at, l, narrow), dest,
-                                        ValueRange{createIndex(at, l, slot)});
-              memref::StoreOp::create(at, l, createZero(at, l, wide),
-                                      initialFailed, ValueRange{zero});
-              scf::YieldOp::create(at, l);
-            });
-      }
-      SmallVector<Value> xyz, lattice;
-      for (int a = 0; a < 3; ++a)
-        xyz.push_back(
-            memref::LoadOp::create(k, loc, positions, ValueRange{i, axis(a)}));
-      auto edge = [&](int a) {
-        return vector::ExtractOp::create(k, loc, cell, a).getResult();
-      };
-      if (g.triclinic) {
-        Value zero = createReal(k, loc, dbl, 0);
-        lattice = {edge(0), zero,    zero,    edge(3), edge(1),
-                   zero,    edge(4), edge(5), edge(2)};
-        for (int a = 2; a >= 0; --a) {
-          for (int j = 2; j > a; --j)
-            xyz[a] = arith::SubFOp::create(
-                k, loc, xyz[a],
-                arith::MulFOp::create(k, loc, xyz[j], lattice[3 * j + a]));
-          xyz[a] = arith::DivFOp::create(k, loc, xyz[a], lattice[3 * a + a]);
-        }
-      } else
-        lattice = {edge(0), edge(1), edge(2)};
-      auto first =
-          arith::CmpIOp::create(k, loc, arith::CmpIPredicate::eq, i, axis(0));
-      scf::IfOp::create(k, loc, first, [&](OpBuilder &at, Location l) {
-        for (auto [j, v] : llvm::enumerate(lattice))
-          memref::StoreOp::create(at, l, v, box,
-                                  ValueRange{createIndex(at, l, j)});
-        if (g.cells() <= g.atoms)
-          emitTowersGeometry(at, l, g, box, status, geometry);
-        scf::YieldOp::create(at, l);
-      });
-      if (!shape.cartesianPositions)
-        for (int a = 0; a < 3; ++a)
-          memref::StoreOp::create(k, loc, xyz[a], raw, ValueRange{axis(a), i});
-      Value chargeValue, typeValue;
-      for (Value from : fields) {
-        Value v = memref::LoadOp::create(k, loc, from, ValueRange{i});
-        if (!chargeValue && v.getType() == real)
-          chargeValue = v;
-        if (!typeValue && v.getType() == narrow)
-          typeValue = v;
-      }
-      if (!chargeValue)
-        chargeValue = createZero(k, loc, real);
-      if (g.cells() > g.atoms)
-        memref::StoreOp::create(k, loc, chargeValue, charge, ValueRange{i});
-      memref::StoreOp::create(
-          k, loc, typeValue ? typeValue : createZero(k, loc, narrow), types,
-          ValueRange{i});
-      if (g.cells() <= g.atoms) {
-        xyz.push_back(chargeValue);
-        emitTowersInsertRow(k, loc, g, i, xyz, binsInfo, lattice, counts, keys,
-                            local);
-      }
+      input.emit(k, loc, i, binsInfo, fields);
     });
     return success();
   }
@@ -437,9 +355,8 @@ LogicalResult Dispatch::run(Value positions) {
     llvm::append_range(args, fields);
     args.push_back(packedTypes);
     llvm::append_range(args, captures);
-    int exclusionWidth = shape.exclusionRowsPerThread() * shape.workers;
-    int64_t blocks = int64_t(g.cells()) * shape.split +
-                     llvm::divideCeil(shape.exclusions, exclusionWidth);
+    int64_t blocks = towersForceBlocks(g.cells(), shape.split, shape.exclusions,
+                                       shape.workers);
     int shared = 8 * shape.records;
     if (force && shape.virialYield >= 0) {
       bool full =

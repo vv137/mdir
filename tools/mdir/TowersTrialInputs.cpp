@@ -116,11 +116,12 @@ mdir::tool::bindTowersTrialInputs(const Program &program, ValueRange fields,
                                    what);
   };
   unsigned firstField = 3 + program.takesForces;
+  buffers.fields = fields.size();
   for (Value field : fields) {
     auto arg = dyn_cast_if_present<BlockArgument>(hostBuffer(field));
     if (!arg || arg.getArgNumber() - firstField >= program.fields.size())
       return fail("particle field");
-    auto &array = buffers.emplace_back();
+    auto &array = buffers.values.emplace_back();
     const auto &input = program.fields[arg.getArgNumber() - firstField];
     for (double x : input.values)
       if (input.isInteger)
@@ -133,7 +134,7 @@ mdir::tool::bindTowersTrialInputs(const Program &program, ValueRange fields,
   for (Value v : captures) {
     if (matchPattern(v, m_Constant()))
       continue;
-    auto &array = buffers.emplace_back();
+    auto &array = buffers.values.emplace_back();
     if (auto global = v.getDefiningOp<memref::GetGlobalOp>()) {
       auto def = SymbolTable::lookupNearestSymbolFrom<memref::GlobalOp>(
           global, global.getNameAttr());

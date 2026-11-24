@@ -1,7 +1,7 @@
-#include "TowersShape.h"
 #include "Commands.h"
 #include "TowersCell.h"
 #include "TowersHeight.h"
+#include "TowersShape.h"
 #include "TowersSpecialization.h"
 #include "TowersTrial.h"
 #include "mdir/Compiler/CompileCache.h"
@@ -101,7 +101,7 @@ llvm::Error occupancyRefusal(int registers, int blocks, int64_t resident) {
       registers, blocks, static_cast<long long>(resident));
 }
 llvm::Expected<Object> checkRegisters(int device, const TowersShape &shape,
-                                      const std::string &image,
+                                      const std::string &image, bool pressure,
                                       bool require = true) {
   auto lib = llvm::sys::DynamicLibrary::getPermanentLibrary("libcuda.so.1");
 #define LOAD(name, api, symbol)                                                \
@@ -134,7 +134,9 @@ llvm::Expected<Object> checkRegisters(int device, const TowersShape &shape,
   auto cleanup = llvm::scope_exit([&] { unload(module); });
   CUfunction pair;
   int registers, blocks;
-  if (function(&pair, module, "towers_force") != CUDA_SUCCESS ||
+  if (function(&pair, module,
+               pressure ? "towers_force_virial" : "towers_force") !=
+          CUDA_SUCCESS ||
       attribute(&registers, CU_FUNC_ATTRIBUTE_NUM_REGS, pair) != CUDA_SUCCESS ||
       configure(pair, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
                 8 * shape.records) != CUDA_SUCCESS ||
@@ -351,13 +353,12 @@ timeCandidates(const Control &control, const System &system,
   TowersCell geometry(system);
   int64_t cells = 1;
   for (int a = 0; a < 3; ++a)
-    cells *= int64_t(
-        geometry.bins(a, reach, cutoff, control.barostat));
+    cells *= int64_t(geometry.bins(a, reach, cutoff, control.barostat));
   // Include the compiled pair body, the device identity, the box and the
   // feasible proposals. Frames on the same grid can reuse the winning launch.
   std::string key = compiler::getCacheSalt();
   llvm::raw_string_ostream os(key);
-  os << "\ntowers-v1 " << limits.uuid << " " << limits.driver << " "
+  os << "\ntowers-moving-v2 " << limits.uuid << " " << limits.driver << " "
      << compiler::getCacheEntryName(*firstImage, "") << " " << cells << " "
      << llvm::format_hex(llvm::bit_cast<uint64_t>(cutoff), 18);
   for (double length : system.box)
@@ -395,7 +396,8 @@ timeCandidates(const Control &control, const System &system,
   if (!frame)
     return frame.takeError();
   auto measure = [&](const Candidate &c, float &us) -> llvm::Error {
-    auto result = measureTowersTrial(**frame, c.image, candidates[c.index]);
+    auto result = measureTowersTrial(**frame, c.image, candidates[c.index],
+                                     control.barostat);
     if (!result)
       return result.takeError();
     us = *result;
@@ -405,7 +407,8 @@ timeCandidates(const Control &control, const System &system,
     auto image = idx == 0 ? std::move(firstImage) : emit(s, nullptr);
     if (!image)
       return image.takeError();
-    auto registers = checkRegisters(limits.device, s, *image, false);
+    auto registers =
+        checkRegisters(limits.device, s, *image, control.barostat, false);
     if (!registers)
       return registers.takeError();
     int blocks = registers->getInteger("resident_blocks").value();
@@ -478,7 +481,8 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
                                   : Value("AUTO")},
                 {"source", fields(given, true)}};
   if (*limits && !(**limits).supportsTowers) {
-    constexpr auto reason = "TOWERS requires mma.sync m16n8k8 f16 (sm_75 or newer)";
+    constexpr auto reason =
+        "TOWERS requires mma.sync m16n8k8 f16 (sm_75 or newer)";
     if (control.neighborStructure == NeighborStructure::Towers)
       return refusal(reason);
     result["selection"] = reason;
@@ -546,8 +550,8 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
     result["register_check"] = "no force-only region";
   } else {
     if (setup) {
-      shape = timeCandidates(control, system, **limits, maximum->capacity, *emit,
-                             candidates, result);
+      shape = timeCandidates(control, system, **limits, maximum->capacity,
+                             *emit, candidates, result);
       if (!shape)
         return shape.takeError();
     } else {
@@ -557,7 +561,8 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
     auto image = (*emit)(*shape, nullptr);
     if (!image)
       return image.takeError();
-    auto compiled = checkRegisters((*limits)->device, *shape, *image);
+    auto compiled =
+        checkRegisters((*limits)->device, *shape, *image, control.barostat);
     if (!compiled)
       return compiled.takeError();
     result["register_check"] = std::move(*compiled);
@@ -566,7 +571,8 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
     resolved->launch = *shape;
     resolved->capacity = maximum->capacity;
     for (int a = 0; a < 3; ++a)
-      resolved->bins[a] = int(geometry.bins(a, reach, cutoff, control.barostat));
+      resolved->bins[a] =
+          int(geometry.bins(a, reach, cutoff, control.barostat));
   }
 #endif
   result["effective"] = fields(*shape, false);

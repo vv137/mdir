@@ -1,6 +1,7 @@
 // Device timing of a private, rebuilt and certified frame at a fixed grid.
 #include "TowersTrial.h"
 #include "TowersCell.h"
+#include "mdir/Conversion/TowersLaunch.h"
 #if MDIR_HAS_CUDA
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/DynamicLibrary.h"
@@ -36,6 +37,8 @@ struct Api {
   ENTRY(cuGraphExecDestroy)
   ENTRY(cuGraphInstantiateWithFlags)
   ENTRY(cuGraphLaunch)
+  ENTRY(cuDeviceGetAttribute)
+  ENTRY(cuLaunchCooperativeKernel)
   ENTRY(cuLaunchKernel)
   ENTRY(cuMemAlloc)
   ENTRY(cuMemFree)
@@ -53,7 +56,8 @@ struct Api {
   ENTRY(cuStreamSynchronize)
 #undef ENTRY
   bool complete() const {
-    return cuCtxSynchronize && cuCtxPopCurrent && cuCtxPushCurrent &&
+    return cuDeviceGetAttribute && cuLaunchCooperativeKernel &&
+           cuCtxSynchronize && cuCtxPopCurrent && cuCtxPushCurrent &&
            cuDevicePrimaryCtxRelease && cuDevicePrimaryCtxRetain &&
            cuEventCreate && cuEventDestroy && cuEventElapsedTime &&
            cuEventRecord && cuEventSynchronize && cuFuncSetAttribute &&
@@ -75,12 +79,16 @@ const Api &api() {
 namespace mdir::tool {
 struct TowersTrial {
   int device, atoms, cells, reach, capacity, exclusions;
+  int sms = 0;
+  size_t fields = 0;
+  bool cartesian = false;
   CUcontext context{};
   CUstream stream{};
   CUevent start{}, stop{};
-  CUdeviceptr raw{}, box{}, charge{}, types{}, map{}, counts{}, rebuildStatus{},
-      geometry{}, keys{}, local{}, packed{}, packedTypes{}, ids{}, inverse{},
-      spans{}, state{}, failed{}, words{}, low{}, high{}, bonds{}, output{};
+  CUdeviceptr positions{}, edgesBox{}, raw{}, box{}, charge{}, types{}, map{},
+      counts{}, rebuildStatus{}, geometry{}, keys{}, local{}, packed{},
+      packedTypes{}, ids{}, inverse{}, spans{}, state{}, failed{}, words{},
+      low{}, high{}, bonds{}, index{}, arrivals{}, virial{}, output{};
   std::vector<CUdeviceptr> allocations, parameters;
   std::string error;
 
@@ -102,13 +110,11 @@ struct TowersTrial {
                          "initialize trial buffer");
   }
   bool setup(const driver::System &system, const TowersBuffers &buffers) {
-    std::vector<double> positions(3ULL * atoms);
     TowersCell cell(system);
-    for (int i = 0; i < atoms; ++i) {
-      auto point = cell.coordinates(&system.positions[size_t(i) * 3]);
-      for (int a = 0; a < 3; ++a)
-        positions[size_t(a) * atoms + i] = point[a];
-    }
+    cartesian = !cell.triclinic && cells <= atoms;
+    std::array<double, 6> cellEdges{system.box[0],  system.box[1],
+                                    system.box[2],  system.tilt[0],
+                                    system.tilt[1], system.tilt[2]};
     std::vector<std::pair<unsigned, unsigned>> pairs;
     if (system.topology)
       pairs = system.topology->exclusions;
@@ -118,17 +124,27 @@ struct TowersTrial {
     llvm::sort(pairs);
     std::vector<int32_t> edges;
     edges.reserve(2 * pairs.size());
+    std::vector<uint32_t> indexRows(2ULL * atoms);
     for (auto [i, j] : pairs) {
+      if (j > i && j - i <= 32)
+        indexRows[2ULL * i] |= 1u << (j - i - 1);
+      indexRows[2ULL * i + 1] = std::max(indexRows[2ULL * i + 1], j);
       edges.push_back(i);
       edges.push_back(j);
     }
     size_t n = atoms, c = cells, slots = c * capacity + n;
     size_t entries = c * (5 + 2 * reach);
-    if (!check(api().cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING),
+    fields = buffers.fields;
+    if (!check(api().cuDeviceGetAttribute(
+                   &sms, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, device),
+               "query cooperative grid size") ||
+        !check(api().cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING),
                "cuStreamCreate") ||
         !check(api().cuEventCreate(&start, 0), "cuEventCreate") ||
         !check(api().cuEventCreate(&stop, 0), "cuEventCreate") ||
-        !allocate(raw, 24 * n, positions.data()) ||
+        !allocate(positions, 24 * n, system.positions.data()) ||
+        !allocate(edgesBox, cell.triclinic ? 48 : 24, cellEdges.data()) ||
+        !allocate(raw, 24 * n) ||
         !allocate(box, cell.triclinic ? 72 : 24,
                   cell.triclinic ? cell.lattice.data() : system.box) ||
         !allocate(map, 4 * entries) || !allocate(counts, 4 * (2 * c + 1)) ||
@@ -141,13 +157,16 @@ struct TowersTrial {
         !allocate(spans, 8 * entries) || !allocate(state, 8) ||
         !allocate(failed, 8) || !allocate(words, 24 * n) ||
         !allocate(low, 24 * n) || !allocate(high, 24 * n) ||
+        !allocate(arrivals, 4) || !allocate(virial, 72) ||
         !allocate(output, 24 * n))
       return false;
-    if (exclusions && !allocate(bonds, 8ULL * exclusions, edges.data()))
+    if (exclusions && (!allocate(bonds, 8ULL * exclusions, edges.data()) ||
+                       !allocate(index, 8 * n, indexRows.data())))
       return false;
-    parameters.resize(buffers.size());
+    parameters.resize(buffers.values.size());
     for (size_t i = 0; i < parameters.size(); ++i)
-      if (!allocate(parameters[i], buffers[i].size(), buffers[i].data()))
+      if (!allocate(parameters[i], buffers.values[i].size(),
+                    buffers.values[i].data()))
         return false;
     return check(api().cuCtxSynchronize(), "initialize trial buffers");
   }
@@ -160,10 +179,10 @@ struct Sample {
   CUmodule module{};
   CUgraph graph{};
   CUgraphExec exec{};
-  enum Kernel { Setup, Insert, Pack, Force, Certify, Replay, Publish, Size };
+  enum Kernel { Setup, Inputs, Insert, Pack, Force, Finish, Size };
   CUfunction fn[Size]{};
   int threads, shared, split;
-  bool capturing = false;
+  bool capturing = false, pressure = false;
   ~Sample() {
     if (capturing)
       api().cuStreamEndCapture(f.stream, &graph);
@@ -183,10 +202,22 @@ struct Sample {
   }
   bool rebuild() {
     int forward = 0;
-    return launch(Insert, (f.atoms + 127) / 128, 128,
-                  {&f.raw, &f.charge, &f.geometry, &f.counts, &f.keys, &f.local,
-                   &forward}) &&
-           launch(Pack, (f.cells + 3) / 4, 128,
+    std::vector<void *> args{
+        &f.positions,     &f.edgesBox, &f.raw,   &f.box,    &f.geometry,
+        &f.rebuildStatus, &f.charge,   &f.types, &f.counts, &f.keys,
+        &f.local,         &f.words,    &f.state, &f.failed, &f.arrivals};
+    for (size_t i = 0; i < f.fields; ++i)
+      args.push_back(&f.parameters[i]);
+    if (!launch(Inputs, (f.atoms + 127) / 128, 128, args))
+      return false;
+    if (f.cells > f.atoms &&
+        (!launch(Setup, (f.cells + 127) / 128, 128,
+                 {&f.map, &f.counts, &f.rebuildStatus, &f.box, &f.geometry}) ||
+         !launch(Insert, (f.atoms + 127) / 128, 128,
+                 {&f.raw, &f.charge, &f.geometry, &f.counts, &f.keys, &f.local,
+                  &forward})))
+      return false;
+    return launch(Pack, (f.cells + 3) / 4, 128,
                   {&f.counts, &f.keys, &f.local, &f.types, &f.map, &f.packed,
                    &f.packedTypes, &f.ids, &f.inverse, &f.spans,
                    &f.rebuildStatus});
@@ -196,33 +227,45 @@ struct Sample {
     std::vector<void *> args{&f.spans, &f.packed, &f.ids, &f.geometry,
                              &f.words, &f.state,  &scale, &f.failed};
     if (f.exclusions)
-      args.insert(args.end(), {&f.bonds, &f.inverse, &f.raw, &f.box});
-    for (auto &ptr : f.parameters)
-      args.push_back(&ptr);
+      args.insert(args.end(),
+                  {&f.bonds, &f.inverse, f.cartesian ? &f.positions : &f.raw,
+                   &f.box, &f.index});
+    for (size_t i = 0; i < f.fields; ++i)
+      args.push_back(&f.parameters[i]);
+    args.push_back(&f.packedTypes);
+    for (size_t i = f.fields; i < f.parameters.size(); ++i)
+      args.push_back(&f.parameters[i]);
     auto n = f.atoms;
     auto blocks =
-        int64_t(f.cells) * split + (f.exclusions + threads - 1) / threads;
-    if (!rebuild() ||
-        !f.check(api().cuMemsetD8Async(f.words, 0, 24ULL * n, f.stream),
-                 "clear force") ||
-        !f.check(api().cuMemsetD8Async(f.state, 0, 8, f.stream),
-                 "clear status") ||
-        !f.check(api().cuMemsetD8Async(f.failed, 0, 8, f.stream),
-                 "clear conversions") ||
-        !launch(Force, blocks, threads, args, shared) ||
-        !launch(Certify, (n + 127) / 128, 128, {&f.words, &f.failed, &f.state}))
+        kernels::towersForceBlocks(f.cells, split, f.exclusions, threads);
+    if (!rebuild())
       return false;
+    if (pressure) {
+      args.push_back(&f.virial);
+      if (!f.check(api().cuMemsetD8Async(f.virial, 0, 72, f.stream),
+                   "clear virial"))
+        return false;
+    }
+    if (!launch(Force, blocks, threads, args, shared))
+      return false;
+    if (pressure)
+      args.pop_back();
     args[4] = &f.low;
-    args.push_back(&f.high);
-    return launch(Replay, 1, threads, args, shared) &&
-           launch(Publish, (n + 127) / 128, 128,
-                  {&f.state, &f.words, &f.low, &f.output});
+    args.insert(args.end(), {&f.high, &f.words, &f.arrivals, &f.output});
+    int grid =
+        std::min<int64_t>(f.sms, kernels::towersFinishBlocks(n, threads));
+    return f.check(api().cuLaunchCooperativeKernel(fn[Finish], grid, 1, 1,
+                                                   threads, 1, 1, shared,
+                                                   f.stream, args.data()),
+                   "launch towers_finish");
   }
   bool measure(const void *image, float &us) {
-    static const char *names[] = {"towers_setup",   "towers_insert",
-                                  "towers_pack",    "towers_force",
-                                  "towers_certify", "towers_recover_once",
-                                  "towers_publish"};
+    const char *names[] = {"towers_setup",
+                           "towers_trial_inputs",
+                           "towers_insert",
+                           "towers_pack",
+                           pressure ? "towers_force_virial" : "towers_force",
+                           "towers_finish"};
     if (!f.check(api().cuModuleLoadData(&module, image),
                  "load trial specialization"))
       return false;
@@ -230,7 +273,7 @@ struct Sample {
       if (!f.check(api().cuModuleGetFunction(&fn[k], module, names[k]),
                    names[k]))
         return false;
-    for (auto k : {Force, Replay})
+    for (auto k : {Force, Finish})
       if (!f.check(api().cuFuncSetAttribute(
                        fn[k], CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
                        shared),
@@ -312,7 +355,8 @@ llvm::Expected<TrialFrame> createTowersTrial(int device,
 
 llvm::Expected<float> measureTowersTrial(TowersTrial &f,
                                          const std::string &image,
-                                         const driver::TowersShape &shape) {
+                                         const driver::TowersShape &shape,
+                                         bool pressure) {
   if (!f.check(api().cuCtxPushCurrent(f.context), "enter trial context"))
     return llvm::createStringError("towers_shape: %s", f.error.c_str());
   auto restore = llvm::scope_exit([] {
@@ -320,6 +364,7 @@ llvm::Expected<float> measureTowersTrial(TowersTrial &f,
     api().cuCtxPopCurrent(&old);
   });
   Sample sample{f};
+  sample.pressure = pressure;
   sample.threads = shape.threads;
   sample.shared = 8 * shape.records;
   sample.split = shape.split;

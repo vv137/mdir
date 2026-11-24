@@ -14,5 +14,6 @@ llvm::Expected<TrialFrame> createTowersTrial(int device,
                                              const TowersBuffers &parameters);
 llvm::Expected<float> measureTowersTrial(TowersTrial &frame,
                                          const std::string &image,
-                                         const driver::TowersShape &shape);
+                                         const driver::TowersShape &shape,
+                                         bool pressure);
 } // namespace mdir::tool

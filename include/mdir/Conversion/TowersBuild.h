@@ -29,6 +29,20 @@ struct TowersLayout {
   int cells() const { return nx * ny * nz; }
 };
 
+/// Per-atom preparation shared by the moving schedule and its setup trial.
+struct TowersMovingRow {
+  TowersLayout g;
+  bool cartesianPositions;
+  mlir::Value positions, cell, raw, box, geometry, status, charge, types,
+      counts, keys, local, initialWords, initialState, initialFailed, arrivals;
+  void emit(mlir::OpBuilder &b, mlir::Location loc, mlir::Value atom,
+            mlir::ValueRange binsInfo, mlir::ValueRange fields) const;
+};
+llvm::SmallVector<mlir::Value> towersMovingBinGeometry(mlir::OpBuilder &b,
+                                                       mlir::Location loc,
+                                                       TowersLayout g,
+                                                       mlir::Value cell);
+
 /// The moving producer initializes membership and the fixed stencil once.
 void emitTowersInitRow(mlir::OpBuilder &builder, mlir::Location loc,
                        TowersLayout layout, mlir::Value cell, mlir::Value map,
