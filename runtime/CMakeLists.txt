@@ -31,6 +31,21 @@ endif()
 if(MDIR_CUDA_FOUND)
   message(STATUS "CUDA toolkit: ${CUDAToolkit_TARGET_DIR}")
   add_library(mdrt_cuda SHARED mdrt_cuda.c)
+  if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 12.6 AND CUDAToolkit_NVCC_EXECUTABLE)
+    set(callback_file "${CMAKE_CURRENT_BINARY_DIR}/pme_callbacks.fatbin")
+    set(callback_header "${CMAKE_CURRENT_BINARY_DIR}/pme_callback_code.h")
+    add_custom_command(OUTPUT "${callback_header}"
+      COMMAND "${CUDAToolkit_NVCC_EXECUTABLE}" -std=c++17 -dc -fatbin
+              --fmad=false -gencode arch=compute_75,code=lto_75
+              "${CMAKE_CURRENT_SOURCE_DIR}/pme_callbacks.cu" -o "${callback_file}"
+      COMMAND "${CMAKE_COMMAND}" "-DINPUT=${callback_file}" "-DOUTPUT=${callback_header}"
+              -P "${PROJECT_SOURCE_DIR}/cmake/EmbedPMECallbacks.cmake"
+      DEPENDS pme_callbacks.cu "${PROJECT_SOURCE_DIR}/cmake/EmbedPMECallbacks.cmake"
+      BYPRODUCTS "${callback_file}" VERBATIM)
+    target_sources(mdrt_cuda PRIVATE "${callback_header}")
+    target_include_directories(mdrt_cuda PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_definitions(mdrt_cuda PRIVATE MDIR_PME_LTO=1)
+  endif()
   # The FFT of particle mesh Ewald takes cuFFT of the toolkit.
   # The products of the bodies of neural stages take cuBLAS
   # (D302).

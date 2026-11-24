@@ -7,13 +7,14 @@ using namespace mdir;
 using namespace mdir::kernels;
 
 template <bool tilted, bool useList, bool potentialOnly, bool cachedWeights>
-void DevicePME::emitGather(StringRef symbol) {
+void DevicePME::emitGather(StringRef symbol, bool ordered, int orderedLanes) {
+  const int gatherLanes = ordered ? orderedLanes : lanes;
   StringRef blockFunction =
       tilted ? "mdrt_gpu_pme_blocks_triclinic" : "mdrt_gpu_pme_blocks";
   OpBuilder::InsertionGuard functionGuard(b);
   SmallVector<Type> inputs;
-  inputs.push_back(globalMem({ShapedType::kDynamic, 3}, positionType));
-  inputs.push_back(globalMem({ShapedType::kDynamic}, chargeType));
+  inputs.push_back(ordered ? records() : globalMem({ShapedType::kDynamic, 3}, positionType));
+  inputs.push_back(globalMem({ShapedType::kDynamic}, ordered ? i32Type : chargeType));
   if constexpr (useList) {
     inputs.push_back(globalMem({ShapedType::kDynamic}, i32Type));
   }
@@ -27,7 +28,7 @@ void DevicePME::emitGather(StringRef symbol) {
                 (!tilted && potentialOnly)) {
     inputs.push_back(idxType);
   }
-  if constexpr (cachedWeights) {
+  if (cachedWeights && !ordered) {
     inputs.push_back(globalMem({ShapedType::kDynamic}, realType));
   }
   inputs.append(3, idxType);
@@ -40,6 +41,8 @@ void DevicePME::emitGather(StringRef symbol) {
   if constexpr (potentialOnly) {
     inputs.push_back(globalMem({ShapedType::kDynamic}, realType));
   }
+  if (ordered)
+    inputs.push_back(idxType);
   auto fn = func::FuncOp::create(b, loc, symbol, b.getFunctionType(inputs, {}));
   fn.setPrivate();
   Block *entry = fn.addEntryBlock();
@@ -54,7 +57,7 @@ void DevicePME::emitGather(StringRef symbol) {
   Value phi = entry->getArgument(arg++);
   Value box = entry->getArgument(arg++);
   Value weights;
-  if constexpr (cachedWeights) {
+  if (cachedWeights && !ordered) {
     weights = entry->getArgument(arg++);
   }
   Value k1 = entry->getArgument(arg++);
@@ -123,32 +126,33 @@ void DevicePME::emitGather(StringRef symbol) {
   }
   Value count = memref::DimOp::create(b, loc, x, c0);
   Value lanes_all =
-      arith::ConstantOp::create(b, loc, b.getIntegerAttr(idxType, lanes));
+      arith::ConstantOp::create(b, loc, b.getIntegerAttr(idxType, gatherLanes));
   Value points = muli(count, lanes_all);
   Value last = subi(count, c1);
-  Value blocks_points =
-      func::CallOp::create(b, loc, blockFunction, TypeRange{idxType},
+  Value threads = ordered ? entry->getArguments().back() : c128;
+  Value blocks_points = ordered
+      ? maxui(c1, arith::CeilDivUIOp::create(b, loc, points, threads))
+      : func::CallOp::create(b, loc, blockFunction, TypeRange{idxType},
                            ValueRange{points})
           .getResult(0);
   {
     auto launch =
-        gpu::LaunchOp::create(b, loc, blocks_points, c1, c1, c128, c1, c1);
+        gpu::LaunchOp::create(b, loc, blocks_points, c1, c1, threads, c1, c1);
     OpBuilder::InsertionGuard guard(b);
     b.setInsertionPointToStart(&launch.getBody().front());
     Value bx = launch.getBlockIds().x;
     Value tx = launch.getThreadIds().x;
-    Value base = muli(bx, c128);
+    Value base = muli(bx, threads);
     Value item0 = addi(base, tx);
     Value inside = cmpi(arith::CmpIPredicate::ult, item0, points);
     Value lanes_l =
-        arith::ConstantOp::create(b, loc, b.getIntegerAttr(idxType, lanes));
-    Value c4l = arith::ConstantIndexOp::create(b, loc, 4);
+        arith::ConstantOp::create(b, loc, b.getIntegerAttr(idxType, gatherLanes));
     Value lane_of = remui(item0, lanes_l);
     Value last_first = muli(last, lanes_l);
     Value last_item = addi(last_first, lane_of);
     Value item = select(inside, item0, last_item);
     Value laneCount =
-        arith::ConstantOp::create(b, loc, b.getIntegerAttr(idxType, lanes));
+        arith::ConstantOp::create(b, loc, b.getIntegerAttr(idxType, gatherLanes));
     Value i;
     if constexpr (!useList) {
       i = divui(item, laneCount);
@@ -158,6 +162,8 @@ void DevicePME::emitGather(StringRef symbol) {
       slot = divui(item, laneCount);
     }
     Value j3 = remui(item, laneCount);
+    if (ordered && gatherLanes == 2)
+      j3 = addi(j3, j3);
     Value listed;
     Value is_listed;
     scf::IfOp warp_activeBranch;
@@ -200,6 +206,15 @@ void DevicePME::emitGather(StringRef symbol) {
     Value dx = memref::AllocaOp::create(b, loc, MemRefType::get({8}, realType));
     Value dy = memref::AllocaOp::create(b, loc, MemRefType::get({8}, realType));
     Value dz = memref::AllocaOp::create(b, loc, MemRefType::get({8}, realType));
+    const bool cubicForce = order == 4 && !potentialOnly;
+    std::array<Value, 4> cubicX, cubicY, cubicZ, slopeX, slopeY, slopeZ;
+    auto prepareAxis = [&](Value fraction, Value weights, Value slopes,
+                           std::array<Value, 4> &w, std::array<Value, 4> &dw) {
+      if (cubicForce)
+        w = cubicWeights(fraction, &dw);
+      else
+        splineWeights(fraction, pointCount, weights, slopes);
+    };
     Value xs;
     Value ys;
     Value zs;
@@ -208,7 +223,8 @@ void DevicePME::emitGather(StringRef symbol) {
       ys = load(x, {i, i1});
       zs = load(x, {i, i2});
     }
-    Value qs = load(q, {i});
+    Value packed = ordered ? readRecord(x, i) : Value();
+    Value qs = ordered ? extract(packed, 3) : load(q, {i});
     Value xi;
     Value yi;
     Value zi;
@@ -233,7 +249,7 @@ void DevicePME::emitGather(StringRef symbol) {
     if constexpr (!cachedWeights) {
       px_start = xPlacement.first;
       Value px_w = xPlacement.second;
-      splineWeights(px_w, pointCount, wx, dx);
+      prepareAxis(px_w, wx, dx, cubicX, slopeX);
     }
     std::pair<Value, Value> yPlacement;
     if constexpr (!tilted && !cachedWeights) {
@@ -246,7 +262,7 @@ void DevicePME::emitGather(StringRef symbol) {
     if constexpr (!cachedWeights) {
       py_start = yPlacement.first;
       Value py_w = yPlacement.second;
-      splineWeights(py_w, pointCount, wy, dy);
+      prepareAxis(py_w, wy, dy, cubicY, slopeY);
     }
     std::pair<Value, Value> zPlacement;
     if constexpr (!tilted && !cachedWeights) {
@@ -259,45 +275,33 @@ void DevicePME::emitGather(StringRef symbol) {
     if constexpr (!cachedWeights) {
       pz_start = zPlacement.first;
       Value pz_w = zPlacement.second;
-      splineWeights(pz_w, pointCount, wz, dz);
+      prepareAxis(pz_w, wz, dz, cubicZ, slopeZ);
     }
     Value xstart;
     Value ystart;
     Value zstart;
     if constexpr (cachedWeights) {
-      Value xsc = arith::ConstantIndexOp::create(b, loc, 0);
-      Value xsn = muli(count, xsc);
-      Value xsat = addi(xsn, i);
-      Value xstart_r = load(weights, {xsat});
-      xstart = fptosi(i32Type, xstart_r);
-      Value xfc = arith::ConstantIndexOp::create(b, loc, 3);
-      Value xfn = muli(count, xfc);
-      Value xfat = addi(xfn, i);
-      Value xfrac = load(weights, {xfat});
-      splineWeights(xfrac, pointCount, wx, dx);
-      Value ysc = arith::ConstantIndexOp::create(b, loc, 1);
-      Value ysn = muli(count, ysc);
-      Value ysat = addi(ysn, i);
-      Value ystart_r = load(weights, {ysat});
-      ystart = fptosi(i32Type, ystart_r);
-      Value yfc = arith::ConstantIndexOp::create(b, loc, 4);
-      Value yfn = muli(count, yfc);
-      Value yfat = addi(yfn, i);
-      Value yfrac = load(weights, {yfat});
-      splineWeights(yfrac, pointCount, wy, dy);
-      Value zsc = arith::ConstantIndexOp::create(b, loc, 2);
-      Value zsn = muli(count, zsc);
-      Value zsat = addi(zsn, i);
-      Value zstart_r = load(weights, {zsat});
-      zstart = fptosi(i32Type, zstart_r);
-      Value zfc = arith::ConstantIndexOp::create(b, loc, 5);
-      Value zfn = muli(count, zfc);
-      Value zfat = addi(zfn, i);
-      Value zfrac = load(weights, {zfat});
-      splineWeights(zfrac, pointCount, wz, dz);
+      auto axis = [&](int a, Value size, auto &w, auto &dw, Value ws, Value ds) {
+        Value start, fraction;
+        if (ordered) {
+          std::tie(start, fraction) = splitMeshAxis(extract(packed, a), size, pointCount, true);
+          start = indexCast(i32Type, start);
+        } else {
+          start = placementStart(weights, count, i, a);
+          Value axis = arith::ConstantIndexOp::create(b, loc, a + 3);
+          fraction = load(weights, {addi(muli(axis, count), i)});
+        }
+        prepareAxis(fraction, ws, ds, w, dw);
+        return start;
+      };
+      xstart = axis(0, k1, cubicX, slopeX, wx, dx);
+      ystart = axis(1, k2, cubicY, slopeY, wy, dy);
+      zstart = axis(2, k3, cubicZ, slopeZ, wz, dz);
     }
-    Value w3p_value = pickSpline(wz, j3, pointCount);
-    Value d3p_value = pickSpline(dz, j3, pointCount);
+    Value w3p_value =
+        cubicForce ? cubicLane(cubicZ, j3) : pickSpline(wz, j3, pointCount);
+    Value d3p_value =
+        cubicForce ? cubicLane(slopeZ, j3) : pickSpline(dz, j3, pointCount);
     Value gzero =
         arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 0.0));
     Value j0 = arith::ConstantIndexOp::create(b, loc, 0);
@@ -316,137 +320,153 @@ void DevicePME::emitGather(StringRef symbol) {
       Value j3t = indexCast(i32Type, j3);
       g3 = md_alg::WrapOp::create(b, loc, zstart, j3t, k3t, false);
     }
-    auto sumxOp = scf::ForOp::create(
-        b, loc, j0, pointCount, j1c, ValueRange{gzero, gzero, gzero},
-        [&](OpBuilder &b, Location, Value j1, ValueRange carried) {
-          Value ax = carried[0];
-          Value ay = carried[1];
-          Value az = carried[2];
-          Value g1s;
-          Value g1w;
-          Value g1over;
-          if constexpr (!cachedWeights) {
-            g1s = addi(px_start, j1);
-            g1w = subi(g1s, k1);
-            g1over = cmpi(arith::CmpIPredicate::uge, g1s, k1);
+    Value sumx, sumy, sumz;
+    if (cubicForce) {
+      // Contract each z plane along y first so the three derivatives
+      // share each row of potential samples.
+      auto wrapped = [&](Value start, int offset, Value size) {
+        Value j = arith::ConstantOp::create(
+            b, loc, b.getIntegerAttr(size.getType(), offset));
+        return md_alg::WrapOp::create(b, loc, start, j, size, false).getResult();
+      };
+      Value nx = cachedWeights ? k1t : k1;
+      Value ny = cachedWeights ? k2t : k2;
+      Value nz = cachedWeights ? k3t : k3;
+      Value sx = cachedWeights ? xstart : px_start;
+      Value sy = cachedWeights ? ystart : py_start;
+      auto contract = [&](Value z, Value w, Value dw) {
+        Value dxPlane = gzero, dyPlane = gzero, plane = gzero;
+        for (int xj = 0; xj < 4; ++xj) {
+          Value xrow = muli(wrapped(sx, xj, nx), ny);
+          Value row = gzero, dyRow = gzero;
+          for (int yj = 0; yj < 4; ++yj) {
+            Value base = muli(addi(xrow, wrapped(sy, yj, ny)), nz);
+            Value sample =
+                md_alg::GridReadOp::create(b, loc, phi, base, z, Value{});
+            row = addf(row, mulf(cubicY[yj], sample));
+            dyRow = addf(dyRow, mulf(slopeY[yj], sample));
           }
-          if constexpr (cachedWeights) {
-            Value j1t = indexCast(i32Type, j1);
-            g1s = addi(xstart, j1t);
-            g1w = subi(g1s, k1t);
-            g1over = cmpi(arith::CmpIPredicate::uge, g1s, k1t);
-          }
-          Value g1 = select(g1over, g1w, g1s);
-          Value row1;
-          if constexpr (cachedWeights) {
-            row1 = muli(g1, k2t);
-          }
-          Value w1 = load(wx, {j1});
-          Value d1 = load(dx, {j1});
-          auto bx2Op = scf::ForOp::create(
-              b, loc, j0, pointCount, j1c, ValueRange{ax, ay, az},
-              [&](OpBuilder &b, Location, Value j2, ValueRange carried) {
-                Value cx = carried[0];
-                Value cy = carried[1];
-                Value cz = carried[2];
-                Value g2s;
-                Value g2w;
-                Value g2over;
-                if constexpr (!cachedWeights) {
-                  g2s = addi(py_start, j2);
-                  g2w = subi(g2s, k2);
-                  g2over = cmpi(arith::CmpIPredicate::uge, g2s, k2);
-                }
-                if constexpr (cachedWeights) {
-                  Value j2t = indexCast(i32Type, j2);
-                  g2s = addi(ystart, j2t);
-                  g2w = subi(g2s, k2t);
-                  g2over = cmpi(arith::CmpIPredicate::uge, g2s, k2t);
-                }
-                Value g2 = select(g2over, g2w, g2s);
-                Value w2 = load(wy, {j2});
-                Value d2 = load(dy, {j2});
-                if constexpr (!cachedWeights) {
-                  row1 = muli(g1, k2);
-                }
-                Value row = addi(row1, g2);
-                Value gbase;
-                if constexpr (!cachedWeights) {
-                  gbase = muli(row, k3);
-                }
-                if constexpr (cachedWeights) {
-                  gbase = muli(row, k3t);
-                }
-                Value p =
-                    md_alg::GridReadOp::create(b, loc, phi, gbase, g3, Value{});
-                Value d1w2 = mulf(d1, w2);
-                Value w1d2 = mulf(w1, d2);
-                Value w1w2 = mulf(w1, w2);
-                Value px;
-                if constexpr (!potentialOnly) {
-                  px = mulf(d1w2, w3p_value);
-                } else {
-                  px = mulf(w1w2, w3p_value);
-                }
-                Value py = mulf(w1d2, w3p_value);
-                Value pz = mulf(w1w2, d3p_value);
-                Value vx = mulf(p, px);
-                Value vy = mulf(p, py);
-                Value vz = mulf(p, pz);
-                Value nx = addf(cx, vx);
-                Value ny = addf(cy, vy);
-                Value nz = addf(cz, vz);
-                scf::YieldOp::create(b, loc, ValueRange{nx, ny, nz});
-              });
-          Value bx2 = bx2Op.getResult(0);
-          Value by2 = bx2Op.getResult(1);
-          Value bz2 = bx2Op.getResult(2);
-          scf::YieldOp::create(b, loc, ValueRange{bx2, by2, bz2});
-        });
-    Value sumx = sumxOp.getResult(0);
-    Value sumy = sumxOp.getResult(1);
-    Value sumz = sumxOp.getResult(2);
+          dxPlane = addf(dxPlane, mulf(slopeX[xj], row));
+          dyPlane = addf(dyPlane, mulf(cubicX[xj], dyRow));
+          plane = addf(plane, mulf(cubicX[xj], row));
+        }
+        return std::array<Value, 3>{mulf(dxPlane, w), mulf(dyPlane, w),
+                                    mulf(plane, dw)};
+      };
+      auto force = contract(g3, w3p_value, d3p_value);
+      if (ordered && gatherLanes == 2) {
+        Value next = addi(j3, c1);
+        auto second = contract(wrapped(g3, 1, nz), cubicLane(cubicZ, next),
+                               cubicLane(slopeZ, next));
+        for (int axis = 0; axis < 3; ++axis)
+          force[axis] = addf(force[axis], second[axis]);
+      }
+      sumx = force[0];
+      sumy = force[1];
+      sumz = force[2];
+    } else {
+      auto sumxOp = scf::ForOp::create(
+          b, loc, j0, pointCount, j1c, ValueRange{gzero, gzero, gzero},
+          [&](OpBuilder &b, Location, Value j1, ValueRange carried) {
+            Value ax = carried[0];
+            Value ay = carried[1];
+            Value az = carried[2];
+            Value g1s;
+            Value g1w;
+            Value g1over;
+            if constexpr (!cachedWeights) {
+              g1s = addi(px_start, j1);
+              g1w = subi(g1s, k1);
+              g1over = cmpi(arith::CmpIPredicate::uge, g1s, k1);
+            }
+            if constexpr (cachedWeights) {
+              Value j1t = indexCast(i32Type, j1);
+              g1s = addi(xstart, j1t);
+              g1w = subi(g1s, k1t);
+              g1over = cmpi(arith::CmpIPredicate::uge, g1s, k1t);
+            }
+            Value g1 = select(g1over, g1w, g1s);
+            Value row1;
+            if constexpr (cachedWeights) {
+              row1 = muli(g1, k2t);
+            }
+            Value w1 = load(wx, {j1});
+            Value d1 = load(dx, {j1});
+            auto bx2Op = scf::ForOp::create(
+                b, loc, j0, pointCount, j1c, ValueRange{ax, ay, az},
+                [&](OpBuilder &b, Location, Value j2, ValueRange carried) {
+                  Value cx = carried[0];
+                  Value cy = carried[1];
+                  Value cz = carried[2];
+                  Value g2s;
+                  Value g2w;
+                  Value g2over;
+                  if constexpr (!cachedWeights) {
+                    g2s = addi(py_start, j2);
+                    g2w = subi(g2s, k2);
+                    g2over = cmpi(arith::CmpIPredicate::uge, g2s, k2);
+                  }
+                  if constexpr (cachedWeights) {
+                    Value j2t = indexCast(i32Type, j2);
+                    g2s = addi(ystart, j2t);
+                    g2w = subi(g2s, k2t);
+                    g2over = cmpi(arith::CmpIPredicate::uge, g2s, k2t);
+                  }
+                  Value g2 = select(g2over, g2w, g2s);
+                  Value w2 = load(wy, {j2});
+                  Value d2 = load(dy, {j2});
+                  if constexpr (!cachedWeights) {
+                    row1 = muli(g1, k2);
+                  }
+                  Value row = addi(row1, g2);
+                  Value gbase;
+                  if constexpr (!cachedWeights) {
+                    gbase = muli(row, k3);
+                  }
+                  if constexpr (cachedWeights) {
+                    gbase = muli(row, k3t);
+                  }
+                  Value p =
+                      md_alg::GridReadOp::create(b, loc, phi, gbase, g3, Value{});
+                  Value d1w2 = mulf(d1, w2);
+                  Value w1d2 = mulf(w1, d2);
+                  Value w1w2 = mulf(w1, w2);
+                  Value px;
+                  if constexpr (!potentialOnly) {
+                    px = mulf(d1w2, w3p_value);
+                  } else {
+                    px = mulf(w1w2, w3p_value);
+                  }
+                  Value py = mulf(w1d2, w3p_value);
+                  Value pz = mulf(w1w2, d3p_value);
+                  Value vx = mulf(p, px);
+                  Value vy = mulf(p, py);
+                  Value vz = mulf(p, pz);
+                  Value nx = addf(cx, vx);
+                  Value ny = addf(cy, vy);
+                  Value nz = addf(cz, vz);
+                  scf::YieldOp::create(b, loc, ValueRange{nx, ny, nz});
+                });
+            Value bx2 = bx2Op.getResult(0);
+            Value by2 = bx2Op.getResult(1);
+            Value bz2 = bx2Op.getResult(2);
+            scf::YieldOp::create(b, loc, ValueRange{bx2, by2, bz2});
+          });
+      sumx = sumxOp.getResult(0);
+      sumy = sumxOp.getResult(1);
+      sumz = sumxOp.getResult(2);
+    }
     Value width =
         arith::ConstantOp::create(b, loc, b.getIntegerAttr(i32Type, 32));
-    Value one32 =
-        arith::ConstantOp::create(b, loc, b.getIntegerAttr(i32Type, 1));
-    Value two32 =
-        arith::ConstantOp::create(b, loc, b.getIntegerAttr(i32Type, 2));
-    Value sx1 = laneValue(gpu::ShuffleMode::XOR, sumx, one32, width);
-
-    Value sy1 = laneValue(gpu::ShuffleMode::XOR, sumy, one32, width);
-
-    Value sz1 = laneValue(gpu::ShuffleMode::XOR, sumz, one32, width);
-
-    Value tx1 = addf(sumx, sx1);
-    Value ty1 = addf(sumy, sy1);
-    Value tz1 = addf(sumz, sz1);
-    Value sx2 = laneValue(gpu::ShuffleMode::XOR, tx1, two32, width);
-
-    Value sy2 = laneValue(gpu::ShuffleMode::XOR, ty1, two32, width);
-
-    Value sz2 = laneValue(gpu::ShuffleMode::XOR, tz1, two32, width);
-
-    Value ux = addf(tx1, sx2);
-    Value uy = addf(ty1, sy2);
-    Value uz = addf(tz1, sz2);
-    Value four32 =
-        arith::ConstantOp::create(b, loc, b.getIntegerAttr(i32Type, 4));
-    Value eight_lanes = cmpi(arith::CmpIPredicate::ugt, lanes_l, c4l);
-    Value sx4 = laneValue(gpu::ShuffleMode::XOR, ux, four32, width);
-
-    Value sy4 = laneValue(gpu::ShuffleMode::XOR, uy, four32, width);
-
-    Value sz4 = laneValue(gpu::ShuffleMode::XOR, uz, four32, width);
-
-    Value zero_r =
-        arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 0.0));
-    Value hx = select(eight_lanes, sx4, zero_r);
-    Value hy = select(eight_lanes, sy4, zero_r);
-    Value hz = select(eight_lanes, sz4, zero_r);
-    Value allx = addf(ux, hx);
-    Value ally = addf(uy, hy);
-    Value allz = addf(uz, hz);
+    Value zero_r = gzero;
+    auto reduce = [&](Value value) {
+      for (int offset = 1; offset < gatherLanes; offset *= 2) {
+        Value hop = arith::ConstantIntOp::create(b, loc, offset, 32);
+        value = addf(value, laneValue(gpu::ShuffleMode::XOR, value, hop, width));
+      }
+      return !ordered && gatherLanes == 4 ? addf(value, zero_r) : value;
+    };
+    Value allx = reduce(sumx), ally = reduce(sumy), allz = reduce(sumz);
     Value first = cmpi(arith::CmpIPredicate::eq, j3, c0);
     Value stores;
     if constexpr (!useList) {
@@ -496,9 +516,10 @@ void DevicePME::emitGather(StringRef symbol) {
         Value fxs = convert(realType, fx64);
         Value fys = convert(realType, fy64);
         Value fzs = convert(realType, fz64);
-        store(fxs, f, {i, i0});
-        store(fys, f, {i, i1});
-        store(fzs, f, {i, i2});
+        Value atom = ordered ? indexCast(idxType, load(q, {i})) : i;
+        store(fxs, f, {atom, i0});
+        store(fys, f, {atom, i1});
+        store(fzs, f, {atom, i2});
       } else {
         Value pots = convert(realType, allx);
         store(pots, f, {i});
@@ -537,13 +558,13 @@ void DevicePME::emitGather(StringRef symbol) {
   func::ReturnOp::create(b, loc);
 }
 
-template void DevicePME::emitGather<false, false, false, false>(StringRef);
-template void DevicePME::emitGather<false, false, false, true>(StringRef);
-template void DevicePME::emitGather<false, false, true, false>(StringRef);
-template void DevicePME::emitGather<false, true, false, false>(StringRef);
-template void DevicePME::emitGather<false, true, false, true>(StringRef);
-template void DevicePME::emitGather<true, false, false, false>(StringRef);
-template void DevicePME::emitGather<true, false, false, true>(StringRef);
-template void DevicePME::emitGather<true, false, true, false>(StringRef);
-template void DevicePME::emitGather<true, true, false, false>(StringRef);
-template void DevicePME::emitGather<true, true, false, true>(StringRef);
+template void DevicePME::emitGather<false, false, false, false>(StringRef, bool, int);
+template void DevicePME::emitGather<false, false, false, true>(StringRef, bool, int);
+template void DevicePME::emitGather<false, false, true, false>(StringRef, bool, int);
+template void DevicePME::emitGather<false, true, false, false>(StringRef, bool, int);
+template void DevicePME::emitGather<false, true, false, true>(StringRef, bool, int);
+template void DevicePME::emitGather<true, false, false, false>(StringRef, bool, int);
+template void DevicePME::emitGather<true, false, false, true>(StringRef, bool, int);
+template void DevicePME::emitGather<true, false, true, false>(StringRef, bool, int);
+template void DevicePME::emitGather<true, true, false, false>(StringRef, bool, int);
+template void DevicePME::emitGather<true, true, false, true>(StringRef, bool, int);

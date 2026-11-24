@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s --md-exec-assign-storage="memory=device" | FileCheck %s
 // RUN: mdir-opt %s --md-exec-assign-storage | FileCheck %s --check-prefix=HOST
 
-// The reciprocal sums of a function share their scratch
+// The dispersion reciprocal sums of a function share their scratch
 // (D315): each buffer is allocated once in the body of
 // the function and taken by every sum that needs one of its shape. Two
 // sums on the grid of 8^3 points take the same buffers; the sum on the
@@ -38,13 +38,13 @@ func.func @three(%x: !vec, %q: !real, %cell: !md.cell,
   %moduli = mdrt.from_buffer %b : memref<?x?xf64> to !grid
   %moduli6 = mdrt.from_buffer %b6 : memref<?x?xf64> to !grid
   %u1, %w1, %f1 = md_exec.reciprocal %x, %q, %cell, %moduli
-      grid([8, 8, 8]) order(4) beta(3.0) coulomb(138.9)
+      grid([8, 8, 8]) order(4) beta(3.0) coulomb(138.9) dispersion
       : !vec, !real, !grid -> f64, vector<9xf64>, !vec
   %u2, %w2, %f2 = md_exec.reciprocal %x, %q, %cell, %moduli
-      grid([8, 8, 8]) order(4) beta(3.5) coulomb(138.9)
+      grid([8, 8, 8]) order(4) beta(3.5) coulomb(138.9) dispersion
       : !vec, !real, !grid -> f64, vector<9xf64>, !vec
   %u3, %w3, %f3 = md_exec.reciprocal %x, %q, %cell, %moduli6
-      grid([6, 6, 6]) order(4) beta(3.0) coulomb(138.9)
+      grid([6, 6, 6]) order(4) beta(3.0) coulomb(138.9) dispersion
       : !vec, !real, !grid -> f64, vector<9xf64>, !vec
   return %u1, %u2, %u3, %f1, %f2, %f3 : f64, f64, f64, !vec, !vec, !vec
 }

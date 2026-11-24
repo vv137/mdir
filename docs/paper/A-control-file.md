@@ -28,6 +28,9 @@ D343 changes how differentiation accesses declared
 tuple-coordinate attributes inside the compiler. It adds no key and changes
 no default, format, checkpoint, or overwrite behavior.
 
+D[pme-tiles] applies the frame-certified integer spread internally to
+eligible cubic Gaussian device forces using the existing `[pme]` settings.
+
 D342 adds a compiler inspection interface for loop
 accesses. It adds no control-file or Python key and changes no default,
 input or output format, checkpoint, or overwrite behavior.

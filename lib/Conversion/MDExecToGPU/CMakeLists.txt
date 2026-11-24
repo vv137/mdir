@@ -4,6 +4,8 @@ add_mlir_conversion_library(MDIRMDExecToGPU
   MDExecToMDAlg.cpp
   StageBodies.cpp
   DevicePME.cpp
+  PMECellOrder.cpp
+  PMEIntegerPatch.cpp
   PMEBin.cpp
   PMEBlocks.cpp
   PMECoefficients.cpp

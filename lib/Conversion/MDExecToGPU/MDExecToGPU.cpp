@@ -6,6 +6,7 @@
 #include "TowersDispatch.h"
 #include "mdir/Conversion/Passes.h"
 #include "DevicePME.h"
+#include "mdir/Dialect/MDExec/PMECellOrder.h"
 #include "mdir/Runtime/GroupsABI.h"
 
 #include "mdir/Conversion/MDExecKernels.h"
@@ -898,7 +899,7 @@ private:
   /// (D282).
   LogicalResult addPMEKernels(Type position, Type charge, Type force,
                                 int64_t order, bool tilted, bool potential,
-                                bool listed, int64_t tiles = 0);
+                                bool listed, int64_t tiles, bool ordered);
   /// Adds the kernels of the prolate kernel (D266) for these
   /// types and points of the window, and with `listed` those of a list of
   /// the particles, and with `tiles` E the spreading into tiles of bins
@@ -906,7 +907,9 @@ private:
   LogicalResult addProlateKernels(Type position, Type charge, Type force,
                                     int64_t order, bool listed,
                                     int64_t tiles = 0);
-  LogicalResult lowerReciprocal(md_exec::ReciprocalOp op);
+  DenseMap<Value, Value> pmeCells;
+  LogicalResult selectReciprocal(md_exec::ReciprocalOp op, Value cachedCell);
+  LogicalResult lowerReciprocal(md_exec::ReciprocalOp op, Value cachedCell = {});
   LogicalResult inlineFrameReadbacks(func::FuncOp function);
   LogicalResult lowerLinearTransform(md_exec::LinearTransformOp op);
 
@@ -5246,13 +5249,13 @@ static void unrollSmallLoops(Operation *root, int64_t limit) {
 LogicalResult Lowering::addPMEKernels(Type position, Type charge,
                                         Type force, int64_t order,
                                         bool tilted, bool potential,
-                                        bool listed, int64_t tiles) {
+                                        bool listed, int64_t tiles, bool ordered) {
   // A triclinic cell takes the kernels of its own as well, which only it
   // emits (docs/triclinic.md); the spreading into
   // bricks, of its list too.
   if (tilted && failed(addPMEKernels(position, charge, force, order,
                                        /*tilted=*/false, /*potential=*/false,
-                                       listed, tiles)))
+                                       listed, tiles, ordered)))
     return failure();
   auto has = [&](StringRef name) {
     std::string full = tilted ? (name + "_triclinic").str() : name.str();
@@ -5275,6 +5278,7 @@ LogicalResult Lowering::addPMEKernels(Type position, Type charge,
            named("mdrt_gpu_pme_bin" + edge + (listed ? "_listed" : ""));
   };
   if (has("mdrt_gpu_pme_spread") &&
+      (!ordered || has("mdrt_gpu_pme_cell_order")) &&
       (!potential || has("mdrt_gpu_pme_potential")) &&
       (!listed || has("mdrt_gpu_pme_spread_listed")) && hasTiles())
     return success();
@@ -5283,9 +5287,9 @@ LogicalResult Lowering::addPMEKernels(Type position, Type charge,
   kernels::DevicePME emitter(pmeBuilder, *stages, position, charge, force, order,
                              launch.getGatherLanes(order));
   if (tilted)
-    emitter.emitSplineStages<true>(potential, listed, tiles);
+    emitter.emitSplineStages<true>(potential, listed, tiles, ordered);
   else
-    emitter.emitSplineStages<false>(potential, listed, tiles);
+    emitter.emitSplineStages<false>(potential, listed, tiles, ordered);
   if (failed(kernels::instantiatePMESymbols(*stages, position, charge,
                                             force, order)))
     return failure();
@@ -5395,6 +5399,13 @@ LogicalResult Lowering::addProlateKernels(Type position, Type charge,
   }
   return success();
 }
+
+/// A producer supplies all three buffers for the current frame. Offsets delimit
+/// consecutive 4x4x4 cells of wrapped stencil starts (z fastest). Slot i
+/// holds (mesh x, mesh y, mesh z, charge) and maps to atom permutation[i].
+struct PMECellOrder {
+  Value offsets, permutation, particles;
+};
 
 /// The bricks of the spreading (D108), the scratch after the factors of
 /// the influence function where the grid is in f32; the bins of the tiles
@@ -5571,7 +5582,96 @@ LogicalResult Lowering::lowerLinearTransform(md_exec::LinearTransformOp op) {
   return success();
 }
 
-LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
+/// Both candidates overwrite the same output and reuse the FFT buffers. Time
+/// force-only evaluations, even if the first caller requests an observation.
+LogicalResult Lowering::selectReciprocal(md_exec::ReciprocalOp op, Value cachedCell) {
+  OpBuilder b(op);
+  Location loc = op.getLoc();
+  Type wide = b.getI64Type();
+  auto word = [&](int64_t value) -> Value {
+    return arith::ConstantIntOp::create(b, loc, value, 64);
+  };
+  auto call = [&](StringRef name, ValueRange args, bool result) {
+    return func::CallOp::create(b, loc, getOrDeclare(name, b.getFunctionType(
+        args.getTypes(), result ? TypeRange{wide} : TypeRange{})), args);
+  };
+  auto count = [&](Value values) -> Value {
+    return arith::IndexCastOp::create(b, loc, wide,
+                                      memref::DimOp::create(b, loc, values, 0));
+  };
+  bool side = op->hasAttr(md_exec::kSideAttrName);
+  if (side)
+    call("mdrtSideBegin", {}, false);
+  auto scratch = op.getScratch();
+  auto grid = op.getGrid();
+  Value n = count(op.getPositions());
+  // Both single and mixed transform an f32 mesh. Their particle positions
+  // have different widths during the order rebuild, spread and gather.
+  bool narrowGrid = cast<MemRefType>(scratch[1].getType()).getElementType().isF32();
+  bool narrowPositions =
+      cast<MemRefType>(op.getPositions().getType()).getElementType().isF32();
+  int precision = narrowGrid ? (narrowPositions ? 2 : 1) : 0;
+  Value state = call("mdrtCudaPMEPathPrepare",
+      {word(grid[0]), word(grid[1]), word(grid[2]), n,
+       op.getListed() ? count(op.getListed()) : word(-1),
+       word(precision),
+       word(isTriclinic(op.getCellMutable().get())), word(getTileEdge(op))},
+      true).getResult(0);
+  Value trials = call("mdrtCudaPMEPathTrials", {state}, true).getResult(0);
+  auto dispatch = [&](Value path, bool observe) -> LogicalResult {
+    Value tiled = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne,
+                                        path, word(0));
+    SmallVector<Type> types;
+    if (observe)
+      types.append({op.getEnergy().getType(), op.getVirial().getType()});
+    auto route = scf::IfOp::create(b, loc, types, tiled, true);
+    for (bool ordered : {true, false}) {
+      OpBuilder::InsertionGuard guard(b);
+      b.setInsertionPointToStart(ordered ? route.thenBlock() : route.elseBlock());
+      auto candidate = cast<md_exec::ReciprocalOp>(b.clone(*op));
+      candidate->removeAttr(md_exec::kSideAttrName);
+      SmallVector<Value> buffers;
+      if (ordered)
+        llvm::append_range(buffers, scratch.take_front(15));
+      else {
+        llvm::append_range(buffers, scratch.take_front(4));
+        buffers.append({scratch[15], scratch[5]});
+        llvm::append_range(buffers, scratch.drop_front(16));
+      }
+      candidate.getScratchMutable().assign(buffers);
+      if (observe)
+        scf::YieldOp::create(b, loc, candidate.getResults());
+      if (failed(lowerReciprocal(candidate, cachedCell)))
+        return failure();
+      candidate.erase();
+    }
+    if (observe) {
+      op.getEnergy().replaceAllUsesWith(route.getResult(0));
+      op.getVirial().replaceAllUsesWith(route.getResult(1));
+    }
+    return success();
+  };
+  bool observe = !op.getEnergy().use_empty() || !op.getVirial().use_empty();
+  Value end = observe ? trials : arith::AddIOp::create(b, loc, trials, word(1));
+  auto loop = scf::ForOp::create(b, loc, word(0), end, word(1));
+  {
+    OpBuilder::InsertionGuard guard(b);
+    b.setInsertionPointToStart(loop.getBody());
+    Value i = loop.getInductionVar();
+    Value path = call("mdrtCudaPMEPathBegin", {state, i}, true).getResult(0);
+    if (failed(dispatch(path, false)))
+      return failure();
+    call("mdrtCudaPMEPathEnd", {state, i}, false);
+  }
+  if (observe && failed(dispatch(
+          call("mdrtCudaPMEPathBegin", {state, trials}, true).getResult(0), true)))
+    return failure();
+  if (side)
+    call("mdrtSideEnd", {}, false);
+  return success();
+}
+
+LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op, Value cachedCell) {
   if (!op.isStorageForm() || !isDeviceType(op.getPositions().getType()))
     return op->emitOpError()
            << "expected the storage form with the buffers on the device; "
@@ -5602,7 +5702,46 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // (Scatter.h, D285); never where the spreading is `fixed_order` (the
   // deterministic mode), whose grid is in fixed point (D70, D84).
   int64_t tiles = getTileEdge(op);
-  Value bins = getBins(op);
+  if (op->hasAttr("md_exec.private_pme_tables") && !cachedCell)
+    cachedCell = pmeCells.lookup(op.getScratch()[5]);
+  if (op->hasAttr("md_exec.private_pme_tables") && !cachedCell) {
+    // Initialize the host cell stamp at allocation of the persistent device
+    // tables, outside the time-step loop. Each sum owns its factors.
+    OpBuilder::InsertionGuard guard(builder);
+    Value tables = op.getScratch()[5];
+    builder.setInsertionPointAfterValue(tables);
+    cachedCell = memref::AllocaOp::create(builder, loc,
+        MemRefType::get({7}, builder.getF64Type()));
+    Value zero = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
+    for (int i = 0; i < 7; ++i)
+      memref::StoreOp::create(builder, loc, zero, cachedCell, createIndex(builder, loc, i));
+    pmeCells[tables] = cachedCell;
+  }
+  auto scratch = op.getScratch();
+  bool ordered = scratch.size() > 4 &&
+                 cast<MemRefType>(scratch[4].getType()).getRank() == 2;
+  PMECellOrder cellOrder;
+  if (ordered && !fixedPoint && scratch.size() >= 16)
+    return selectReciprocal(op, cachedCell);
+  if (ordered) {
+    if (!md_exec::canUsePMECellOrder(op))
+      return op.emitOpError("cell-order storage requires a cubic Gaussian force sum with compatible scatter and grid");
+    auto record = MemRefType::get({ShapedType::kDynamic, 4}, force,
+                                 MemRefLayoutAttrInterface(),
+                                 cast<MemRefType>(forces.getType()).getMemorySpace());
+    auto word = MemRefType::get({ShapedType::kDynamic}, builder.getI32Type(),
+                                MemRefLayoutAttrInterface(), record.getMemorySpace());
+    if (scratch.size() != 15 || scratch[4].getType() != record ||
+        scratch[6].getType() != record ||
+        scratch[14].getType() != scratch[0].getType() ||
+        !llvm::all_of(scratch.slice(7, 7),
+                      [&](Value v) { return v.getType() == word; }))
+      return op.emitOpError(
+          "cell-order storage requires two four-component mesh buffers and "
+          "seven i32 work buffers plus i64 callback metadata");
+    cellOrder = {scratch[10], scratch[8], scratch[6]};
+  }
+  Value bins = ordered ? Value() : getBins(op);
   if (tiles) {
     if (md_exec::scatter::Refusal refused =
             md_exec::scatter::checkTile(op, tiles, launch.blockMemoryBytes))
@@ -5610,18 +5749,21 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
              << "takes the strategy 'tile', whose precondition does not "
                 "hold: "
              << *refused;
-    if (!bins)
+    if (!bins && !ordered)
       return op->emitOpError() << "has tiles but no buffer of the bins";
   }
   if (failed(addPMEKernels(position, charge, force, op.getOrder(), tilted,
                              op.getPotential(), static_cast<bool>(listed),
-                             tiles)))
+                             tiles, ordered)))
     return failure();
   // The kernels that do not depend on the cell, which a triclinic cell
   // shares: the conversion from fixed point, the bricks, the binning and
   // the tiles.
   auto instance = [&](StringRef name) {
     bool own = tilted && name != "mdrt_gpu_pme_real" &&
+               name != "mdrt_gpu_pme_pack" &&
+               name != "mdrt_gpu_pme_patch_real" &&
+               name != "mdrt_gpu_pme_spread_ordered" &&
                name != "mdrt_gpu_pme_spread_bricks" &&
                name != "mdrt_gpu_pme_spread_bricks_listed" &&
                !name.starts_with("mdrt_gpu_pme_bin") &&
@@ -5649,11 +5791,11 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // Splines of order 4 in f32 use the particle weights for gathering
   // whether their spreading takes tiles or bricks (D85, D108, D282).
   Value weights = op.getScratch().size() > 4 ? op.getScratch()[4] : Value();
-  Value bricks = getBricks(op);
+  Value bricks = ordered ? Value() : getBricks(op);
   // The potential at the particles (the fourth result of md.reciprocal)
   // has the kernel of its own, which takes no weights.
   bool narrowGrid = cast<MemRefType>(real.getType()).getElementType().isF32();
-  bool usesWeights = !fixedPoint && op.getOrder() == 4 && narrowGrid &&
+  bool usesWeights = !ordered && !fixedPoint && op.getOrder() == 4 && narrowGrid &&
                      !op.getPotential() && (tiles || bricks);
   if (usesWeights && !weights)
     return op->emitOpError()
@@ -5717,7 +5859,23 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // gathering of order 4 as well), the binning of the particles or of the
   // entries of the list, and the tiles.
   std::string edge = std::to_string(tiles);
-  if (tiles) {
+  if (ordered) {
+    if (fixedPoint)
+      func::CallOp::create(builder, loc,
+          getOrDeclare("mdrtCudaPMEFixedPath", builder.getFunctionType({}, {})),
+          ValueRange{});
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_cell_order"),
+        ValueRange{positions, charges, box, scratch[4], scratch[7], cellOrder.permutation,
+                   scratch[9], cellOrder.offsets, scratch[11], scratch[12], k1, k2, k3});
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_pack"),
+                         ValueRange{scratch[4], cellOrder.permutation, cellOrder.particles});
+    func::CallOp::create(
+        builder, loc, instance("mdrt_gpu_pme_spread_ordered"),
+        ValueRange{cellOrder.particles, cellOrder.offsets, scratch[13], fixed,
+                   scratch[11], k1, k2, k3,
+                   createIndex(builder, loc, launch.blockSize),
+                   createIndex(builder, loc, md_exec::PMECellEdge + 3)});
+  } else if (tiles) {
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_weights"),
                          ValueRange{positions, box, weights, k1, k2, k3});
     SmallVector<Value> binned = {charges};
@@ -5788,8 +5946,6 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
       transform);
   for (func::FuncOp function : {forward, backward})
     function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
-  func::CallOp::create(builder, loc, forward,
-                       ValueRange{real, complex, sizes[0], sizes[1], sizes[2]});
   // Without its energy and virial, a step only scales the transform, and
   // the host need not wait for the sums of the rows.
   // The factors of the influence function along the edges first (D104).
@@ -5803,20 +5959,139 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // Influence "P3M" (D304) takes tables and a product with the
   // virial of its own; its tables give `scale` eq. 2.28 as they are.
   std::string tabled = op.getP3m() ? "_p3m" : kind;
-  func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_tables" + tabled),
-                       ValueRange{op.getModuli(), tables, box, beta, coulomb,
-                                  k1, k2, k3});
+  bool observe = !op.getEnergy().use_empty() || !op.getVirial().use_empty();
+  bool calibrate = ordered && !fixedPoint;
+  bool flat = cachedCell && calibrate && md_exec::usePMEInfluenceMesh(grid);
+  SmallVector<Value> tableArgs{op.getModuli(), tables, box, beta,
+                               coulomb,        k1,     k2,  k3};
+  auto makeTables = [&] {
+    OpBuilder::InsertionGuard guard(builder);
+    if (cachedCell) {
+      // State 2 includes the callback pointers. Their addresses are fixed for
+      // this sum; the per-frame wide/narrow flag lives behind one pointer.
+      Value index = createIndex(builder, loc, 6);
+      Value state = memref::LoadOp::create(builder, loc, cachedCell, index);
+      Value need = arith::ConstantOp::create(builder, loc,
+          builder.getF64FloatAttr(calibrate ? 2.0 : 1.0));
+      Value changed = arith::CmpFOp::create(builder, loc,
+          arith::CmpFPredicate::ULT, state, need);
+      SmallVector<Value> components;
+      for (int i = 0; i < (tilted ? 6 : 3); ++i) {
+        Value component = vector::ExtractOp::create(builder, loc, box, i);
+        Value old = memref::LoadOp::create(builder, loc, cachedCell,
+                                           createIndex(builder, loc, i));
+        Value different = arith::CmpFOp::create(builder, loc,
+            arith::CmpFPredicate::UNE, component, old);
+        changed = arith::OrIOp::create(builder, loc, changed, different);
+        components.push_back(component);
+      }
+      auto refresh = scf::IfOp::create(builder, loc, changed);
+      builder.setInsertionPointToStart(refresh.thenBlock());
+      for (auto [i, component] : llvm::enumerate(components))
+        memref::StoreOp::create(builder, loc, component, cachedCell,
+                                createIndex(builder, loc, i));
+      memref::StoreOp::create(builder, loc, need, cachedCell, index);
+    }
+    if (calibrate)
+      tableArgs.append({fixed, scratch[11], scratch[14]});
+    func::CallOp::create(builder, loc,
+                         instance(calibrate ? "mdrt_gpu_pme_tables_ordered"
+                                            : "mdrt_gpu_pme_tables" + tabled),
+                         tableArgs);
+    if (flat)
+      func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_influence"),
+                           ValueRange{complex, tables, box, beta, coulomb, k1, k2, k3});
+  };
+  auto toReal = [&] {
+    if (ordered)
+      func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_patch_real"),
+                           ValueRange{scratch[13], fixed, scratch[11], real});
+  };
+  auto fft = [&](bool inverse) {
+    func::CallOp::create(builder, loc, inverse ? backward : forward,
+                         ValueRange{inverse ? complex : real,
+                                    inverse ? real : complex, sizes[0],
+                                    sizes[1], sizes[2]});
+  };
+  auto scale = [&] {
+    func::CallOp::create(
+        builder, loc, instance("mdrt_gpu_pme_scale" + kind),
+        ValueRange{complex, tables, box, beta, coulomb, k1, k2, k3});
+  };
+  if (calibrate) {
+    makeTables();
+    auto word = [&](int n) -> Value {
+      return arith::ConstantIntOp::create(builder, loc, n, 64);
+    };
+    auto pointer = [&](Value buf) -> Value {
+      auto addr =
+          memref::ExtractAlignedPointerAsIndexOp::create(builder, loc, buf);
+      return arith::IndexCastOp::create(builder, loc, wide, addr);
+    };
+    auto runtime = [&](StringRef name, ValueRange args, bool returnsWord) {
+      auto fn = getOrDeclare(
+          name,
+          builder.getFunctionType(args.getTypes(),
+                                  returnsWord ? TypeRange{wide} : TypeRange{}));
+      return func::CallOp::create(builder, loc, fn, args);
+    };
+    SmallVector<Value> prepareArgs{sizes[0], sizes[1], sizes[2], word(narrow),
+                                   word(tilted), pointer(scratch[14])};
+    if (flat) {
+      int64_t bytes = 3 * (grid[0] + grid[1] + grid[2]) * (narrow ? 4 : 8);
+      prepareArgs.push_back(arith::AddIOp::create(builder, loc, pointer(tables), word(bytes)));
+    }
+    Value state = runtime(flat ? "mdrtCudaPMEPrepareFlat" : "mdrtCudaPMEPrepare",
+                          prepareArgs, true).getResult(0);
+    Value trials = runtime("mdrtCudaPMETrials", {state}, true).getResult(0);
+    Value count =
+        observe ? trials : arith::AddIOp::create(builder, loc, trials, word(1));
+    auto runs = scf::ForOp::create(builder, loc, word(0), count, word(1));
+    {
+      OpBuilder::InsertionGuard scope(builder);
+      builder.setInsertionPointToStart(runs.getBody());
+      Value iteration = runs.getInductionVar();
+      Value mode =
+          runtime("mdrtCudaPMEBegin", {state, iteration}, true).getResult(0);
+      auto transform = [&](int dir) {
+        Value bit = arith::AndIOp::create(builder, loc, mode, word(1 << dir));
+        Value callback = arith::CmpIOp::create(
+            builder, loc, arith::CmpIPredicate::ne, bit, word(0));
+        auto route = scf::IfOp::create(builder, loc, callback, true);
+        OpBuilder::InsertionGuard path(builder);
+        builder.setInsertionPointToStart(route.thenBlock());
+        Value input = dir ? complex : (narrow ? scratch[13] : fixed);
+        runtime(
+            "mdrtCudaPMEFFT",
+            {state, word(dir), pointer(input), pointer(dir ? real : complex)},
+            false);
+        builder.setInsertionPointToStart(route.elseBlock());
+        if (dir)
+          scale();
+        else
+          toReal();
+        fft(dir);
+      };
+      transform(0);
+      transform(1);
+      runtime("mdrtCudaPMEEnd", {state, iteration}, false);
+    }
+    runtime("mdrtCudaPMERelease", {state}, false);
+  }
   func::CallOp convolve;
-  if (op.getEnergy().use_empty() && op.getVirial().use_empty())
-    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_scale" + kind),
-                         ValueRange{complex, tables, box, beta, coulomb, k1,
-                                    k2, k3});
-  else
-    convolve = func::CallOp::create(
-        builder, loc, instance("mdrt_gpu_pme_convolve" + tabled),
-        ValueRange{complex, tables, rows, box, beta, coulomb, k1, k2, k3});
-  func::CallOp::create(builder, loc, backward,
-                       ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});
+  if (!calibrate || observe) {
+    toReal();
+    fft(false);
+    if (!calibrate)
+      makeTables();
+    if (observe)
+      convolve = func::CallOp::create(
+          builder, loc, instance("mdrt_gpu_pme_convolve" + tabled),
+          ValueRange{complex, tables, rows, box, beta, coulomb, k1, k2, k3});
+    else
+      scale();
+    fft(true);
+  }
   // The gathering takes the places of the particles from the weights
   // where it has them (D102). With a list, it takes the listed particles,
   // or with `gather_all` every particle, as without a list: there most
@@ -5824,7 +6099,13 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // their neighbors in a warp (D262).
   if (op.getGatherAll())
     listed = Value();
-  if (listed && usesWeights)
+  if (ordered) {
+    bool twoLanes = cachedCell && !fixedPoint && grid[0] * grid[1] * grid[2] >= (1 << 22);
+    func::CallOp::create(builder, loc, instance(twoLanes ? "mdrt_gpu_pme_gather_ordered_two"
+                                                         : "mdrt_gpu_pme_gather_ordered"),
+                         ValueRange{cellOrder.particles, cellOrder.permutation, real, box,
+                                    k1, k2, k3, forces, createIndex(builder, loc, launch.blockSize)});
+  } else if (listed && usesWeights)
     func::CallOp::create(builder, loc,
                          instance("mdrt_gpu_pme_gather_weights_listed"),
                          ValueRange{positions, charges, listed, real, box,
@@ -5865,7 +6146,10 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
 /// nothing with the allocator of the runtime: the transforms of cuFFT,
 /// whose plans hold their work areas (runtime/mdrt_cuda.c).
 static bool isAuditedNotToAllocate(StringRef name) {
-  return name == "mdrtCudaFFTForward3D" || name == "mdrtCudaFFTBackward3D" ||
+  return name == "mdrtCudaPMEFixedPath" || name.starts_with("mdrtCudaPMEPath") || (name == "mdrtCudaPMEPrepareFlat" || name == "mdrtCudaPMEPrepare" || name == "mdrtCudaPMETrials" ||
+          name == "mdrtCudaPMEBegin" || name == "mdrtCudaPMEFFT" ||
+          name == "mdrtCudaPMEEnd" || name == "mdrtCudaPMERelease") ||
+         name == "mdrtCudaFFTForward3D" || name == "mdrtCudaFFTBackward3D" ||
          name == "mdrtCudaFFTForward3DF32" ||
          name == "mdrtCudaFFTBackward3DF32";
 }

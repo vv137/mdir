@@ -1,0 +1,24 @@
+# REQUIRES: cuda
+# Compare each integer grid word to a direct host scatter. Change the block
+# size, shorten the patch, force every stencil to escape and reverse equal
+# keys. Check Cartesian force bits after undoing the permutation.
+# RUN:   %python %S/Inputs/pme_integer_patch.py emit f32 normal %S/pme-cell-order.mlir --opt mdir-opt > %t.mlir && \
+# RUN:   mlir-opt %t.mlir %lower_gpu_to_llvm > %t.llvm && \
+# RUN:   mlir-runner %t.llvm -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt_cuda > %t.words && \
+# RUN:   %python %S/Inputs/pme_integer_patch.py check f32 normal %t.words
+# RUN:   %python %S/Inputs/pme_integer_patch.py emit f32 occupancy %S/pme-cell-order.mlir --opt mdir-opt > %t.mlir && \
+# RUN:   mlir-opt %t.mlir %lower_gpu_to_llvm > %t.llvm && \
+# RUN:   mlir-runner %t.llvm -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt_cuda > %t.words && \
+# RUN:   %python %S/Inputs/pme_integer_patch.py check f32 occupancy %t.words
+# RUN:   %python %S/Inputs/pme_integer_patch.py emit f32 charge %S/pme-cell-order.mlir --opt mdir-opt > %t.mlir && \
+# RUN:   mlir-opt %t.mlir %lower_gpu_to_llvm > %t.llvm && \
+# RUN:   mlir-runner %t.llvm -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt_cuda > %t.words && \
+# RUN:   %python %S/Inputs/pme_integer_patch.py check f32 charge %t.words
+# RUN:   %python %S/Inputs/pme_integer_patch.py emit f64 normal %S/pme-cell-order.mlir --opt mdir-opt > %t.mlir && \
+# RUN:   mlir-opt %t.mlir %lower_gpu_to_llvm > %t.llvm && \
+# RUN:   mlir-runner %t.llvm -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt_cuda > %t.words && \
+# RUN:   %python %S/Inputs/pme_integer_patch.py check f64 normal %t.words
+# RUN: %python %S/Inputs/pme_integer_patch.py emit f64 refuse %S/pme-cell-order.mlir --opt mdir-opt > %t.invalid
+# RUN: mlir-opt %t.invalid %lower_gpu_to_llvm > %t.llvm
+# RUN: not --crash mlir-runner %t.llvm -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt_cuda 2>&1 | FileCheck %s
+# CHECK: CUDA

@@ -4,6 +4,39 @@ using namespace mlir;
 using namespace mdir;
 using namespace mdir::kernels;
 
+// Cubic cardinal weights in mesh order, and their fractional derivatives.
+std::array<Value, 4> DevicePME::cubicWeights(Value u,
+                                            std::array<Value, 4> *slopes) {
+  auto constant = [&](double x) {
+    return arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, x));
+  };
+  Value one = constant(1), three = constant(3), sixth = constant(1.0 / 6);
+  Value v = subf(one, u), vv = mulf(v, v), uu = mulf(u, u);
+  Value cube = mulf(uu, u), threeCube = mulf(three, cube);
+  if (slopes) {
+    Value half = constant(0.5);
+    Value first = mulf(half, vv), last = mulf(half, uu);
+    Value middle = subf(subf(one, first), last);
+    *slopes = {subf(constant(0), first), subf(first, middle),
+               subf(middle, last), last};
+  }
+  Value w1 = addf(subf(threeCube, mulf(constant(6), uu)), constant(4));
+  Value w2 = addf(addf(subf(mulf(three, uu), threeCube), mulf(three, u)), one);
+  return {mulf(mulf(vv, v), sixth), mulf(w1, sixth), mulf(w2, sixth),
+          mulf(cube, sixth)};
+}
+
+Value DevicePME::cubicLane(const std::array<Value, 4> &weights, Value lane) {
+  Value selected = weights.back();
+  for (int j = 2; j >= 0; --j) {
+    Value index = arith::ConstantOp::create(
+        b, loc, b.getIntegerAttr(lane.getType(), j));
+    selected = select(cmpi(arith::CmpIPredicate::eq, lane, index),
+                      weights[j], selected);
+  }
+  return selected;
+}
+
 // Cardinal B-spline recursion [Essmann1995, Eq. 2.28].
 void DevicePME::splineWeights(Value fraction, Value pointCount, Value weights,
                               Value slopes) {
@@ -18,17 +51,35 @@ std::pair<Value, Value> DevicePME::placeAxis(Value coordinate,
                                              Value inverseLength, Value size,
                                              Value pointCount) {
   Value s = mulf(coordinate, inverseLength);
+  return splitMeshAxis(meshCoordinate(s, size), size, pointCount);
+}
+
+Value DevicePME::meshCoordinate(Value s, Value size) {
   Value fs = math::FloorOp::create(b, loc, s);
   Value frac = subf(s, fs);
   Value ki = indexCast(i32Type, size);
   Value kf = sitofp(realType, ki);
   Value fracr = convert(realType, frac);
-  Value u = mulf(fracr, kf);
+  return mulf(fracr, kf);
+}
+
+std::pair<Value, Value> DevicePME::splitMeshAxis(Value u, Value size,
+                                                  Value pointCount, bool cubic) {
   Value fu0 = math::FloorOp::create(b, loc, u);
   Value nil = arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 0.0));
   Value fu = maxnumf(fu0, nil);
   Value w = subf(u, fu);
   Value bi32 = fptosi(i32Type, fu);
+  if (cubic) {
+    // The packed mesh coordinate lies in [0, K], including a point that
+    // rounded up to K. Center the four-point stencil using i32 arithmetic.
+    Value three = arith::ConstantIntOp::create(b, loc, 3, 32);
+    Value n = indexCast(i32Type, size);
+    Value raw = subi(bi32, three);
+    Value upper = select(cmpi(arith::CmpIPredicate::sge, raw, n), subi(raw, n), raw);
+    Value start = select(cmpi(arith::CmpIPredicate::slt, bi32, three), addi(raw, n), upper);
+    return {indexCast(idxType, start), w};
+  }
   Value bi = arith::ExtSIOp::create(b, loc, i64Type, bi32);
   Value accB = indexCast(idxType, bi);
   Value bk = addi(accB, size);

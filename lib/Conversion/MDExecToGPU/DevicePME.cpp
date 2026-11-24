@@ -35,7 +35,7 @@ template <Window window> void DevicePME::emitTiles(int64_t tiles, bool listed) {
 }
 
 template <bool tilted>
-void DevicePME::emitSplineStages(bool potential, bool listed, int64_t tiles) {
+void DevicePME::emitSplineStages(bool potential, bool listed, int64_t tiles, bool ordered) {
   auto name = [](StringRef stage) {
     return ("mdrt_gpu_pme_" + stage + (tilted ? "_triclinic" : "")).str();
   };
@@ -57,6 +57,19 @@ void DevicePME::emitSplineStages(bool potential, bool listed, int64_t tiles) {
       name("scale_dispersion"));
   emitGather<tilted, false, false, false>(name("gather"));
   emitGather<tilted, false, false, true>(name("gather_weights"));
+  if (ordered) {
+    emitTables<Window::Spline, Splitting::Gaussian, tilted>(
+        name("tables_ordered"), true);
+    emitScale<Window::Spline, Splitting::Gaussian, tilted>(name("influence"), true);
+    emitCellOrder<tilted>(name("cell_order"));
+    emitGather<tilted, false, false, true>(name("gather_ordered"), true);
+    emitGather<tilted, false, false, true>(name("gather_ordered_two"), true, 2);
+    if constexpr (!tilted) {
+      emitPack(name("pack"));
+      emitIntegerPatch(name("spread_ordered"));
+      emitPatchReal(name("patch_real"));
+    }
+  }
   if (potential)
     emitGather<tilted, false, true, false>(name("potential"));
   if (listed) {
@@ -74,8 +87,8 @@ void DevicePME::emitSplineStages(bool potential, bool listed, int64_t tiles) {
   }
 }
 
-template void DevicePME::emitSplineStages<false>(bool, bool, int64_t);
-template void DevicePME::emitSplineStages<true>(bool, bool, int64_t);
+template void DevicePME::emitSplineStages<false>(bool, bool, int64_t, bool);
+template void DevicePME::emitSplineStages<true>(bool, bool, int64_t, bool);
 
 void DevicePME::emitProlate(bool listed, int64_t tiles) {
   emitBlocks("mdrt_gpu_pme_prolate_blocks");

@@ -806,6 +806,7 @@
         "reason": {
           "type": "string"
         },
+        "pme_force_path": {"enum": ["current", "tiled"]},
         "elapsed_seconds": {
           "type": "number",
           "minimum": 0

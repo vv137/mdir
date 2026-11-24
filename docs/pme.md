@@ -544,6 +544,18 @@ disturbed one. On Cellulose (RTX 4090) the spreading of 95 µs is 16 for
 zeroing the grid, 8 for the binning, and 71 for the tiles; on STMV
 (RTX 4090) 44, 26, and 209 (the zeroing of a grid of 12 million points).
 
+For cubic Gaussian charge forces on meshes at least seven points wide
+in each dimension, the ordered device spread checks integer range on
+every frame. A block deposits its particles into a shared patch. The
+gather writes three Cartesian force components at each original atom
+index. The [range bounds and cell layout](decisions/pme-tiles.md)
+specify the narrow and wide paths (D[pme-tiles]). On the first evaluation,
+the runtime times the available forward conversion and inverse scaling
+callback combinations, including the cost of any explicit sweeps. A
+force-only step uses the measured winner. An observation step uses the
+explicit convolution and its energy and virial reductions. Fixed-order
+runs use explicit transforms.
+
 ### 3.4 One set of buffers for every sum (D315)
 
 A program evaluates the reciprocal sum in several places: before the
@@ -1282,3 +1294,9 @@ call), ms a step:
 ## The axes of the grid
 
 Planned, from the roadmap (#603). TODO: the longest edge as the contiguous axis of the grid, along which the real-to-complex transform runs: cuFFT on an RTX 3090 takes 277 µs for the pair of transforms of 126 × 126 × 270 against 292 for 270 × 126 × 126 (Cellulose; 255 against 275 for 128 × 128 × 256). The spreading, the weights, the tables of D104, the products, and the gathering then take the axes permuted; nothing for a cubic cell (STMV)
+
+On a GPU, eligible cubic Gaussian sums time the current and cell-ordered
+force paths at setup, including the cost of rebuilding the particle order.
+Deterministic mode selects the cell-ordered integer spread directly.
+`mdir check` describes the setup policy. The run log and the manifest end
+event (`pme_force_path`) give the path used.

@@ -1,5 +1,6 @@
 // Typed builders of the reciprocal sum on a device [Essmann1995, Liang2026].
 #pragma once
+#include <array>
 #include "../MDExecKernels/PMECode.h"
 #include "../MDExecKernels/ShuffleLane.h"
 #include "mdir/Dialect/MDAlg/MDAlgOps.h"
@@ -24,7 +25,7 @@ public:
     b.setInsertionPointToEnd(module.getBody());
   }
   template <bool tilted>
-  void emitSplineStages(bool potential, bool listed, int64_t tiles);
+  void emitSplineStages(bool potential, bool listed, int64_t tiles, bool ordered);
   void emitProlate(bool listed, int64_t tiles);
 
 private:
@@ -35,6 +36,27 @@ private:
     return tilted ? "mdrt_gpu_pme_blocks_triclinic" : "mdrt_gpu_pme_blocks";
   }
   int64_t order, lanes;
+  static void forParticles(OpBuilder &b, Location loc, Value count, Value blocks,
+                           Value threads, Value one, function_ref<void(Value)> body);
+  Type recordType() { return VectorType::get({4}, realType); }
+  MemRefType records() { return globalMem({ShapedType::kDynamic, 4}, realType); }
+  Value readRecord(Value buffer, Value i) {
+    Value zero = arith::ConstantIndexOp::create(b, loc, 0);
+    return vector::LoadOp::create(b, loc, recordType(), buffer, ValueRange{i, zero},
+                                  false, llvm::Align(4 * realBytes));
+  }
+  void writeRecord(Value record, Value buffer, Value i) {
+    Value zero = arith::ConstantIndexOp::create(b, loc, 0);
+    vector::StoreOp::create(b, loc, record, buffer, ValueRange{i, zero},
+                            false, llvm::Align(4 * realBytes));
+  }
+  template <bool tilted> void emitCellOrder(StringRef symbol);
+  void emitPack(StringRef symbol);
+  void emitIntegerPatch(StringRef symbol);
+  void emitPatchReal(StringRef symbol);
+  Value meshCoordinate(Value fractional, Value size);
+  std::pair<Value, Value> splitMeshAxis(Value mesh, Value size, Value support,
+                                        bool cubic = false);
   int64_t realBytes = realType.getIntOrFloatBitWidth() / 8;
   Type tokenType = gpu::AsyncTokenType::get(b.getContext());
   Type globalPointer = LLVM::LLVMPointerType::get(b.getContext(), 1);
@@ -93,6 +115,9 @@ private:
                         Value n_all, Value pe, Value c0w, Value two_i,
                         Value three_i, bool slopes);
   Value placementStart(Value places, Value n, Value i, int axis);
+  std::array<Value, 4> cubicWeights(Value fraction,
+                                    std::array<Value, 4> *slopes = nullptr);
+  Value cubicLane(const std::array<Value, 4> &weights, Value lane);
   void splineWeights(Value fraction, Value pointCount, Value weights,
                      Value slopes = {});
   std::pair<Value, Value> placeAxis(Value coordinate, Value inverseLength,
@@ -128,13 +153,13 @@ private:
   template <bool useList> void emitSpreadBricks(StringRef symbol);
   void emitReal(StringRef symbol);
   template <Window window, Splitting splitting, bool tilted>
-  void emitTables(StringRef symbol);
+  void emitTables(StringRef symbol, bool callbackInfo = false);
   template <Splitting splitting, bool tilted>
   void emitConvolve(StringRef symbol);
   template <Window window, Splitting splitting, bool tilted>
-  void emitScale(StringRef symbol);
+  void emitScale(StringRef symbol, bool storeFactors = false);
   template <bool tilted, bool useList, bool potentialOnly, bool cachedWeights>
-  void emitGather(StringRef symbol);
+  void emitGather(StringRef symbol, bool ordered = false, int orderedLanes = 4);
   template <bool useList, int tileEdge> void emitBin(StringRef symbol);
   template <Window window, int tileEdge> void emitSpreadTile(StringRef symbol);
   void emitCoefficients(StringRef symbol);

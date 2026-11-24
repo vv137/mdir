@@ -975,6 +975,18 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // by now.
   (*engine)->initialize();
 
+  int (*selectedPMEPath)() = nullptr;
+  if (program->pme && control->target == Target::GPU) {
+    auto symbol = (*engine)->lookup("mdrtCudaPMESelectedPath");
+    if (!symbol)
+      return fail(symbol.takeError());
+    selectedPMEPath = reinterpret_cast<int (*)()>(*symbol);
+  }
+  auto pmePath = [&]() -> StringRef {
+    if (!program->pme)
+      return {};
+    return selectedPMEPath && selectedPMEPath() == 2 ? "tiled" : "current";
+  };
   auto function = (*engine)->lookupPacked(program->entry);
   scheduler.restore();
   if (!function)
@@ -1228,7 +1240,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                                             options.continues, std::move(metadata)))
       return fail(std::move(error));
     output.recordStop = [&](int64_t step, const char *reason) {
-      return manifest.finish("stopped", step, reason);
+      return manifest.finish("stopped", step, reason, pmePath());
     };
   }
 
@@ -1693,10 +1705,12 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     output.trajectory->close();
   if (llvm::Error error = manifest.finish("completed", control->minimize
                                               ? output.lastMinimizationStep
-                                              : output.endStep))
+                                              : output.endStep, "", pmePath()))
     return fail(std::move(error));
 
 
+  if (program->pme)
+    output.log.print("MDIR: PME force path: %s\n", pmePath().data());
   output.log.print("MDIR: ran in %.2f s", runTime);
   if (!control->minimize && control->numSteps > 0 && runTime > 0.0) {
     double simulated = control->timestep * control->numSteps * 1.0e-3;

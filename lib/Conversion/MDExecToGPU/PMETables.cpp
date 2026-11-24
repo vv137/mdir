@@ -6,7 +6,7 @@ using namespace mdir;
 using namespace mdir::kernels;
 
 template <Window window, Splitting splitting, bool tilted>
-void DevicePME::emitTables(StringRef symbol) {
+void DevicePME::emitTables(StringRef symbol, bool callbackInfo) {
   static_assert(!tilted || splitting != Splitting::P3M,
                 "P3M requires a rectangular cell");
   StringRef blockFunction = blockSymbol<window, tilted>();
@@ -23,6 +23,10 @@ void DevicePME::emitTables(StringRef symbol) {
   inputs.push_back(f64Type);
   inputs.push_back(f64Type);
   inputs.append(3, idxType);
+  if (callbackInfo)
+    inputs.append({globalMem({ShapedType::kDynamic}, i64Type),
+                   globalMem({ShapedType::kDynamic}, i32Type),
+                   globalMem({ShapedType::kDynamic}, i64Type)});
   auto fn = func::FuncOp::create(b, loc, symbol, b.getFunctionType(inputs, {}));
   fn.setPrivate();
   Block *entry = fn.addEntryBlock();
@@ -148,6 +152,41 @@ void DevicePME::emitTables(StringRef symbol) {
       Value inside = cmpi(arith::CmpIPredicate::ult, item, entries);
       insideBranch =
           scf::IfOp::create(b, loc, TypeRange{}, inside, true, false);
+    }
+    if (callbackInfo) {
+      Value zero = arith::ConstantIndexOp::create(b, loc, 0);
+      auto first = scf::IfOp::create(
+          b, loc, cmpi(arith::CmpIPredicate::eq, item, zero), false);
+      OpBuilder::InsertionGuard infoScope(b);
+      b.setInsertionPointToStart(first.thenBlock());
+      auto args = entry->getArguments();
+      Value info = args[arg + 2];
+      unsigned slot = 0;
+      auto append = [&](Value word) {
+        store(word, info, {arith::ConstantIndexOp::create(b, loc, slot++)});
+      };
+      // The ordered scale callback unflattens a 32-bit spectrum offset with
+      // these two invariant reciprocals. cuFFT uses its plain plan for a
+      // spectrum whose offsets need more bits.
+      Value radix = arith::ConstantIntOp::create(b, loc, 1LL << 32, 64);
+      Value two = arith::ConstantIndexOp::create(b, loc, 2);
+      Value depth = addi(divui(k3, two), c1);
+      auto reciprocal = [&](Value d) {
+        return arith::CeilDivUIOp::create(b, loc, radix, indexCast(i64Type, d));
+      };
+      append(addi(muli(reciprocal(depth), radix), reciprocal(k2)));
+      Value buffers[] = {args[arg], args[arg + 1], tables};
+      for (Value buf : buffers) {
+        auto ptr = memref::ExtractAlignedPointerAsIndexOp::create(b, loc, buf);
+        append(indexCast(i64Type, ptr));
+      }
+      for (Value size : {k1, k2, k3})
+        append(indexCast(i64Type, size));
+      if constexpr (tilted) {
+        auto [xx, yx, yy, zx, zy, zz] = inverseCell(box, lx, ly, lz);
+        for (Value coeff : {xx, yx, yy, zx, zy, zz, gauss})
+          append(arith::BitcastOp::create(b, loc, i64Type, coeff));
+      }
     }
     Value axis;
     Value from;
@@ -344,19 +383,23 @@ void DevicePME::emitTables(StringRef symbol) {
   func::ReturnOp::create(b, loc);
 }
 
-template void DevicePME::emitTables<Window::Spline, Splitting::Gaussian, false>(
-    StringRef);
 template void
-    DevicePME::emitTables<Window::Spline, Splitting::Dispersion, false>(
-        StringRef);
+DevicePME::emitTables<Window::Spline, Splitting::Gaussian, false>(StringRef,
+                                                                  bool);
 template void
-    DevicePME::emitTables<Window::Spline, Splitting::P3M, false>(StringRef);
+DevicePME::emitTables<Window::Spline, Splitting::Dispersion, false>(StringRef,
+                                                                    bool);
 template void
-    DevicePME::emitTables<Window::Spline, Splitting::Gaussian, true>(StringRef);
+DevicePME::emitTables<Window::Spline, Splitting::P3M, false>(StringRef, bool);
 template void
-    DevicePME::emitTables<Window::Spline, Splitting::Dispersion, true>(
-        StringRef);
+DevicePME::emitTables<Window::Spline, Splitting::Gaussian, true>(StringRef,
+                                                                 bool);
 template void
-    DevicePME::emitTables<Window::Prolate, Splitting::Radial, false>(StringRef);
+DevicePME::emitTables<Window::Spline, Splitting::Dispersion, true>(StringRef,
+                                                                   bool);
 template void
-    DevicePME::emitTables<Window::Prolate, Splitting::Radial, true>(StringRef);
+DevicePME::emitTables<Window::Prolate, Splitting::Radial, false>(StringRef,
+                                                                 bool);
+template void
+DevicePME::emitTables<Window::Prolate, Splitting::Radial, true>(StringRef,
+                                                                bool);
