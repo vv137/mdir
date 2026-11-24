@@ -11,11 +11,13 @@ struct AxisFactors {
   int first, second;
 };
 
+inline constexpr int axisRadices[] = {2, 3, 5, 7, 11};
+
 inline std::optional<AxisFactors> factorAxis(int64_t n) {
   if (n < 1 || n > 32 * 32)
     return std::nullopt;
   int64_t rest = n;
-  for (int radix : {2, 3, 5, 7})
+  for (int radix : axisRadices)
     while (rest % radix == 0)
       rest /= radix;
   if (rest != 1)

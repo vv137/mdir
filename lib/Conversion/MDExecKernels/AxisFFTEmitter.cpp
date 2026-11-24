@@ -249,9 +249,9 @@ private:
   void transform(Line &v, bool backward) {
     int length = v.size();
     for (int s = 1; s < length;) {
-      int r = 2;
-      while ((length / s) % r)
-        r = r == 2 ? 3 : r == 3 ? 5 : 7;
+      int r = *llvm::find_if(axisRadices, [&](int radix) {
+        return (length / s) % radix == 0;
+      });
       Line out(length);
       for (int j = 0; j < length / r; ++j) {
         Line terms;

@@ -4,7 +4,7 @@
 # RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=on" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --implicit-check-not=mdrtCudaFFT
 # RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --force-only --listed --grid 15 7 10 > %t
 # RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=on" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=FORCE
-# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --grid 11 7 10 > %t
+# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --grid 13 7 10 > %t
 # RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=on" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=FALLBACK --implicit-check-not=fft_stage
 # RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --grid 40 40 40 > %t
 # RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=AUTO
