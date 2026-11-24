@@ -531,9 +531,41 @@ atomics differ from each other: $10^{-7}$ to $10^{-6}$ of the RMS force in
 mixed precision, $10^{-16}$ to $10^{-15}$ in double (D282, D283). The
 default mode therefore allows a privatized floating-point sum, and the
 deterministic mode does not: it fixes the bits, which a regrouping in f32
-or f64 changes. Its sums are in fixed point (D70, D84), where a privatized
-sum would give the same bits; that is the next step of #416. No strategy
-of floating-point values keeps the deterministic mode bitwise.
+or f64 changes. Deterministic PME spreads charges in fixed point (D70,
+D84). Deterministic tuple forces use the ordered rows of their incidence
+structure.
+
+**Partitioning the atoms of a tuple calculation (D[bonded-workunits]).**
+Cerutti et al. assign interacting atoms to overlapping valence work units,
+which can import positions and share intermediate results within a block
+(Section IV B, Figures 3–6). The offline experiment here partitions atoms
+in topology order. The owner of atom $i$ is the interval containing $i$.
+Each distinct interval touched by a term imports all its members and
+evaluates the term. Each interval keeps the force only for its own members.
+The interval containing the first member accounts for the term energy and
+virial once. With $d_t$ distinct intervals for term $t$, the extra
+evaluations per original term are $\sum_t(d_t-1)/N_\mathrm{term}$.
+At 128 owned atoms per interval, this costs 5.68% on JAC, 5.62% on
+Factor IX, 6.55% on Cellulose, and 5.88% on STMV for the bonds, angles,
+dihedrals, CMAP terms, and 1–4 pairs. JAC has only 20 nonempty intervals
+for these terms. Including the reciprocal-space exclusion correction
+increases this to 185. [[Cerutti2024]](references.md#cerutti2024)
+
+To accumulate forces in shared memory in fixed point, each evaluation
+would first round a component to $z_k=\mathrm{round}(S_F v_k)$. Integer
+additions of those same words in shared memory and in global memory give
+identical sums when the signed sums are representable. Unscaling divides
+by $S_F$ in both cases. A device check exercises these additions with
+signed integer payloads derived from the position bits. It stages each
+distinct position once per block and adds each owned component once to
+global memory. The results agree bitwise with a direct walk on the host
+for four interval widths on the four suite inputs and a smaller TIP3P
+input. This establishes the property for the integer inputs. The tuple evaluator in mixed precision adds
+floating-point contributions, and its deterministic rows round after
+each addition. Quantization, switching the grouping of those additions,
+and changing the reduction tree of energies or virials can each change
+the output bits. Designating a single energy owner settles multiplicity
+only. [Work-unit measurements](../device-tuples.md#12-topology-order-work-units)
 
 **The algebra as a stated fact (D301).** Which of these
 forms a sum may take is a property of the sum, and the IR states it for

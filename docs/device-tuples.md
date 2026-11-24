@@ -516,3 +516,79 @@ the change gains less there.
   particles would then leave 0.10 particles a member on Cellulose instead
   of the block's 0.237, but the order of the tuples is that of the files,
   which the energies of the terms and their fields follow. A follow-up.
+
+## 12. Topology-order work units
+
+The offline target `bonded-partition` reads a control file through the
+driver, after removal of the terms held by SHAKE and SETTLE. It constructs
+intervals in file order. An interval imports the distinct atoms of all
+terms touching an owned atom, including atoms outside the interval. Each
+term appears once in each touching interval. Only the owning interval
+exports a given member's force, and the interval of slot zero takes the
+energy and virial. The packer checks both rules against every original
+term slot. Particle reordering in a simulation would require translating
+the import and export lists through the current inverse permutation
+(Section 2). The offline target uses file-order positions.
+
+Each instruction starts with a 32-bit index in the original term table.
+The following one or two words pack the local atom indices in slot order,
+ten bits per slot, least significant first. The maximum index is 1023.
+The table index identifies the term family and its parameters. The
+packer checks the decoded slots against the original members. A 1–4
+pair has its own instruction. The local-to-file atom list takes another
+four bytes per import.
+
+| System | Extra valence evaluations at 64 atoms | 128 | 256 | 512 | Active units at 128 | Largest import list at 512 |
+|---|---:|---:|---:|---:|---:|---:|
+| JAC | 10.88% | 5.68% | 2.85% | 1.19% | 20 | 530 |
+| Factor IX | 11.28% | 5.62% | 3.18% | 1.83% | 46 | 547 |
+| Cellulose | 13.09% | 6.55% | 3.27% | 1.64% | 712 | 542 |
+| STMV | 11.80% | 5.88% | 2.95% | 1.46% | 1,300 | 547 |
+
+At 128 atoms the JAC valence instruction stream occupies 208,960 bytes
+plus 11,268 bytes of atom imports. The original 32-bit member indices
+occupy 248,252 bytes. On Cellulose the corresponding sizes are 8,596,816
+plus 423,464 bytes against 10,110,096. These counts exclude force-field
+parameters and unit descriptors. The separate exclusion correction matters
+when comparing with a trace of the fused step kernel. Including it lowers
+the extra evaluations at 128 atoms to 3.58%, 3.03%, 5.10%, and 4.15%,
+respectively.
+
+The method source is Cerutti et al., Section IV B. Their Table IV gives
+RTX 4090 valence times of 9, 18, 58, and 125 µs for their four systems
+under their 4 fs NVT conditions. The MDIR suite uses other controls and
+includes the reciprocal-space exclusion correction in the fused tuple
+kernel. The sizes and term counts above describe the host partition.
+[Method source](references.md#cerutti2024)
+
+A fused integration would also need the constraint groups. At width 128
+the intervals split 110 of 7,023 SETTLE waters on JAC and 4,688 of
+300,053 on STMV. They split 9 of 790 and 614 of 52,761 hydrogen
+constraint groups on those two systems. A fused update of a split group
+would require additional imports and a single owner for its position
+update, or an interval construction that keeps the group together.
+
+The companion target `bonded-device-check` takes the same control file.
+One block imports each local position once. For every term, it derives a
+signed integer diagnostic from the coordinate bits of every slot, adds
+three components per owned member in shared memory, and flushes each
+owned component with one global 64-bit addition. It also counts the
+slot-zero owner on the device. A direct host walk over the original
+members checks every component and owner. These payloads exercise the
+data path independently of a physical force scale.
+
+| System | Ordinary tuple launch, µs | Global additions in one sampled step | Logical bytes of members and term parameters |
+|---|---:|---:|---:|
+| JAC | 10.98 | 394,443 | 973,060 |
+| Factor IX | 17.78 | 378,051 | 2,561,948 |
+| Cellulose | 90.83 | 3,028,536 | 35,291,736 |
+| STMV | 206.36 | 6,657,801 | 65,573,784 |
+
+The table measures the existing mixed kernel on an RTX 4090. The timed
+launch is the recurring force-only kernel in a 250-step trace. STMV
+also runs an alternate NPT branch at 204.46 µs. A separate instrumented
+launch counted each global force component addition in the executed
+path. Each launch uses 128 threads per block and can admit 10 blocks per
+multiprocessor, giving 83.33% theoretical occupancy. JAC's 432 blocks
+limit its device-wide ceiling to 28.125%. The logical byte counts exclude
+position and charge loads and cache traffic.
