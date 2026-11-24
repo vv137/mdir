@@ -610,7 +610,9 @@ tuple sets and instruction format.
 The force quantum is $2^{-18}$ kJ mol⁻¹ nm⁻¹. A slot contributes at most
 $2^{-19}$ kJ mol⁻¹ nm⁻¹ of absolute rounding error per component. The
 signed range is $[-2^{45},2^{45}-2^{-18}]$ in these units. Conversion and
-both levels of addition are checked. On failure the GPU traps and the
+both levels of addition are checked. Each shared add uses block scope.
+Global force and energy adds use device scope. All three use relaxed
+ordering because the block barriers and kernel boundaries order readers. On failure the GPU traps and the
 simulation stops. On a successful evaluation, the integer sum is
 independent of thread order. Slot-zero owners add Q32 energy words
 directly to a checked int64 total for each bonded energy output. They

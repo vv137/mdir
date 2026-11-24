@@ -1,4 +1,5 @@
 # REQUIRES: cuda
+# RUN: rm -rf %t
 # RUN: %python %S/Inputs/bonded_words.py mdir %t | FileCheck %s
 # CHECK: ties passed
 # CHECK: wide component passed

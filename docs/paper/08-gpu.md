@@ -568,6 +568,31 @@ device trap ends the run before the next kernel can publish or integrate
 the force. This also rejects an overflowing intermediate sum followed by
 cancellation.
 
+**Ordering the checked adds (D[bonded-word-atomics]).** Each component
+of the quantized force is an independent integer sum. In the modification
+order of one word, an atomic addition returns its immediate predecessor.
+Adding the same contribution to that predecessor modulo $2^{64}$ gives
+the exact bit pattern to test for signed overflow. This test reads only
+registers after the atomic. It needs no ordering between components.
+A block barrier separates initialization from accumulation, and a second
+barrier completes accumulation before a block publishes its owned words.
+Kernel completion orders the global sums before the next kernel reads
+them. The compiler consequently emits relaxed block-scope additions for
+shared memory and relaxed device-scope additions for global force and
+energy words. On RTX 4090 this removes the system fences that otherwise
+surround the additions. Each shared int64 add still uses a compare-and-swap
+loop on that device.
+
+The three component updates that publish a work unit's subtotal each
+compile to a global 64-bit integer add on the measured RTX 4090 kernel.
+Let $a$ be the returned word, $b$ the subtotal and $s=(a+b)\bmod 2^{64}$.
+The high bit of $(s\mathbin{\mathrm{xor}}a)\mathbin{\mathrm{and}}
+(s\mathbin{\mathrm{xor}}b)$ is one exactly when the two operand signs
+agree and the result sign differs. Thus a publisher can test its own
+update even if a different block has already modified the destination.
+The retry branch seen in shared accumulation belongs to a different
+phase from this global update.
+
 For $n$ contributions to one component, the triangle inequality gives
 $\lvert\sum_k z_k/S_F-\sum_k v_k\rvert\le n/(2S_F)$.
 If the rounding residuals are independent and uniform within half a

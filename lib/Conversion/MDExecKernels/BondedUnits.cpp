@@ -29,8 +29,23 @@ struct UnitKernel : NeighborBuildCode {
                   roundeven(select(fits, scaled, createReal(b, loc, type, 0))));
   }
   void addWord(Value dest, ValueRange indices, Value value) {
-    Value old = memref::AtomicRMWOp::create(b, loc, arith::AtomicRMWKind::addi,
-                                            value, dest, indices);
+    // The add returns the preceding word for the signed overflow check.
+    // Phase barriers and kernel completion order the consumers of the sum.
+    auto layout = memref::ExtractStridedMetadataOp::create(b, loc, dest);
+    Value element = layout.getOffset();
+    for (auto [i, stride] : llvm::zip_equal(indices, layout.getStrides()))
+      element = addi(element, muli(i, stride));
+    Value address =
+        addi(baseAddress(dest), muli(indexCast(i64, element), cl(8)));
+    auto type = cast<MemRefType>(dest.getType());
+    bool shared =
+        type.getMemorySpace() ==
+        gpu::AddressSpaceAttr::get(context, gpu::AddressSpace::Workgroup);
+    auto ptr = LLVM::LLVMPointerType::get(context, shared ? 3 : 1);
+    Value old = LLVM::AtomicRMWOp::create(
+        b, loc, LLVM::AtomicBinOp::add,
+        LLVM::IntToPtrOp::create(b, loc, ptr, address), value,
+        LLVM::AtomicOrdering::monotonic, shared ? "block" : "device");
     Value sum = addi(old, value);
     failIf(cmpi(CmpIPredicate::slt, andi(xori(sum, old), xori(sum, value)),
                 cl(0)));

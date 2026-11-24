@@ -1,4 +1,5 @@
 # REQUIRES: cuda, python-api
+# RUN: rm -rf %t
 # RUN: %mdir_python %S/Inputs/bonded_frames.py %S/Inputs/dipeptide 2>&1 | FileCheck %s
 # RUN: %mdir_python %S/Inputs/bonded_words.py mdir %t energy 2>&1 | FileCheck %s --check-prefix=ENERGY
 # CHECK-NOT: bonded check:

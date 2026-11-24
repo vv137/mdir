@@ -1,0 +1,20 @@
+# D[bonded-word-atomics]
+
+Recorded at its merge.
+
+The mixed bonded work-unit evaluator uses a relaxed int64 atomic add with
+block scope for each contribution to a shared force word. Publication,
+direct global force accumulation, and Q32 energy accumulation use relaxed
+device scope. The address calculation uses the offset and strides of the
+destination. Each add returns the old word for the existing overflow test.
+The unit barriers and stream execution order protect each change of phase.
+The [derivation](../paper/08-gpu.md) is in the GPU chapter.
+
+On RTX 4090, a recurring JAC force-only kernel had 33 static shared
+addition sites and three global publication sites. Its original lowering
+emitted 36 system fences. Changing only the shared adds reduced the mean
+from 508.5 to 50.6 µs. Changing both reduced it to 36.3 µs. The corresponding
+Cellulose means were 12,572.1, 413.8, and 59.9 µs. These measurements cover
+38 launches of each kernel at a 2 fs time step. The quantization, signed
+overflow checks, and mixed-only selection follow
+[D[bonded-workunits]](bonded-workunits.md).
