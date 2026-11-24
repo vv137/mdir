@@ -9,7 +9,8 @@ template <Window window, Splitting splitting, bool tilted>
 void DevicePME::emitTables(StringRef symbol) {
   static_assert(!tilted || splitting != Splitting::P3M,
                 "P3M requires a rectangular cell");
-  StringRef blockFunction = blockSymbol<window, tilted>();
+  StringRef blockFunction = splitting == Splitting::Radial ? "mdrt_gpu_pme_prolate_blocks"
+                                                        : blockSymbol<window, tilted>();
   OpBuilder::InsertionGuard functionGuard(b);
   SmallVector<Type> inputs;
   inputs.push_back(
@@ -101,9 +102,13 @@ void DevicePME::emitTables(StringRef symbol) {
   Value entries = addi(k12a, k3);
   Value blocks_entries;
   if constexpr (splitting != Splitting::P3M) {
+    Value work = entries;
+    if constexpr (window == Window::Spline && splitting == Splitting::Radial)
+      work = arith::MaxUIOp::create(b, loc, entries,
+                                    memref::DimOp::create(b, loc, moduli, 1));
     blocks_entries =
         func::CallOp::create(b, loc, blockFunction, TypeRange{idxType},
-                             ValueRange{entries})
+                             ValueRange{work})
             .getResult(0);
   }
   Value blocks;
@@ -145,6 +150,20 @@ void DevicePME::emitTables(StringRef symbol) {
     scf::IfOp insideBranch;
     if constexpr (splitting != Splitting::P3M) {
       item = addi(base, tx);
+      if constexpr (window == Window::Spline && splitting == Splitting::Radial) {
+        // Pack the radial transform beside the axis factors in the same launch.
+        // Row 4 begins with two window fields, n, scale, and two n-term series.
+        Value two = arith::ConstantIndexOp::create(b, loc, 2);
+        Value four = arith::ConstantIndexOp::create(b, loc, 4);
+        Value n = indexCast(idxType, fptosi(i64Type, load(moduli, {four, two})));
+        Value count = addi(two, addi(n, n));
+        auto pack = scf::IfOp::create(b, loc, cmpi(arith::CmpIPredicate::ult, item, count));
+        OpBuilder::InsertionGuard packGuard(b);
+        b.setInsertionPointToStart(pack.thenBlock());
+        Value at = select(cmpi(arith::CmpIPredicate::ult, item, two), item, addi(item, c1));
+        store(convert(realType, load(moduli, {four, addi(item, two)})), tables,
+              {addi(muli(entries, c3), at)});
+      }
       Value inside = cmpi(arith::CmpIPredicate::ult, item, entries);
       insideBranch =
           scf::IfOp::create(b, loc, TypeRange{}, inside, true, false);
@@ -360,3 +379,5 @@ template void
     DevicePME::emitTables<Window::Prolate, Splitting::Radial, false>(StringRef);
 template void
     DevicePME::emitTables<Window::Prolate, Splitting::Radial, true>(StringRef);
+template void DevicePME::emitTables<Window::Spline, Splitting::Radial, false>(StringRef);
+template void DevicePME::emitTables<Window::Spline, Splitting::Radial, true>(StringRef);

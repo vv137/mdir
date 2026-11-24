@@ -1381,7 +1381,10 @@ between $k+2$ and 40 even Legendre terms. Positive continuity defaults
 to eight terms. The assignment `window` defaults to `"PROLATE"` at
 zero and `"BSPLINE"` otherwise. The prolate window takes orders 5–8
 (default 6) and accepts `window_bandwidth`. The B-spline window takes
-order 4. The split bandwidth comes from `bandwidth` or the usual
+order 4. On the GPU, positive continuity with this window uses the Gaussian
+order-4 charge assignment and force gathering kernels. The radial influence
+uses the cosine transform of the constrained density and the inverse squared
+B-spline transform on each axis. The split bandwidth comes from `bandwidth` or the usual
 `tolerance` rule. The initial automatic grid spacing is $\pi r_c/c$.
 The original aliasing refinement applies to the original density and
 prolate window. Gaussian inputs reject all three new keys. Prolate inputs

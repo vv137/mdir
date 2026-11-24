@@ -506,6 +506,7 @@ struct ReciprocalIRConfig {
   llvm::SmallVector<int64_t, 3> grid;
   int64_t order = 0;
   double beta = 0.0, coulomb = 0.0;
+  bool splineAssignment = false;
   bool dispersion = false, prolate = false, p3m = false, gatherAll = false;
 };
 
@@ -527,6 +528,7 @@ static TermIRValues buildReciprocal(mlir::OpBuilder &builder,
       builder.getF64FloatAttr(config.coulomb),
       config.dispersion ? builder.getUnitAttr() : UnitAttr{},
       config.prolate ? builder.getUnitAttr() : UnitAttr{},
+      config.splineAssignment ? builder.getUnitAttr() : UnitAttr{},
       config.p3m ? builder.getUnitAttr() : UnitAttr{},
       config.gatherAll ? builder.getUnitAttr() : UnitAttr{});
   return {reciprocal.getEnergy(), reciprocal.getForces(),
@@ -2274,6 +2276,8 @@ public:
       config.beta = program.pmeBeta;
       config.coulomb = coulombInternal;
       config.prolate = program.pmeProlate;
+      config.splineAssignment = config.prolate && control.pmeContinuity > 0 &&
+                                control.pmeWindow == "BSPLINE";
       config.p3m = program.pmeP3M;
       config.gatherAll = listed && gathersAll("pme_listed");
       TermIRValues operands = {point.physical.positions, point.physical.field("q"), point.physical.cell,

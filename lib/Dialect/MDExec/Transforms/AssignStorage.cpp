@@ -1555,7 +1555,8 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       /*forces=*/Type(), positions, charges, mapping.lookup(op.getCell()),
       moduli, out, scratch, listed, op.getGridAttr(), op.getOrderAttr(),
       op.getBetaAttr(), op.getCoulombAttr(), op.getDispersionAttr(),
-      op.getPotentialAttr(), op.getProlateAttr(), op.getP3mAttr(),
+      op.getPotentialAttr(), op.getProlateAttr(), op.getSplineAssignmentAttr(),
+      op.getP3mAttr(),
       op.getGatherAllAttr(), onDevice ? op.getScatterAttr() : ScatterAttr());
   if (axisFFT != "off" && onDevice)
     created->setAttr("md_exec.fft_requested",

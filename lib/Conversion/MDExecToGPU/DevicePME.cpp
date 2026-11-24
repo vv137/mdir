@@ -79,6 +79,10 @@ template void DevicePME::emitSplineStages<true>(bool, bool, int64_t);
 
 void DevicePME::emitProlate(bool listed, int64_t tiles) {
   emitBlocks("mdrt_gpu_pme_prolate_blocks");
+  if (order == 4) {
+    emitTables<Window::Spline, Splitting::Radial, false>("mdrt_gpu_pme_radial_spline_tables");
+    emitTables<Window::Spline, Splitting::Radial, true>("mdrt_gpu_pme_radial_spline_tables_triclinic");
+  }
   emitCoefficients("mdrt_gpu_pme_prolate_coefficients");
   emitPlaces<false>("mdrt_gpu_pme_prolate_places");
   emitPlaces<true>("mdrt_gpu_pme_prolate_places_triclinic");

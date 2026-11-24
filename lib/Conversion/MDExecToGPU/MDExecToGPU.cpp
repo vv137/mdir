@@ -6119,12 +6119,14 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
         builder, loc,
         getOrDeclare("mdrtSideBegin", builder.getFunctionType({}, {})),
         ValueRange());
-  // The prolate kernel has kernels of its own (D266).
+  // Both prolate assignments use the radial influence kernels.
   if (op.getProlate()) {
-    recordFFTPlan(module,op,"prolate window");
     if (failed(addProlateKernels(position, charge, force, op.getOrder(),
                                    static_cast<bool>(listed), tiles)))
       return failure();
+  }
+  if (op.getProlate() && !op.getSplineAssignment()) {
+    recordFFTPlan(module, op, "prolate window");
     // A triclinic cell takes its own places, gathering, and influence;
     // the coefficients and the spreading do not depend on the cell.
     auto prolateInstance = [&](StringRef name) {
@@ -6233,11 +6235,14 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // Influence "P3M" (D304) takes tables and a product with the
   // virial of its own; its tables give `scale` eq. 2.28 as they are.
   std::string tabled = op.getP3m() ? "_p3m" : kind;
+  bool radial = op.getSplineAssignment();
   func::CallOp convolve;
   auto pitch = op->getAttrOfType<IntegerAttr>("md_exec.fft_pitch");
   bool forceOnly = op.getEnergy().use_empty() && op.getVirial().use_empty();
   StringRef fallback;
-  if (!narrowGrid || !position.isF64())
+  if (radial)
+    fallback = "prolate radial influence";
+  else if (!narrowGrid || !position.isF64())
     fallback = "requires mixed precision";
   else if (op.getOrder() != 4)
     fallback = "unqualified spline order";
@@ -6307,7 +6312,8 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
       function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
     func::CallOp::create(builder, loc, forward,
                          ValueRange{real, complex, sizes[0], sizes[1], sizes[2]});
-    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_tables" + tabled),
+    func::CallOp::create(builder, loc, instance(radial ? "mdrt_gpu_pme_radial_spline_tables"
+                                         : "mdrt_gpu_pme_tables" + tabled),
                          ValueRange{op.getModuli(), tables, box, beta, coulomb,
                                     k1, k2, k3});
     bool fuse = false;
@@ -6323,7 +6329,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
       return n == 1;
     };
     // A charge derivative can have a separate potential sum at these positions.
-    fuse = forceOnly && narrow && position.isF64() && !tilted &&
+    fuse = !radial && forceOnly && narrow && position.isF64() && !tilted &&
            !op.getDispersion() && llvm::all_of(grid, supportsCallback) &&
            grid[0] <= UINT32_MAX / grid[1] / (grid[2] / 2 + 1) &&
            llvm::none_of(op->getBlock()->getOps<md_exec::ReciprocalOp>(),
@@ -6342,12 +6348,14 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
           ValueRange{complex, real, tables, sizes[0], sizes[1], sizes[2]});
     } else {
       if (forceOnly)
-        func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_scale" + kind),
+        func::CallOp::create(builder, loc, instance(radial ? "mdrt_gpu_pme_prolate_scale"
+                                                  : "mdrt_gpu_pme_scale" + kind),
                              ValueRange{complex, tables, box, beta, coulomb, k1,
                                         k2, k3});
       else
         convolve = func::CallOp::create(
-            builder, loc, instance("mdrt_gpu_pme_convolve" + tabled),
+            builder, loc, instance(radial ? "mdrt_gpu_pme_prolate_convolve"
+                                          : "mdrt_gpu_pme_convolve" + tabled),
             ValueRange{complex, tables, rows, box, beta, coulomb, k1, k2, k3});
       func::CallOp::create(builder, loc, backward,
                            ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});

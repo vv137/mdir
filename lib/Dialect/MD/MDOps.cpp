@@ -687,6 +687,8 @@ LogicalResult LinearTransformOp::verify() {
 }
 
 LogicalResult ReciprocalOp::verify() {
+  if (getSplineAssignment() && (!getProlate() || getOrder() != 4))
+    return emitOpError() << "spline_assignment requires prolate with order 4";
   auto positions = cast<FieldType>(getPositions().getType());
   auto charges = cast<FieldType>(getCharges().getType());
   if (positions.getParticleSet() != charges.getParticleSet())
