@@ -10,6 +10,6 @@
 # CHECK: c 14.4712 lambda
 # CHECK: epsilon 1e-05 bandwidth 14.471
 # CHECK: series of (1 - Phi)/(1 - x) at epsilon 1e-05: 23 terms, {{.*}} ok
-# CHECK: C3 cutoff at c 9.5392: {{.*}} ok
-# CHECK: C3 cutoff at c 14.471: {{.*}} ok
+# CHECK: C3 cutoff N=8 at c 9.5392: {{.*}} ok
+# CHECK: C3 cutoff N=8 at c 14.471: {{.*}} ok
 # CHECK: 0 failures

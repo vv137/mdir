@@ -547,12 +547,15 @@
                       "minimum": 1
                     },
                     "kernel": {
-                      "enum": ["GAUSSIAN", "PROLATE", "PROLATE_C3"]
+                      "enum": ["GAUSSIAN", "PROLATE"]
                     },
                     "bandwidth": {
                       "type": "number",
                       "minimum": 0
                     },
+                    "continuity": {"type": "integer", "minimum": 0, "maximum": 3},
+                    "basis_terms": {"type": "integer", "minimum": 2, "maximum": 40},
+                    "window": {"enum": ["BSPLINE", "PROLATE"]},
                     "window_bandwidth": {
                       "type": "number",
                       "minimum": 0

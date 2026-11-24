@@ -342,6 +342,11 @@ block scans, and the scans of counting sorts of the shared emitters
 (D296, [device-primitives.md](device-primitives.md),
 Section 4).
 
+### CuPotential
+
+NVIDIA, “Splitting the interaction,” *cuPotential Theory*, accessed
+2026-11-24. [Theory documentation](https://docs.nvidia.com/cuda/cupotential/theory)
+
 ### MerrillGarland2016
 
 D. Merrill and M. Garland, *Single-pass Parallel Prefix Scan with Decoupled
@@ -1421,6 +1426,13 @@ ghost copies of the particles near each domain, and the choice between
 computing each pair at both owners and computing it once with the force
 on the ghost returned to its owner (D275,
 [distributed-ml2.md](distributed-ml2.md)).
+
+### Predescu2020
+
+C. Predescu, A. K. Lerer, R. A. Lippert, et al., “The u-series: A separable
+decomposition for electrostatics computation with improved accuracy,”
+*J. Chem. Phys.* **152**, 084113 (2020).
+[doi:10.1063/1.5129393](https://doi.org/10.1063/1.5129393)
 
 ### Press2007
 

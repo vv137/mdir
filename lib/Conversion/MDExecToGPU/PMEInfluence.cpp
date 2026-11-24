@@ -1,5 +1,5 @@
 #include "DevicePME.h"
-#include "mdir/Conversion/PMEC3Spectrum.h"
+#include "mdir/Conversion/PMEProlateSpectrum.h"
 
 using namespace mlir;
 using namespace mdir;
@@ -20,16 +20,21 @@ DevicePME::Influence DevicePME::radialInfluence(Value tables, Value pe,
   Value ptwo = arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 2.0));
   Value pz = arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 0.0));
   Value pchi, pgchi, pband;
-  if (order == 4) {
+  auto spectrum = scf::IfOp::create(b, loc, TypeRange{realType, realType, b.getI1Type()},
+      cmpf(arith::CmpFPredicate::OLT, pscale, pz), true);
+  {
+    OpBuilder::InsertionGuard guard(b);
+    b.setInsertionPointToStart(spectrum.thenBlock());
     Value start = addi(pe, arith::ConstantIndexOp::create(b, loc, 3));
     Value k = arith::NegFOp::create(b, loc, px);
     std::tie(pchi, pgchi) =
-        mdir::prolate::emitC3Spectrum(b, loc, k, [&](bool derivative, Value i) {
+        mdir::prolate::emitPolynomialSpectrum(b, loc, k, [&](bool derivative, Value i) {
           Value at = addi(start, i);
           return load(tables, {derivative ? addi(at, pn) : at});
         });
     pband = arith::ConstantOp::create(b, loc, b.getBoolAttr(true));
-  } else {
+    scf::YieldOp::create(b, loc, ValueRange{pchi, pgchi, pband});
+    b.setInsertionPointToStart(spectrum.elseBlock());
     Value px2 = mulf(px, px);
     Value p2x2 = mulf(ptwo, px2);
     Value py = subf(p2x2, rone);
@@ -70,7 +75,11 @@ DevicePME::Influence DevicePME::radialInfluence(Value tables, Value pe,
     Value ps02 = subf(pm02, pc2);
     pgchi = addf(ps02, pas0);
     pband = cmpf(arith::CmpFPredicate::OLT, px, rone);
+    scf::YieldOp::create(b, loc, ValueRange{pchi, pgchi, pband});
   }
+  pchi = spectrum.getResult(0);
+  pgchi = spectrum.getResult(1);
+  pband = spectrum.getResult(2);
   Value pnonzero = cmpf(arith::CmpFPredicate::OGT, msqr, pz);
   Value pin = andi(pband, pnonzero);
   Value psafe = select(pnonzero, msqr, rone);

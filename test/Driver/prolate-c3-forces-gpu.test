@@ -1,2 +1,0 @@
-# REQUIRES: python-api, cuda
-# RUN: env OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 %mdir_python %S/Inputs/prolate_c3_forces.py GPU %t

@@ -126,12 +126,4 @@ This permits differentiation of an unshifted Gaussian direct sum locally.
 The output keeps the two energies at every displacement and repetition so
 the direction, sign, step choice and numerical error estimate can be checked.
 
-For the conditional NVE comparison with the direct analytic C² function,
-apply `analytic-direct.patch` to a separate source copy of the stage and
-build it before submitting either run. The integral of the even
-degree-78 concentration polynomial, divided by its argument, is a
-degree-39 polynomial in squared distance. The patch changes its basis
-once during setup and evaluates all 40 Chebyshev coefficients by
-Clenshaw recurrence in each pair. Check the emitted `term_coulomb`
-potential for the removal of the four table lookups. Run both frozen
-binaries with the same initial conditions, control and physical duration.
+The finite Legendre basis now uses the global analytic pair polynomial directly.

@@ -368,7 +368,10 @@ alone.
 | `System.pme_influence` | `[pme] influence` | `mdir.PMEInfluence.SPME` (the default), `mdir.PMEInfluence.Optimal` (D134), `mdir.PMEInfluence.P3M` (D304; a rectangular cell only) |
 | `System.analytic_bonds` | `[constraints] analytic_bonds` | `False` (the default), `True`: a group of SHAKE of one bond is projected in closed form |
 | `System.pme_order` | `[pme] order` | 4 (the default), 6, or 8; before, 4 alone |
-| `System.pme_kernel` | `[pme] kernel` | `mdir.PMEKernel.Gaussian` (the default), `mdir.PMEKernel.Prolate` (D266); with `Prolate`, `pme_order` takes 5 to 8 and is 6 unless set, and `pme_spacing` follows the bandwidth unless set, as the control file |
+| `System.pme_kernel` | `[pme] kernel` | `mdir.PMEKernel.Gaussian` (the default), `mdir.PMEKernel.Prolate` (D266); with a prolate window, `pme_order` takes 5 to 8 and defaults to 6, and `pme_spacing` follows the bandwidth unless set, as the control file |
+| `System.pme_continuity` | `[pme] continuity` | Prolate cutoff continuity, 0 (default) through 3 |
+| `System.pme_basis_terms` | `[pme] basis_terms` | Even Legendre terms from $k+2$ to 40. Omitting it uses the original density at zero continuity and eight terms otherwise. |
+| `System.pme_window` | `[pme] window` | `"PROLATE"` (default at zero continuity) or `"BSPLINE"` (default otherwise, order 4) |
 | `System.pme_bandwidth` | `[pme] bandwidth` | 0 (from `pme_tolerance`); prolate only |
 | `System.pme_window_bandwidth` | `[pme] window_bandwidth` | 0 ($c(\varepsilon/2)$); prolate only |
 

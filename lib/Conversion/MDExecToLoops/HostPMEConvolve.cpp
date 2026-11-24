@@ -1,5 +1,5 @@
 #include "HostPME.h"
-#include "mdir/Conversion/PMEC3Spectrum.h"
+#include "mdir/Conversion/PMEProlateSpectrum.h"
 
 using namespace mlir;
 using namespace mdir::kernels;
@@ -360,7 +360,7 @@ void HostPME::emitInfluence() {
       OpBuilder::InsertionGuard guard(b);
       b.setInsertionPointToStart(spectrum.thenBlock());
       Value k = arith::NegFOp::create(b, loc, p_x);
-      auto [v, slope] = mdir::prolate::emitC3Spectrum(
+      auto [v, slope] = mdir::prolate::emitPolynomialSpectrum(
           b, loc, k, [&](bool derivative, Value i) {
             Value col = arith::AddIOp::create(b, loc, p_r4, i);
             if (derivative)

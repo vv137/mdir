@@ -119,7 +119,8 @@ def dipeptide(kind="plain"):
     if scenario == "prolate":
         system.pme_kernel = mdir.PMEKernel.Prolate
     elif scenario == "c3":
-        system.pme_kernel = mdir.PMEKernel.ProlateC3
+        system.pme_kernel = mdir.PMEKernel.Prolate
+        system.pme_continuity = 3
         system.pme_grid = [28] * 3
     if kind == "tail":
         system.truncation = mdir.Truncation.None_
@@ -169,7 +170,8 @@ def water(kind="plain"):
     if scenario == "prolate":
         system.pme_kernel = mdir.PMEKernel.Prolate
     elif scenario == "c3":
-        system.pme_kernel = mdir.PMEKernel.ProlateC3
+        system.pme_kernel = mdir.PMEKernel.Prolate
+        system.pme_continuity = 3
         system.pme_grid = [28] * 3
     if kind == "wall":
         wall = mdir.ExternalTerm()

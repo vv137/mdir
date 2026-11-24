@@ -158,6 +158,8 @@ struct System {
   std::array<int64_t, 3> pmeGrid = {0,0,0};
   /// The order of the B-splines: 4, 6, or 8, as `[pme] order`.
   int64_t pmeOrder = 4;
+  int64_t pmeContinuity = 0, pmeBasisTerms = 0;
+  std::string pmeWindow;
   /// `[pme] influence` (D134; D246).
   PMEInfluence pmeInfluence = PMEInfluence::SPME;
   /// `[pme] kernel`, `bandwidth`, and `window_bandwidth` (D266):

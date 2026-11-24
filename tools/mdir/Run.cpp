@@ -1206,16 +1206,21 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                                     program->pmeGrid[2]}},
           {"order", program->pmeOrder},
           {"force_only_product_rule", pmeForceProduct},
-          {"kernel", control->pmeKernel == PMEKernel::ProlateC3 ? "PROLATE_C3" : program->pmeProlate ? "PROLATE" : "GAUSSIAN"}};
+          {"kernel", program->pmeProlate ? "PROLATE" : "GAUSSIAN"}};
     if (program->pme && !fftPlans.empty())
       (*pme.getAsObject())["fft_plans"] = std::move(fftPlans);
     // The prolate kernel's own parameters (D266).
     if (program->pme && program->pmeProlate) {
       llvm::json::Object &object = *pme.getAsObject();
       object["bandwidth"] = program->pmeBandwidth;
-      if (control->pmeKernel == PMEKernel::Prolate) {
+      object["continuity"] = control->pmeContinuity;
+      if (control->pmeBasisTerms)
+        object["basis_terms"] = control->pmeBasisTerms;
+      object["window"] = control->pmeWindow;
+      if (control->pmeWindow == "PROLATE") {
         object["window_bandwidth"] = program->pmeWindowBandwidth;
-        object["aliasing_estimate"] = program->pmeAliasing;
+        if (!control->pmeBasisTerms)
+          object["aliasing_estimate"] = program->pmeAliasing;
       }
     }
     llvm::json::Object effective{
@@ -1554,9 +1559,14 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (program->pme)
     output.log.print("MDIR: PME force-only product rule: %s\n", pmeForceProduct);
   // The parameters that the prolate kernel derives (D266).
-  if (control->pmeKernel == PMEKernel::ProlateC3)
-    output.log.print("MDIR: constrained cubic PME, bandwidth %.6g\n", program->pmeBandwidth);
-  else if (program->pmeProlate)
+  if (program->pmeProlate && (control->pmeBasisTerms || control->pmeWindow == "BSPLINE")) {
+    output.log.print("MDIR: prolate PME, continuity %lld, c = %.6g, %s window, order %lld\n",
+                     static_cast<long long>(control->pmeContinuity), program->pmeBandwidth,
+                     control->pmeWindow.c_str(), static_cast<long long>(program->pmeOrder));
+    if (control->pmeBasisTerms)
+      output.log.print("MDIR: %lld even Legendre terms\n",
+                       static_cast<long long>(control->pmeBasisTerms));
+  } else if (program->pmeProlate)
     output.log.print("MDIR: the prolate kernel of PME: c = %.6g, c1 = %.6g, "
                      "%lld points of the window, a grid of %lld x %lld x "
                      "%lld, the aliasing estimate %.2g\n",

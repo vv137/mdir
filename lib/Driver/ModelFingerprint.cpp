@@ -198,6 +198,12 @@ Fingerprint mdir::model::getFingerprint(const System &s,
         "[" + getFingerprintInteger(s.pmeGrid[0]) + "," +
             getFingerprintInteger(s.pmeGrid[1]) + "," +
             getFingerprintInteger(s.pmeGrid[2]) + "]");
+  if (has(given.system, "pme_continuity"))
+    add("physics", "[pme] continuity", getFingerprintInteger(s.pmeContinuity));
+  if (has(given.system, "pme_basis_terms"))
+    add("physics", "[pme] basis_terms", getFingerprintInteger(s.pmeBasisTerms));
+  if (has(given.system, "pme_window"))
+    add("physics", "[pme] window", getFingerprintString(s.pmeWindow));
   if (has(given.system, "pme_order"))
     add("physics", "[pme] order", getFingerprintInteger(s.pmeOrder));
   if (has(given.system, "pme_influence"))
@@ -209,7 +215,7 @@ Fingerprint mdir::model::getFingerprint(const System &s,
   // (D266).
   if (has(given.system, "pme_kernel"))
     add("physics", "[pme] kernel",
-        getFingerprintString(s.pmeKernel == driver::PMEKernel::ProlateC3 ? "PROLATE_C3" : s.pmeKernel == driver::PMEKernel::Prolate ? "PROLATE" : "GAUSSIAN"));
+        getFingerprintString(s.pmeKernel == driver::PMEKernel::Prolate ? "PROLATE" : "GAUSSIAN"));
   if (has(given.system, "pme_bandwidth"))
     add("physics", "[pme] bandwidth", number(s.pmeBandwidth));
   if (has(given.system, "pme_window_bandwidth"))

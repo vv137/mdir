@@ -1,4 +1,5 @@
 #include "mdir/Driver/Model.h"
+#include "mdir/Driver/Prolate.h"
 #include "mdir/Driver/RigidUnits.h"
 #include "mdir/Driver/Fingerprint.h"
 #include "llvm/ADT/StringExtras.h"
@@ -258,21 +259,26 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   // The orders of the control file, with its words.
   // What belongs to the other kernel is refused, with the words of the
   // control file (D266).
-  bool c3 = s.pmeKernel == driver::PMEKernel::ProlateC3;
-  if (c3 && (s.pmeOrder != 4 || s.pmeAlpha != 0 || s.pmeWindowBandwidth != 0 ||
-             s.pmeInfluence != PMEInfluence::SPME))
-    return input("PROLATE_C3 requires order 4 and conflicts with beta, window_bandwidth and explicit influence");
   bool prolate = s.pmeKernel == driver::PMEKernel::Prolate;
   if (prolate && s.pmeAlpha != 0)
     return input("'beta' is for kernel = \"GAUSSIAN\"; the prolate kernel takes 'bandwidth' and 'window_bandwidth'");
   if (prolate && s.pmeInfluence != PMEInfluence::SPME)
     return input("'influence' is for kernel = \"GAUSSIAN\"; the prolate kernel takes 'bandwidth' and 'window_bandwidth'");
-  if (!prolate && !c3 && (s.pmeBandwidth != 0 || s.pmeWindowBandwidth != 0))
+  if (!prolate && (s.pmeBandwidth != 0 || s.pmeWindowBandwidth != 0))
     return input("'bandwidth' and 'window_bandwidth' are for kernel = \"PROLATE\"");
   if (!(s.pmeBandwidth >= 0) || !(s.pmeWindowBandwidth >= 0))
     return input("invalid PME settings");
-  int64_t order = prolate && !s.pmeOrderGiven ? 6 : s.pmeOrder;
-  if (prolate && (order < 5 || order > 8))
+  int64_t terms = s.pmeBasisTerms;
+  std::string window = s.pmeWindow;
+  if (prolate)
+    if (auto reason = mdir::prolate::resolveSettings(s.pmeContinuity, terms, terms != 0,
+                                                     window, !window.empty()))
+      return input(reason);
+  bool spline = window == "BSPLINE";
+  int64_t order = prolate && !s.pmeOrderGiven ? (spline ? 4 : 6) : s.pmeOrder;
+  if (spline && order != 4)
+    return input("B-spline orders other than 4 with the prolate split are not yet supported");
+  if (prolate && !spline && (order < 5 || order > 8))
     return input("expected 5, 6, 7, or 8 points of the window for 'order' with kernel = \"PROLATE\"");
   if (!prolate && s.pmeOrder != 4 && s.pmeOrder != 6 && s.pmeOrder != 8)
     return input("model: expected 4, 6, or 8 for 'order'");
@@ -326,10 +332,13 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.pmeAlphaTolerance = s.pmeTolerance;
   c.pmeMaxSpacing = s.pmeSpacing / driver::units::length;
   c.pmeOrder = order;
+  c.pmeContinuity = s.pmeContinuity;
+  c.pmeBasisTerms = terms;
+  c.pmeWindow = window;
   c.pmeKernel = s.pmeKernel;
   c.pmeBandwidth = s.pmeBandwidth;
   c.pmeWindowBandwidth = s.pmeWindowBandwidth;
-  if ((prolate || c3) && !s.pmeSpacingGiven) c.pmeMaxSpacing = 0.0;
+  if (prolate && !s.pmeSpacingGiven) c.pmeMaxSpacing = 0.0;
   c.pmeInfluence = s.pmeInfluence == PMEInfluence::Optimal ? driver::PMEInfluence::Optimal
                    : s.pmeInfluence == PMEInfluence::P3M   ? driver::PMEInfluence::P3M
                                                            : driver::PMEInfluence::SPME;

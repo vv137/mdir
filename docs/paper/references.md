@@ -143,6 +143,11 @@ against the headers of CUDA 13.2).
 NVIDIA, *cuFFTDx Examples*, "3D Convolution Examples," entry
 `convolution_3d_r2c`. [NVIDIA documentation](https://docs.nvidia.com/cuda/cufftdx/examples.html)
 
+### CuPotential
+
+NVIDIA, “Splitting the interaction,” *cuPotential Theory*, accessed
+2026-11-24. [Theory documentation](https://docs.nvidia.com/cuda/cupotential/theory)
+
 ### CurtisPowellReid1974
 
 A. R. Curtis, M. J. D. Powell, J. K. Reid, "On the estimation of sparse
@@ -584,6 +589,13 @@ R. Piessens, E. de Doncker-Kapenga, C. W. Überhuber, D. K. Kahaner,
 *QUADPACK: A Subroutine Package for Automatic Integration*, Springer Series
 in Computational Mathematics **1** (Springer, Berlin, 1983).
 [doi:10.1007/978-3-642-61786-7](https://doi.org/10.1007/978-3-642-61786-7)
+
+### Predescu2020
+
+C. Predescu, A. K. Lerer, R. A. Lippert, et al., “The u-series: A separable
+decomposition for electrostatics computation with improved accuracy,”
+*J. Chem. Phys.* **152**, 084113 (2020).
+[doi:10.1063/1.5129393](https://doi.org/10.1063/1.5129393)
 
 ### Press2007
 

@@ -16,7 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "mdir/Driver/Prolate.h"
-#include "mdir/Driver/ProlateC3.h"
+#include "mdir/Driver/ProlateSpectrum.h"
 #include <array>
 #include <numeric>
 
@@ -68,30 +68,32 @@ void gaussLegendre(int n, std::vector<double> &x, std::vector<double> &w) {
   }
 }
 
-// Project the band-concentration operator onto the null space of value,
-// slope and curvature at x=1 in the orthonormal even Legendre basis on [0,1].
-using Basis = std::array<double, C3Basis>;
-using Matrix = std::array<Basis, C3Basis>;
+// Project the band-concentration operator onto the null space of the first
+// k endpoint constraints in the orthonormal even Legendre basis on [0,1].
+using Basis = std::array<double, SpectrumBasis>;
+using Matrix = std::array<Basis, SpectrumBasis>;
 double dot(const Basis &a, const Basis &b) {
   return std::inner_product(a.begin(), a.end(), b.begin(), 0.0);
 }
 
-std::vector<double> constrainedKernel(double bandwidth) {
+std::vector<double> constrainedKernel(double bandwidth, int continuity, int terms) {
   Matrix basis{}, concentration{}, eigenvectors{};
-  for (int i = 0; i < C3Basis; ++i) {
-    basis[0][i] = std::sqrt(4 * i + 1);
-    basis[1][i] = i * (2 * i + 1) * basis[0][i];
+  for (int i = 0; i < terms; ++i) {
     int degree = 2 * i;
-    basis[2][i] = basis[1][i] * ((degree - 1) * (degree + 2) / 4.0);
-    if (i >= 3)
-      basis[i][i - 3] = 1;
+    double endpoint = std::sqrt(4 * i + 1);
+    for (int m = 0; m < continuity; ++m) {
+      basis[m][i] = endpoint;
+      endpoint *= double((degree - m) * (degree + m + 1)) / (2 * (m + 1));
+    }
+    if (i >= continuity)
+      basis[i][i - continuity] = 1;
     eigenvectors[i][i] = 1;
   }
-  for (int i = 0; i < C3Basis; ++i) {
+  for (int i = 0; i < terms; ++i) {
     for (int pass = 0; pass < 2; ++pass)
       for (int j = 0; j < i; ++j) {
         double projection = dot(basis[i], basis[j]);
-        for (int k = 0; k < C3Basis; ++k)
+        for (int k = 0; k < terms; ++k)
           basis[i][k] -= projection * basis[j][k];
       }
     double norm = std::sqrt(dot(basis[i], basis[i]));
@@ -106,7 +108,7 @@ std::vector<double> constrainedKernel(double bandwidth) {
   for (size_t i = 0; i < nodes.size(); ++i) {
     double x = (1 + nodes[i]) / 2, prev = 1, cur = x;
     values[i][0] = weights[i] / 2;
-    for (int k = 2; k <= 2 * (C3Basis - 1); ++k) {
+    for (int k = 2; k <= 2 * (terms - 1); ++k) {
       double next = ((2 * k - 1) * x * cur - (k - 1) * prev) / k;
       if (k % 2 == 0)
         values[i][k / 2] = std::sqrt(2 * k + 1) * next * weights[i] / 2;
@@ -119,20 +121,20 @@ std::vector<double> constrainedKernel(double bandwidth) {
     Basis spectrum{}, projected{};
     for (size_t i = 0; i < nodes.size(); ++i) {
       double cosine = std::cos(frequency * (1 + nodes[i]) / 2);
-      for (int k = 0; k < C3Basis; ++k)
+      for (int k = 0; k < terms; ++k)
         spectrum[k] += cosine * values[i][k];
     }
-    for (int i = 3; i < C3Basis; ++i)
+    for (int i = continuity; i < terms; ++i)
       projected[i] = dot(basis[i], spectrum);
-    for (int i = 3; i < C3Basis; ++i)
-      for (int j = 3; j < C3Basis; ++j)
+    for (int i = continuity; i < terms; ++i)
+      for (int j = continuity; j < terms; ++j)
         concentration[i][j] += weights[f] * projected[i] * projected[j];
   }
   // Symmetric Jacobi diagonalization in the constrained subspace.
   for (int sweep = 0; sweep < 100; ++sweep) {
     double off = 0;
-    for (int i = 3; i < C3Basis; ++i)
-      for (int j = i + 1; j < C3Basis; ++j) {
+    for (int i = continuity; i < terms; ++i)
+      for (int j = i + 1; j < terms; ++j) {
         double cross = concentration[i][j];
         off = std::max(off, std::fabs(cross));
         if (std::fabs(cross) < 1e-19)
@@ -144,7 +146,7 @@ std::vector<double> constrainedKernel(double bandwidth) {
         concentration[i][i] -= t * cross;
         concentration[j][j] += t * cross;
         concentration[i][j] = concentration[j][i] = 0;
-        for (int k = 3; k < C3Basis; ++k) {
+        for (int k = continuity; k < terms; ++k) {
           if (k != i && k != j) {
             double x = concentration[k][i], y = concentration[k][j];
             concentration[i][k] = concentration[k][i] = c * x - s * y;
@@ -158,13 +160,13 @@ std::vector<double> constrainedKernel(double bandwidth) {
     if (off < 2e-18)
       break;
   }
-  int best = 3;
-  for (int i = 4; i < C3Basis; ++i)
+  int best = continuity;
+  for (int i = continuity + 1; i < terms; ++i)
     if (concentration[i][i] > concentration[best][best])
       best = i;
-  std::vector<double> coefficients(2 * C3Basis);
-  for (int k = 0; k < C3Basis; ++k)
-    for (int i = 3; i < C3Basis; ++i)
+  std::vector<double> coefficients(2 * terms);
+  for (int k = 0; k < terms; ++k)
+    for (int i = continuity; i < terms; ++i)
       coefficients[2 * k] +=
           std::sqrt(4 * k + 1) * basis[i][k] * eigenvectors[i][best];
   return coefficients;
@@ -172,9 +174,25 @@ std::vector<double> constrainedKernel(double bandwidth) {
 
 } // namespace
 
-Function::Function(double bandwidth, bool constrained) : c(bandwidth) {
-  if (constrained) {
-    coefficients = constrainedKernel(c);
+const char *mdir::prolate::resolveSettings(int64_t continuity, int64_t &terms,
+                                          bool termsGiven, std::string &window,
+                                          bool windowGiven) {
+  if (continuity < 0 || continuity > 3)
+    return "supported cutoff continuity is 0 through 3";
+  if (termsGiven && (terms < continuity + 2 || terms > 40))
+    return "basis_terms must be at least continuity + 2 and at most 40";
+  if (!termsGiven)
+    terms = continuity ? 8 : 0;
+  if (!windowGiven)
+    window = continuity ? "BSPLINE" : "PROLATE";
+  if (window != "BSPLINE" && window != "PROLATE")
+    return "window must be BSPLINE or PROLATE";
+  return nullptr;
+}
+
+Function::Function(double bandwidth, int continuity, int terms) : c(bandwidth) {
+  if (terms) {
+    coefficients = constrainedKernel(c, continuity, terms);
   } else {
     // Enough terms that the last coefficients are below the rounding: the
     // coefficients decay superexponentially beyond k ≈ c.
@@ -240,7 +258,7 @@ Function::Function(double bandwidth, bool constrained) : c(bandwidth) {
   lambda = 2.0 * coefficients[0] / value(0.0);
   c0 = integral(1.0);
   int points = std::max(200, static_cast<int>(4 * c) + 100);
-  if (constrained)
+  if (terms)
     points = std::max(points, 384);
   gaussLegendre(points, nodes, weights);
   values.resize(points);
@@ -562,24 +580,24 @@ double Function::endpointDerivative(int derivative) const {
   return static_cast<double>(result);
 }
 
-Influence mdir::prolate::getC3Influence(const Function &psi) {
+Influence mdir::prolate::getPolynomialInfluence(const Function &psi) {
   Influence influence;
-  influence.terms = C3Terms;
-  influence.value.resize(C3Terms);
-  influence.slope.resize(C3Terms);
+  influence.terms = SpectrumTerms;
+  influence.value.resize(SpectrumTerms);
+  influence.slope.resize(SpectrumTerms);
   double norm = 2 * psi.halfIntegral();
-  for (int i = 0; i < C3Knots; ++i) {
-    double k = static_cast<double>(i) / C3SamplesPerUnit;
+  for (int i = 0; i < SpectrumKnots; ++i) {
+    double k = static_cast<double>(i) / SpectrumSamplesPerUnit;
     influence.value[i] = psi.transform(k) / norm;
-    influence.slope[i] = psi.transformDerivative(k) / (norm * C3SamplesPerUnit);
+    influence.slope[i] = psi.transformDerivative(k) / (norm * SpectrumSamplesPerUnit);
   }
   // Integration by parts terminates at the degree of the polynomial.
   // Values multiply sin(k)/k, slopes multiply cos(k)/k².
-  for (int i = 0; i < C3Basis; ++i) {
+  for (int i = 0; i < SpectrumBasis; ++i) {
     double scale = (i % 2 ? -1 : 1) /
-                   (psi.halfIntegral() * std::pow(double(C3Transition), 2 * i));
-    influence.value[C3Knots + i] = scale * psi.endpointDerivative(2 * i);
-    influence.slope[C3Knots + i] = scale * psi.endpointDerivative(2 * i + 1);
+                   (psi.halfIntegral() * std::pow(double(SpectrumTransition), 2 * i));
+    influence.value[SpectrumKnots + i] = scale * psi.endpointDerivative(2 * i);
+    influence.slope[SpectrumKnots + i] = scale * psi.endpointDerivative(2 * i + 1);
   }
   return influence;
 }
@@ -619,22 +637,23 @@ Window mdir::prolate::getCubicWindow() {
 // factors into (1-z exp(i theta))^-1/2 and its conjugate, giving the cosine
 // coefficients below. This avoids amplifying sampling noise in derivatives.
 std::vector<double> Function::squaredDistanceSeries() const {
-  std::array<double, 2 * C3Basis> primitive{}, binomial{};
+  int terms = coefficients.size() / 2;
+  std::vector<double> primitive(2 * terms), binomial(2 * terms);
   primitive[1] = coefficients[0];
-  for (int n = 2; n < 2 * C3Basis; n += 2) {
+  for (int n = 2; n < 2 * terms; n += 2) {
     double term = coefficients[n] / (2 * n + 1);
     primitive[n + 1] += term;
     primitive[n - 1] -= term;
   }
   binomial[0] = 1;
-  for (int k = 1; k < 2 * C3Basis; ++k)
+  for (int k = 1; k < 2 * terms; ++k)
     binomial[k] = binomial[k - 1] * (1 - 0.5 / k);
-  std::vector<double> series(C3Basis);
+  std::vector<double> series(terms);
   double next = 0;
-  for (int j = C3Basis - 1; j >= 0; --j) {
+  for (int j = terms - 1; j >= 0; --j) {
     int m = 2 * j + 1;
     double cosine = 0;
-    for (int n = m; n < 2 * C3Basis; n += 2)
+    for (int n = m; n < 2 * terms; n += 2)
       cosine += 2 * primitive[n] * binomial[(n - m) / 2] *
                 binomial[(n + m) / 2];
     // Divide by x using 2x T_k = T_(k+1) + T_(k-1).
