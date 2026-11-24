@@ -1389,7 +1389,7 @@ reject explicit `beta` and `influence`.
 
 **Construction.** The density is $\chi(x)=\sum_{j=0}^{N-1}a_jP_{2j}(x)$ on $x=r/r_c\in[0,1]$, the split is $\phi(r)=(1-\Phi(r/r_c))/r$ with $\Phi(x)=\int_0^x\chi$ and $\Phi(1)=1$. The coefficients maximize the band concentration $a^{\mathsf T}Aa/a^{\mathsf T}Ga$ (sinc kernel of bandwidth $c$) subject to $\chi^{(m)}(1)=0$ for $m<k$. Then $\phi$ is $C^k$ at $r_c$, and the first nonzero jump is $\Delta\phi^{(k+1)}(r_c)=-\chi^{(k)}(1)/r_c^{k+2}$, from $r\phi^{(k)}+k\phi^{(k-1)}=-\chi^{(k-1)}/r_c^k$. With $k=0$ the maximizer is the prolate function of the current kernel; $\phi(r_c)=0$ holds for every $k$, so `coulomb_modifier` changes nothing for this kernel.
 
-**Why N is a key.** With many terms the constrained maximizer stays close to the unconstrained prolate function and meets the endpoint constraints in a thin layer next to $x=1$. Markov's inequality bounds the endpoint derivatives of a degree-$n$ polynomial by $n^2$ times its maximum; it does not by itself prove that the optimum forms such a layer. The computed values are consistent with Markov-type endpoint scaling: for $k=2$, doubling N from 20 to 40 multiplies $\chi''(1)$ by 14.8, near $2^4$. At the leakage of the 40-term C³ prototype (N = 40, $c=9.5392$, 8 Å):
+**Why N is a key.** With many terms the constrained maximizer stays close to the unconstrained prolate function and meets the endpoint constraints in a thin layer next to $x=1$. For a degree-$n$ polynomial on $[-1,1]$, Markov's inequality gives $\lVert p'\rVert_\infty\le n^2\lVert p\rVert_\infty$. Applying the bound twice allows curvature of order $n^4$. This permits a thin endpoint layer. The concentration solve determines whether it occurs. The computed values are consistent with Markov-type endpoint scaling: for $k=2$, doubling N from 20 to 40 multiplies $\chi''(1)$ by 14.8, near $2^4$. At the leakage of the 40-term C³ prototype (N = 40, $c=9.5392$, 8 Å):
 
 | | N = 40 | N = 8 | bandwidth for equal leakage |
 |---|---:|---:|---:|
@@ -1399,6 +1399,15 @@ reject explicit `beta` and `influence`.
 Below N = 8 the bandwidth must rise by 21–24% for the same leakage.
 
 The primitive of the even density, divided by $x$, is a polynomial of degree $N-1$ in squared distance. The pair region evaluates its Chebyshev series by Clenshaw recurrence. MATRIX, GROUPS and TOWERS consume this same region. The reciprocal multiplier and its derivative use the cosine transform of the same normalized density.
+
+At $r_c=8$ Å and $c=9.5392$, the binary32 Clenshaw evaluation and its
+differentiated recurrence were compared with the binary64 recurrence at
+8192 successive binary32 values of $r/r_c$ immediately below one.
+For $(k,N)=(2,8),(2,40),(3,8)$, the largest absolute differences were
+$2.99\times10^{-8}$ Å⁻¹ for the direct potential per unit Coulomb
+prefactor and $9.76\times10^{-9}$ Å⁻² for its slope. This check used
+separate multiply and add operations. The mixed-precision force oracle
+also exercises the compiled recurrence.
 
 ### Prototype measurements
 
