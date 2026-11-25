@@ -465,6 +465,24 @@ Boundary copies must establish completion and host visibility on the actual
 producer queue before storage is released. It does not infer overlap
 from tokens or change the existing reciprocal implementation.
 
+**Ordinary TOWERS steps (D[towers-graph]).** For fixed-cell velocity Verlet
+with Gaussian PME and V-rescale, the ordinary steps between host actions
+can share one graph launch. The compiler unrolls up to 16 steps. Each phase
+reads accepted particle and force banks and writes proposals through a device
+pointer table. The drift checks and force certificate guard subsequent
+particle work, including the final kick. The absolute step and simulation
+time advance only on acceptance. At a boundary the host reads progress and
+selects the accepted banks. A failed proposal can be replayed from those banks.
+Coupling, output and checkpointing retain their absolute schedule.
+
+AUTO skips the trial at 408,609 particles or more, the size of the smallest
+LAUNCH winner in the six-input RTX 4090 comparison. On smaller eligible
+inputs the setup trial alternates the order of the two paths across four pairs.
+Replay must reduce the mean whole ordinary-step time by more than twice
+the sample standard deviation of the paired savings.
+In the six-input prototype measurement, graph submission changed throughput by
+−1.26% to +4.01%. The control file can pin either path.
+
 ## 8.4 Where the time of a step goes
 
 *Table 8.2. Cellulose NVE (408,609 atoms, 2 fs), mixed precision, dual

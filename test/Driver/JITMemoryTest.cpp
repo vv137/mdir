@@ -1,6 +1,6 @@
 // Deterministic tests at the production memory-manager boundary.
 #include "../../lib/Compiler/JITMemory.h"
-#include "../../lib/Compiler/JITEngine.h"
+#include "mdir/Compiler/JITEngine.h"
 #include "mdir/Compiler/Compile.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"

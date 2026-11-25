@@ -101,6 +101,7 @@ mdir::tool::prepareTowersSpecialization(const Control &control,
   // Setup sees the input atom order. Its private rebuild packs the atoms.
   source.reorder = false;
   source.neighborStructure = NeighborStructure::Matrix;
+  source.stepGraph = "LAUNCH";
   if (auto error = resolveRigidUnits(source, system))
     return std::move(error);
   auto program = buildProgram(source, system);

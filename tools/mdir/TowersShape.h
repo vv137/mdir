@@ -4,6 +4,10 @@
 #include "llvm/Support/JSON.h"
 
 namespace mdir::tool {
+/// Resolve the choice available before a timing trial. AUTO as the value
+/// means an eligible input still needs the paired measurements.
+llvm::json::Object initialStepGraphChoice(llvm::StringRef request,
+                                         llvm::StringRef refusal, size_t particles);
 llvm::Expected<llvm::json::Object>
 checkTowersShape(const driver::Control &control, const driver::System &system,
                  bool setup, llvm::StringRef checkpointHeight = {},

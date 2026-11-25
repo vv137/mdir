@@ -9,6 +9,7 @@
 #include <cstdio>
 
 namespace mdir::tool {
+llvm::Expected<std::string> getExecutionPins(llvm::StringRef path);
 llvm::json::Object getManifestBuild();
 /// The version of MDIR and its commit, "0.1.0 (<commit>)", as a checkpoint
 /// records its creator (D173).

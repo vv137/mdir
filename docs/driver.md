@@ -391,6 +391,37 @@ HDF5 was built but does not test checkpoints, PME, constraints, or the
 stability of a user's system; use `mdir check FILE` and the test suite for
 those concerns.
 
+The `[execution] step_graph` key controls submission of the ordinary steps
+between coupling and output boundaries. The default, `"LAUNCH"`, submits
+each step's kernels from the host. `"GRAPH"` uses CUDA graph replay for
+constrained, fixed-cell TOWERS dynamics with velocity Verlet, Gaussian PME
+and V-rescale. On eligible inputs with at least 408,609 particles, `"AUTO"`
+selects LAUNCH before timing. The log and manifest record category `rule`
+and both the particle count and inclusive threshold in `inputs`. On smaller
+eligible inputs AUTO times both paths on disposable states at setup.
+A request for GRAPH outside its scope gives a reason. AUTO uses LAUNCH there
+and includes the reason in the setup log.
+
+The setup log and the start event's `resolved_choices.step_graph` object
+record the requested and selected paths. Four pairs alternate which path runs first. Each
+candidate discards graph construction and the first half of the remaining
+chunks. The record gives the mean times and each pair's LAUNCH minus GRAPH
+time in µs per ordinary step. GRAPH must save more than twice the sample
+standard deviation of those four differences. Otherwise AUTO keeps LAUNCH,
+sets `below_noise` and logs `within noise` for the GRAPH gain. `setup_ms` measures elapsed wall time for the disposable
+runs, including input loading, compilation and warm-up. The `launch_setup`
+and `graph_setup` records give wall seconds for compilation (`compile_s`)
+and CUDA graph instantiation calls (`instantiate_s`). Stream-event seconds
+give the discarded warm chunks (`warm_s`) and retained ordinary chunks
+(`timed_s`). Construction chunks are excluded from both chunk totals.
+PTX, cubin and host object counts distinguish cache hits from compilation.
+`shared_lowering` indicates reuse of the other candidate’s common passes. Set `step_graph` to the
+record's `value` to pin that choice and skip the trial. Python exposes the
+same strings through `Execution.step_graph`. `mdir pin MANIFEST` prints
+the latest invocation’s resolved `[execution]` keys as TOML, including
+the TOWERS shape when present and the step timings in a comment. Python's segmented simulations
+currently resolve AUTO to LAUNCH. See D[towers-graph].
+
 For periodic TOWERS preflight, `[execution] towers_shape` accepts an
 inline table such as `{threads = 512, blocks_per_sm = 2, panel = 352,
 stripe = 384, records = 1536, split = 1, cell_height = "HALF"}` on one

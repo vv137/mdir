@@ -34,6 +34,7 @@ public:
   llvm::Error registerSymbols(
       llvm::function_ref<llvm::orc::SymbolMap(llvm::orc::MangleAndInterner)> map);
   llvm::Error initialize();
+  llvm::Expected<void *> lookup(llvm::StringRef name);
   llvm::Expected<void (*)(void **)> lookupPacked(llvm::StringRef name);
   /// What generating the host code cost, and what the cache saved.
   CompileStats getCompileStats() const { return cache->getStats(); }

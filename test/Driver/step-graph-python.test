@@ -1,0 +1,2 @@
+# REQUIRES: python-api
+# RUN: %mdir_python %S/Inputs/check_step_graph_python.py %S/Inputs/dipeptide

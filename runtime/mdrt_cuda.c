@@ -1649,7 +1649,7 @@ static void stopWith(const char *message) {
    it held 8 before, and the ninth plan ended the process. */
 struct FFTPlan {
   int64_t k1, k2, k3;
-  int forward, single;
+  int forward, single, graphUsers;
   const float *tables;
   CUdeviceptr callbackInfo;
   cufftHandle plan;
@@ -1797,11 +1797,13 @@ static int getFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward,
     return 0;
   }
   /* The plans least recently taken make room for this one in the budget. */
-  while (numFFTPlans && fftPlanBytes + workspace > getFFTPlanBudget()) {
-    int64_t oldest = 0;
-    for (int64_t i = 1; i != numFFTPlans; ++i)
-      if (fftPlans[i].lastUse < fftPlans[oldest].lastUse)
+  while (fftPlanBytes + workspace > getFFTPlanBudget()) {
+    int64_t oldest = -1;
+    for (int64_t i = 0; i != numFFTPlans; ++i)
+      if (!fftPlans[i].graphUsers &&
+          (oldest < 0 || fftPlans[i].lastUse < fftPlans[oldest].lastUse))
         oldest = i;
+    if (oldest < 0) break;
     destroyFFTPlan(oldest);
   }
   struct FFTPlan *entry = &fftPlans[numFFTPlans++];
@@ -1812,6 +1814,7 @@ static int getFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward,
   entry->single = single;
   entry->tables = tables;
   entry->callbackInfo = info;
+  entry->graphUsers = 0;
   entry->plan = made;
   entry->bytes = workspace;
   entry->lastUse = ++fftUses;
@@ -1820,8 +1823,32 @@ static int getFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward,
   return 1;
 }
 
+/* A captured transform keeps its plan and workspace across graph launches.
+   An aligned restart can reach capture before its first ordinary FFT. */
+int mdrtRetainFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward, int single) {
+  cufftHandle plan;
+  enter();
+  if (!getFFTPlan(k1, k2, k3, forward, single, tables, &plan)) return -1;
+  for (int64_t i = 0; i != numFFTPlans; ++i)
+    if (fftPlans[i].plan == plan) {
+      ++fftPlans[i].graphUsers;
+      return plan;
+    }
+  abort();
+}
+
+void mdrtReleaseFFTPlan(int handle) {
+  for (int64_t i = 0; i != numFFTPlans; ++i)
+    if (fftPlans[i].plan == handle) {
+      if (--fftPlans[i].graphUsers == 0 && fftPlanBytes > getFFTPlanBudget())
+        destroyFFTPlan(i);
+      return;
+    }
+  abort();
+}
+
 static int isDriverGone(void);
-/* No plan is in use when a trim destroys the plans: each transform
+/* No unretained plan is in use when a trim destroys the plans: each transform
    (mdrtCudaFFT*3D*) looks its plan up in getFFTPlan and executes it at
    once, with no allocation of the runtime between the two, and no handle
    is kept across calls. The trims within getFFTPlan run before the plan it
@@ -1845,8 +1872,9 @@ static uint64_t trimIdle(void) {
     freeBlocks[i] = freeBlocks[--numFree];
     releaseArena(piece, 0, 1);
   }
-  while (numFFTPlans)
-    destroyFFTPlan(numFFTPlans - 1);
+  for (int64_t i = numFFTPlans; i-- > 0;)
+    if (!fftPlans[i].graphUsers) destroyFFTPlan(i);
+  released -= fftPlanBytes;
   return released;
 }
 

@@ -877,6 +877,12 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
     return fail(system.takeError(), json);
   // As `mdir run` resolves it (D261).
   resolveNeighborStructure(*control, *system);
+  auto refusal = control->stepGraphRefusal(system->numConstraints);
+  if (control->stepGraph == "GRAPH" && !refusal.empty())
+    return fail(llvm::createStringError("step_graph: %s", refusal.str().c_str()), json);
+  using llvm::StringRef;
+  auto graphChoice = initialStepGraphChoice(control->stepGraph, refusal,
+                                            system->getNumParticles());
   std::optional<llvm::json::Object> towers;
   if (control->towersShapeGiven || control->neighborStructure == NeighborStructure::Towers) {
     auto shape = checkTowersShape(*control, *system, /*setup=*/false);
@@ -914,11 +920,15 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
     report.warnings.push_back({code, message});
   if (json) {
     auto object = makeJSON(*control, *system, report);
+    (*object.getObject("run"))["step_graph"] = std::move(graphChoice);
     if (towers)
       (*object.getObject("run")->getObject("neighbors"))["towers_shape"] =
           std::move(*towers);
     printJSON(std::move(object));
   } else {
+    if (control->stepGraph == "AUTO")
+      llvm::outs() << "step_graph " << *graphChoice.getString("value") << " ("
+                   << *graphChoice.getString("reason") << ")\n";
     if (towers)
       llvm::outs() << "TOWERS launch shape "
                    << llvm::formatv("{0}", llvm::json::Value(std::move(*towers))) << "\n";

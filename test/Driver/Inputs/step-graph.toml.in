@@ -1,0 +1,51 @@
+[input]
+format      = "AMBER"
+topology = "{inputs}/dipeptide.prmtop"
+coordinates = "{inputs}/dipeptide.inpcrd"
+
+[output]
+manifest = "choices.jsonl"
+energy_interval = {period}
+checkpoint = "state.h5"
+checkpoint_interval = {period}
+
+[energy]
+cutoff            = 8.0
+pairlist_distance = 10.0
+electrostatics    = "PME"
+
+[pme]
+beta      = 0.39467022824439113
+grid      = [32, 32, 32]
+order     = 4
+influence = "OPTIMAL"
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.001
+steps = {steps}
+
+[ensemble]
+ensemble    = "NVT"
+temperature = 300.0
+
+[thermostat]
+method        = "V-RESCALE"
+time_constant = 1.0
+interval = {period}
+
+[constraints]
+hydrogen_bonds = true
+rigid_water    = true
+analytic_bonds = false
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "GPU"
+precision = "MIXED"
+
+neighbor_structure = "TOWERS"
+towers_shape = {{threads=128, blocks_per_sm=1, panel=64, stripe=64, records=16, split=1, cell_height="FULL"}}
+step_graph = "{mode}"

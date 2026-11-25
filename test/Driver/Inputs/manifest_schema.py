@@ -40,8 +40,13 @@ def validate(value, rule):
         assert set(rule.get("required", ())) <= value.keys()
         properties = rule.get("properties", {})
         for key, item in value.items():
+            matching = [r for pattern, r in rule.get("patternProperties", {}).items()
+                        if re.search(pattern, key)]
             if key in properties:
-                validate(item, properties[key])
+                matching.append(properties[key])
+            if matching:
+                for matched in matching:
+                    validate(item, matched)
             elif rule.get("additionalProperties") is False:
                 assert False, key
             elif isinstance(rule.get("additionalProperties"), dict):

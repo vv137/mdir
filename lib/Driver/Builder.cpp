@@ -22,6 +22,11 @@ std::vector<const Program::TupleSet *> Builder::getRigidGroups() const {
 }
 
 llvm::Error Builder::build() {
+  if (control.stepGraph == "AUTO")
+    return makeError("step_graph AUTO must be resolved before building the run");
+  if (control.stepGraph == "GRAPH")
+    if (auto why = control.stepGraphRefusal(system.numConstraints); !why.empty())
+      return makeError("step_graph: " + why);
   // Every front end resolves `AUTO` for its system first
   // (resolveNeighborStructure, D261).
   if (control.neighborStructure == NeighborStructure::Towers) {
@@ -33,6 +38,8 @@ llvm::Error Builder::build() {
     mlir::Builder b(module.getContext());
     if (setup.launch.pack == "WIDE")
       module->setAttr("mdir.towers_wide_pack", b.getUnitAttr());
+    if (control.stepGraph == "GRAPH")
+      module->setAttr("mdir.towers_dt", b.getF64FloatAttr(control.timestep));
     if (system.topology)
       module->setAttr("mdir.towers_type_count",
                       b.getI64IntegerAttr(system.topology->getNumTypes()));

@@ -494,6 +494,9 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
       execution.neighborStructure != driver::NeighborStructure::Groups &&
       execution.neighborStructure != driver::NeighborStructure::Auto)
     return unsupported("unsupported neighbor structure");
+  c.stepGraph = execution.stepGraph;
+  if (c.stepGraph != "LAUNCH" && c.stepGraph != "GRAPH" && c.stepGraph != "AUTO")
+    return input("step_graph requires LAUNCH, GRAPH or AUTO");
   c.neighborStructure = execution.neighborStructure;
   c.rigidUnits = execution.rigidUnits;
   c.rigidUnitsGiven = execution.rigidUnits != driver::RigidUnits::Auto;
@@ -721,6 +724,9 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   // `NeighborStructure.Auto` is resolved for the system, as `mdir run`
   // resolves it (D261).
   driver::resolveNeighborStructure(c, *prepared);
+  if (c.stepGraph == "GRAPH")
+    return unsupported(("step_graph: " + c.stepGraphRefusal(prepared->numConstraints)).str());
+  c.stepGraph = "LAUNCH";
   // `RigidUnits`, as `mdir run` resolves it, at the positions of the state
   // (D424).
   if (llvm::Error e = driver::resolveRigidUnits(c, *prepared))

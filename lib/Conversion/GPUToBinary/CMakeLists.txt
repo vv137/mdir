@@ -1,5 +1,7 @@
 add_mlir_conversion_library(MDIRGPUToBinary
   GPUToBinary.cpp
+  TowersStepGraph.cpp
+  TowersChunk.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mdir/Conversion

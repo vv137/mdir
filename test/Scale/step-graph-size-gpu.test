@@ -1,0 +1,3 @@
+# REQUIRES: cuda, amber-suite
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/../Driver/Inputs/check_step_graph_size.py %amber_suite %t mdir

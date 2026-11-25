@@ -135,6 +135,232 @@
           "type": "integer",
           "minimum": 1
         },
+        "resolved_choices": {
+          "type": "object",
+          "properties": {
+            "step_graph": {
+              "type": "object",
+              "required": [
+                "requested",
+                "category",
+                "value",
+                "reason"
+              ],
+              "properties": {
+                "requested": {
+                  "enum": [
+                    "LAUNCH",
+                    "GRAPH",
+                    "AUTO"
+                  ]
+                },
+                "value": {
+                  "enum": [
+                    "LAUNCH",
+                    "GRAPH"
+                  ]
+                },
+                "category": {
+                  "enum": [
+                    "setup trial",
+                    "rule"
+                  ]
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "below_noise": {
+                  "type": "boolean"
+                },
+                "launch_us": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "graph_us": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "margin_us": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "margin_percent": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "paired_gain_us": {
+                  "type": "array",
+                  "minItems": 4,
+                  "maxItems": 4,
+                  "items": {
+                    "type": "number"
+                  }
+                },
+                "setup_ms": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "noise_factor": {
+                  "const": 2
+                },
+                "noise_us": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "launch_measured_chunks": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "graph_measured_chunks": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "graph_construction_chunks_excluded": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "inputs": {
+                  "type": "object",
+                  "properties": {
+                    "particles": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "threshold": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "particles",
+                    "threshold"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false,
+              "oneOf": [
+                {"properties": {"category": {"const": "setup trial"}}},
+                {
+                  "properties": {
+                    "category": {"const": "rule"},
+                    "requested": {"const": "AUTO"},
+                    "value": {"const": "LAUNCH"}
+                  },
+                  "required": ["inputs"]
+                }
+              ],
+              "patternProperties": {
+                "^(launch|graph)_setup$": {
+                  "type": "object",
+                  "properties": {
+                    "compile_s": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "instantiate_s": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "warm_s": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "timed_s": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "host_hits": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "host_compiled": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "ptx_hits": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "ptx_compiled": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "cubin_hits": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "cubin_compiled": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "shared_lowering": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "compile_s",
+                    "instantiate_s",
+                    "warm_s",
+                    "timed_s",
+                    "host_hits",
+                    "host_compiled",
+                    "ptx_hits",
+                    "ptx_compiled",
+                    "cubin_hits",
+                    "cubin_compiled",
+                    "shared_lowering"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "towers_shape": {
+              "type": "object",
+              "required": [
+                "threads",
+                "panel",
+                "blocks_per_sm",
+                "records",
+                "stripe",
+                "split",
+                "cell_height"
+              ],
+              "properties": {
+                "threads": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "panel": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "blocks_per_sm": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "records": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "stripe": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "split": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "cell_height": {
+                  "enum": [
+                    "FULL",
+                    "HALF"
+                  ]
+                }
+              }
+            }
+          }
+        },
         "effective": {
           "type": "object",
           "properties": {

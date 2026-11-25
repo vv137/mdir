@@ -23,6 +23,7 @@
 #include "mdir/Driver/H5MD.h"
 #include "mdir/Driver/Builder.h"
 #include "mdir/Compiler/Compile.h"
+#include "mdir/Compiler/JITEngine.h"
 #include "mdir/Compiler/ProfileMap.h"
 #include "mdir/Compiler/Skins.h"
 #include "mdir/Driver/Checkpoint.h"
@@ -43,6 +44,7 @@
 #include "mlir/Pass/PassInstrumentation.h"
 #include <set>
 #include "mlir/Pass/PassRegistry.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
@@ -260,8 +262,187 @@ takeAlgPolicy(mlir::ModuleOp module) {
   return {std::move(entries), line + "\n"};
 }
 
-int mdir::tool::runControl(StringRef controlFile, Emit emit,
-                           const char *argv0, const RunOptions &options) {
+namespace mdir::tool {
+struct CompiledRun {
+  std::unique_ptr<mlir::ExecutionEngine> engine;
+  void (*entry)(void **) = nullptr;
+  std::unique_ptr<compiler::JITEngine> trialEngine;
+  llvm::Expected<void *> lookup(StringRef name) const {
+    return trialEngine ? trialEngine->lookup(name) : engine->lookup(name);
+  }
+};
+
+static llvm::Expected<CompiledRun> compileEntry(mlir::ModuleOp module,
+                                                 llvm::ArrayRef<std::string> paths,
+                                                 const Program &program, bool trial) {
+  // The code of the host is scheduled by the fast list scheduler of LLVM.
+  // The default one, at each call, follows the chains of the block up
+  // through every path of their token factors, which grows exponentially
+  // with the calls of one block: the host code of a term over the centers
+  // of a dihedral on JAC, a block of 95 calls among 1,400 stores of the
+  // arguments of kernels, did not compile in ten minutes; the fast one
+  // compiles it in 2.6 s (D150). The kernels were compiled in the pass
+  // pipeline, with the default; it is set back once the host code is. A
+  // scheduler of the command line is kept. A skin search before restored
+  // the option as it found it (#829).
+  compiler::FastHostScheduler scheduler(/*keepCommandLine=*/true);
+  mlir::ExecutionEngineOptions engineOptions;
+  SmallVector<StringRef> sharedLibraries(paths.begin(), paths.end());
+  engineOptions.sharedLibPaths = sharedLibraries;
+  auto hostMachine = compiler::createHostMachine();
+  if (!hostMachine)
+    return hostMachine.takeError();
+  auto runtimeSymbols = [&](llvm::orc::MangleAndInterner interner) {
+    llvm::orc::SymbolMap symbols;
+    auto add = [&](StringRef name, void *function) {
+      symbols[interner(name)] = {llvm::orc::ExecutorAddr::fromPtr(function),
+                                 llvm::JITSymbolFlags::Exported};
+    };
+    add("_mlir_ciface_mdrtWriteEnergies",
+        (void *)&_mlir_ciface_mdrtWriteEnergies);
+    add("_mlir_ciface_mdrtWriteFrame", (void *)&_mlir_ciface_mdrtWriteFrame);
+    add("_mlir_ciface_mdrtStageFrame", (void *)&_mlir_ciface_mdrtStageFrame);
+    add("_mlir_ciface_mdrtCheckSpread",
+        (void *)&_mlir_ciface_mdrtCheckSpread);
+    add("_mlir_ciface_mdrtWriteTerms", (void *)&_mlir_ciface_mdrtWriteTerms);
+    add("_mlir_ciface_mdrtWriteVirial", (void *)&_mlir_ciface_mdrtWriteVirial);
+    add("_mlir_ciface_mdrtModelEvaluate",
+        (void *)&_mlir_ciface_mdrtModelEvaluate);
+    add("_mlir_ciface_mdrtModelEvaluateEnergy",
+        (void *)&_mlir_ciface_mdrtModelEvaluateEnergy);
+    add("_mlir_ciface_mdrtModelEvaluateEdges",
+        (void *)&_mlir_ciface_mdrtModelEvaluateEdges);
+    add("_mlir_ciface_mdrtModelEvaluateEdgesEnergy",
+        (void *)&_mlir_ciface_mdrtModelEvaluateEdgesEnergy);
+    add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
+    add("mdrtNoseHooverFactor", (void *)&mdrtNoseHooverFactor);
+    add("mdrtWriteSolvent", (void *)&mdrtWriteSolvent);
+    add("_mlir_ciface_mdrtWritePull", (void *)&_mlir_ciface_mdrtWritePull);
+    add("_mlir_ciface_mdrtWriteFreeEnergy",
+        (void *)&_mlir_ciface_mdrtWriteFreeEnergy);
+    add("_mlir_ciface_mdrtWriteObservables",
+        (void *)&_mlir_ciface_mdrtWriteObservables);
+    add("_mlir_ciface_mdrtSetBox", (void *)&_mlir_ciface_mdrtSetBox);
+    add("_mlir_ciface_mdrtSetTilt", (void *)&_mlir_ciface_mdrtSetTilt);
+    add("_mlir_ciface_mdrtSetBarostatState",
+        (void *)&_mlir_ciface_mdrtSetBarostatState);
+    add("_mlir_ciface_mdrtWriteMinimization",
+        (void *)&_mlir_ciface_mdrtWriteMinimization);
+    add("_mlir_ciface_mdrtCheckMinimization",
+        (void *)&_mlir_ciface_mdrtCheckMinimization);
+    add("_mlir_ciface_mdrtFinish", (void *)&_mlir_ciface_mdrtFinish);
+    add("_mlir_ciface_mdrtWriteCheckpoint",
+        program.writesForces
+            ? (void *)&_mlir_ciface_mdrtWriteCheckpointWithForces
+            : (void *)&_mlir_ciface_mdrtWriteCheckpoint);
+    return symbols;
+  };
+
+  const auto &triple = (*hostMachine)->getTargetTriple();
+  if (trial && triple.isOSBinFormatELF() && (triple.getArch() == llvm::Triple::x86_64 ||
+                                             triple.getArch() == llvm::Triple::aarch64)) {
+    auto engine = compiler::JITEngine::create(
+        module, std::move(*hostMachine), paths, program.entry,
+        ("host-opt=" + compiler::hostOptimization()).str());
+    if (!engine)
+      return engine.takeError();
+    if (auto error = (*engine)->registerSymbols(runtimeSymbols))
+      return std::move(error);
+    if (auto error = (*engine)->initialize())
+      return std::move(error);
+    auto entry = (*engine)->lookupPacked(program.entry);
+    if (!entry)
+      return entry.takeError();
+    return CompiledRun{nullptr, *entry, std::move(*engine)};
+  }
+
+  // LLVM's module pipeline on the host code before the code generator, as
+  // a simulation runs it (D269). The options hold a reference to the
+  // transformer, which lives until the engine is made.
+  llvm::TargetMachine *machine = hostMachine->get();
+  std::function<llvm::Error(llvm::Module *)> optimize =
+      [machine](llvm::Module *module) {
+        compiler::optimizeHostModule(*module, *machine);
+        return llvm::Error::success();
+      };
+  engineOptions.transformer = optimize;
+  auto engine = mlir::ExecutionEngine::create(module, engineOptions,
+                                              std::move(*hostMachine));
+  if (!engine)
+    return engine.takeError();
+
+  (*engine)->registerSymbols(runtimeSymbols);
+
+  // Loads the kernels of a GPU. The functions of the driver must be known
+  // by now.
+  (*engine)->initialize();
+
+  auto function = (*engine)->lookupPacked(program.entry);
+  scheduler.restore();
+  if (!function)
+    return function.takeError();
+  return CompiledRun{std::move(*engine), *function};
+}
+
+// Both candidates have the same passes up to the graph transformation.
+// Retain the input as well: a nonaligned restart can build different loops.
+struct TrialLowering {
+  mlir::MLIRContext context{compiler::getRegistry(), mlir::MLIRContext::Threading::DISABLED};
+  mlir::OwningOpRef<mlir::ModuleOp> input, lowered;
+  std::string pipeline;
+
+  TrialLowering() { compiler::shareThreadPool(context); }
+
+  mlir::LogicalResult prepare(mlir::OwningOpRef<mlir::ModuleOp> &module,
+                              StringRef passes, bool &reused) {
+    // These two attributes are consumed by the graph pass in the suffix.
+    auto dt = (*module)->removeAttr("mdir.towers_dt");
+    auto start = (*module)->removeAttr("mdir.towers_start_time");
+    if (input && passes == pipeline && mlir::OperationEquivalence::isEquivalentTo(
+            *module, *input, mlir::OperationEquivalence::IgnoreLocations)) {
+      module = lowered->clone();
+      reused = true;
+    } else {
+      mlir::PassManager manager(&context, mlir::ModuleOp::getOperationName(),
+                                mlir::PassManager::Nesting::Implicit);
+      if (mlir::failed(mlir::parsePassPipeline(passes, manager)))
+        return mlir::failure();
+      input = module->clone();
+      pipeline = passes.str();
+      if (mlir::failed(manager.run(*module)))
+        return mlir::failure();
+      lowered = module->clone();
+    }
+    if (dt) (*module)->setAttr("mdir.towers_dt", dt);
+    if (start) (*module)->setAttr("mdir.towers_start_time", start);
+    return mlir::success();
+  }
+};
+
+struct StepGraphTrial {
+  TrialLowering &lowering;
+  const TowersSetup &setup;
+  StringRef path, restart;
+  double us = 0;
+  int64_t measured = 0, cold = 0;
+  std::string refusal;
+  CompiledRun compiled;
+  double compileSeconds = 0, instantiateSeconds = 0, warmSeconds = 0, timedSeconds = 0;
+  compiler::CompileStats cache;
+  bool sharedLowering = false;
+
+  llvm::json::Object timings() const {
+    return llvm::json::Object{{"compile_s", compileSeconds}, {"instantiate_s", instantiateSeconds},
+            {"warm_s", warmSeconds}, {"timed_s", timedSeconds},
+            {"shared_lowering", sharedLowering},
+            {"host_hits", cache.hits}, {"host_compiled", cache.compiled},
+            {"ptx_hits", cache.gpuPtxHits}, {"ptx_compiled", cache.gpuPtxCompiled},
+            {"cubin_hits", cache.gpuCubinHits}, {"cubin_compiled", cache.gpuCubinCompiled}};
+  }
+};
+
+static int runControlImpl(StringRef controlFile, Emit emit,
+                           const char *argv0, const RunOptions &options, StepGraphTrial *trial) {
   auto began = std::chrono::steady_clock::now();
 
   //===--------------------------------------------------------------------===//
@@ -274,6 +455,25 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // What the run writes (D149). Its log goes to the standard output from
   // here, and to the file of [output] as well once that is open.
   Output output;
+  if (trial) {
+    // An independent invocation owns its state, callbacks and banks. Use the
+    // production shape and checkpoint, with no files or checkpoints to write.
+    output.log.quiet = true;
+    control->stepGraph = trial->path.str();
+    control->restartInput = trial->restart.str();
+    for (auto *file : {&control->restartOutput, &control->energyFile,
+                       &control->trajectoryFile, &control->manifestFile, &control->logFile,
+                       &control->profileMapFile, &control->freeEnergyFile, &control->pullFile,
+                       &control->observablesFile})
+      file->clear();
+    control->framePeriod = control->checkpointPeriod = 0;
+    auto period = std::min<int64_t>(control->getCouplingPeriod(), 17);
+    control->thermostatPeriod = period;
+    if (control->comPeriod) control->comPeriod = period;
+    // Leave a long sequence of ordinary chunks between reporting sites.
+    control->energyPeriod = period * 32;
+    control->numSteps = control->energyPeriod * 2;
+  }
   Manifest manifest;
   llvm::json::Array manifestInputs;
 
@@ -362,6 +562,10 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // anything is built from it (D261).
   resolveNeighborStructure(*control, *system);
 
+  auto graphRefusal = control->stepGraphRefusal(system->numConstraints);
+  if (options.segments) graphRefusal = "GRAPH does not support segmented execution";
+  if (control->stepGraph == "GRAPH" && !graphRefusal.empty())
+    return fail("step_graph: " + graphRefusal);
   InputPaths inputPaths = getManifestInputs(controlFile, *control, *system);
   if (!control->manifestFile.empty() && emit == Emit::Run) {
     auto hashes = hashManifestInputs(inputPaths);
@@ -530,6 +734,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       }
     }
     firstStep = checkpoint->step;
+    control->restoredStep = firstStep;
     firstTime = checkpoint->time;
   } else if (control->minimize) {
     system->velocities.assign(3 * system->getNumParticles(), 0.0);
@@ -539,9 +744,13 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   StringRef previousTowersHeight =
       isRestart ? StringRef(checkpoint->towersCellHeight) : StringRef();
   bool usesTowers = control->neighborStructure == NeighborStructure::Towers;
+  llvm::json::Object resolvedChoices;
   llvm::json::Value towersShapeReport = nullptr;
   std::string towersCellHeight;
-  if (control->towersShapeGiven || usesTowers) {
+  if (trial) {
+    control->towersSetup = trial->setup;
+    towersCellHeight = trial->setup.launch.cellHeight;
+  } else if (control->towersShapeGiven || usesTowers) {
     auto shape =
         checkTowersShape(*control, *system, /*setup=*/true,
                          usesTowers ? previousTowersHeight : StringRef(),
@@ -551,8 +760,76 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     if (usesTowers)
       towersCellHeight =
           shape->getObject("effective")->getString("cell_height")->str();
+    if (usesTowers) resolvedChoices["towers_shape"] = llvm::json::Object(*shape->getObject("effective"));
     towersShapeReport = std::move(*shape);
   }
+  auto graphChoice = initialStepGraphChoice(control->stepGraph, graphRefusal,
+                                            system->getNumParticles());
+  control->stepGraph = graphChoice.getString("value")->str();
+  if (control->stepGraph == "AUTO") {
+    auto start = std::chrono::steady_clock::now();
+    auto recordElapsed = llvm::scope_exit([&] {
+      graphChoice["setup_ms"] = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - start).count();
+    });
+    TrialLowering lowering;
+    StepGraphTrial launch{lowering, control->towersSetup, "LAUNCH", control->restartInput};
+    StepGraphTrial graph{lowering, control->towersSetup, "GRAPH", control->restartInput};
+    constexpr int rounds = 4;
+    constexpr int noiseFactor = 2;
+    llvm::json::Array differences;
+    double launchSum = 0, graphSum = 0;
+    int64_t launchChunks = 0, graphChunks = 0, cold = 0;
+    for (int i = 0; i < rounds; ++i) {
+      auto *first = i % 2 ? &graph : &launch;
+      auto *second = i % 2 ? &launch : &graph;
+      for (auto *candidate : {first, second}) {
+        if (runControlImpl(controlFile, Emit::Run, argv0, {}, candidate))
+          return fail("step_graph setup trial could not measure the ordinary steps");
+        if (!candidate->refusal.empty())
+          break;
+      }
+      if (!launch.refusal.empty() || !graph.refusal.empty())
+        break;
+      launchSum += launch.us;
+      graphSum += graph.us;
+      differences.push_back(launch.us - graph.us);
+      launchChunks += launch.measured;
+      graphChunks += graph.measured;
+      cold += graph.cold;
+    }
+    graphChoice["launch_setup"] = launch.timings();
+    graphChoice["graph_setup"] = graph.timings();
+    control->stepGraph = "LAUNCH";
+    if (!launch.refusal.empty() || !graph.refusal.empty()) {
+      graphChoice["reason"] = launch.refusal.empty() ? graph.refusal : launch.refusal;
+    } else {
+      double gain = (launchSum - graphSum) / rounds;
+      double squared = 0;
+      for (const auto &difference : differences) {
+        double residual = *difference.getAsNumber() - gain;
+        squared += residual * residual;
+      }
+      double noise = std::sqrt(squared / (rounds - 1));
+      bool selectGraph = gain > noiseFactor * noise;
+      control->stepGraph = selectGraph ? "GRAPH" : "LAUNCH";
+      graphChoice["reason"] = selectGraph ? "GRAPH gain exceeds noise threshold"
+                                          : "within noise";
+      graphChoice["launch_us"] = launchSum / rounds;
+      graphChoice["graph_us"] = graphSum / rounds;
+      graphChoice["paired_gain_us"] = std::move(differences);
+      graphChoice["margin_us"] = std::abs(gain);
+      graphChoice["margin_percent"] = 100 * std::abs(gain) * rounds / std::max(launchSum, graphSum);
+      graphChoice["launch_measured_chunks"] = launchChunks;
+      graphChoice["graph_measured_chunks"] = graphChunks;
+      graphChoice["graph_construction_chunks_excluded"] = cold;
+      graphChoice["noise_us"] = noise;
+      graphChoice["noise_factor"] = noiseFactor;
+      graphChoice["below_noise"] = !selectGraph;
+    }
+  }
+  graphChoice["value"] = control->stepGraph;
+  std::string graphReport = llvm::formatv("{0}", llvm::json::Value(llvm::json::Object(graphChoice))).str();
   // The stored forces use the writer's strict pair predicate. Rebuild
   // them at the restored positions if the requested traversal or its
   // cell origins have changed.
@@ -668,12 +945,16 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
 
   // The passes are registered once a process: a search of the skins may
   // have lowered programs before (D281).
-  mlir::DialectRegistry registry = compiler::getRegistry();
   // The threads of the process's pool, at most MDIR_COMPILE_THREADS, as a
   // Python simulation lowers (D211); the GPU modules are serialized on them
   // (D214).
-  mlir::MLIRContext context(registry, mlir::MLIRContext::Threading::DISABLED);
-  compiler::shareThreadPool(context);
+  std::unique_ptr<mlir::MLIRContext> productionContext;
+  if (!trial) {
+    productionContext = std::make_unique<mlir::MLIRContext>(
+        compiler::getRegistry(), mlir::MLIRContext::Threading::DISABLED);
+    compiler::shareThreadPool(*productionContext);
+  }
+  auto &context = trial ? trial->lowering.context : *productionContext;
 
   // The kernels for a GPU take their math functions from libdevice: that
   // of the toolkit the environment names, else the copy installed with
@@ -692,6 +973,11 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                 "of mdir. Please report it with the directory that `mdir "
                 "bug-report " + controlFile + "` writes");
 
+  if (trial)
+    (*module)->setAttr("mdir.step_graph_trial", mlir::UnitAttr::get(&context));
+  if ((*module)->hasAttr("mdir.towers_dt"))
+    (*module)->setAttr("mdir.towers_start_time",
+                       mlir::FloatAttr::get(mlir::Float64Type::get(&context), firstTime));
   // Passes on functions are nested where they occur, as on the command
   // line of mlir-opt.
   std::set<std::string> neighborKinds;
@@ -715,6 +1001,17 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     if (options.profileMap.empty())
       return 0;
   }
+  // Custom pipelines and pass dumps retain their original pass sequence.
+  if (trial && !trial->compiled.entry && !std::getenv("MDIR_PIPELINE") &&
+      !std::getenv("MDIR_PRINT_AFTER")) {
+    auto split = pipeline.find(",mdir-gpu-lower-to-nvvm{");
+    if (split != std::string::npos) {
+      if (mlir::failed(trial->lowering.prepare(module, StringRef(pipeline).take_front(split),
+                                               trial->sharedLowering)))
+        return fail("cannot lower the common step_graph trial program");
+      pipeline.erase(0, split + 1);
+    }
+  }
   if (mlir::failed(mlir::parsePassPipeline(pipeline, manager, llvm::errs())))
     return fail("cannot set up the passes");
   // With MDIR_PRINT_AFTER set to the name of a pass of the pipeline, the
@@ -736,12 +1033,25 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   std::string reproducer = "mdir-reproducer.mlir";
   if (const char *path = std::getenv("MDIR_REPRODUCER"))
     reproducer = path;
-  manager.enableCrashReproducerGeneration(reproducer);
-  if (mlir::failed(manager.run(*module)))
+  // Unsupported ordinary-loop layouts are choices for AUTO. Keep genuine
+  // compiler errors on the usual error path.
+  mlir::ScopedDiagnosticHandler graphDiagnostics(&context, [&](mlir::Diagnostic &diag) {
+    std::string message = diag.str();
+    if (!trial || !StringRef(message).starts_with("step_graph: "))
+      return mlir::failure();
+    trial->refusal = message;
+    return mlir::success();
+  });
+  if (!trial) manager.enableCrashReproducerGeneration(reproducer);
+  // Later rounds run the same candidate with freshly initialized data.
+  // Its executable already contains the lowered kernels and host entry.
+  if ((!trial || !trial->compiled.entry) && mlir::failed(manager.run(*module))) {
+    if (trial && !trial->refusal.empty()) return 0;
     return fail("cannot compile the run; this is a defect of mdir. The "
                 "input of the passes is in '" + reproducer + "'. Please "
                 "report it with the directory that `mdir bug-report " +
                 controlFile + "` writes");
+  }
   // The execution parameters of the md_alg ops, for the log and the
   // manifest (D408).
   auto [algPolicy, algPolicyLine] = takeAlgPolicy(*module);
@@ -929,92 +1239,15 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     if (!llvm::sys::fs::exists(path))
       return fail("cannot find '" + path + "'");
 
-  // The code of the host is scheduled by the fast list scheduler of LLVM.
-  // The default one, at each call, follows the chains of the block up
-  // through every path of their token factors, which grows exponentially
-  // with the calls of one block: the host code of a term over the centers
-  // of a dihedral on JAC, a block of 95 calls among 1,400 stores of the
-  // arguments of kernels, did not compile in ten minutes; the fast one
-  // compiles it in 2.6 s (D150). The kernels were compiled in the pass
-  // pipeline, with the default; it is set back once the host code is. A
-  // scheduler of the command line is kept. A skin search before restored
-  // the option as it found it (#829).
-  compiler::FastHostScheduler scheduler(/*keepCommandLine=*/true);
-  mlir::ExecutionEngineOptions engineOptions;
-  SmallVector<StringRef> sharedLibraries(paths.begin(), paths.end());
-  engineOptions.sharedLibPaths = sharedLibraries;
-  auto hostMachine = compiler::createHostMachine();
-  if (!hostMachine)
-    return fail(hostMachine.takeError());
-  // LLVM's module pipeline on the host code before the code generator, as
-  // a simulation runs it (D269). The options hold a reference to the
-  // transformer, which lives until the engine is made.
-  llvm::TargetMachine *machine = hostMachine->get();
-  std::function<llvm::Error(llvm::Module *)> optimize =
-      [machine](llvm::Module *module) {
-        compiler::optimizeHostModule(*module, *machine);
-        return llvm::Error::success();
-      };
-  engineOptions.transformer = optimize;
-  auto engine = mlir::ExecutionEngine::create(*module, engineOptions,
-                                              std::move(*hostMachine));
-  if (!engine)
-    return fail(engine.takeError());
-
-  (*engine)->registerSymbols([&](llvm::orc::MangleAndInterner interner) {
-    llvm::orc::SymbolMap symbols;
-    auto add = [&](StringRef name, void *function) {
-      symbols[interner(name)] = {llvm::orc::ExecutorAddr::fromPtr(function),
-                                 llvm::JITSymbolFlags::Exported};
-    };
-    add("_mlir_ciface_mdrtWriteEnergies",
-        (void *)&_mlir_ciface_mdrtWriteEnergies);
-    add("_mlir_ciface_mdrtWriteFrame", (void *)&_mlir_ciface_mdrtWriteFrame);
-    add("_mlir_ciface_mdrtStageFrame", (void *)&_mlir_ciface_mdrtStageFrame);
-    add("_mlir_ciface_mdrtCheckSpread",
-        (void *)&_mlir_ciface_mdrtCheckSpread);
-    add("_mlir_ciface_mdrtWriteTerms", (void *)&_mlir_ciface_mdrtWriteTerms);
-    add("_mlir_ciface_mdrtWriteVirial", (void *)&_mlir_ciface_mdrtWriteVirial);
-    add("_mlir_ciface_mdrtModelEvaluate",
-        (void *)&_mlir_ciface_mdrtModelEvaluate);
-    add("_mlir_ciface_mdrtModelEvaluateEnergy",
-        (void *)&_mlir_ciface_mdrtModelEvaluateEnergy);
-    add("_mlir_ciface_mdrtModelEvaluateEdges",
-        (void *)&_mlir_ciface_mdrtModelEvaluateEdges);
-    add("_mlir_ciface_mdrtModelEvaluateEdgesEnergy",
-        (void *)&_mlir_ciface_mdrtModelEvaluateEdgesEnergy);
-    add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
-    add("mdrtNoseHooverFactor", (void *)&mdrtNoseHooverFactor);
-    add("mdrtWriteSolvent", (void *)&mdrtWriteSolvent);
-    add("_mlir_ciface_mdrtWritePull", (void *)&_mlir_ciface_mdrtWritePull);
-    add("_mlir_ciface_mdrtWriteFreeEnergy",
-        (void *)&_mlir_ciface_mdrtWriteFreeEnergy);
-    add("_mlir_ciface_mdrtWriteObservables",
-        (void *)&_mlir_ciface_mdrtWriteObservables);
-    add("_mlir_ciface_mdrtSetBox", (void *)&_mlir_ciface_mdrtSetBox);
-    add("_mlir_ciface_mdrtSetTilt", (void *)&_mlir_ciface_mdrtSetTilt);
-    add("_mlir_ciface_mdrtSetBarostatState",
-        (void *)&_mlir_ciface_mdrtSetBarostatState);
-    add("_mlir_ciface_mdrtWriteMinimization",
-        (void *)&_mlir_ciface_mdrtWriteMinimization);
-    add("_mlir_ciface_mdrtCheckMinimization",
-        (void *)&_mlir_ciface_mdrtCheckMinimization);
-    add("_mlir_ciface_mdrtFinish", (void *)&_mlir_ciface_mdrtFinish);
-    add("_mlir_ciface_mdrtWriteCheckpoint",
-        program->writesForces
-            ? (void *)&_mlir_ciface_mdrtWriteCheckpointWithForces
-            : (void *)&_mlir_ciface_mdrtWriteCheckpoint);
-    return symbols;
-  });
-
-  // Loads the kernels of a GPU. The functions of the driver must be known
-  // by now.
-  (*engine)->initialize();
-
-  auto function = (*engine)->lookupPacked(program->entry);
-  scheduler.restore();
-  if (!function)
-    return fail(function.takeError());
+  CompiledRun production;
+  auto &compiled = trial ? trial->compiled : production;
+  bool needsCompile = !compiled.entry;
+  if (needsCompile) {
+    auto result = compileEntry(*module, paths, *program, trial != nullptr);
+    if (!result)
+      return fail(result.takeError());
+    compiled = std::move(*result);
+  }
   // The learned potentials (D270): the plugin beside the
   // runtime, or at MDIR_MLIP_PLUGIN, on the device of the runtime, which
   // the program has loaded.
@@ -1032,6 +1265,12 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // Run
   //===--------------------------------------------------------------------===//
 
+  if (trial && needsCompile) {
+    trial->compileSeconds = compileTime;
+    trial->cache = gpuCache;
+    if (compiled.trialEngine)
+      trial->cache += compiled.trialEngine->getCompileStats();
+  }
   size_t count = system->getNumParticles();
   Buffer<2> positions(system->positions, program->state, count);
   Buffer<2> velocities(system->velocities, program->state, count);
@@ -1252,8 +1491,10 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       effective["towers_shape"] = towersShapeReport;
     if (!towersCellHeight.empty())
       effective["towers_cell_height"] = towersCellHeight;
+    resolvedChoices["step_graph"] = std::move(graphChoice);
     llvm::json::Object metadata{
         {"build", getManifestBuild()}, {"effective", std::move(effective)},
+        {"resolved_choices", std::move(resolvedChoices)},
         {"warnings", std::move(warnings)}, {"pipeline", pipeline},
         {"inputs", std::move(manifestInputs)},
         {"target", control->target == Target::GPU ? "gpu" : "cpu"},
@@ -1595,6 +1836,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     output.log.print(
                  "MDIR: the velocities are those of the file of "
                  "coordinates\n");
+  output.log.print("MDIR: step_graph %s\n", graphReport.c_str());
   if (towersShapeReport.getAsObject())
     output.log.print("MDIR: TOWERS launch shape %s\n",
                      llvm::formatv("{0}", towersShapeReport).str().c_str());
@@ -1694,7 +1936,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // runs.
   bool onDevice = control->target == Target::GPU;
   auto findRuntime = [&](StringRef host, StringRef device) -> void * {
-    auto symbol = (*engine)->lookup(onDevice ? device : host);
+    auto symbol = compiled.lookup(onDevice ? device : host);
     if (!symbol) {
       llvm::consumeError(symbol.takeError());
       return nullptr;
@@ -1710,7 +1952,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
 
   begin = std::chrono::steady_clock::now();
   output.lastCheckpoint = begin;
-  (*function)(arguments.data());
+  compiled.entry(arguments.data());
   // The wait of the end of the run: the checkpoint at the last step is
   // written by a thread of its own (D336), and the run ends
   // once it has passed all three of its events (CheckpointThread in
@@ -1733,6 +1975,18 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       reinterpret_cast<void (*)()>(leave)();
     if (void *close = findRuntime("mdrtTuplesClose", "mdrtDeviceTuplesClose"))
       reinterpret_cast<void (*)(void *)>(close)(tupleStore);
+  }
+  if (trial) {
+    auto result = compiled.lookup("mdrtStepTrialResult");
+    if (!result) return fail(result.takeError());
+    if (!reinterpret_cast<int (*)(double *, int64_t *, int64_t *, double *, double *, double *)>(*result)(
+            &trial->us, &trial->measured, &trial->cold, &trial->instantiateSeconds,
+            &trial->warmSeconds, &trial->timedSeconds))
+      trial->refusal = "too few warmed ordinary chunks to measure replay";
+    // Trial builds and prunes belong to the disposable run.
+    if (auto reset = findRuntime("mdrtResetCounts", "mdrtResetCounts"))
+      reinterpret_cast<void (*)()>(reset)();
+    setOutput(nullptr);
   }
   if (output.trajectory)
     output.trajectory->close();
@@ -1776,7 +2030,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
 
   // How much of the blocks of the lists of groups the builds took.
   auto readCount = [&](StringRef name) -> int64_t {
-    auto symbol = (*engine)->lookup(name);
+    auto symbol = compiled.lookup(name);
     if (!symbol) {
       llvm::consumeError(symbol.takeError());
       return 0;
@@ -1805,7 +2059,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                  static_cast<long long>(over));
 
   // The runtime has counted the builds of the neighbor structures.
-  if (auto count = (*engine)->lookup("mdrtGetBuildCount")) {
+  if (auto count = compiled.lookup("mdrtGetBuildCount")) {
     auto getCount = reinterpret_cast<int64_t (*)()>(*count);
     int64_t builds = getCount();
     output.log.print("MDIR: neighbor structures were built %lld "
@@ -1827,7 +2081,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                      static_cast<long long>(tupleCounts[1]),
                      static_cast<long long>(tupleCounts[0]));
   // The prunings of the inner lists of dual lists (D114).
-  if (auto count = (*engine)->lookup("mdrtGetPruneCount")) {
+  if (auto count = compiled.lookup("mdrtGetPruneCount")) {
     int64_t prunes = reinterpret_cast<int64_t (*)()>(*count)();
     if (prunes > 0) {
       output.log.print("MDIR: the inner lists were pruned %lld times",
@@ -1837,7 +2091,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                      static_cast<double>(control->numSteps) /
                          static_cast<double>(prunes - 1));
       // Those that the loop over pairs did (D284).
-      if (auto fused = (*engine)->lookup("mdrtGetFusedPruneCount")) {
+      if (auto fused = compiled.lookup("mdrtGetFusedPruneCount")) {
         int64_t inLoop = reinterpret_cast<int64_t (*)()>(*fused)();
         if (inLoop > 0)
           output.log.print(", %lld of them in the loop over pairs",
@@ -1853,7 +2107,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // At a fixed interval, the builds that found a structure no longer valid:
   // pairs within the cutoff may have been missed before each (D88).
   if (control->rebuildPeriod > 0) {
-    if (auto count = (*engine)->lookup("mdrtGetLateBuildCount")) {
+    if (auto count = compiled.lookup("mdrtGetLateBuildCount")) {
       int64_t late = reinterpret_cast<int64_t (*)()>(*count)();
       output.log.print(
                    "MDIR: %lld rebuilds found a neighbor structure no "
@@ -1873,7 +2127,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // The pressures that semi-isotropic coupling took, which a bilayer at
   // its tension balances (D119).
   if (control->barostat && control->semiIsotropic) {
-    if (auto get = (*engine)->lookup("mdrtGetSemiPressures")) {
+    if (auto get = compiled.lookup("mdrtGetSemiPressures")) {
       double p[6];
       int64_t n = reinterpret_cast<int64_t (*)(double *)>(*get)(p);
       output.log.print(
@@ -1888,7 +2142,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   }
   // The pressures of the axes that anisotropic coupling took (D163c).
   if (control->barostat && control->anisotropic) {
-    if (auto get = (*engine)->lookup("mdrtGetAxisPressures")) {
+    if (auto get = compiled.lookup("mdrtGetAxisPressures")) {
       double p[6];
       int64_t n = reinterpret_cast<int64_t (*)(double *)>(*get)(p);
       output.log.print(
@@ -2003,3 +2257,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                            output.firstTotal));
   return 0;
 }
+
+int runControl(StringRef controlFile, Emit emit, const char *argv0, const RunOptions &options) {
+  return runControlImpl(controlFile, emit, argv0, options, nullptr);
+}
+} // namespace mdir::tool

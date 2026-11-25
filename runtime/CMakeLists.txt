@@ -52,6 +52,19 @@ if(MDIR_CUDA_FOUND)
       endif()
     endforeach()
   endif()
+  set(step_object "${CMAKE_CURRENT_BINARY_DIR}/mdrt_step_graph.o")
+  add_custom_command(OUTPUT "${step_object}"
+    COMMAND "${CUDAToolkit_NVCC_EXECUTABLE}" -std=c++17 -O2 -arch=compute_75 -code=compute_75
+      -Xcompiler=-fPIC -c "${CMAKE_CURRENT_SOURCE_DIR}/mdrt_step_graph.cu" -o "${step_object}"
+    DEPENDS mdrt_step_graph.cu VERBATIM)
+  target_sources(mdrt_cuda PRIVATE "${step_object}")
+  set_target_properties(mdrt_cuda PROPERTIES LINKER_LANGUAGE CXX)
+  target_link_libraries(mdrt_cuda PRIVATE CUDA::cudart_static mdrt)
+  if(SKBUILD AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Like the Python extension, the shipped runtime must load without a
+    # dependency on the host's version of libstdc++.
+    target_link_options(mdrt_cuda PRIVATE -static-libstdc++)
+  endif()
   # The FFT of particle mesh Ewald takes cuFFT of the toolkit.
   # The products of the bodies of neural stages take cuBLAS
   # (D302).
