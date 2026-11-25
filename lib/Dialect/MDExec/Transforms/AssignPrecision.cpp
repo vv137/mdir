@@ -347,11 +347,11 @@ LogicalResult Assigner::collect(Operation *op) {
     }
     return success();
   }
-  if (auto to = dyn_cast<mdrt::ToBufferOp>(op)) {
-    if (isRealField(to.getField().getType()))
+  if (isa<mdrt::ToBufferOp, mdrt::SnapshotOp>(op)) {
+    if (isRealField(op->getOperand(0).getType()))
       markBoundary(
-          to.getField(),
-          cast<MemRefType>(to.getResult().getType()).getElementType(), op);
+          op->getOperand(0),
+          cast<MemRefType>(op->getResult(0).getType()).getElementType(), op);
     return success();
   }
 
@@ -781,7 +781,7 @@ static Value createCopy(OpBuilder &builder, Location loc, Value field) {
 void Assigner::isolateBoundaries() {
   SmallVector<Operation *> boundaries;
   function.walk([&](Operation *op) {
-    if (isa<mdrt::FromBufferOp, mdrt::ToBufferOp, mdrt::HostCallOp>(op))
+    if (isa<mdrt::FromBufferOp, mdrt::ToBufferOp, mdrt::SnapshotOp, mdrt::HostCallOp>(op))
       boundaries.push_back(op);
   });
   for (Operation *op : boundaries) {
