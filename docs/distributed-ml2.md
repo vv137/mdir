@@ -1603,3 +1603,35 @@ the schedule supplies owned rows of the partition that declared the group.
 Partitioning and migration assign the entire group by its unwrapped center.
 The CPU reference executor assembles positions to resolve the topology
 schedule. This adds communication beyond importing the pair halo.
+
+### CPU MATRIX rows within a domain (D[distribute-pair-lowering])
+
+In the default CPU driver each rank visits its assigned domains. A
+compiled procedure packs the current owned rows followed by ghost rows
+in their explicit periodic images. Independent evaluations of the same
+relation share a procedure. The ordinary pair passes can fuse compatible
+loops, specialize the force law in mixed or double precision, and choose
+the host lane width. Threads divide the center rows. For two-ended
+kernels both the center and neighbor updates are atomic, including when
+the center itself is a ghost.
+
+The halo owns the candidate matrix, its row lengths, and the reference
+positions. The ordinary binned MATRIX builder grows overflowing rows.
+Its search box encloses the local coordinates with a gap exceeding the
+list reach on each axis. Thus searching with periodic bins in that box
+finds the explicit images already supplied by the halo. The force kernel
+takes their Cartesian difference. In mixed precision it restores the
+untranslated coordinates before rounding each to its storage type, then
+subtracts the two stored positions and applies the explicit translation
+in the compute type. This follows the rounding of the ordinary kernel at
+periodic faces, including in the cutoff comparison. Migration releases the old
+matrix with its halo. At fixed membership, displacement is checked on
+all local rows against half the pair skin.
+
+Directed rows start at owned particles. Unique rows retain the lesser
+global identity as their center. Midpoint rows may start at a ghost and
+also require the current midpoint to belong to this domain in the
+canonical image. Identity exclusions precede the force law. A list can
+remain valid while its midpoint assignment changes, so selection reads
+current coordinates at each evaluation. The deterministic executor uses
+the integer-image and fixed-point algorithm of ruling B.
