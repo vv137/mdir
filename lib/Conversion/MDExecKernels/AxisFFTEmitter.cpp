@@ -217,10 +217,21 @@ private:
   }
   C read(Value mem, Value i) {
     Value at = muli(i, idx(2));
+    if (mem == real || mem == spectrum) {
+      Value pair = vector::LoadOp::create(b, loc, VectorType::get({2}, b.getF32Type()),
+                                           mem, ValueRange{at}, false, llvm::Align(8));
+      return {extract(pair, 0), extract(pair, 1)};
+    }
     return {load(mem, {at}), load(mem, {addi(at, idx(1))})};
   }
   void write(Value mem, Value i, C v) {
     Value at = muli(i, idx(2));
+    if (mem == real || mem == spectrum) {
+      Value pair = vector::FromElementsOp::create(
+          b, loc, VectorType::get({2}, b.getF32Type()), ValueRange{v.re, v.im});
+      vector::StoreOp::create(b, loc, pair, mem, ValueRange{at}, false, llvm::Align(8));
+      return;
+    }
     store(v.re, mem, {at});
     store(v.im, mem, {addi(at, idx(1))});
   }
