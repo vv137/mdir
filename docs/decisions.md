@@ -728,6 +728,7 @@ specification follow those made with it.
 | [D430](decisions/D430.md) | Reduce the work per candidate in the moving TOWERS force loop. | 2026-11-23 |
 | [D431](decisions/D431.md) | Compact large GPU exclusion lists and place them among the tower splits. | 2026-11-24 |
 | [D432](decisions/D432.md) | The existing height rule and launch trial selected the fastest height and split on all eight validation systems. | 2026-11-24 |
+| [D433](decisions/D433.md) | For mixed-precision Gaussian Coulomb PME in an orthorhombic cell, apply the influence function in the inverse cuFFT load on eligible force-only evaluations. | 2026-11-25 |
 <!-- end decisions-table -->
 
 

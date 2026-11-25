@@ -379,7 +379,7 @@ the FFT runtime entry points for the force precision.
 
 On an orthorhombic cell, a mixed-precision GPU evaluation that needs only
 the Gaussian Coulomb forces applies the influence function as cuFFT loads
-the complex input of its inverse transform (D[pme-fused-convolution]).
+the complex input of its inverse transform (D433).
 The callback reads the same per-axis tables, sets the zero mode to zero,
 and scales both components in f32. This saves one read and one write per
 stored frequency. A different FFT plan can change force rounding.

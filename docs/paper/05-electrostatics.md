@@ -298,7 +298,7 @@ precision (D78).*
 
 For a force-only Gaussian Coulomb evaluation in mixed precision on a
 rectangular cell, the inverse cuFFT load can form $BC\,\hat Q$ directly
-from the per-axis tables (D[pme-fused-convolution]). At zero frequency
+from the per-axis tables (D433). At zero frequency
 the product is zero. This avoids writing and rereading the scaled complex
 grid. Energy and virial reductions and derivatives in the charges keep
 the separate product. The mesh and its accuracy are the same up to rounding.

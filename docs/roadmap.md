@@ -78,7 +78,7 @@ remaining Python consumers and the duplicate-definition check follow in part 2.
 | Barostat integrators | Done: the exact work (D77), the Trotter integrator (D92), the virial of the groups (D116), the ensemble test of two pressures (white paper, Section 9.5). Next: the effective energy of [[Bernetti2020]](references.md#bernetti2020), eq. S11, as a diagnostic |
 | CHARMM force fields | Done (D121, D122, [charmm.md](charmm.md)). Next: CHARMM-GUI's triclinic cells and cell files, VSWITCH (done since as D175, F3), the lone pairs of CGenFF, and a bilayer at constant pressure against GROMACS and CHARMM |
 | PME stage emitters | Implemented in D427 (#908). The C² splitting and four-point window of #466 build on these stages. |
-| Force-only Gaussian PME product (#959) | Implemented for eligible mixed-precision GPU transforms (D[pme-fused-convolution]). |
+| Force-only Gaussian PME product (#959) | Implemented for eligible mixed-precision GPU transforms (D433). |
 | PME grid axes | TODO: the longest edge as the contiguous axis of the grid, with the tables of D104 and the other stages on the permuted axes ([pme.md](pme.md#the-axes-of-the-grid)) |
 | Ewald summation with prolates | Done (D266, #334; measured again with tiles, D282, #336; the direct sum as a table, D280, #380; [pme.md](pme.md#7-the-prolate-kernel-d266), Section 7) |
 | Influence functions of P3M (#468) | In part: step 1, `[pme] influence = "P3M"` (D304; a triclinic cell is #475). Next: the self-force subtraction, the a priori error estimate and a choice of $(\beta, K, P)$, interlacing, and the prolate kernel with an optimal $G$ (#467) |
