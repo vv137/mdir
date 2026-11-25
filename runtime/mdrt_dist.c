@@ -909,6 +909,24 @@ int64_t _mlir_ciface_mdrtDistCovered(int64_t handle,
   return 1;
 }
 
+/* The partition checked disjointness before assigning a row to each
+   member. Verify the common owner again at the epoch of the solve. */
+void _mlir_ciface_mdrtDistConstraintRows(int64_t handle, struct Memref3D *positions,
+                                         struct Members *members, struct Memref2I *out) {
+  const struct Layout *l = ((struct Halo *)(intptr_t)handle)->layout;
+  (void)positions;
+  for (int64_t t = 0; t < members->sizes[0]; ++t) {
+    int64_t *record = out->aligned + out->offset + t*out->strides[0];
+    for (int64_t a = 0; a < members->sizes[1]; ++a) {
+      int32_t j = members->aligned[members->offset + t*members->strides[0] + a*members->strides[1]];
+      if (j < 0 || j >= l->count) fail("constraint member outside particle set");
+      if (a == 0) record[0] = l->owner[j];
+      if (record[0] != l->owner[j]) fail("constraint group split across domains");
+      record[(a+1)*out->strides[1]] = l->row[j];
+    }
+  }
+}
+
 /* Index the imported images by identity. An atom may have several images
    on one domain, including periodic images of a locally owned atom. */
 void _mlir_ciface_mdrtDistTupleRows(int64_t handle, struct Memref3D *positions,

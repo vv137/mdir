@@ -292,7 +292,7 @@ llvm::Error Builder::build() {
       groups.push_back(&set);
   for (const Program::TupleSet *set : getShakeSets())
     groups.push_back(set);
-  if (control.distribution && control.distribution->traversal == "midpoint")
+  if (program.domainTopology)
     for (const auto *set : groups) {
       auto declaration = termIR.getModule().lookupSymbol<mdir::md::TupleSetOp>(set->name);
       declaration->setAttr("md_dist.constraint_group", declarationBuilder.getUnitAttr());
@@ -482,10 +482,15 @@ llvm::Expected<Program> mdir::driver::buildProgram(const Control &control,
   if (llvm::Error error = checkEntryControl(control)) return std::move(error);
   Program program;
   if (control.distribution) {
-    if (llvm::Error error = checkDistributedSystem(control, system))
-      return std::move(error);
+    if ((system.numConstraints || system.numSettles) && control.distribution->traversal == "directed")
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+          "distributed constraints require cross-domain constraint partners");
+    if (llvm::any_of(system.tilt, [](double t) { return t != 0.0; }))
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+          "distributed halos require an orthorhombic cell");
     program.distributed = true;
     program.domainTopology = system.topology && control.distribution->traversal != "directed";
+    program.domainGroupSteps = program.domainTopology && (system.numConstraints || system.numSettles || control.thermostat);
     program.domainGrid = control.distribution->grid;
     if (control.distribution->domains) {
       auto grid =

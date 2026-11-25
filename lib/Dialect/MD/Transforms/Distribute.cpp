@@ -11,6 +11,7 @@
 #include "mdir/Dialect/MD/Transforms/Passes.h"
 #include "mdir/Dialect/MD/Transforms/Truncation.h"
 
+#include "mdir/Dialect/Dyn/DynOps.h"
 #include "mdir/Dialect/MD/MDExchange.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDDist/Grid.h"
@@ -198,7 +199,7 @@ void Distributor::begin() {
   MLIRContext *context = builder.getContext();
   builder.setInsertionPointToStart(body);
   SmallVector<Value> groups;
-  if (traversal == md_dist::Traversal::Midpoint)
+  if (traversal == md_dist::Traversal::Midpoint || isa<FunctionOp>(potential.getOperation()))
     for (Value input : body->getArguments()) {
       auto type = dyn_cast<RelationType>(input.getType());
       if (type && type.getTupleSet()) {
@@ -407,7 +408,7 @@ LogicalResult Distributor::rewriteTuple(Op op) {
   auto rowsType = MemRefType::get({ShapedType::kDynamic, 1 + int64_t(op.getArity())},
                                   builder.getI64Type());
   Value rows = md_dist::TupleRowsOp::create(builder, op.getLoc(), rowsType,
-                                            op.getRelation(), ownedPositions, halo);
+                                            op.getRelation(), ownedPositions, halo, false);
   SmallVector<Value> fields;
   if (failed(gatheredPairs(op, op.getGathered(), fields))) return failure();
   builder.setInsertionPoint(op);
@@ -524,6 +525,101 @@ LogicalResult Distributor::run() {
 }
 
 namespace {
+// Project disjoint constraint tuples at their common owner. The native
+// integrator supplies the old and predicted rows, and consumes the complete
+// correction and the agreed failure flag before its next kick.
+static LogicalResult distributeGroups(ModuleOp module, ArrayRef<int64_t> grid,
+                                      double reach) {
+  for (auto program : module.getOps<dyn::ProgramOp>()) {
+    SmallVector<Operation *> work;
+    SmallVector<Value> groups;
+    program.walk([&](Operation *op) {
+      if (!isa<SumTuplesOp, GatherTuplesOp>(op)) return;
+      Value relation = op->getOperand(0);
+      auto type = cast<RelationType>(relation.getType());
+      auto set = SymbolTable::lookupNearestSymbolFrom<TupleSetOp>(op, type.getTupleSet());
+      if (set && set->hasAttr("md_dist.constraint_group")) {
+        work.push_back(op);
+        if (!llvm::is_contained(groups, relation)) groups.push_back(relation);
+      }
+    });
+    if (work.empty()) continue;
+    auto loc = program.getLoc();
+    OpBuilder b(work.front());
+    Value x = program.getBody().front().getArgument(0), cell = work.front()->getOperand(2);
+    auto particleSet = cast<FieldType>(x.getType()).getParticleSet();
+    auto name = FlatSymbolRefAttr::get(b.getContext(), (particleSet.getValue() + ".midpoint_domains").str());
+    if (!module.lookupSymbol(name.getValue())) {
+      OpBuilder::InsertionGuard guard(b);
+      b.setInsertionPointToStart(module.getBody());
+      md_dist::DecompositionOp::create(b, loc, name.getAttr(), particleSet, b.getDenseI64ArrayAttr(grid));
+    }
+    auto layoutType = md_dist::LayoutType::get(b.getContext(), name);
+    auto haloType = md_dist::HaloType::get(b.getContext(), name, APFloat(reach));
+    auto fieldType = [&](Value field) {
+      auto t = cast<FieldType>(field.getType());
+      return md_dist::FieldType::get(b.getContext(), name, md_dist::Role::Owned,
+          false, t.getNumComponents(), t.getElementType());
+    };
+    Value original = md_dist::PartitionOp::create(b, loc, layoutType, x, cell, groups);
+    struct Epoch { Value layout, x, h, ghosts; };
+    DenseMap<Value, Epoch> epochs;
+    for (Operation *op : work) {
+      b.setInsertionPoint(op);
+      loc = op->getLoc();
+      Value positions = op->getOperand(1);
+      Epoch &e = epochs[positions];
+      if (!e.layout) {
+        Value moving = md_dist::DistributeOp::create(b, loc, fieldType(positions), positions, original, Value());
+        e.layout = md_dist::MigrateOp::create(b, loc, layoutType, original, moving, cell);
+        if (epochs.size() == 1) e.layout.getDefiningOp()->setAttr("md_dist.step", b.getUnitAttr());
+        e.x = md_dist::RedistributeOp::create(b, loc, fieldType(positions), moving, original, e.layout, cell);
+        e.h = md_dist::HaloOp::create(b, loc, haloType, e.layout, e.x, cell);
+        e.ghosts = md_dist::HaloCopyOp::create(b, loc,
+            fieldType(positions).with(md_dist::Role::Ghost, false), e.x, e.h, cell);
+      }
+      auto convert = [&](auto tuple) {
+        constexpr bool gather = std::is_same_v<decltype(tuple), GatherTuplesOp>;
+        auto rowType = MemRefType::get({ShapedType::kDynamic, int64_t(tuple.getArity() + 1)}, b.getI64Type());
+        Value rows = md_dist::TupleRowsOp::create(b, loc, rowType, tuple.getRelation(), e.x, e.h, true);
+        SmallVector<Value> fields;
+        for (Value field : tuple.getGathered()) {
+          auto type = fieldType(field);
+          Value owned = md_dist::DistributeOp::create(b, loc, type, field, e.layout, Value());
+          fields.push_back(owned);
+          fields.push_back(md_dist::HaloCopyOp::create(b, loc, type.with(md_dist::Role::Ghost, false), owned, e.h, Value()));
+        }
+        SmallVector<Type> resultTypes;
+        if constexpr (gather) {
+          resultTypes.push_back(fieldType(tuple.getResult()));
+          if (tuple.getFailed()) resultTypes.push_back(b.getI1Type());
+        } else
+          resultTypes.push_back(md_dist::PartialType::get(b.getContext(), tuple.getResult().getType()));
+        auto kernel = md_dist::TupleKernelOp::create(b, loc, resultTypes, rows, e.x, e.ghosts,
+            e.h, fields, tuple.getParameters(), tuple.getCoordinateKindsAttr(), tuple.getCoordinateMembersAttr());
+        IRMapping map;
+        tuple.getKernel().cloneInto(&kernel.getKernel(), map);
+        auto term = kernel.getKernel().front().getTerminator();
+        OpBuilder inside(term);
+        md_dist::YieldOp::create(inside, loc, term->getOperands());
+        term->erase();
+        Value result;
+        if constexpr (gather) {
+          result = md_dist::CollectOp::create(b, loc, tuple.getResult().getType(), kernel.getResult(0), e.layout);
+          if (tuple.getFailed()) tuple.getFailed().replaceAllUsesWith(kernel.getResult(1));
+        } else {
+          result = md_dist::AllReduceOp::create(b, loc, tuple.getResult().getType(), kernel.getResult(0));
+        }
+        tuple.getResult().replaceAllUsesWith(result);
+        tuple.erase();
+      };
+      if (auto gather = dyn_cast<GatherTuplesOp>(op)) convert(gather);
+      else convert(cast<SumTuplesOp>(op));
+    }
+  }
+  return success();
+}
+
 class Distribute : public impl::DistributeBase<Distribute> {
 public:
   using impl::DistributeBase<Distribute>::DistributeBase;
@@ -597,6 +693,7 @@ public:
         if (failed(Distributor(fn, divisions, kind, reach).run()))
           return signalPassFailure();
       }
+      if (failed(distributeGroups(module, divisions, reach))) return signalPassFailure();
       return;
     }
     for (PotentialOp potential : selected) {

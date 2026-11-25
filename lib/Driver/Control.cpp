@@ -3397,7 +3397,10 @@ Error Reader::read(const toml::table &root) {
       return fail(*table, "reciprocal sums require a distributed mesh");
     if (!control.periodic || control.barostat)
       return fail(*table, "distributed execution requires a fixed periodic cell");
-    if (control.minimize || control.thermostat ||
+    bool supportedBath = !control.thermostat ||
+        (control.hasTopology() && dist.traversal != "directed" &&
+         control.thermostatMethod == ThermostatMethod::VRescale);
+    if (control.minimize || !supportedBath ||
         control.integrator != Integrator::VelocityVerlet)
       return fail(*table, "distributed dynamics requires NVE velocity Verlet");
   }
