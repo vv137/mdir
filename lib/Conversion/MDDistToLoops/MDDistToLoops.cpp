@@ -191,6 +191,7 @@ private:
   SmallVector<Value> stateOf(Value state);
   /// A copy of `buffer`, a buffer of all domains, that the state owns: not
   /// freed at the end of the block.
+  Value ownedCapacity(OpBuilder &b, Value handle);
   Value copyForState(OpBuilder &b, Value buffer);
 
   /// The decomposition of a type of md_dist, and its number of domains.
@@ -589,6 +590,12 @@ Value Lowering::inputSnapshot(OpBuilder &b, md::FieldType type, Value field) {
   return snapshot.getResult();
 }
 
+Value Lowering::ownedCapacity(OpBuilder &b, Value handle) {
+  Type i64 = b.getI64Type();
+  auto capacity = declare("mdrtDistOwnedCapacity", b.getFunctionType({i64}, {i64}), false);
+  return toIndex(b, func::CallOp::create(b, loc, capacity, ValueRange{handle}).getResult(0));
+}
+
 LogicalResult Lowering::lowerPartition(PartitionOp op) {
   OpBuilder b(op);
   Value edges[3];
@@ -632,7 +639,7 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
     func::CallOp::create(b, loc, apply, ValueRange{handle, cast, view});
   }
   Value count = memref::DimOp::create(b, loc, positions, 0);
-  Value capacity = arith::MaxUIOp::create(b, loc, count, index(b, 1));
+  Value capacity = ownedCapacity(b, handle);
   auto rowsType = MemRefType::get({ShapedType::kDynamic}, i64);
   auto idsType =
       MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, i64);
@@ -674,7 +681,8 @@ LogicalResult Lowering::lowerMigrate(MigrateOp op) {
   auto idsType =
       MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, i64);
   Value rows = allocate(b, rowsType, {index(b, domains)});
-  Value ids = allocate(b, idsType, {index(b, domains), old.capacity});
+  Value capacity = ownedCapacity(b, handle);
+  Value ids = allocate(b, idsType, {index(b, domains), capacity});
   func::CallOp::create(
       b, loc,
       declare("mdrtDistLayoutRows", b.getFunctionType({i64, rowsType, idsType},
@@ -685,7 +693,7 @@ LogicalResult Lowering::lowerMigrate(MigrateOp op) {
       atEnd, loc,
       declare("mdrtDistReleaseLayout", b.getFunctionType({i64}, {}), false),
       ValueRange{handle});
-  storage[op.getLayout()] = {handle, rows, ids, old.capacity, old.count,
+  storage[op.getLayout()] = {handle, rows, ids, capacity, old.count,
                              Value()};
   return success();
 }
@@ -2012,7 +2020,7 @@ LogicalResult Lowering::lowerUnpack(UnpackOp op) {
                      false),
              ValueRange{layoutHandle})
              .getResult(0));
-  Value capacity = arith::MaxUIOp::create(b, loc, count, index(b, 1));
+  Value capacity = ownedCapacity(b, layoutHandle);
   Value rows = allocate(b, rowsType, {index(b, domains)});
   Value ids = allocate(b, idsType, {index(b, domains), capacity});
   func::CallOp::create(
@@ -2055,20 +2063,14 @@ LogicalResult Lowering::lowerUnpack(UnpackOp op) {
   halo.rows = haloRows;
   halo.ids = haloIds;
   halo.capacity = haloCapacity;
-  // The buffers: copies in allocations of this block, freed at its end. The
-  // state's own buffers are freed here, as the state is consumed.
+  // Pack allocated each tuple field independently. Consuming the state
+  // transfers those allocations to this block until its terminator.
   SmallVector<Value> results = {op.getReference()};
   results.append(op.getFields().begin(), op.getFields().end());
   for (auto [result, buffer] :
        llvm::zip(results, ArrayRef<Value>(tuple).drop_front(2))) {
-    auto type = cast<MemRefType>(buffer.getType());
-    SmallVector<Value> sizes;
-    for (int64_t i = 0; i < type.getRank(); ++i)
-      sizes.push_back(memref::DimOp::create(b, loc, buffer, i));
-    Value copy = allocate(b, type, sizes);
-    memref::CopyOp::create(b, loc, buffer, copy);
-    memref::DeallocOp::create(b, loc, buffer);
-    storage[result].buffer = copy;
+    storage[result].buffer = buffer;
+    memref::DeallocOp::create(atEnd, loc, buffer);
   }
   return success();
 }
