@@ -684,7 +684,8 @@ private:
                           Value box, double reach, double cellWidth);
   LogicalResult emitUncachedBuild(OpBuilder &builder, Location loc,
                                   const Neighbors &structure, Value positions,
-                                  Value box, double reach, double cellWidth);
+                                  Value box, double reach, double cellWidth,
+                                  bool explicitImages = false);
   /// Stops the run, through the runtime, if `notNumbers` positions, as a
   /// build counted them, are not numbers (D107).
   void emitStopNotNumbers(OpBuilder &builder, Location loc, Value notNumbers);
@@ -5566,7 +5567,7 @@ LogicalResult Lowering::addMatrixBuild(Type real) {
     return success();
 
   OwningOpRef<ModuleOp> definitions = ModuleOp::create(module.getLoc());
-  kernels::emitMatrixBuild(*definitions);
+  kernels::emitMatrixBuild(*definitions, module.lookupSymbol("mdrtDistDeviceMatrixSlot") != nullptr);
   if (failed(instantiateTemplates(*definitions, real)))
     return failure();
   for (Operation &op : llvm::make_early_inc_range(*definitions)) {
@@ -8624,7 +8625,7 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                                        arith::ConstantIntOp::create(builder,loc,0,64));
   LogicalResult status = success();
   scf::IfOp::create(builder,loc,missing,[&](OpBuilder &at, Location) {
-    status = emitUncachedBuild(at,loc,structure,positions,box,reach,cellWidth);
+    status = emitUncachedBuild(at,loc,structure,positions,box,reach,cellWidth,true);
     func::CallOp::create(at,loc,save,args);
     scf::YieldOp::create(at,loc);
   },[&](OpBuilder &at, Location) {
@@ -8635,7 +8636,8 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
 }
 
 LogicalResult Lowering::emitUncachedBuild(OpBuilder &builder, Location loc,
-    const Neighbors &structure, Value positions, Value box, double reach, double cellWidth) {
+    const Neighbors &structure, Value positions, Value box, double reach, double cellWidth,
+    bool explicitImages) {
   if (structure.groups) {
     if (failed(emitGroupsBuild(builder, loc, structure, positions, box,
                                reach)))
@@ -8682,8 +8684,8 @@ LogicalResult Lowering::emitUncachedBuild(OpBuilder &builder, Location loc,
   }
   auto build = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
       module,
-      getInstanceName(tilted ? std::string(buildNeighborsName) + "_triclinic"
-                             : std::string(buildNeighborsName),
+      getInstanceName(std::string(buildNeighborsName) +
+                          (tilted ? "_triclinic" : explicitImages ? "_explicit" : ""),
                       real)));
   // Build; if a row was too narrow to hold the neighbors of a particle,
   // the runtime makes the rows wider, and the build is made again.

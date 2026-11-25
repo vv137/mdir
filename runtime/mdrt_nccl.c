@@ -40,7 +40,7 @@ void mdrtNCCLStart(MPI_Comm world) {
   int pools = 0;
   checkCuda(cudaDeviceGetAttribute(&pools, cudaDevAttrMemoryPoolsSupported, ordinal));
   if (pools) {
-    cudaMemPoolProps props = {0};
+    struct cudaMemPoolProps props = {0};
     props.allocType = cudaMemAllocationTypePinned;
     props.location.type = cudaMemLocationTypeDevice;
     props.location.id = ordinal;

@@ -31,10 +31,11 @@ public:
   void emitMatrixImageWithin();
   void emitBuildNeighborsMatrixTriclinic();
   void emitSpatialOrder();
-  void emitSearch(StringRef symbol, bool triclinic, bool testAllImages);
+  void emitSearch(StringRef symbol, bool triclinic, bool testAllImages,
+                  bool useExplicitImages = false);
 
 private:
-  bool tilted, allImages;
+  bool tilted, allImages, explicitImages;
   // Common arguments and SSA values captured by the build's launches.
   Value x, box, widths, reach, cellWidth, excluded, counts, entries, order;
   Value lx, ly, lz, ilx, ily, ilz, tbx, tcx, tcy;
@@ -502,9 +503,11 @@ void MatrixBuild::emitParticleBins() {
         Value z3 = mulf(wz, ilz);
         cz = binCoordinate(z3, nz, zeroIndex, firstIndex);
       }
-      Value narrowX = truncf(wx);
-      Value narrowY = truncf(wy);
-      Value narrowZ = truncf(wz);
+      // An explicit-image neighborhood still uses periodic bin keys. Its
+      // stored coordinates already identify a particular periodic copy.
+      Value narrowX = truncf(explicitImages ? xi : wx);
+      Value narrowY = truncf(explicitImages ? yi : wy);
+      Value narrowZ = truncf(explicitImages ? zi : wz);
       store(narrowX, wrapped, {i, zeroIndex});
       store(narrowY, wrapped, {i, firstIndex});
       store(narrowZ, wrapped, {i, secondIndex});
@@ -860,7 +863,11 @@ Value MatrixBuild::emitCandidateWithinReach(Value xi, Value yi, Value zi,
                                             Value xj, Value yj, Value zj,
                                             Value inRun) {
   Value dx, dy, dz;
-  if (tilted) {
+  if (explicitImages) {
+    dx = subf(xi, xj);
+    dy = subf(yi, yj);
+    dz = subf(zi, zj);
+  } else if (tilted) {
     // The minimum-image displacement of the triclinic cell, in one
     // pass along c, b, and a: see the template for the host.
     Value dx0 = subf(xi, xj);
@@ -931,7 +938,8 @@ Value MatrixBuild::emitCandidateWithinReach(Value xi, Value yi, Value zi,
 }
 
 void MatrixBuild::emitSearch(StringRef symbol, bool triclinic,
-                             bool testAllImages) {
+                             bool testAllImages, bool useExplicitImages) {
+  explicitImages = useExplicitImages;
   tilted = triclinic;
   allImages = testAllImages;
   SmallVector<Type> inputs{positions, tilted ? tiltedType : boxType};
@@ -1220,7 +1228,7 @@ void MatrixBuild::emitSpatialOrder() {
 
 } // namespace
 
-void kernels::emitMatrixBuild(ModuleOp module) {
+void kernels::emitMatrixBuild(ModuleOp module, bool explicitImages) {
   OpBuilder builder = OpBuilder::atBlockEnd(module.getBody());
   MatrixBuild matrix(builder, module.getLoc());
   matrix.emitCellCount();
@@ -1230,6 +1238,8 @@ void kernels::emitMatrixBuild(ModuleOp module) {
   matrix.emitExcludedPartner("mdrt_gpu_excluded_partner");
   matrix.emitMatrixSort();
   matrix.emitSearch("mdrt_gpu_build_neighbors_matrix", false, false);
+  if (explicitImages)
+    matrix.emitSearch("mdrt_gpu_build_neighbors_matrix_explicit", false, false, true);
   matrix.emitSearch("mdrt_gpu_build_neighbors_matrix_triclinic_pass", true,
                     false);
   matrix.emitMatrixImageWithin();
