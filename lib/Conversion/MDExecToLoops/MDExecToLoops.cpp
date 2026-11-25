@@ -71,6 +71,7 @@ struct Neighbors {
   Value counts;
   Value handle;
   Value domainMatrix, halo, imagePositions;
+  bool midpoint = false;
   /// The number of neighbors that a row holds at first.
   Value width;
   /// The configuration and the cell that the structure was built at.
@@ -380,7 +381,11 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
 
   Value imageShifts, imagePositions;
   if (structure.domainMatrix && md_exec::hostpairs::getComputedType(op).isF32()) {
+    // Midpoint rows already carry explicit f64 images. Taking their
+    // difference before narrowing avoids cancellation in bonded liquids.
     imagePositions = structure.imagePositions;
+  }
+  if (imagePositions && !structure.midpoint) {
     auto type = MemRefType::get({ShapedType::kDynamic, 3}, builder.getF64Type());
     auto shifts = getOrDeclare("mdrtDistMatrixImages", builder.getFunctionType(
         {builder.getI64Type(), builder.getI64Type()}, {type}));
@@ -903,6 +908,7 @@ LogicalResult Lowering::lowerDomainMatrix(mdrt::DomainMatrixOp op) {
        createReal(b, loc, b.getF64Type(), cutoff), createReal(b, loc, b.getF64Type(), skin),
        word(op.getWidth())});
   list.imagePositions = x;
+  list.midpoint = op.getRule() == 2;
   list.domainMatrix = matrix;
   list.halo = op.getHalo();
   auto countsType = MemRefType::get({ShapedType::kDynamic}, b.getI32Type());

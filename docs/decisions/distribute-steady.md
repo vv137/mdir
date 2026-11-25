@@ -10,3 +10,5 @@ The MPI transport caches its row schedules until the halo is released.
 Reverse reception visits contributions in domain and ghost order,
 including local entries, to preserve the order of force accumulation.
 Validated constraint groups read every tuple member at its owner.
+Mixed CPU midpoint rows subtract the explicit-image coordinates in double
+before converting the displacement to kernel precision.
