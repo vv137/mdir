@@ -23,6 +23,11 @@ config.excludes = ["CMakeLists.txt", "lit.cfg.py", "lit.site.cfg.py.in", "mdir_l
 llvm_config.with_system_environment(
     ["HOME", "TMP", "TEMP", "ASAN_OPTIONS", "UBSAN_OPTIONS",
      "CUDA_VISIBLE_DEVICES", "CUDA_CACHE_PATH"])
+if "mpi" in config.available_features:
+    # Keep the MPI launcher inside the allocation and retain its fabric plugins.
+    llvm_config.with_system_environment([name for name in os.environ
+        if name.startswith(("I_MPI_", "FI_", "SLURM_", "PMI_", "PMIX_", "UCX_"))
+        or name in ("LD_LIBRARY_PATH", "PATH")])
 # What lit itself was given, for the test that the tests receive it
 # (test/Lit/environment.test).
 for variable in ("CUDA_CACHE_PATH", "TMPDIR"):
