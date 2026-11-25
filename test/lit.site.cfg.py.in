@@ -6,6 +6,8 @@ config.llvm_shlib_ext = "@SHLIBEXT@"
 config.mdir_obj_root = "@MDIR_BINARY_DIR@"
 config.mdir_python = @MDIR_TEST_PYTHON@
 config.mdir_python_executable = "@MDIR_PYTHON_EXECUTABLE@"
+if "@MDIR_ENABLE_NCCL@" == "ON":
+    config.available_features.add("nccl")
 if "@MDIR_ENABLE_MPI@" == "ON":
     config.available_features.add("mpi")
     config.substitutions.append(("%mpiexec", "@MPIEXEC_EXECUTABLE@"))

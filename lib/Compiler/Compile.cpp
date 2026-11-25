@@ -483,10 +483,10 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // again and again in the same order of the particles (D253), and a
        // segment of `mdir run` builds in the memory of the one before
        // (#316).
-       << "kept-tuples=true "
-       // ... and builds them on the device where it does not take them
-       // (D257).
-       << "device-tuples=true "
+       // On distributed runs the host migration and tuple-row planner
+       // consume the actual renumbered members. Materialize those on the
+       // host, including when the coordinates were permuted on device.
+       << (control.distribution ? "" : "kept-tuples=true device-tuples=true ")
        << (units ? "bonded-units=" + std::to_string(units) + " " : "")
        // A check of the pruning of the dual lists, for tests
        // (D268).

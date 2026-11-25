@@ -1,0 +1,11 @@
+# REQUIRES: cuda, nccl
+# RUN: rm -rf %t && mkdir %t
+# RUN: cp %S/Inputs/towers-one-step.toml %S/../../examples/argon/argon.pdb %t/
+# RUN: sed -e 's/"TOWERS"/"MATRIX"/' -e 's/"MIXED"/"DOUBLE"/' -e 's/steps *= *1$/steps = 2/' %t/towers-one-step.toml > %t/run.toml
+# RUN: printf '\n[distribute]\ntransport = "nccl"\nplacement = "node"\n' >> %t/run.toml
+# RUN: cd %t && mdir run run.toml | FileCheck %s
+# CHECK: domain grid 1 x 1 x 1, nccl transport, directed traversal
+# CHECK: intra-node halo bytes 0 inter-node halo bytes 0
+# RUN: sed '/^\[execution\]$/a deterministic = true' %t/run.toml > %t/det.toml
+# RUN: not mdir run %t/det.toml 2>&1 | FileCheck %s --check-prefix=DET
+# DET: distributed GPU pairs do not implement deterministic fixed-point sums
