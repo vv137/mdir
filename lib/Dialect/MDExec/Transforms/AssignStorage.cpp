@@ -1443,7 +1443,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   bool fixedOrder = algebra::getAlgebra(op, 0) == Algebra::FixedOrder;
   // These order-four meshes passed the full-chain accuracy gate and
   // benefited from five passes on the measured TOWERS target (#961).
-  bool measuredMesh =
+  bool measuredMesh = kernels::isFoldingFFTMesh(grid) ||
       (grid[0] == grid[1] && grid[1] == grid[2] &&
        (grid[0] == 40 || grid[0] == 64)) ||
       (grid[0] == 144 && grid[1] == 84 && grid[2] == 80);

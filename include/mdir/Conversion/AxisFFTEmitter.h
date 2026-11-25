@@ -28,6 +28,13 @@ inline std::optional<AxisFactors> factorAxis(int64_t n) {
   return std::nullopt;
 }
 
+inline bool isFoldingFFTMesh(llvm::ArrayRef<int64_t> grid) {
+  return grid == llvm::ArrayRef<int64_t>({28, 28, 30}) ||
+         grid == llvm::ArrayRef<int64_t>({32, 32, 32}) ||
+         grid == llvm::ArrayRef<int64_t>({18, 20, 20}) ||
+         grid == llvm::ArrayRef<int64_t>({22, 24, 24});
+}
+
 inline bool supportsAxisFFT(llvm::ArrayRef<int64_t> grid) {
   return grid.size() == 3 && grid[2] % 2 == 0 && factorAxis(grid[0]) &&
          factorAxis(grid[1]) && factorAxis(grid[2] / 2);

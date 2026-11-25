@@ -5836,7 +5836,8 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     fallback = "unqualified spline order";
   else if (op.getDispersion() || op.getP3m())
     fallback = "requires Gaussian influence";
-  else if (tilted && op->getAttrOfType<StringAttr>("md_exec.fft_requested") !=
+  else if (tilted && !isFoldingFFTMesh(grid) &&
+           op->getAttrOfType<StringAttr>("md_exec.fft_requested") !=
                          builder.getStringAttr("on"))
     fallback = "unqualified triclinic mesh";
   else if (op.getPotential())
