@@ -377,7 +377,14 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   auto loop = scf::ParallelOp::create(
       builder, loc, ValueRange{zero}, ValueRange{size}, ValueRange{one},
       inits, [&](OpBuilder &body, Location, ValueRange ivs, ValueRange) {
-        IRMapping local;
+        auto emitRow = [&](OpBuilder &at) {
+          if (hostLanes)
+            return emitPairRowLanes(at, op, structure.counts, entries, box,
+                                    inverse, ivs[0], *hostLanes);
+          IRMapping local;
+          return emitPairKernel(at, op, structure.counts, entries, box,
+                                inverse, ivs[0], local);
+        };
         SmallVector<Value> contributions;
         if (Value selected = op.getCenterSet()) {
           Value bit = memref::LoadOp::create(body, loc, selected,
@@ -398,8 +405,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
             OpBuilder then = OpBuilder::atBlockEnd(filtered.thenBlock());
             scf::YieldOp::create(
                 then, loc,
-                emitPairKernel(then, op, structure.counts, entries, box,
-                               inverse, ivs[0], local));
+                emitRow(then));
           }
           {
             OpBuilder otherwise = OpBuilder::atBlockEnd(filtered.elseBlock());
@@ -410,13 +416,8 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
           }
           contributions.assign(filtered.getResults().begin(),
                                filtered.getResults().end());
-        } else if (hostLanes) {
-          contributions =
-              emitPairRowLanes(body, op, structure.counts, entries, box,
-                               inverse, ivs[0], *hostLanes);
         } else {
-          contributions = emitPairKernel(body, op, structure.counts, entries,
-                                         box, inverse, ivs[0], local);
+          contributions = emitRow(body);
         }
         if (!contributions.empty())
           createReduction(body, loc, contributions, /*isSum=*/true);

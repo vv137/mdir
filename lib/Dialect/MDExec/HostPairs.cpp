@@ -87,11 +87,6 @@ hostpairs::Refusal hostpairs::checkLanes(PairForOp op, int64_t lanes) {
       op.getConflict() != Conflict::OwnerOnly)
     return std::string("the policy is not (directed, owner_only): the "
                        "lanes write at the centers alone");
-  if (op.getCenters() || op.getCenterSet() || op.getGhostFree() ||
-      op.getImages() == Images::Explicit)
-    return std::string("the loop is over a domain (centers, center_set, "
-                       "ghost_free, or images(explicit)), which the first "
-                       "slice does not take");
   Type computed = getComputedType(op);
   if (!computed || !(computed.isF32() || computed.isF64()))
     return std::string("the kernel does not compute in f32 or f64");

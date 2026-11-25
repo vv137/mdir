@@ -177,17 +177,13 @@ func.func @refused(%x: !vec, %t: !type, %cell: !md.cell) -> (!vec, f32, f32, f32
   return %f, %p, %c, %s : !vec, f32, f32, f32
 }
 
-// The loops over a domain, a power by a vector of exponents, and a value
-// that is not a number or a vector of one dimension keep the scalar row. The
-// lanes always take the minimum image, so a loop whose rows carry their
-// images (images(explicit), which the distributed lowering builds) must not
-// take them. The types of the kernel's arguments, f32 or f64 and numbers or
-// vectors of one dimension, are the verifier's (host-pairs-invalid.mlir).
+// The parallel loop limits the centers. Explicit images use plain
+// displacements in the vector body. Unsupported kernels still use scalar rows.
 // AVX-LABEL: func.func @domain(
+// AVX-COUNT-2: host(lanes(8))
 // AVX-NOT: host(
 // AVX: return
-// WHY: remark: host pairs: scalar: no lanes(8): the loop is over a domain (centers, center_set, ghost_free, or images(explicit)), which the first slice does not take
-// WHY: remark: host pairs: scalar: no lanes(8): the loop is over a domain (centers, center_set, ghost_free, or images(explicit)), which the first slice does not take
+// WHY-COUNT-2: remark: host pairs: lanes(8)
 // WHY: remark: host pairs: scalar: no lanes(8): the exponent of 'math.fpowi' is not a scalar constant
 // WHY: remark: host pairs: scalar: no lanes(8): a value of 'arith.constant' is neither a number nor a vector of one dimension
 func.func @domain(%x: !vec, %cell: !md.cell, %n: index) -> (f32, f32, f32, f32) {

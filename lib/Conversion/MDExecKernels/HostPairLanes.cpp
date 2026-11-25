@@ -367,7 +367,8 @@ SmallVector<Value> kernels::emitPairRowLanes(OpBuilder &builder,
           b, loc,
           arith::SubFOp::create(b, loc, centralParts[k], otherPosition[k]),
           computed));
-    emitLaneMinimumImage(b, loc, d, boxParts, inverseParts);
+    if (op.getImages() != md_exec::Images::Explicit)
+      emitLaneMinimumImage(b, loc, d, boxParts, inverseParts);
     Value r2;
     for (int64_t k = 0; k != 3; ++k) {
       Value square = arith::MulFOp::create(b, loc, d[k], d[k]);
