@@ -862,9 +862,9 @@ LogicalResult Lowering::lowerPartitionCenters(PartitionCentersOp op) {
                     Value xk = loadValue(bg, xg, d, k,
                                          VectorType::get({3}, bg.getF64Type()));
                     Value delta = arith::SubFOp::create(bg, loc, xi, xk);
-                    if (shifts)
-                      dvec = arith::SubFOp::create(bk, loc, dvec,
-                          side.getResult(1 + types.size()));
+                    if (Value shifts = imageShifts.lookup(relation.getGhosts()))
+                      delta = arith::SubFOp::create(bg, loc, delta,
+                          loadValue(bg, shifts, d, k, delta.getType()));
                     Value r2 = vector::ReductionOp::create(
                         bg, loc, vector::CombiningKind::ADD,
                         arith::MulFOp::create(bg, loc, delta, delta));
@@ -1040,6 +1040,9 @@ static void emitPairs(
                     // d = x_i − x_k: ghosts carry their images, so no
                     // minimum image is taken.
                     Value dvec = arith::SubFOp::create(bk, loc, xi, xk);
+                    if (shifts)
+                      dvec = arith::SubFOp::create(bk, loc, dvec,
+                          side.getResult(1 + types.size()));
                     Value r2 = vector::ReductionOp::create(
                         bk, loc, vector::CombiningKind::ADD,
                         arith::MulFOp::create(bk, loc, dvec, dvec));

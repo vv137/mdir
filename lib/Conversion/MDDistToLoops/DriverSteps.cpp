@@ -4,6 +4,8 @@
 #include "mdir/Dialect/Dyn/DynOps.h"
 #include "mdir/Dialect/MDDist/MDDistOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/IRMapping.h"
@@ -39,7 +41,8 @@ private:
   Value cell;
   Location loc;
 public:
-  explicit Segment(Location loc) : loc(loc) {}
+  bool wrapDrift;
+  Segment(Location loc, bool wrapDrift) : loc(loc), wrapDrift(wrapDrift) {}
 };
 
 Value Segment::advance(OpBuilder &b, Value field, Value slope, Value dt, Value mass) {
@@ -61,6 +64,13 @@ Value Segment::advance(OpBuilder &b, Value field, Value slope, Value dt, Value m
   Value w = vector::BroadcastOp::create(k, loc, body->getArgument(0).getType(), dt);
   Value delta = arith::MulFOp::create(k, loc, w, body->getArgument(1));
   Value updated = arith::AddFOp::create(k, loc, body->getArgument(0), delta);
+  if (!mass && wrapDrift) {
+    auto box = cell.getDefiningOp<md::OrthorhombicCellOp>();
+    Value edges = vector::FromElementsOp::create(k, loc,
+        cast<VectorType>(updated.getType()), ValueRange{box.getLx(), box.getLy(), box.getLz()});
+    Value image = math::FloorOp::create(k, loc, arith::DivFOp::create(k, loc, updated, edges));
+    updated = arith::SubFOp::create(k, loc, updated, arith::MulFOp::create(k, loc, edges, image));
+  }
   dd::YieldOp::create(k, loc, ValueRange{updated});
   return map;
 }
@@ -142,6 +152,8 @@ LogicalResult Segment::run(scf::ForOp root) {
   if (!kick || !partition || !neighbors || !halo)
     return root.emitOpError("distributed Verlet requires a finite-range pair force");
   cell = partition.getCell();
+  if (wrapDrift && !cell.getDefiningOp<md::OrthorhombicCellOp>())
+    return root.emitOpError("deterministic distribution requires an orthorhombic cell");
   parameters.push_back(kick.getMasses());
   bool unsupported = false;
   root.walk([&](scf::ForOp step) {
@@ -197,7 +209,7 @@ class DriverSteps : public impl::MDistributeDriverStepsBase<DriverSteps> {
       return signalPassFailure();
     }
     for (auto root : roots)
-      if (failed(Segment(root.getLoc()).run(root))) return signalPassFailure();
+      if (failed(Segment(root.getLoc(), wrapDrift).run(root))) return signalPassFailure();
   }
 };
 } // namespace
