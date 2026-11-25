@@ -1510,6 +1510,14 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       if (checkpoint)
         effective["input_box_rounding_delta_nm"] = deltas(inputBoxRounding);
     }
+    if (control->distribution) {
+      const auto &grid = program->domainGrid;
+      effective["distribute"] = llvm::json::Object{
+          {"grid", llvm::json::Array{grid[0], grid[1], grid[2]}},
+          {"transport", control->distribution->transport},
+          {"traversal", control->distribution->traversal},
+          {"reach_angstrom", control->pairlistDistance}};
+    }
     if (towersShapeReport.getAsObject())
       effective["towers_shape"] = towersShapeReport;
     if (!towersCellHeight.empty())
@@ -1819,6 +1827,14 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     output.log.print("MDIR: %zu particles, %lld steps of %g ps\n",
                  count, static_cast<long long>(control->numSteps),
                  control->timestep);
+  if (control->distribution) {
+    const auto &grid = program->domainGrid;
+    output.log.print("MDIR: domain grid %lld x %lld x %lld, %s transport, "
+                     "%s traversal, halo reach %g Ang\n",
+                     static_cast<long long>(grid[0]), static_cast<long long>(grid[1]),
+                     static_cast<long long>(grid[2]), control->distribution->transport.c_str(),
+                     control->distribution->traversal.c_str(), control->pairlistDistance);
+  }
   if (program->pme)
     output.log.print("MDIR: PME force-only product rule: %s\n", pmeForceProduct);
   // The parameters that the prolate kernel derives (D266).

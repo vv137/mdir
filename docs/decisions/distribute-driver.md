@@ -1,0 +1,1 @@
+| D[distribute-driver] | The optional `[distribute]` table selects a grid for the CPU pair potential. An integer uses the geometric grid selector of `md-distribute`. An explicit grid fixes each axis. The traversal defaults to directed and the transport to local. The manifest records the resolved grid, traversal, transport, and reach. |

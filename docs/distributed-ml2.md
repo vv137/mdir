@@ -1542,3 +1542,8 @@ a field computed from the positions
   come with the new gather.
 - Derivatives in parameters or fields on domains; migration; MPI. The
   `mixed` mode and GPUs run through `md_exec` (Section 7.2, 7.4).
+
+D[distribute-driver] selects the grid and traversal of the potential
+rewrite from the control file. At the potential-lowering checkpoint a
+force evaluation creates its layout from current positions. Carrying the
+layout and halo between evaluations requires the step state of Section 8.1.
