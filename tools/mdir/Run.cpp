@@ -1541,6 +1541,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
         {"ranks", distRanks}, {"cutoff_angstrom", control->cutoffDistance},
         {"skin_angstrom", control->pairlistDistance-control->cutoffDistance},
         {"reach_angstrom", domainReach}};
+    if (dist->transport == "nccl") distribution["placement"] = "node";
     output.log.print("MDIR: grid choice %s, requested count %lld, ranks %d; %s transport (%s), %s traversal (%s); reach %g Ang, cutoff %g Ang, skin %g Ang\n",
         source, (long long)dist->domains, distRanks, dist->transport.c_str(),
         dist->transportGiven ? "requested" : "default", dist->traversal.c_str(),

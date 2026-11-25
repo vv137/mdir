@@ -627,6 +627,7 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
     auto dynamic = MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, b.getI32Type());
     Value view = memref::CastOp::create(b, loc, dynamic, members);
     auto apply = declare("mdrtDistGroupOwners", b.getFunctionType({i64, wide, dynamic}, {}), true);
+    apply.setArgAttr(2, "mdrt.read_only", b.getUnitAttr());
     func::CallOp::create(b, loc, apply, ValueRange{handle, cast, view});
   }
   Value count = memref::DimOp::create(b, loc, positions, 0);

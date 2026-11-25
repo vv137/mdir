@@ -464,7 +464,8 @@
                   "minItems": 3,
                   "maxItems": 3
                 },
-                "transport": {"enum": ["local", "mpi"]},
+                "transport": {"enum": ["local", "mpi", "nccl"]},
+                "placement": {"const": "node"},
                 "traversal": {"enum": ["directed", "unique"]},
                 "ranks": {"type": "integer", "minimum": 1},
                 "cutoff_angstrom": {"type": "number"},
