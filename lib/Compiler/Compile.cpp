@@ -354,6 +354,7 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
   if (control.distribution)
     os << "md-dist-owner-computes,md-distribute-driver-steps,md-exec-assign-algebra,"
        << "convert-md-dist-to-loops{halo-events=true"
+       << (control.threads > 1 ? " parallel-domains=true" : "")
        << (control.distribution->transport == "mpi" ? " mpi=true" : "")
        << "},lower-mdrt-halo-events,";
   os << "convert-md-to-md-exec{skin=" << program.skin
