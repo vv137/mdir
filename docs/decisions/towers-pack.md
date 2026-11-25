@@ -31,8 +31,8 @@ one dense cell may see a smaller benefit. The physics-neutral
 `[execution] towers_shape.pack` field accepts `"AUTO"`, `"COMPACT"`, or
 `"WIDE"`. The setup log and manifest record the choice, the selection
 rule, and both populations. Pinned launches and cache hits still inspect
-the starting frame. Programs without an eligible trial region use the
-input-coordinate bin counts and report their source.
+the starting frame. Programs without an eligible pair region run the setup
+rebuild alone.
 
 The rebuild test compares both insertion directions against independently
 sorted keys, checks cell-relative coordinates and enumerates pair ownership.

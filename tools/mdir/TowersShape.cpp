@@ -156,7 +156,7 @@ llvm::Expected<Object> checkRegisters(int device, const TowersShape &shape,
 using Cell = std::array<int, 3>;
 struct FrameSpans {
   int64_t column = 1, plate = 1;
-  int capacity = 32, cells = 1, peak = 0;
+  int capacity = 32, cells = 1;
 };
 
 llvm::Expected<FrameSpans> measureSpans(const System &system, double cutoff,
@@ -184,7 +184,7 @@ llvm::Expected<FrameSpans> measureSpans(const System &system, double cutoff,
         x += length;
       cell[a] = std::min(dims[a] - 1, int(x / (length / dims[a])));
     }
-    maximum.peak = std::max(maximum.peak, ++counts[cell]);
+    maximum.capacity = std::max(maximum.capacity, ++counts[cell]);
   }
   for (const auto &[cell, count] : counts) {
     auto add = [&](int x, int y, int z, int plane) {
@@ -203,7 +203,7 @@ llvm::Expected<FrameSpans> measureSpans(const System &system, double cutoff,
     maximum.column = std::max(maximum.column, entry.second[0]);
     maximum.plate = std::max(maximum.plate, entry.second[1]);
   }
-  maximum.capacity = llvm::alignTo(std::max(maximum.capacity, maximum.peak), 8);
+  maximum.capacity = llvm::alignTo(maximum.capacity, 8);
   // Slot offsets, including the growth pool, are signed 32-bit indices.
   int64_t limit =
       (INT32_MAX - int64_t(system.getNumParticles())) / maximum.capacity;
@@ -345,12 +345,14 @@ Object fields(const TowersShape &s, bool provenance) {
 }
 #if MDIR_HAS_CUDA
 std::string resolvePack(const TowersShape &given, mdir::tool::TowersPopulation pop,
-                        Object &report, llvm::StringRef source) {
-  report["population_source"] = source;
+                        Object &report) {
+  report["population_source"] = "device spans";
   report["maximum_population"] = pop.maximum;
   report["mean_population"] = pop.mean;
   report["pack_rule"] = "AUTO selects WIDE when maximum_population > 128";
-  return given.pack.empty() ? (pop.maximum > 128 ? "WIDE" : "COMPACT") : given.pack;
+  if (!given.pack.empty())
+    return given.pack;
+  return pop.maximum > 128 ? "WIDE" : "COMPACT";
 }
 llvm::Expected<TowersShape>
 timeCandidates(const Control &control, const System &system,
@@ -376,7 +378,7 @@ timeCandidates(const Control &control, const System &system,
   auto population = readTowersPopulation(**frame, *firstImage);
   if (!population)
     return population.takeError();
-  auto pack = resolvePack(control.towersShape, *population, report, "device spans");
+  auto pack = resolvePack(control.towersShape, *population, report);
   bool recompile = (first.pack == "WIDE") != (pack == "WIDE");
   for (auto &candidate : candidates)
     candidate.pack = pack;
@@ -654,13 +656,23 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
     result["register_check"] = "register check runs at setup";
     return result;
   }
+  std::string rebuildOnly;
   auto emit = prepareTowersSpecialization(control, system, reach,
-                                          maximum->capacity, (*limits)->device);
+                                          maximum->capacity, (*limits)->device,
+                                          setup ? &rebuildOnly : nullptr);
   if (!emit)
     return emit.takeError();
   if (!*emit) {
-    shape->pack = resolvePack(given, {maximum->peak, double(system.getNumParticles()) /
-                                                  maximum->cells}, result, "input coordinates");
+    if (setup) {
+      auto frame = createTowersTrial((*limits)->device, system, maximum->cells,
+                                     reach, maximum->capacity, {});
+      if (!frame)
+        return frame.takeError();
+      auto population = readTowersPopulation(**frame, rebuildOnly);
+      if (!population)
+        return population.takeError();
+      shape->pack = resolvePack(given, *population, result);
+    }
     result["selection"] = "derived shape (no force-only region)";
     result["register_check"] = "no force-only region";
   } else {
