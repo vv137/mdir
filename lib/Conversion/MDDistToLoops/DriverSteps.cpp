@@ -183,7 +183,12 @@ class DriverSteps : public impl::MDistributeDriverStepsBase<DriverSteps> {
   void runOnOperation() final {
     SmallVector<scf::ForOp> roots;
     getOperation().walk([&](scf::ForOp op) {
-      if (!op->getParentOfType<scf::ForOp>() &&
+      // A checkpoint segment may first reorder the particle set, carrying
+      // its permutation and parameters as well. Build the domain state
+      // inside that segment, after the new order has been selected.
+      auto parent = op->getParentOfType<scf::ForOp>();
+      if (op.getNumRegionIterArgs() == 3 &&
+          (!parent || parent.getNumRegionIterArgs() != 3) &&
           op.walk([](dyn::DriftOp) { return WalkResult::interrupt(); }).wasInterrupted())
         roots.push_back(op);
     });
