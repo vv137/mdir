@@ -23,6 +23,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 struct Memref1I {
   int64_t *allocated, *aligned;
@@ -663,6 +664,13 @@ static void shareRows(struct Layout *l, const int64_t *rows, struct Memref3D *fi
                        mdrtMPIOwner(l->domains, d));
 }
 
+void _mlir_ciface_mdrtMPICopyState(struct Memref3D *source, struct Memref3D *dest) {
+  int64_t domains = source->sizes[0];
+  int64_t first = mdrtMPIDomainBound(domains, 0), end = mdrtMPIDomainBound(domains, 1);
+  size_t length = (end-first)*source->sizes[1]*source->sizes[2];
+  memcpy(at3(dest,first,0,0),at3(source,first,0,0),length*sizeof(double));
+}
+
 void _mlir_ciface_mdrtMPICollectRows(int64_t handle, struct Memref3D *field) {
   struct Layout *layout = (struct Layout *)(intptr_t)handle;
   shareRows(layout, layout->rows, field);
@@ -899,15 +907,25 @@ void _mlir_ciface_mdrtDistRedistribute(int64_t oldHandle, int64_t newHandle,
     fail("redistribution requires matching, distinct field buffers");
   shareRows(old, old->rows, source);
   int64_t components = source->sizes[2];
-  for (int64_t j = 0; j < old->count; ++j)
-    for (int64_t k = 0; k < components; ++k) {
-      double value = *at3(source, old->owner[j], old->row[j], k);
-      if (image) {
-        if (!isfinite(value))
-          fail("redistributed positions must be finite");
-        value -= next->edges[k] * floor(value / next->edges[k]);
+  int64_t first = 0, past = next->domains;
+#ifdef MDIR_ENABLE_MPI
+  if (next->mpi) {
+    first = mdrtMPIDomainBound(next->domains, 0);
+    past = mdrtMPIDomainBound(next->domains, 1);
+  }
+#endif
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < next->rows[d]; ++r) {
+      int64_t j = next->ids[d*next->count+r];
+      for (int64_t k = 0; k < components; ++k) {
+        double value = *at3(source, old->owner[j], old->row[j], k);
+        if (image) {
+          if (!isfinite(value))
+            fail("redistributed positions must be finite");
+          value -= next->edges[k] * floor(value / next->edges[k]);
+        }
+        *at3(destination,d,r,k) = value;
       }
-      *at3(destination, next->owner[j], next->row[j], k) = value;
     }
 }
 
@@ -936,53 +954,63 @@ static double outsideBox(double y, double lo, double hi) {
   return y < lo ? lo-y : (y > hi ? y-hi : 0.0);
 }
 
-/* Visits the ghosts of domain `d`: each image y = x_j + n L of each particle
-   j, in the order of the set and then of n, other than the domain's own
-   particles at n = 0, within `reach` of the box. With `out`, stores them;
-   returns their number. */
-static int64_t visitGhosts(struct Halo *h, struct Memref3D *x, int64_t d,
-                           int store) {
+/* Bin consecutive particle identities together. A bin's bounds reject
+   entire image ranges without reordering the surviving rows. */
+enum { GhostBinSize = 32 };
+struct GhostBin { double lo[3], hi[3]; };
+struct GhostRow { int64_t id, image[3]; };
+struct GhostList { struct GhostRow *data; size_t size, capacity; };
+
+static void visitGhosts(struct Halo *h, const double (*points)[3],
+                        const struct GhostBin *bins, int64_t d,
+                        const double lo[3], const double hi[3],
+                        struct GhostList *list) {
   struct Layout *l = h->layout;
-  double lo[3], hi[3];
-  domainBox(l, x, d, lo, hi);
+  const double reach2 = h->reach*h->reach;
   int64_t span[3];
-  for (int k = 0; k < 3; ++k)
-    span[k] = (int64_t)ceil(h->reach / l->edges[k]);
-  int64_t count = 0;
-  double reach2 = h->reach * h->reach;
-  for (int64_t j = 0; j < l->count; ++j) {
-    int64_t e = l->owner[j], r = l->row[j];
-    // Reject an entire slab or column once its partial squared distance
-    // reaches the cutoff. Surviving images retain the original visit order.
-    double position[3];
-    for (int k = 0; k < 3; ++k) position[k] = *at3(x, e, r, k);
-    for (int64_t na = -span[0]; na <= span[0]; ++na) {
-      double dx = outsideBox(position[0] + na*l->edges[0], lo[0], hi[0]);
-      double dx2 = dx*dx;
-      if (!(dx2 < reach2)) continue;
-      for (int64_t nb = -span[1]; nb <= span[1]; ++nb) {
-        double dy = outsideBox(position[1] + nb*l->edges[1], lo[1], hi[1]);
-        double dxy2 = dx2 + dy*dy;
-        if (!(dxy2 < reach2)) continue;
-        for (int64_t nc = -span[2]; nc <= span[2]; ++nc) {
-          if (e == d && na == 0 && nb == 0 && nc == 0) continue;
-          double dz = outsideBox(position[2] + nc*l->edges[2], lo[2], hi[2]);
-          if (!(dxy2 + dz*dz < reach2)) continue;
-          int64_t n[3] = {na, nb, nc};
-          if (store) {
-            int64_t g = d * h->capacity + count;
-            h->sourceDomain[g] = e;
-            h->sourceRow[g] = r;
-            h->ids[g] = j;
-            for (int k = 0; k < 3; ++k)
-              h->image[3 * g + k] = n[k];
+  for (int c = 0; c < 3; ++c)
+    span[c] = (int64_t)ceil(h->reach/l->edges[c]);
+  for (int64_t first = 0; first < l->count; first += GhostBinSize) {
+    const struct GhostBin *bin = &bins[first/GhostBinSize];
+    int64_t low[3], high[3];
+    int c = 0;
+    for (; c < 3; ++c) {
+      double edge = l->edges[c];
+      low[c] = -span[c];
+      high[c] = span[c];
+      while (low[c] <= high[c] && bin->hi[c]+low[c]*edge < lo[c]-h->reach)
+        ++low[c];
+      while (low[c] <= high[c] && bin->lo[c]+high[c]*edge > hi[c]+h->reach)
+        --high[c];
+      if (low[c] > high[c]) break;
+    }
+    if (c != 3) continue;
+    int64_t end = first+GhostBinSize < l->count ? first+GhostBinSize : l->count;
+    for (int64_t j = first; j < end; ++j) {
+      const double *x = points[j];
+      for (int64_t a = low[0]; a <= high[0]; ++a) {
+        double dx = outsideBox(x[0]+a*l->edges[0],lo[0],hi[0]);
+        double dx2 = dx*dx;
+        if (!(dx2 < reach2)) continue;
+        for (int64_t b = low[1]; b <= high[1]; ++b) {
+          double dy = outsideBox(x[1]+b*l->edges[1],lo[1],hi[1]);
+          double dxy2 = dx2+dy*dy;
+          if (!(dxy2 < reach2)) continue;
+          for (int64_t z = low[2]; z <= high[2]; ++z) {
+            if (l->owner[j] == d && a == 0 && b == 0 && z == 0) continue;
+            double dz = outsideBox(x[2]+z*l->edges[2],lo[2],hi[2]);
+            if (!(dxy2+dz*dz < reach2)) continue;
+            if (list->size == list->capacity) {
+              list->capacity = list->capacity ? 2*list->capacity : 64;
+              list->data = realloc(list->data,list->capacity*sizeof *list->data);
+              if (!list->data) fail("out of memory recording ghost rows");
+            }
+            list->data[list->size++] = (struct GhostRow){j,{a,b,z}};
           }
-          ++count;
         }
       }
     }
   }
-  return count;
 }
 
 int64_t _mlir_ciface_mdrtDistHalo(int64_t layout, struct Memref3D *x,
@@ -999,11 +1027,30 @@ int64_t _mlir_ciface_mdrtDistHalo(int64_t layout, struct Memref3D *x,
   h->rows = calloc(domains, sizeof(int64_t));
   if (!h->rows)
     fail("out of memory");
-  for (int64_t d = 0; d < domains; ++d) {
-    h->rows[d] = visitGhosts(h, x, d, 0);
-    if (h->rows[d] > h->capacity)
-      h->capacity = h->rows[d];
+  struct Layout *l = h->layout;
+  size_t length = l->count ? l->count : 1;
+  double (*points)[3] = malloc(length*sizeof *points);
+  struct GhostBin *bins = malloc(((length+GhostBinSize-1)/GhostBinSize)*sizeof *bins);
+  struct GhostList *lists = calloc(domains,sizeof *lists);
+  if (!points || !bins || !lists) fail("out of memory binning halo positions");
+  for (int64_t j = 0; j < l->count; ++j) {
+    struct GhostBin *bin = &bins[j/GhostBinSize];
+    for (int c = 0; c < 3; ++c) {
+      double v = *at3(x,l->owner[j],l->row[j],c);
+      points[j][c] = v;
+      if (j%GhostBinSize == 0 || v < bin->lo[c]) bin->lo[c] = v;
+      if (j%GhostBinSize == 0 || v > bin->hi[c]) bin->hi[c] = v;
+    }
   }
+  for (int64_t d = 0; d < domains; ++d) {
+    double lo[3], hi[3];
+    domainBox(l,x,d,lo,hi);
+    visitGhosts(h,points,bins,d,lo,hi,&lists[d]);
+    h->rows[d] = lists[d].size;
+    if (h->rows[d] > h->capacity) h->capacity = h->rows[d];
+  }
+  free(points);
+  free(bins);
   int64_t cap = h->capacity > 0 ? h->capacity : 1;
   h->capacity = cap;
   h->sourceDomain = malloc(sizeof(int64_t) * domains * cap);
@@ -1012,8 +1059,18 @@ int64_t _mlir_ciface_mdrtDistHalo(int64_t layout, struct Memref3D *x,
   h->image = malloc(sizeof(int64_t) * 3 * domains * cap);
   if (!h->sourceDomain || !h->sourceRow || !h->ids || !h->image)
     fail("out of memory");
-  for (int64_t d = 0; d < domains; ++d)
-    visitGhosts(h, x, d, 1);
+  for (int64_t d = 0; d < domains; ++d) {
+    for (int64_t r = 0; r < h->rows[d]; ++r) {
+      struct GhostRow *row = &lists[d].data[r];
+      int64_t g = d*cap+r, j = row->id;
+      h->ids[g] = j;
+      h->sourceDomain[g] = l->owner[j];
+      h->sourceRow[g] = l->row[j];
+      memcpy(&h->image[3*g],row->image,sizeof row->image);
+    }
+    free(lists[d].data);
+  }
+  free(lists);
   if (observer) {
     // Count neighbor multiplicities once per halo, including periodic
     // self-images. Later transfers scale these counts by their field width.
