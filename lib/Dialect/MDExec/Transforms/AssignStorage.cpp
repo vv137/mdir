@@ -2049,6 +2049,33 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     if (failed(checkStored(op, from.getResult().getType(), storedType)))
       return failure();
     Value buffer = mapping.lookup(from.getBuffer());
+    if (from->hasAttr("mdrt.collect_buffer")) {
+      if (onDevice || !from.getBuffer().getDefiningOp<memref::AllocOp>() ||
+          !from.getBuffer().hasOneUse()) {
+        // The buffer also has the stores of the collect. Validate that every
+        // other user fills it before the handoff.
+        auto allocated = from.getBuffer().getDefiningOp<memref::AllocOp>();
+        if (onDevice || !allocated || llvm::any_of(from.getBuffer().getUsers(),
+            [&](Operation *user) {
+              if (user == op) return false;
+              auto store = dyn_cast<memref::StoreOp>(user);
+              if (!store || store.getMemRef() != from.getBuffer()) return true;
+              Operation *ancestor = op->getBlock()->findAncestorOpInBlock(*user);
+              return !ancestor || !ancestor->isBeforeInBlock(op);
+            }))
+          return op->emitOpError("collected field requires its own filled allocation");
+      }
+      Type field = from.getResult().getType();
+      Attribute set = getParticleSet(field);
+      Value size = sizes.lookup(set);
+      if (!size)
+        return op->emitOpError("collected field requires a known particle-set extent");
+      Value held = scope.request(getStorageType(field), size, set, op->getLoc());
+      memref::CopyOp::create(builder, op->getLoc(), buffer, held);
+      memref::DeallocOp::create(builder, op->getLoc(), buffer);
+      bind(from.getResult(), held, scope);
+      return success();
+    }
     if (deviceInput) {
       buffer = tagInputBuffer(builder, op->getLoc(),
                               getStorageType(from.getResult().getType()),

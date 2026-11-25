@@ -542,7 +542,9 @@ LogicalResult Lowering::lowerCollect(CollectOp op) {
             });
         scf::YieldOp::create(bd, loc);
       });
-  Value field = mdrt::FromBufferOp::create(b, loc, fieldType, global);
+  auto field = mdrt::FromBufferOp::create(b, loc, fieldType, global);
+  if (module->hasAttr("md_dist.driver"))
+    field->setAttr("mdrt.collect_buffer", b.getUnitAttr());
   op.getResult().replaceAllUsesWith(field);
   return success();
 }
