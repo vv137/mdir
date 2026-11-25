@@ -223,6 +223,7 @@ void emitPairs(
   Value finish(OpBuilder &b, Value sum, int fractionalBits);
   Value add(OpBuilder &b, Value lhs, Value rhs);
   llvm::DenseMap<Value, Value> devicePositions, deviceScalars;
+  llvm::DenseMap<std::pair<Block *, Value>, Value> fieldSnapshots;
   int64_t scalarSite = 0;
   llvm::DenseMap<Value, Value> imageShifts, fieldWords, excludedPairs;
   llvm::DenseMap<Value, std::pair<Value, int>> observableWords;
@@ -572,7 +573,13 @@ Storage &Lowering::rowsOf(Value field) {
 Value Lowering::inputSnapshot(OpBuilder &b, md::FieldType type, Value field) {
   if (!module->hasAttr("md_dist.driver"))
     return mdrt::ToBufferOp::create(b, loc, mdrt::getBufferType(type), field);
+  auto key = std::make_pair(b.getInsertionBlock(), field);
+  if (sharedState())
+    if (Value snapshot = fieldSnapshots.lookup(key))
+      if (snapshot.getDefiningOp()->isBeforeInBlock(&*b.getInsertionPoint()))
+        return snapshot;
   auto snapshot = mdrt::SnapshotOp::create(b, loc, mdrt::getBufferType(type), field);
+  if (sharedState()) fieldSnapshots[key] = snapshot.getResult();
   OpBuilder atEnd(end);
   memref::DeallocOp::create(atEnd, loc, snapshot.getResult());
   return snapshot.getResult();
@@ -1204,6 +1211,23 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
   Type scalar = sumType(b.getF64Type());
   Storage halo = storage[op.getHalo()];
   Storage layout = storage[layoutOf(op.getHalo())];
+  if (sharedState()) {
+    auto tableType = MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, b.getI64Type());
+    Value table = memref::CastOp::create(b, loc, tableType, op.getRows());
+    auto materialize = [&](Value field, bool ghost) {
+      Value data = storage[field].buffer;
+      if (!data) return;
+      SmallVector<Value> args{layout.handle, data, table,
+                              arith::ConstantIntOp::create(b,loc,ghost,64)};
+      auto fn = declare("mdrtDistHostTupleField",
+                        b.getFunctionType(ValueRange(args).getTypes(),{}),true);
+      func::CallOp::create(b,loc,fn,args);
+    };
+    materialize(op.getPositions(),false);
+    if (!constraintKernels.contains(op)) materialize(op.getGhosts(),true);
+    for (auto [i, field] : llvm::enumerate(op.getGathered()))
+      if (!(i % 2) || !constraintKernels.contains(op)) materialize(field,i % 2);
+  }
   auto buffer = [&](ArrayRef<int64_t> shape, ValueRange sizes) {
     Value value = allocate(b, MemRefType::get(shape, scalar), sizes);
     fillZero(b, value);
@@ -1361,7 +1385,13 @@ LogicalResult Lowering::lowerTupleRows(TupleRowsOp op) {
   if (mpi && !op.getGroup()) {
     // The field is immutable within its SSA lifetime. All tuple sets in
     // this block can read the same replicated coordinates.
-    if (sharedTuplePositions.insert({op->getBlock(), op.getPositions()}).second) {
+    if (sharedState()) {
+      Value layout = storage[layoutOf(op.getHalo())].handle;
+      auto share = declare("mdrtDistShareTupleMembers",
+          b.getFunctionType({b.getI64Type(),positions.getType(),source.getType()},{}),true);
+      share.setArgAttr(2,"mdrt.read_only",b.getUnitAttr());
+      func::CallOp::create(b,loc,share,ValueRange{layout,positions,source});
+    } else if (sharedTuplePositions.insert({op->getBlock(), op.getPositions()}).second) {
       Value layout = storage[layoutOf(op.getHalo())].handle;
       auto share = declare("mdrtMPICollectRows",
           b.getFunctionType({b.getI64Type(),positions.getType()}, {}), true);
@@ -2927,7 +2957,7 @@ LogicalResult Lowering::lower(Operation *op) {
   // Native host consumers materialize the local slice on first read.
   // Packing, coverage and integration can pass the device version on.
   if (sharedState() && !isa<PackOp, UnpackOp, CoveredOp, MapParticlesOp,
-                             HaloCopyOp, NeighborhoodOp, RedistributeOp, MigrateOp, HaloOp>(op)) {
+                             HaloCopyOp, NeighborhoodOp, RedistributeOp, MigrateOp, HaloOp, TupleRowsOp, TupleKernelOp>(op)) {
     OpBuilder b(op);
     for (Value operand : op->getOperands())
       if (isa<FieldType>(operand.getType())) hostRows(b, storage[operand].buffer);

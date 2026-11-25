@@ -748,6 +748,7 @@ struct StateField {
   size_t bytes;
   int64_t domain;
   int deviceNewer;
+  unsigned char *hostValid;
 #endif
   double data[];
 };
@@ -774,6 +775,7 @@ void _mlir_ciface_mdrtDistReleaseField(struct Memref3D *m) {
   struct StateField *field = (struct StateField *)m->allocated;
   if (--field->refs) return;
 #ifdef MDIR_ENABLE_NCCL
+  free(field->hostValid);
   if (field->device) mdrtNCCLFreePositions(field->device);
 #endif
   free(field);
@@ -792,7 +794,11 @@ static double *deviceRows(struct Memref3D *m, int64_t domain, int64_t rows, int 
   } else if (field->domain != domain || field->bytes != bytes) {
     fail("distributed field changed its local row extent");
   }
-  if (output) field->deviceNewer = 1;
+  if (output) {
+    free(field->hostValid);
+    field->hostValid = NULL;
+    field->deviceNewer = 1;
+  }
   return field->device;
 }
 
@@ -800,8 +806,69 @@ void _mlir_ciface_mdrtDistHostRows(struct Memref3D *m) {
   struct StateField *field = (struct StateField *)m->allocated;
   if (field->deviceNewer) {
     mdrtNCCLDownload(at3(m,field->domain,0,0),field->device,field->bytes);
+    free(field->hostValid);
+    field->hostValid = NULL;
     field->deviceNewer = 0;
   }
+}
+
+/* Materialize the union of tuple reads over the lifetime of an immutable
+   device field. The full-slice flag stays dirty for other consumers. */
+static void downloadSubset(struct Memref3D *m, int64_t domain,
+                           const int *rows, int64_t count) {
+  struct StateField *field=(void *)m->allocated;
+  if (!field->deviceNewer || !count) return;
+  int64_t width=m->sizes[2], extent=field->bytes/(width*sizeof(double));
+  if (field->domain != domain) fail("tuple rows belong to another domain");
+  if (!field->hostValid) {
+    field->hostValid=calloc(extent ? extent : 1,1);
+    if (!field->hostValid) fail("out of memory recording host tuple rows");
+  }
+  int *missing=malloc(count*sizeof *missing);
+  if (!missing) fail("out of memory indexing host tuple reads");
+  int64_t n=0;
+  for (int64_t i=0; i<count; ++i) {
+    int row=rows[i];
+    if (row<0 || row>=extent) fail("tuple row exceeds device field extent");
+    if (field->hostValid[row]) continue;
+    field->hostValid[row]=1;
+    missing[n++]=row;
+  }
+  if (n) {
+    double *wire=malloc((size_t)n*width*sizeof *wire);
+    if (!wire) fail("out of memory staging host tuple reads");
+    mdrtNCCLDownloadRows(field->device,missing,n,width,wire);
+    for (int64_t i=0; i<n; ++i)
+      memcpy(at3(m,domain,missing[i],0),wire+i*width,width*sizeof *wire);
+    free(wire);
+  }
+  free(missing);
+}
+
+void _mlir_ciface_mdrtDistHostTupleField(int64_t layout, struct Memref3D *field,
+                                         struct Memref2I *tuples, int64_t ghost) {
+  struct StateField *state=(void *)field->allocated;
+  if (!state->deviceNewer) return;
+  struct Layout *l=(void *)(intptr_t)layout;
+  int64_t d=mdrtMPIDomainBound(l->domains,0), owned=l->rows[d];
+  int64_t arity=tuples->sizes[1]-1, count=tuples->sizes[0];
+  if (!count) return;
+  int *rows=malloc((size_t)count*arity*sizeof *rows);
+  if (!rows) fail("out of memory mapping host tuple reads");
+  int64_t n=0;
+  for (int64_t t=0; t<count; ++t) {
+    int64_t *record=tuples->aligned+tuples->offset+t*tuples->strides[0];
+    if (record[0]!=d) continue;
+    for (int64_t a=1; a<=arity; ++a) {
+      int64_t row=record[a*tuples->strides[1]];
+      if ((row>=owned) != ghost) continue;
+      row-=ghost ? owned : 0;
+      if (row<0 || row>INT_MAX) fail("host tuple row exceeds index range");
+      rows[n++]=(int)row;
+    }
+  }
+  downloadSubset(field,d,rows,n);
+  free(rows);
 }
 
 void _mlir_ciface_mdrtDistScalarDeviceView(struct Memref1D *out, int64_t d, int64_t n,
@@ -1817,6 +1884,48 @@ void _mlir_ciface_mdrtDistConstraintRows(int64_t handle, struct Memref3D *positi
     }
   }
 }
+
+#ifdef MDIR_ENABLE_NCCL
+void _mlir_ciface_mdrtDistShareTupleMembers(int64_t layout, struct Memref3D *positions,
+                                             struct Members *members) {
+  struct Layout *l=(void *)(intptr_t)layout;
+  unsigned char *needed=calloc(l->count ? l->count : 1,1);
+  if (!needed) fail("out of memory recording tuple members");
+  for (int64_t t=0; t<members->sizes[0]; ++t) {
+    for (int64_t a=0; a<members->sizes[1]; ++a) {
+      int32_t j=members->aligned[members->offset+t*members->strides[0]+a*members->strides[1]];
+      if (j<0 || j>=l->count) fail("tuple member outside particle set");
+      needed[j]=1;
+    }
+  }
+  int *rows=malloc(l->stride*sizeof *rows);
+  double *wire=malloc(l->stride*3*sizeof *wire);
+  if (!rows || !wire) fail("out of memory exchanging tuple coordinates");
+  for (int64_t d=0; d<l->domains; ++d) {
+    int64_t n=0;
+    for (int64_t r=0; r<l->rows[d]; ++r)
+      if (needed[l->ids[d*l->stride+r]]) {
+        if (r>INT_MAX) fail("tuple coordinates exceed device row range");
+        rows[n++]=(int)r;
+      }
+    if (!n) continue;
+    int root=mdrtMPIOwner(l->domains,d);
+    if (root==mdrtMPIRank()) {
+      downloadSubset(positions,d,rows,n);
+      if (mdrtMPISize()==1) continue;
+      for (int64_t i=0; i<n; ++i)
+        memcpy(wire+3*i,at3(positions,d,rows[i],0),3*sizeof *wire);
+    }
+    mdrtMPIBroadcast(wire,3*n,root);
+    if (root!=mdrtMPIRank())
+      for (int64_t i=0; i<n; ++i)
+        memcpy(at3(positions,d,rows[i],0),wire+3*i,3*sizeof *wire);
+  }
+  free(needed);
+  free(rows);
+  free(wire);
+}
+#endif
 
 /* Index the imported images by identity. An atom may have several images
    on one domain, including periodic images of a locally owned atom. */
