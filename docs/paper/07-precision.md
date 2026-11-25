@@ -288,6 +288,30 @@ saves nothing, and a root is a divisor like any other there. With $\mathsf u
 neither overflow nor underflow where the quotients do not, as long as $1/y$
 is a normal number, which holds for $r^2 \in (0, r_c^2]$.
 
+**The period of retained images (D[box-f32-exact]).** Consider a pair at
+displacement $\mathbf d$ for which a neighbor entry retains image $\mathbf e$.
+Wrapping with $H_{64}$ and translating the retained partner with $H_{32}$
+assign two displacements to the same configuration. Their difference, up to
+the sign convention for the image, is $\mathbf e\Delta H$. The potential
+jump at a change of representation is therefore
+$\nabla U(\mathbf d)\cdot(\mathbf e\Delta H)+O(\lVert\mathbf e\Delta H\rVert^2)$.
+
+Follow a path from one separation to another using the retained representation
+and retrace it after wrapping. On each leg, integration of the force gives
+the decrease of that leg's potential. The net work is the difference of
+the two representation jumps at the endpoints. For a pair outside a smooth
+cutoff at one endpoint the jump there vanishes, while at the interacting
+endpoint it generally survives. Thus different periods admit nonzero work
+around a physically closed path even before counting arithmetic roundoff.
+
+Rounding each independent component once, in nm, makes $\Delta H=0$.
+The change is at most half a binary32 spacing at the supplied component.
+Ordinary pair arithmetic still rounds. For an orthorhombic unit shift, one
+binary32 addition of a placed binary32 coordinate and the signed rounded edge
+agrees with rounding their binary64 sum for coordinates on the scale of the
+cell. For a tilted cell, the sum of several shifted components can itself
+round before the addition to the position.
+
 ## 7.3 A drift of the energy, and its removal
 
 **Observation.** Over 2 ns of JAC at constant energy (23,558 atoms, 2 fs,

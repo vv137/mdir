@@ -30,6 +30,16 @@ that holds it, a rhombic dodecahedron in 71%: a solvated protein needs
 
 ## 1. The cell inside MDIR
 
+In mixed and single precision MDIR rounds the three diagonal components and
+three tilts to binary32 in nm, after conversion to the reduced cell. Each
+new pressure-scaled cell and each restart cell follows the same rule.
+The setup log and the manifest field `effective.box_rounding_delta_nm`
+give applied minus supplied in the order $a_x,b_y,c_z,b_x,c_x,c_y$.
+For a restart, `effective.input_box_rounding_delta_nm` also records the
+coordinate input used for the reference cell. A restart from an already
+rounded checkpoint cell has six zero changes in `box_rounding_delta_nm`. Double precision
+retains the original components (D[box-f32-exact]).
+
 The cell is the matrix of the GROMACS manual
 [[GromacsManual2025]](references.md#gromacsmanual2025), lower triangular,
 with the box vectors as its rows:
