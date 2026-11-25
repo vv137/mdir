@@ -782,7 +782,7 @@ LogicalResult Lowering::lowerCollect(CollectOp op) {
               for (int64_t c = 0; c < k; ++c) {
                 Value v = memref::LoadOp::create(
                     br, loc, owned, ValueRange{d, r, index(br, c)});
-                if (fieldType.getElementType().isInteger(32))
+                if (fieldType.getElementType().isInteger(32) && v.getType().isF64())
                   v = arith::FPToSIOp::create(br, loc, br.getI32Type(), v);
                 if (k == 1)
                   memref::StoreOp::create(br, loc, v, global, ValueRange{j});
