@@ -2016,15 +2016,8 @@ Value Lowering::copyForState(OpBuilder &b, Value buffer) {
     sizes.push_back(memref::DimOp::create(b, loc, buffer, i));
   Value copy = memref::AllocOp::create(b, loc, type, sizes);
   if (mpi) {
-    auto first = domainBound(b, false), past = domainBound(b, true);
-    auto span = arith::SubIOp::create(b, loc, past, first);
-    SmallVector<OpFoldResult> offsets{first, b.getIndexAttr(0), b.getIndexAttr(0)};
-    SmallVector<OpFoldResult> extent{span, sizes[1], sizes[2]};
-    SmallVector<OpFoldResult> strides(3, b.getIndexAttr(1));
-    auto slice = [&](Value value) {
-      return memref::SubViewOp::create(b, loc, value, offsets, extent, strides);
-    };
-    memref::CopyOp::create(b, loc, slice(buffer), slice(copy));
+    auto fn = declare("mdrtMPICopyState", b.getFunctionType({type, type}, {}), true);
+    func::CallOp::create(b, loc, fn, ValueRange{buffer, copy});
   } else {
     memref::CopyOp::create(b, loc, buffer, copy);
   }
