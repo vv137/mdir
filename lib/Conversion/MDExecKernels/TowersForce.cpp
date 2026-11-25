@@ -1206,11 +1206,12 @@ void Force::stage(ArrayRef<Value> starts, ArrayRef<Value> counts, Value begin,
     } else
       store(norm, bias, {subi(slot, cx(panel))});
     auto halfPair = [&](Value a, Value c) -> Value {
-      auto bits = [&](Value x) -> Value {
-        Value half = arith::TruncFOp::create(b, loc, b.getF16Type(), x);
-        return arith::ExtUIOp::create(b, loc, i32, bitcast(b.getI16Type(), half));
-      };
-      return ori(bits(a), shli(bits(c), ci(16)));
+      // Vector truncation selects packed conversion when the target has it.
+      Value floats = vector::FromElementsOp::create(
+          b, loc, VectorType::get({2}, f32), ValueRange{a, c});
+      Value halves = arith::TruncFOp::create(
+          b, loc, VectorType::get({2}, b.getF16Type()), floats);
+      return LLVM::BitcastOp::create(b, loc, i32, halves);
     };
     Value words[] = {halfPair(q[0], q[1]), halfPair(q[2], fourth)};
     store(vector::FromElementsOp::create(b, loc, VectorType::get({2}, i32),
@@ -1238,24 +1239,23 @@ Value Force::screenOperand(Value x, Value z) {
 Values Force::unpackFeatures(Value pair) {
   Values result;
   for (int j = 0; j < 2; ++j) {
-    Value word = extract(pair, j);
-    for (int k : {0, 16}) {
-      Value bits = arith::TruncIOp::create(b, loc, b.getI16Type(), shrui(word, ci(k)));
-      result.push_back(arith::ExtFOp::create(b, loc, f32, bitcast(b.getF16Type(), bits)));
-    }
+    Value halves = LLVM::BitcastOp::create(
+        b, loc, VectorType::get({2}, b.getF16Type()), extract(pair, j));
+    for (int k : {0, 1})
+      result.push_back(arith::ExtFOp::create(b, loc, f32, extract(halves, k)));
   }
   return result;
 }
 
 Values Force::targetOperands(Value target) {
   Value pair = load(features, {addi(cx(panel), target)});
-  Value tx = extract(pair, 0), tz = extract(pair, 1);
   Value c = subf(load(bias, {target}), limit);
   if (scalarScreen) {
     Values operands = unpackFeatures(pair);
     operands.push_back(c);
     return operands;
   }
+  Value tx = extract(pair, 0), tz = extract(pair, 1);
   Values operands;
   for (int j = 0; j < 4; ++j) {
     Value col = addi(andi(lane, ci(-4)), ci(j));
@@ -1274,8 +1274,8 @@ Value Force::mask(ValueRange operands, Value group, Value sc) {
       for (int a = 0; a < 4; ++a)
         residual = math::FmaOp::create(b, loc, operands[a], source[a], residual);
       Value bit = shli(ci(1), indexCast(i32, j));
-      return Values{ori(mask[0], select(cmpf(CmpFPredicate::OLT, residual, cf(0)),
-                                        bit, ci(0)))};
+      Value inside = cmpf(CmpFPredicate::OLT, residual, cf(0));
+      return Values{ori(mask[0], select(inside, bit, ci(0)))};
     })[0];
   }
   Value row = shrui(lane, ci(2)), bits = ci(0);

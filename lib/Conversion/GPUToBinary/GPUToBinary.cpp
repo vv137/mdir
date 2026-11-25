@@ -694,9 +694,9 @@ void buildGpuLowerToNVVM(OpPassManager &pm,
   target.triple = options.cubinTriple;
   target.chip = options.cubinChip;
   // LLVM defaults to PTX 6.3 for Turing. Its m16n8k8 instruction needs 6.5.
-  target.features = options.cubinChip == "sm_75" && options.cubinFeatures.getValue().empty()
-                        ? "+ptx65"
-                        : options.cubinFeatures.getValue();
+  target.features = options.cubinFeatures;
+  if (options.cubinChip == "sm_75" && options.cubinFeatures.getValue().empty())
+    target.features = "+ptx65";
   target.optLevel = options.optLevel;
   target.cmdOptions = options.cmdOptions;
   pm.addPass(createGpuNVVMAttachTarget(target));
@@ -716,7 +716,8 @@ void buildGpuLowerToNVVM(OpPassManager &pm,
     (void)chip.consumeInteger(10, capability);
   nvvm.hasRedux = capability >= 80;
   if (!nvvm.hasRedux)
-    pm.addNestedPass<gpu::GPUModuleOp>(std::make_unique<ExpandSubgroupReductions>());
+    pm.addNestedPass<gpu::GPUModuleOp>(
+        std::make_unique<ExpandSubgroupReductions>());
   nvvm.useBarePtrCallConv = options.kernelUseBarePtrCallConv;
   nvvm.indexBitwidth = options.indexBitWidth;
   nvvm.allowPatternRollback = options.allowPatternRollback;
