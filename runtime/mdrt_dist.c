@@ -81,7 +81,7 @@ static void fail(const char *message) {
 struct Layout {
   int mpi;
   int64_t references;
-  int64_t grid[3], domains, count;
+  int64_t grid[3], domains, count, stride;
   double edges[3];
   struct ConstraintGroup {
     int32_t atoms[4];
@@ -93,7 +93,7 @@ struct Layout {
   int64_t *owner; /* [count]: the domain that owns each particle */
   int64_t *row;   /* [count]: its owned row there */
   int64_t *rows;  /* [domains]: the number of owned rows */
-  int64_t *ids;   /* [domains * count]: the particle of each owned row */
+  int64_t *ids;   /* [domains * stride]: the particle of each owned row */
 };
 
 struct DomainMatrix {
@@ -501,7 +501,7 @@ void _mlir_ciface_mdrtDistSelectRows(int64_t handle, int64_t matrix,
   struct Exclusions *e = (struct Exclusions *)(intptr_t)exclusions;
   for (int64_t i = first; i < end; ++i) {
     int64_t gi = d*h->capacity + i-n;
-    int64_t idi = i<n ? l->ids[d*l->count+i] : h->ids[gi];
+    int64_t idi = i<n ? l->ids[d*l->stride+i] : h->ids[gi];
     uint64_t prefix = (uint64_t)idi << 32;
     size_t lo = 0, hi = 0;
     if (e && rule) {
@@ -512,7 +512,7 @@ void _mlir_ciface_mdrtDistSelectRows(int64_t handle, int64_t matrix,
     for (int32_t k = 0; k < m->counts[i]; ++k) {
       int32_t j = ((int32_t *)src.aligned)[i*src.strides[0]+k];
       int64_t gj = d*h->capacity + j-n;
-      int64_t idj = j<n ? l->ids[d*l->count+j] : h->ids[gj];
+      int64_t idj = j<n ? l->ids[d*l->stride+j] : h->ids[gj];
       if (rule && idi >= idj) continue;
       if (e && rule) {
         uint64_t key = prefix | (uint32_t)idj;
@@ -558,9 +558,17 @@ static int64_t groupOwner(const struct Layout *l, const struct ConstraintGroup *
 }
 
 static void numberOwnedRows(struct Layout *l) {
-  int64_t cap = l->count ? l->count : 1;
+  memset(l->rows,0,l->domains*sizeof *l->rows);
+  for (int64_t j = 0; j < l->count; ++j) ++l->rows[l->owner[j]];
+  int64_t cap = 1;
   for (int64_t d = 0; d < l->domains; ++d)
-    l->rows[d] = 0;
+    if (l->rows[d] > cap) cap = l->rows[d];
+  if (l->stride != cap) {
+    l->ids = realloc(l->ids,l->domains*cap*sizeof *l->ids);
+    if (!l->ids) fail("out of memory indexing owned rows");
+    l->stride = cap;
+  }
+  memset(l->rows,0,l->domains*sizeof *l->rows);
   for (int64_t j = 0; j < l->count; ++j) {
     int64_t d = l->owner[j], r = l->rows[d]++;
     l->ids[d * cap + r] = j;
@@ -625,8 +633,7 @@ int64_t _mlir_ciface_mdrtDistPartition(struct Memref2D *x, int64_t gx,
   l->owner = malloc(sizeof(int64_t) * cap);
   l->row = malloc(sizeof(int64_t) * cap);
   l->rows = calloc(l->domains, sizeof(int64_t));
-  l->ids = malloc(sizeof(int64_t) * l->domains * cap);
-  if (!l->owner || !l->row || !l->rows || !l->ids)
+  if (!l->owner || !l->row || !l->rows)
     fail("out of memory");
   for (int64_t j = 0; j < n; ++j) {
     int64_t cell[3];
@@ -636,10 +643,8 @@ int64_t _mlir_ciface_mdrtDistPartition(struct Memref2D *x, int64_t gx,
     }
     int64_t d = cell[0] + gx * (cell[1] + gy * cell[2]);
     l->owner[j] = d;
-    l->row[j] = l->rows[d];
-    l->ids[d * cap + l->rows[d]] = j;
-    ++l->rows[d];
   }
+  numberOwnedRows(l);
   return (int64_t)(intptr_t)l;
 }
 
@@ -710,13 +715,32 @@ void _mlir_ciface_mdrtMPISharePartials(struct Memref2D *partial) {
 void _mlir_ciface_mdrtDistLayoutRows(int64_t handle, struct Memref1I *rows,
                                      struct Memref2I *ids) {
   struct Layout *l = (struct Layout *)(intptr_t)handle;
-  int64_t cap = l->count > 0 ? l->count : 1;
+  int64_t cap = l->stride;
   for (int64_t d = 0; d < l->domains; ++d) {
     rows->aligned[rows->offset + d * rows->strides[0]] = l->rows[d];
     for (int64_t r = 0; r < l->rows[d]; ++r)
       ids->aligned[ids->offset + d * ids->strides[0] + r * ids->strides[1]] =
           l->ids[d * cap + r];
   }
+}
+
+/* A state's retained handles own these immutable tables until unpack's
+   block exits. Return dense views without materializing the same rows. */
+void _mlir_ciface_mdrtDistRowView(struct Memref1I *out, int64_t handle, int64_t ghosts) {
+  struct Halo *h = ghosts ? (struct Halo *)(intptr_t)handle : NULL;
+  struct Layout *l = h ? h->layout : (struct Layout *)(intptr_t)handle;
+  *out = (struct Memref1I){.aligned = h ? h->rows : l->rows,
+                           .sizes = {l->domains}, .strides = {1}};
+  out->allocated = out->aligned;
+}
+
+void _mlir_ciface_mdrtDistIdView(struct Memref2I *out, int64_t handle, int64_t ghosts) {
+  struct Halo *h = ghosts ? (struct Halo *)(intptr_t)handle : NULL;
+  struct Layout *l = h ? h->layout : (struct Layout *)(intptr_t)handle;
+  int64_t stride = h ? h->capacity : l->stride;
+  *out = (struct Memref2I){.aligned = h ? h->ids : l->ids,
+                           .sizes = {l->domains,stride}, .strides = {stride,1}};
+  out->allocated = out->aligned;
 }
 
 void mdrtDistRetainLayout(int64_t handle) {
@@ -727,10 +751,7 @@ void mdrtDistRetainLayout(int64_t handle) {
 }
 
 static int64_t ownedCapacity(const struct Layout *l) {
-  int64_t capacity = 1;
-  for (int64_t d = 0; d < l->domains; ++d)
-    if (capacity < l->rows[d]) capacity = l->rows[d];
-  return capacity;
+  return l->stride;
 }
 
 int64_t mdrtDistOwnedCapacity(int64_t handle) {
@@ -771,7 +792,7 @@ static void checkIdentities(struct Layout *l) {
     if (l->rows[d] < 0 || l->rows[d] > n)
       fail("invalid number of owned rows in a layout");
     for (int64_t r = 0; r < l->rows[d]; ++r) {
-      int64_t j = l->ids[d * cap + r];
+      int64_t j = l->ids[d * l->stride + r];
       if (j < 0 || j >= n || seen[j])
         fail("duplicate or invalid global particle identity in a layout");
       if (l->owner[j] != d || l->row[j] != r)
@@ -842,8 +863,7 @@ int64_t _mlir_ciface_mdrtDistMigrate(int64_t oldHandle,
   next->owner = malloc(sizeof(int64_t) * cap);
   next->row = malloc(sizeof(int64_t) * cap);
   next->rows = calloc(next->domains, sizeof(int64_t));
-  next->ids = malloc(sizeof(int64_t) * next->domains * cap);
-  if (!next->owner || !next->row || !next->rows || !next->ids)
+  if (!next->owner || !next->row || !next->rows)
     fail("out of memory");
   for (int64_t j = 0; j < n; ++j) {
     int64_t cell[3];
@@ -917,7 +937,7 @@ void _mlir_ciface_mdrtDistRedistribute(int64_t oldHandle, int64_t newHandle,
 #endif
   for (int64_t d = first; d < past; ++d)
     for (int64_t r = 0; r < next->rows[d]; ++r) {
-      int64_t j = next->ids[d*next->count+r];
+      int64_t j = next->ids[d*next->stride+r];
       for (int64_t k = 0; k < components; ++k) {
         double value = *at3(source, old->owner[j], old->row[j], k);
         if (image) {
@@ -1650,7 +1670,7 @@ void _mlir_ciface_mdrtDistEpochImages(int64_t cache, int64_t layout,
 #endif
   for (int64_t d = first; d < past; ++d)
     for (int64_t r = 0; r < l->rows[d]; ++r) {
-      int64_t j = l->ids[d*l->count+r];
+      int64_t j = l->ids[d*l->stride+r];
       for (int c = 0; c < 3; ++c) {
         double len = l->edges[c], ref = e->reference[3*j+c];
         ref -= len*floor(ref/len);
