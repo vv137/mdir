@@ -82,6 +82,13 @@ exchanges identity, owner and direction bits, then orders the rows by
 identity and periodic image. The runtime wraps physical positions on
 the device and retains immutable numbering when no ownership changes.
 
+With one domain and directed double-precision pair geometry, ownership is
+fixed. A device pass counts periodic images per block of 256 owned rows.
+The host prefix sum of the block counts assigns disjoint output ranges.
+A second device pass emits source rows and image translations in the same
+identity and image order as the general halo. Forward copies gather
+periodic images directly from local device memory.
+
 For other grids and constrained systems the host plans ownership and halo
 membership from coordinates. A topology schedule shares positions for its
 member identities. Host tuple kernels gather the owned and ghost rows they
