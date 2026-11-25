@@ -469,6 +469,10 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // diagnostic history and protect input, trajectory and checkpoint paths.
   auto refuse = [&](const Control &c, llvm::Error e) {
     std::string reason = llvm::toString(std::move(e));
+#ifdef MDIR_ENABLE_MPI
+      if (emit == Emit::Run && c.distribution && c.distribution->transport == "mpi" && mdrtMPIRank() != 0)
+        return 1;
+#endif
     if (emit == Emit::Run && (!c.logFile.empty() || !c.manifestFile.empty())) {
       auto inputs = getManifestInputs(controlFile, c, System{});
       auto diagnosticPath = [&](const std::string &path, const std::string &other) {
@@ -2134,11 +2138,14 @@ static int runControlImpl(StringRef controlFile, Emit emit,
                     firstStep, control->energyPeriod, control->pairlistDistance);
     const char *prefix = std::getenv("MDIR_DIST_STEP_TRACE");
 #ifdef MDIR_ENABLE_MPI
-    if (control->distribution->transport == "mpi" &&
-        mdrtMPIMax(prefix && *prefix) != mdrtMPIAllTrue(prefix && *prefix))
-      return fail("distributed step tracing must be enabled alike on every rank");
+    if (control->distribution->transport == "mpi") {
+      bool any = mdrtMPIMax(prefix && *prefix);
+      bool all = mdrtMPIAllTrue(prefix && *prefix);
+      if (any != all)
+        distLog->error = "distributed step tracing must be enabled alike on every rank";
+    }
 #endif
-    bool opened = distLog->open(prefix, control->restartOutput);
+    bool opened = distLog->error.empty() && distLog->open(prefix, control->restartOutput);
 #ifdef MDIR_ENABLE_MPI
     if (control->distribution->transport == "mpi") {
       distLog->gather = mdrtMPIGatherTimes;

@@ -3774,8 +3774,16 @@ llvm::Expected<Control> mdir::driver::readControl(StringRef path, Control *refus
   Control control;
   Reader reader(path, control);
   if (Error error = reader.read(result.table())) {
-    if (refusedDistribution && result.table().contains("distribute"))
+    if (refusedDistribution && result.table().contains("distribute")) {
+      // The error may precede parsing the transport. Identify the writer
+      // of diagnostics from the requested transport in this case too.
+      if (auto transport = result.table()["distribute"]["transport"].value<std::string>())
+        if (StringRef(*transport).equals_insensitive("mpi")) {
+          if (!control.distribution) control.distribution.emplace();
+          control.distribution->transport = "mpi";
+        }
       *refusedDistribution = std::move(control);
+    }
     return std::move(error);
   }
   return control;
