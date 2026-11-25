@@ -3341,6 +3341,10 @@ Error Reader::read(const toml::table &root) {
     if (Error err = readChoice<std::string>(*table, "traversal", dist.traversal,
                      {{"directed", "directed"}, {"unique", "unique"}}))
       return err;
+    if (control.pairlistDistance <= control.cutoffDistance)
+      return fail(*table, "distributed halo coverage requires a positive skin");
+    if (control.precision == Precision::Single)
+      return fail(*table, "distributed state requires mixed or double position storage");
     if (control.target != Target::CPU)
       return fail(*table, "distributed execution requires a CPU target");
     if (control.pme || control.ljpme)
