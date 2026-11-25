@@ -1465,7 +1465,7 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                          virial,
                          // Convert kJ/mol/nm^3 to bar with the native coefficient.
                          pressure * mdir::physical::pressureBar,
-                         total,
+                         output.distributedWordEnergy ? total : physicalTotal + (output.couples ? output.bath : 0.0),
                          output.volume};
   if (!isRow)
     return;

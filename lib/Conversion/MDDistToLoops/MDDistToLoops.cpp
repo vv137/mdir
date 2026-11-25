@@ -1338,7 +1338,7 @@ LogicalResult Lowering::lowerMapParticles(MapParticlesOp op) {
   bool combine = fixedPoint && op->hasAttr("md_dist.add_terms");
   Value raw;
   if (combine && needsWords(op.getResult())) {
-    raw = allocate(b, cast<MemRefType>(result.getType()).clone(b.getI64Type()),
+    raw = allocate(b, cast<MemRefType>(cast<MemRefType>(result.getType()).clone(b.getI64Type())),
                    {index(b, domains), rows.capacity, index(b, resultType.getNumComponents())});
     fieldWords[op.getResult()] = raw;
   }
