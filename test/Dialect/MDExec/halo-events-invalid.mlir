@@ -1,4 +1,5 @@
 // RUN: mdir-opt %s -split-input-file -verify-diagnostics
+// RUN: mdir-opt %s -split-input-file --convert-md-dist-to-loops="mpi=true" --lower-mdrt-halo-events -verify-diagnostics
 
 func.func @missing_wait(%halo: i64, %image: i64) {
   %source = memref.alloc() : memref<2x2x2xf64>

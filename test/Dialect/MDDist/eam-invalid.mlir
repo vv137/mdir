@@ -4,6 +4,7 @@
 // A copy of the previous step's F'(ρ), or no copy, is an error of the
 // verifier (V2, V1), not of a run.
 // RUN: mdir-opt %s -split-input-file -verify-diagnostics
+// RUN: mdir-opt %s -split-input-file --convert-md-dist-to-loops="mpi=true" --lower-mdrt-halo-events -verify-diagnostics
 
 !vec  = !md.field<@atoms, 3 x f64>
 !own  = !md_dist.field<@dd, owned, 3 x f64>
