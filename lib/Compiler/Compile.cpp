@@ -359,7 +359,7 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
            ? "md-distribute-driver-steps{wrap-drift=true}," : "md-distribute-driver-steps,")
        << "md-exec-assign-algebra,"
        << "convert-md-dist-to-loops{halo-events=true"
-       << (control.deterministic ? " fixed-point=true" : "")
+       << (control.deterministic ? " fixed-point=true" : " matrix-pairs=true")
        << (control.threads > 1 ? " parallel-domains=true" : "")
        << (control.distribution->transport == "mpi" ? " mpi=true" : "")
        << "},lower-mdrt-halo-events,";

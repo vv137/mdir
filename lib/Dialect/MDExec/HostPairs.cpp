@@ -87,6 +87,8 @@ hostpairs::Refusal hostpairs::checkLanes(PairForOp op, int64_t lanes) {
       op.getConflict() != Conflict::OwnerOnly)
     return std::string("the policy is not (directed, owner_only): the "
                        "lanes write at the centers alone");
+  if (op.getGhostFree())
+    return std::string("the row must skip ghost loads before evaluating the kernel");
   Type computed = getComputedType(op);
   if (!computed || !(computed.isF32() || computed.isF64()))
     return std::string("the kernel does not compute in f32 or f64");

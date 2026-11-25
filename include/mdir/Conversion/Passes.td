@@ -795,6 +795,8 @@ def ConvertMDDistToLoops
                            "::mlir::scf::SCFDialect",
                            "::mlir::vector::VectorDialect"];
   let options = [
+    Option<"matrixPairs", "matrix-pairs", "bool", "false",
+           "lower distributed CPU pair evaluations through host MATRIX rows">,
     Option<"parallelDomains", "parallel-domains", "bool", /*default=*/"false",
            "parallelize independent CPU domain pair loops">,
     Option<"mpi", "mpi", "bool", /*default=*/"false",
