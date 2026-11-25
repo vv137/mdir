@@ -301,6 +301,34 @@ Interfaces: `MemoryEffectOpInterface`, `SymbolUserOpInterface`
 
 
 
+### `mdrt.snapshot` (::mdir::mdrt::SnapshotOp)
+
+_An independent host copy of the field for a domain partition_
+
+Syntax:
+
+```
+operation ::= `mdrt.snapshot` $field attr-dict `:` qualified(type($field)) `to` type($result)
+```
+
+Interfaces: `MemoryEffectOpInterface (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{MemoryEffects::Allocate on ::mlir::SideEffects::DefaultResource, MemoryEffects::Read on ::mlir::SideEffects::DefaultResource}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `field` | A per-particle field |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | memref of any non-token type values |
+
+
+
 ### `mdrt.template_convert` (::mdir::mdrt::TemplateConvertOp)
 
 _A conversion of floating point that a template leaves to its instance_
