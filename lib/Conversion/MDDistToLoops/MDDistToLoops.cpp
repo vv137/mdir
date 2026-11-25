@@ -2240,8 +2240,6 @@ LogicalResult Lowering::lowerNeighborhoodExec(NeighborhoodOp op) {
     return op.emitOpError("midpoint requires the distributed CPU pair lowering");
   // The precondition under which the relation is that of md.neighborhood,
   // as in the reference executor.
-  if (gpuPairs && op.getExcluded())
-    return op.emitOpError("GPU domain MATRIX requires mapped exclusions");
   if (failed(lowerNeighborhood(op)))
     return failure();
   auto &local = relations[op.getResult()];
@@ -2286,6 +2284,30 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
         midpoint ? 2 : traversal == Traversal::Unique ? 1 : 0);
     return {positions, structure, nOwned, relation.cell, centers};
   }
+  Value excluded;
+  if (gpuPairs && op.getExcluded()) {
+    auto name = (set.getValue() + ".excluded").str();
+    auto tupleSet = FlatSymbolRefAttr::get(context, name);
+    if (!module.lookupSymbol(name)) {
+      OpBuilder declarations(decomposition);
+      md::TupleSetOp::create(declarations, loc, name, set.getValue(), 2,
+                             md::Orientation::Unordered, false);
+    }
+    Type i64 = b.getI64Type();
+    auto relationType = md::RelationType::get(context, set, 2,
+        md::Orientation::Unordered, tupleSet);
+    auto membersType = mdrt::getMembersType(relationType);
+    auto map = declare("mdrtDistLocalExclusions",
+        b.getFunctionType({i64, i64, i64}, {membersType}), true);
+    Value members = func::CallOp::create(b, loc, map, ValueRange{
+        halo.handle, arith::IndexCastOp::create(b, loc, i64, d),
+        excludedPairs.lookup(op.getResult())}).getResult(0);
+    Value pairs = mdrt::FromBufferOp::create(b, loc, relationType, members);
+    excluded = md_exec::BuildIncidenceOp::create(b, loc,
+        mdrt::IncidenceType::get(context, set, 2, tupleSet), pairs, Value());
+    OpBuilder cleanup(b.getInsertionBlock()->getTerminator());
+    memref::DeallocOp::create(cleanup, loc, members);
+  }
   Value cells = md_exec::BuildCellsOp::create(
       b, loc, mdrt::CellsType::get(context, set), positions,
       relation.cell,
@@ -2294,7 +2316,7 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
       b, loc,
       md_exec::getBuildType(set, md_exec::NeighborKind::Matrix,
                             md_exec::Images::Explicit),
-      cells, positions, relation.cell, /*excluded=*/Value(), nOwned,
+      cells, positions, relation.cell, excluded, nOwned,
       APFloat(cutoff),
       APFloat(skin), md_exec::NeighborKind::Matrix,
       static_cast<uint64_t>(width), md_exec::Images::Explicit);

@@ -169,6 +169,49 @@ int64_t _mlir_ciface_mdrtDistExclusions(struct Members *members) {
   return (int64_t)(intptr_t)e;
 }
 
+/* Map both ends of each excluded pair to the packed owned/image rows.
+   An identity can have several images in a thin domain. */
+void _mlir_ciface_mdrtDistLocalExclusions(struct Members *result, int64_t halo,
+                                           int64_t domain, int64_t exclusions) {
+  const struct Halo *h = (const struct Halo *)(intptr_t)halo;
+  const struct Layout *l = h->layout;
+  const struct Exclusions *e = (const struct Exclusions *)(intptr_t)exclusions;
+  int64_t owned = l->rows[domain], rows = owned + h->rows[domain];
+  if (rows > INT32_MAX) fail("too many local MATRIX rows");
+  int32_t *head = malloc((l->count + 1) * sizeof(*head));
+  int32_t *next = malloc((rows + 1) * sizeof(*next));
+  if (!head || !next) fail("out of memory indexing domain exclusions");
+  for (int64_t i = 0; i < l->count; ++i) head[i] = -1;
+  for (int64_t i = 0; i < rows; ++i) {
+    int64_t id = i < owned ? l->ids[domain*l->count + i] :
+                             h->ids[domain*h->capacity + i-owned];
+    next[i] = head[id];
+    head[id] = (int32_t)i;
+  }
+  int32_t *pairs = NULL;
+  int64_t count = 0;
+  for (int pass = 0; pass < 2; ++pass) {
+    count = 0;
+    for (size_t k = 0; k < e->count; ++k) {
+      uint32_t a = e->pairs[k] >> 32, b = (uint32_t)e->pairs[k];
+      if (a >= l->count || b >= l->count) fail("invalid excluded particle ID");
+      for (int32_t i = head[a]; i >= 0; i = next[i])
+        for (int32_t j = head[b]; j >= 0; j = next[j]) {
+          if (count == INT32_MAX) fail("too many local excluded pairs");
+          if (pass) { pairs[2*count] = i; pairs[2*count+1] = j; }
+          ++count;
+        }
+    }
+    if (!pass) {
+      pairs = malloc((count ? 2*count : 1) * sizeof(*pairs));
+      if (!pairs) fail("out of memory mapping domain exclusions");
+    }
+  }
+  free(next);
+  free(head);
+  *result = (struct Members){pairs, pairs, 0, {count, 2}, {2, 1}};
+}
+
 int64_t mdrtDistPairAllowed(int64_t handle, int64_t i, int64_t j) {
   const struct Exclusions *e = (const struct Exclusions *)(intptr_t)handle;
   uint64_t key = ((uint64_t)i << 32) | (uint32_t)j;
