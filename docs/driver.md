@@ -1749,5 +1749,9 @@ Restart uses `[output] checkpoint` and `--continue` as usual. The
 checkpoint carries the physical state in input particle order, including
 the boundary forces. It carries the seed and the absolute step. A new
 partition rebuilds ownership and halo membership before integration.
-Cross-grid floating-point sums can differ, including when reading exactly
-the same checkpoint.
+With `[execution] deterministic = true`, a continued distributed run on
+another grid uses the same pair words and physical state as an uninterrupted
+run on the same build. Use an explicit one-domain grid for this comparison.
+Omitting the distribution table selects the ordinary driver and its existing
+floating-point reduction. A fixed-point range diagnostic identifies a term
+or partial sum that cannot be represented.

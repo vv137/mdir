@@ -1732,5 +1732,33 @@ criterion for an integer domain count as the potential rewrite.
 
 D[distribute-driver] stores the physical state in the original particle
 order at a step boundary. Restart reconstructs the partition and ghost
-images. A floating-point reduction grouped by domain can round differently
-after this reconstruction on another grid.
+images. In deterministic mode, each drift wraps the position into the
+primary cell before checking halo coverage. For each axis the pair loop
+evaluates $(x_i-x_j)-nL$ using the unshifted owner coordinates and the
+halo's integral image $n$. An owned row has $n=0$. Since the cutoff is
+strictly below half the shortest edge, two distinct images cannot both
+lie within the open cutoff ball. Coverage supplies the accepted image.
+Changing ownership can therefore change its row index alone. The
+subtraction and the multiplication by the cell edge have the same
+operands and evaluation order on each grid.
+
+For a component $t$ in the internal units of Section 2, define
+$w_b(t)=\mathrm{round}(2^b t)$ with ties away from zero. Each term
+contributes at most $2^{-b-1}$ absolute quantization error. For $m$
+terms bounded by $B$, every subtotal has absolute value at most
+$m(2^b B+1/2)$ in words. Thus any grouping is representable if this
+bound is below $2^{63}$. Q40 allows force and gathered-field magnitudes
+below $2^{23}$ in physical units, with half a quantum of $2^{-41}$.
+Q32 gives energy and virial a range below $2^{31}$ and a half quantum
+of $2^{-33}$. Directed energy and virial count both orientations. Their
+words carry one extra factor of two until final conversion. The singular
+repulsive potential admits no finite universal $B$. The implementation
+checks the rounded term and every integer addition and diagnoses an
+unrepresentable operand or subtotal.
+
+For representable sums, associativity of integer addition gives the
+same final word under any partition of the pair set. In NVE the two
+kicks and drift are functions of the previous physical state and these
+forces. Induction from the indexed initial velocities, or from the
+stored checkpoint state, gives the same subsequent trajectory on the
+same build and traversal.
