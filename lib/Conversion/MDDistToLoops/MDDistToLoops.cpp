@@ -192,6 +192,7 @@ private:
   /// A copy of `buffer`, a buffer of all domains, that the state owns: not
   /// freed at the end of the block.
   Value ownedCapacity(OpBuilder &b, Value handle);
+  llvm::SmallPtrSet<Operation *, 8> constraintKernels;
   Value copyForState(OpBuilder &b, Value buffer);
 
   /// The decomposition of a type of md_dist, and its number of domains.
@@ -901,6 +902,12 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
   Storage &halo = storage[op.getHalo()];
   Value owned = storage[op.getField()].buffer;
   int64_t k = op.getResult().getType().getNumComponents();
+  // Group schedules validate that every member resides on the common
+  // owner. A copy used only by such kernels has no destination reads.
+  if (!op.getResult().use_empty() && llvm::all_of(op.getResult().getUsers(), [&](Operation *use) {
+        return constraintKernels.contains(use);
+      }))
+    return success();
   Value ghosts = allocate(b, halo.capacity, k);
   Type i64 = b.getI64Type();
   bool separateImage = fixedPoint || llvm::any_of(op.getResult().getUsers(),
@@ -1075,8 +1082,10 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
             isOwned.push_back(arith::CmpIOp::create(k, loc, arith::CmpIPredicate::ult, r, n));
             ghostRows.push_back(arith::SubIOp::create(k, loc, r, n));
           }
-          auto read = [&](int64_t a, Value owned, Value ghosts) {
+          auto read = [&](int64_t a, Value owned, Value ghosts) -> Value {
             Type type = cast<FieldType>(owned.getType()).getKernelValueType();
+            if (constraintKernels.contains(op))
+              return loadValue(k, storage[owned].buffer, d, localRows[a], type);
             auto value = scf::IfOp::create(k, loc, isOwned[a], [&](OpBuilder &yes, Location) {
               scf::YieldOp::create(yes, loc, loadValue(yes, storage[owned].buffer, d, localRows[a], type));
             }, [&](OpBuilder &no, Location) {
@@ -2897,11 +2906,12 @@ LogicalResult Lowering::run(func::FuncOp function) {
       mark(op->getNextNode(), -phase);
     }
   }
-  llvm::SmallPtrSet<Operation *, 8> constraints;
+  constraintKernels.clear();
   for (Operation *op : ops)
     if (auto rows = dyn_cast<TupleRowsOp>(op))
       if (rows.getGroup())
-        constraints.insert(rows->getUsers().begin(), rows->getUsers().end());
+        for (Operation *use : rows->getUsers())
+          if (isa<TupleKernelOp>(use)) constraintKernels.insert(use);
   DominanceInfo dominance(function);
   for (Operation *op : ops) {
     if (grouped.contains(op)) continue;
@@ -2912,7 +2922,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
       if (op->hasAttr("md_dist.integration")) phase = DistIntegrate;
       if (auto rows = dyn_cast<TupleRowsOp>(op))
         if (rows.getGroup()) phase = DistIntegrate;
-      if (constraints.contains(op)) phase = DistIntegrate;
+      if (constraintKernels.contains(op)) phase = DistIntegrate;
       if (isa<PackOp, UnpackOp>(op)) phase = DistState;
       if (isa<HaloOp>(op)) phase = DistHaloBuild;
       if (isa<HaloCopyOp>(op)) phase = DistCopy;
