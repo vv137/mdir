@@ -1648,6 +1648,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   output.timestep = control->timestep;
   // Langevin dynamics exchanges energy with the bath in every step, which
   // the run does not count (D135): its log has no conserved energy.
+  output.distributedWordEnergy = control->distribution && control->deterministic;
   output.couples = control->getCouplingPeriod() > 0 && !control->isLangevin();
   output.changesCell = control->barostat;
   if (control->barostat && control->precision != Precision::Double) {

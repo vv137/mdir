@@ -1363,6 +1363,21 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                output.getCoulombConstantEnergy() + output.ljpmeSelfEnergy;
   virial += output.getDispersionVirial() + output.getCoulombConstantVirial();
   double total = potential + kinetic;
+  if (output.distributedWordEnergy) {
+    // Directed pair energies carry one more fractional bit than kinetic
+    // energies. The two signed 64-bit operands fit exactly in a 65-bit sum.
+    auto word = [&](double energy) -> int64_t {
+      double scaled = std::round(std::ldexp(energy, 33));
+      if (!(scaled >= -0x1p63 && scaled < 0x1p63)) {
+        stopOnFailure(output, "deterministic total energy operand exceeds Q33 range");
+        return 0;
+      }
+      return static_cast<int64_t>(scaled);
+    };
+    __int128 sum = static_cast<__int128>(word(potential)) + word(kinetic);
+    total = std::ldexp(static_cast<double>(sum), -33);
+  }
+  double physicalTotal = total;
 
   // The mean of the kinetic energies half a step before and after,
   // K_half, exceeds `kinetic` by `excess`: (dt^2 / 8) sum F^2 / m without
@@ -1445,12 +1460,12 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   output.lastEnergies = {step,
                          potential,
                          kinetic,
-                         potential + kinetic,
+                         physicalTotal,
                          temperature,
                          virial,
                          // Convert kJ/mol/nm^3 to bar with the native coefficient.
                          pressure * mdir::physical::pressureBar,
-                         potential + kinetic + (output.couples ? output.bath : 0.0),
+                         total,
                          output.volume};
   if (!isRow)
     return;

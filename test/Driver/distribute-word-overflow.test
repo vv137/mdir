@@ -1,6 +1,6 @@
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: sed -e 's|argon.pdb|%S/../../examples/argon/argon.pdb|' \
-# RUN:   -e 's/^epsilon .*/epsilon = 1.0e20/' -e 's/= 2000$/= 1/' \
+# RUN:   -e 's/^epsilon .*/epsilon = 1.0e20/' -e 's/= 2000$/= 100/' \
 # RUN:   %S/../../examples/argon/argon.toml > %t/run.toml
 # RUN: printf '\ndeterministic=true\n[distribute]\ndomains=[2,1,1]\n' >> %t/run.toml
 # RUN: cd %t && not --crash mdir run run.toml 2>&1 | FileCheck %s

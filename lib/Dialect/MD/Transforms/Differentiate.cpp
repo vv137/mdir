@@ -2117,6 +2117,7 @@ Value DerivativeBuilder::addDistributedFields(ArrayRef<Value> fields) {
   auto type = cast<md_dist::FieldType>(fields.front().getType());
   Type valueType = type.getKernelValueType();
   OperationState state(loc, md_dist::MapParticlesOp::getOperationName());
+  state.addAttribute("md_dist.add_terms", builder.getUnitAttr());
   state.addOperands(fields);
   state.addRegion();
   state.addTypes(type);
