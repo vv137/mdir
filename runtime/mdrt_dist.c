@@ -114,7 +114,7 @@ struct TransferRow { int64_t domain, ghost; int peer; };
 struct TransferPlan {
   int *counts;
   struct TransferRow *send, *receive, *local;
-  size_t sends, receives, locals;
+  size_t sends, receives, locals, onNode;
 };
 #endif
 
@@ -1559,7 +1559,7 @@ static struct TransferPlan *transferPlan(struct Halo *h, int transpose) {
   if (!owners || !plan->counts) mdrtMPIAbort("out of memory planning halo");
   for (int64_t d = 0; d < domains; ++d) owners[d] = mdrtMPIOwner(domains, d);
   for (int pass = 0; pass < 2; ++pass) {
-    size_t ns = 0, nr = 0, nl = 0;
+    size_t ns = 0, nr = 0, nl = 0, near = 0;
     for (int64_t d = 0; d < domains; ++d)
       for (int64_t g = 0; g < h->rows[d]; ++g) {
         int owner = owners[h->sourceDomain[d*h->capacity+g]];
@@ -1575,7 +1575,10 @@ static struct TransferPlan *transferPlan(struct Halo *h, int transpose) {
           if (pass) plan->local[nl] = (struct TransferRow){d, g, from};
           ++nl;
         } else {
-          if (pass) plan->receive[nr] = (struct TransferRow){d, g, from};
+          int sameNode = !transpose && mdrtMPISameNode(from);
+          size_t slot = transpose ? nr : sameNode ? near : plan->onNode + nr - near;
+          if (sameNode) ++near;
+          if (pass) plan->receive[slot] = (struct TransferRow){d, g, from};
           else if (from != rank) {
             if (plan->counts[peers+from] == INT_MAX) mdrtMPIAbort("halo count exceeds MPI int");
             ++plan->counts[peers+from];
@@ -1584,7 +1587,7 @@ static struct TransferPlan *transferPlan(struct Halo *h, int transpose) {
         }
       }
     if (!pass) {
-      plan->sends = ns; plan->receives = nr; plan->locals = nl;
+      plan->sends = ns; plan->receives = nr; plan->locals = nl; plan->onNode = near;
       plan->send = malloc(ns * sizeof *plan->send);
       plan->receive = malloc(nr * sizeof *plan->receive);
       plan->local = malloc(nl * sizeof *plan->local);
@@ -1624,18 +1627,21 @@ static void exchangeHalo(struct Halo *h, struct Memref3D *owned,
   void *send = malloc((size_t)(sendSize ? sendSize : 1) * bytes);
   void *recv = malloc((size_t)(recvSize ? recvSize : 1) * bytes);
   if (!send || !recv) mdrtMPIAbort("out of memory packing halo rows");
-  for (int pass = 0; pass < 3; ++pass) {
+  for (int pass = 0; pass < 4; ++pass) {
     if (pass == 1 && peers > 1) {
-      if (!transpose) mdrtDistPhase(DistInter);
-      mdrtMPIExchange(send, ns, os, recv, nr, or, ownedWords != NULL);
-      if (!transpose) mdrtDistPhase(-DistInter);
+      if (transpose)
+        mdrtMPIExchange(send, ns, os, recv, nr, or, ownedWords != NULL);
+      else
+        mdrtMPIForwardHalo(send, ns, os, recv, nr, or);
     }
-    size_t length = pass == 0 ? plan->sends : pass == 1 ? plan->receives : plan->locals;
-    if (!length) continue;
-    struct TransferRow *rows = pass == 0 ? plan->send : pass == 1 ? plan->receive : plan->local;
-    int phase = pass == 0 ? DistPack : pass == 1 ? DistInter : DistIntra;
+    size_t first = pass == 2 ? plan->onNode : 0;
+    size_t length = pass == 0 ? plan->sends : pass == 1 ? plan->onNode :
+                    pass == 2 ? plan->receives : plan->locals;
+    if (first == length) continue;
+    struct TransferRow *rows = pass == 0 ? plan->send : pass == 3 ? plan->local : plan->receive;
+    int phase = pass == 0 ? DistPack : pass == 2 ? DistInter : DistIntra;
     if (!transpose) mdrtDistPhase(phase);
-    for (size_t k = 0; k < length; ++k) {
+    for (size_t k = first; k < length; ++k) {
       int64_t d = rows[k].domain, g = rows[k].ghost, i = d*h->capacity+g;
       int64_t dom = h->sourceDomain[i], row = h->sourceRow[i];
       int peer = rows[k].peer;

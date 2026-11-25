@@ -1759,8 +1759,8 @@ different ranks count toward network payload. Rank shares divide by the sum
 over ranks for that counter. Phase times in seconds are exclusive. The CPU MATRIX builder records
 `list_build` on steps that reconstruct candidate rows. `pairs` includes
 candidate selection and pair evaluation. Forward MPI halo operations report
-`halo_pack`, `halo_intra` (local copies), and `halo_inter` (the collective
-and remote unpack). Remaining transfer overhead appears under `halo_copy`.
+`halo_pack`, `halo_intra` (copies and exchanges within a shared-memory
+node), and `halo_inter` (exchange and unpack between nodes). Remaining transfer overhead appears under `halo_copy`.
 `halo_sum` includes the reverse pack, exchange, and ordered addition.
 `halo_build` covers membership construction, and `state` covers packing
 and consuming loop state. `integration` covers marked kicks, drifts, and

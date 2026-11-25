@@ -20,3 +20,7 @@ The nondeterministic midpoint path reports the box of possible interaction
 centers for its halo. A group member across a periodic face can be far
 from that box, while its pair midpoint must lie inside. Group-local solves
 require only owned rows.
+
+Forward halo exchange groups peers by MPI shared-memory node. The intra-node
+clock includes copies between ranks on that node, and the inter-node clock
+covers exchange and unpack between nodes.
