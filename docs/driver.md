@@ -409,11 +409,16 @@ of the input frame. Each overflow halves the target stripe and retries at the
 same position. More records use eight additional shared-memory bytes per
 record and can reduce the number of resident blocks. AUTO tries the existing
 full and reduced capacities within each split.
+The optional `pack` field accepts `"AUTO"`, `"COMPACT"`, or `"WIDE"`.
+AUTO selects WIDE when the maximum initial cell population exceeds 128
+at the resolved height. The setup record gives the pack, maximum and mean
+cell populations, their source, and the selection rule. The compiled run
+uses that pack at every rebuild.
 An explicit field fixes its axis. A continuation takes the checkpoint height.
 The log and the manifest's `effective.towers_shape` record the cell medians
 in microseconds, winning shape, margin over the runner-up, whether the
 interquartile ranges overlap, and trial cost in milliseconds. A grid-cache
-hit reuses that record. A single feasible launch skips the trial. A program
+hit reuses that record. A single feasible launch skips candidate timing. A program
 without an eligible pair region uses the derived shape. An explicit TOWERS run then rebuilds from the current positions at each direct evaluation and certifies the forces before integration. Pressure steps accumulate direct force and virial together. On force-only steps, eligible moving pair loops select zero words outside the cutoff (D430).
 For a topology with exclusions, setup allocates eight bytes per atom for the
 physical-pair exclusion index used in pressure evaluation and wide replay.

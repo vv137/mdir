@@ -1345,13 +1345,13 @@ stages. For larger populations each key's rank is the number of strictly
 smaller keys. Both paths assign the same slots and thus the same ordered
 spans to the force traversal.
 
-The four-key and eight-key limits use separate kernel entries. Each
-insertion group's reservation yields the new population of its cell.
-Their maximum, accumulated on the device, selects the entry for that
-evaluation. When the mean population exceeds 128, the maximum exceeds
-128 as well, and the grid requires only the wide launch. At most 128
-atoms in the entire system require only the compact launch. On other
-grids the two entries test the same maximum on the simulation stream.
+At the chosen height, setup reads the home-span populations of the first
+rebuilt frame. If their maximum exceeds 128, AUTO specializes the moving
+pack for up to eight keys per lane. Otherwise it uses the four-key limit.
+The median sorting interval on two dense Trp-cage frames fell from 14,987
+to 4,373 and from 21,720 to 4,405 SM cycles with the eight-key limit.
+Each specialization uses rank counting above its network limit, so the
+same launch remains valid as atoms move between cells.
 
 The rectangular force entry realizes the screen in the owning box's image.
 It rounds the scaled positions to a lattice and rounds the encoded source

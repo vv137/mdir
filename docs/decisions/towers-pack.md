@@ -16,25 +16,30 @@ key gives each atom a unique rank even when several atoms share a quarter.
 The gather uses this rank for coordinates, types, stable IDs and inverse
 maps. Cells with more than 256 atoms retain the dense rank scan. The force traversal consumes the same spans.
 
-The GPU emits separate pack kernels so the eight-key network has its own
-register allocation. A warp leader knows the new cell count after reserving
-its group's slots. It raises a device maximum when that count exceeds the
-previous maximum. For a grid whose peak can fall on either side of 128,
-the compact and wide launches test the maximum on the simulation stream.
-The compact launch saves a snapshot, and the wide launch resets the
-accumulator for the next insertion. Exactly one launch packs the grid.
-If there are at most 128 atoms, only the compact launch is needed. If
-there are more than 128 atoms per cell on average, the maximum must exceed
-128 and only the wide launch is needed. Both single-launch paths also
-save and reset the maximum.
+Setup chooses one pack specialization for the entire run. After the first
+private rebuild at the resolved height, it reads each cell's own span
+count at the synchronization used to check overflow. It includes empty
+cells in the mean. AUTO chooses WIDE when the maximum exceeds 128 and
+COMPACT otherwise. The compact kernel uses up to four keys per lane and
+rank-scans larger cells. The wide kernel also handles smaller populations.
+A later population change affects cost only.
+
+The threshold targets the first cell size at which the wide network can
+save work. In the two dense input frames the median sorting interval fell
+from 14,987 to 4,373 and from 21,720 to 4,405 SM cycles. A frame with only
+one dense cell may see a smaller benefit. The physics-neutral
+`[execution] towers_shape.pack` field accepts `"AUTO"`, `"COMPACT"`, or
+`"WIDE"`. The setup log and manifest record the choice, the selection
+rule, and both populations. Pinned launches and cache hits still inspect
+the starting frame. Programs without an eligible trial region use the
+input-coordinate bin counts and report their source.
 
 The rebuild test compares both insertion directions against independently
 sorted keys, checks cell-relative coordinates and enumerates pair ownership.
-Its dense fixture exercises both the eight-key network and the larger-cell
-fallback.
+Its dense fixture includes cells above both network limits.
 
 On an RTX 4090 the compact and wide pack entries use 48 and 72 registers
-per thread. In two reversed-order runs at 2 fs, Trp-cage CHARMM36m saved
+per thread. With the earlier guarded dispatch, in two reversed-order runs at 2 fs, Trp-cage CHARMM36m saved
 7.68 and 8.15 µs per step, and ff19SB + OPC saved 13.95 and 14.78 µs.
 All six benchmark deck inputs were slower in both orders. TIP3P 10k cost
 an additional 1.87 and 2.24 µs per step. On its fixed input keys, adding
