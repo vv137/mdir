@@ -33,7 +33,7 @@ static void arrival(void) {
   }
 }
 void mdrtMPIGatherTimes(const double *send, double *recv, int count) {
-  MPI_Gather(send, count, MPI_DOUBLE, recv, count, MPI_DOUBLE, 0, comm);
+  MPI_Allgather(send, count, MPI_DOUBLE, recv, count, MPI_DOUBLE, comm);
 }
 
 int mdrtMPIMax(int value) {
@@ -88,6 +88,20 @@ int mdrtMPIOwner(int64_t domains, int64_t d) {
   int64_t q = domains / size, remainder = domains % size;
   int64_t split = remainder * (q + 1);
   return d < split ? d / (q + 1) : remainder + (d - split) / q;
+}
+
+// A field used exclusively by the checkpoint has a single consumer.
+void mdrtMPIRowsToRoot(double *values, int64_t count, int owner) {
+  if (!owner || (rank != owner && rank != 0)) return;
+  while (count > 0) {
+    int n = count > INT_MAX ? INT_MAX : (int)count;
+    if (rank == owner)
+      MPI_Send(values, n, MPI_DOUBLE, 0, 0, comm);
+    else
+      MPI_Recv(values, n, MPI_DOUBLE, owner, 0, comm, MPI_STATUS_IGNORE);
+    count -= n;
+    values += n;
+  }
 }
 
 void mdrtMPIBroadcast(double *values, int64_t count, int root) {

@@ -693,9 +693,15 @@ LogicalResult Lowering::lowerCollect(CollectOp op) {
   auto fieldType = cast<md::FieldType>(op.getResult().getType());
   Storage &layout = storage[op.getLayout()];
   Value owned = storage[op.getField()].buffer;
+  // Other consumers can feed the next replicated segment. Only a private
+  // checkpoint snapshot can skip sending the gathered field to those peers.
+  bool checkpointOnly = llvm::all_of(op.getResult().getUsers(), [](Operation *user) {
+    auto call = dyn_cast<mdrt::HostCallOp>(user);
+    return call && call.getCallee() == "mdrtWriteCheckpoint";
+  });
   if (mpi)
     func::CallOp::create(b, loc,
-        declare("mdrtMPICollectRows", b.getFunctionType({b.getI64Type(), owned.getType()}, {}), true),
+        declare(checkpointOnly ? "mdrtMPICheckpointRows" : "mdrtMPICollectRows", b.getFunctionType({b.getI64Type(), owned.getType()}, {}), true),
         ValueRange{layout.handle, owned});
   int64_t k = fieldType.getNumComponents();
   MemRefType type = mdrt::getBufferType(fieldType);

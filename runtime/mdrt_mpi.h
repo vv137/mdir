@@ -12,6 +12,7 @@ int64_t mdrtMPIDomainBound(int64_t domains, int64_t end);
 int mdrtMPIOwner(int64_t domains, int64_t domain);
 int mdrtMPIRank(void);
 int mdrtMPISize(void);
+void mdrtMPIRowsToRoot(double *values, int64_t count, int owner);
 void mdrtMPIBroadcast(double *values, int64_t count, int root);
 void mdrtMPIExchange(double *send, int *sendCounts, int *sendOffsets,
                      double *recv, int *recvCounts, int *recvOffsets);
