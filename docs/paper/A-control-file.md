@@ -590,12 +590,7 @@ interval traffic. Set `MDIR_DIST_STEP_TRACE` to a fresh prefix for
 rank-local per-step files. The checkpoint and continuation keys also
 apply to distributed runs. A continuation may change `domains`;
 the manifest records both layouts. The deterministic distributed CPU path
-uses checked fixed-point words across grids and restarts, and its
-`--continue` refuses a control file that adds or drops `[distribute]`
-unless `mdir run --continue --force` overrides it, which the log, the
-manifest, and the checkpoints record; the checkpoint's fingerprint records
-the traversal, the transport, and the grid, whose change is a note
-(D[distribute-driver]).
+uses checked fixed-point words across grids and restarts.
 D[mpi-transport] adds `transport = "mpi"` in MPI-enabled builds.
 The grid must have at least as many domains as ranks. The launcher sets
 the rank count. Rank zero owns the output files.

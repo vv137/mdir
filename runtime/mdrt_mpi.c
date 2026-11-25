@@ -6,12 +6,14 @@
 #include <stdlib.h>
 
 static MPI_Comm comm = MPI_COMM_NULL;
+static MPI_Datatype wideWord = MPI_DATATYPE_NULL;
 static int initializedHere, rank, size;
 
 static void finish(void) {
   int done;
   MPI_Finalized(&done);
   if (!done) {
+    MPI_Type_free(&wideWord);
     MPI_Comm_free(&comm);
     if (initializedHere)
       MPI_Finalize();
@@ -67,6 +69,8 @@ static void initialize(void) {
     initializedHere = 1;
   }
   MPI_Comm_dup(MPI_COMM_WORLD, &comm);
+  MPI_Type_contiguous(2, MPI_UINT64_T, &wideWord);
+  MPI_Type_commit(&wideWord);
   MPI_Comm_rank(comm, &rank);
   MPI_Comm_size(comm, &size);
   atexit(finish);
@@ -104,6 +108,17 @@ void mdrtMPIRowsToRoot(double *values, int64_t count, int owner) {
   }
 }
 
+void mdrtMPIBroadcastWords(void *buffer, int64_t count, int root) {
+  unsigned char *values = buffer;
+  while (count > 0) {
+    int n = count > INT_MAX ? INT_MAX : (int)count;
+    arrival();
+    MPI_Bcast(values, n, wideWord, root, comm);
+    values += n;
+    count -= n;
+  }
+}
+
 void mdrtMPIBroadcast(double *values, int64_t count, int root) {
   while (count > 0) {
     int n = count > INT_MAX ? INT_MAX : (int)count;
@@ -124,7 +139,7 @@ int mdrtMPIAllTrue(int predicate) {
 void mdrtMPIExchange(void *send, int *sendCounts, int *sendOffsets,
                      void *recv, int *recvCounts, int *recvOffsets, int words) {
   arrival();
-  MPI_Datatype type = words ? MPI_INT64_T : MPI_DOUBLE;
+  MPI_Datatype type = words ? wideWord : MPI_DOUBLE;
   MPI_Alltoallv(send, sendCounts, sendOffsets, type,
                 recv, recvCounts, recvOffsets, type, comm);
 }

@@ -152,18 +152,18 @@ private:
   LogicalResult lowerNeighborhood(NeighborhoodOp op);
   LogicalResult lowerPartitionCenters(PartitionCentersOp op);
   template <typename OpTy>
-  void emitPairs(
-      OpTy op, Location loc, int64_t domains,
-      llvm::DenseMap<Value, Storage> &storage, Type accumulator, Value shifts,
-      function_ref<Value(OpBuilder &, Value, Value)> add,
-      function_ref<Value(OpBuilder &, Type)> zero,
-      function_ref<Value(OpBuilder &, Value, Value, Value, Type)> load,
-      function_ref<Value(OpBuilder &, Block &, ValueRange)> kernel,
-      function_ref<Value(OpBuilder &, Value value, Value acc, Value d, Value k,
-                         Value isOwned, Value ghostRow)>
-          visit,
-      function_ref<void(OpBuilder &, Value acc, Value d, Value i)> finishCenter,
-      function_ref<void(OpBuilder &, Value acc, Value d)> finishDomain);
+void emitPairs(
+    OpTy op, Location loc, Value first, Value past, bool parallel,
+    llvm::DenseMap<Value, Storage> &storage, Type accumulator, Value shifts,
+    function_ref<Value(OpBuilder &, Value, Value)> add,
+    function_ref<Value(OpBuilder &, Type)> zero,
+    function_ref<Value(OpBuilder &, Value, Value, Value, Type)> load,
+    function_ref<Value(OpBuilder &, Block &, ValueRange)> kernel,
+    function_ref<Value(OpBuilder &, Value value, Value acc, Value d, Value k,
+                       Value isOwned, Value ghostRow)>
+        visit,
+    function_ref<void(OpBuilder &, Value acc, Value d, Value i)> finishCenter,
+    function_ref<void(OpBuilder &, Value acc, Value d)> finishDomain);
   LogicalResult lowerSumPairs(SumPairsOp op);
   LogicalResult lowerGatherPairs(GatherPairsOp op);
   LogicalResult lowerSumParticles(SumParticlesOp op);
@@ -1062,9 +1062,10 @@ struct PairSide {
 /// visit returns the new accumulator of `i`. `finishCenter` receives the
 /// accumulator of each center, `finishDomain` the sum over its centers.
 template <typename OpTy>
-static void emitPairs(
+void Lowering::emitPairs(
     OpTy op, Location loc, Value first, Value past, bool parallel,
-    llvm::DenseMap<Value, Storage> &storage, Type accumulator,
+    llvm::DenseMap<Value, Storage> &storage, Type accumulator, Value shifts,
+    function_ref<Value(OpBuilder &, Value, Value)> add,
     function_ref<Value(OpBuilder &, Type)> zero,
     function_ref<Value(OpBuilder &, Value, Value, Value, Type)> load,
     function_ref<Value(OpBuilder &, Block &, ValueRange)> kernel,
@@ -1103,6 +1104,11 @@ static void emitPairs(
   Type f64 = b.getF64Type();
   auto vec3 = VectorType::get({3}, f64);
   Type i64 = b.getI64Type();
+  auto indices = MemRefType::get({ShapedType::kDynamic}, i64);
+  auto buildCells = declare("mdrtDistPairCells",
+      b.getFunctionType({b.getIndexType(), b.getIndexType(), b.getIndexType(),
+                         f64, xo.getType(), xg.getType(), xg.getType(), i64,
+                         indices, indices}, {}), true);
   auto visitDomain = [&](OpBuilder &bd, Value d) {
         Value owned = arith::IndexCastOp::create(
             bd, loc, bd.getIndexType(),
@@ -1307,7 +1313,8 @@ LogicalResult Lowering::lowerSumPairs(SumPairsOp op) {
   // Over a directed relation every pair is visited at both of its owners.
   double weight = directed ? 0.5 : 1.0;
   emitPairs(
-      op, loc, domainBound(b, false), domainBound(b, true), parallelDomains, storage, type,
+      op, loc, domainBound(b, false), domainBound(b, true), parallelDomains, storage, sumType(type), imageShifts.lookup(op.getGhosts()),
+      [&](OpBuilder &at, Value a, Value v) { return add(at, a, v); },
       [&](OpBuilder &at, Type t) { return zero(at, t); },
       [&](OpBuilder &at, Value buffer, Value d, Value row, Type t) {
         return loadValue(at, buffer, d, row, t);
@@ -1386,7 +1393,8 @@ LogicalResult Lowering::lowerGatherPairs(GatherPairsOp op) {
     return arith::MulFOp::create(at, loc, value, s);
   };
   emitPairs(
-      op, loc, domainBound(b, false), domainBound(b, true), parallelDomains, storage, type,
+      op, loc, domainBound(b, false), domainBound(b, true), parallelDomains, storage, sumType(type), imageShifts.lookup(op.getGhosts()),
+      [&](OpBuilder &at, Value a, Value v) { return add(at, a, v); },
       [&](OpBuilder &at, Type t) { return zero(at, t); },
       [&](OpBuilder &at, Value buffer, Value d, Value row, Type t) {
         return loadValue(at, buffer, d, row, t);
@@ -1589,7 +1597,7 @@ LogicalResult Lowering::lowerAllReduce(AllReduceOp op) {
   Value partial = storage[op.getPartial()].buffer;
   if (mpi)
     func::CallOp::create(b, loc,
-        declare("mdrtMPISharePartials", b.getFunctionType({partial.getType()}, {}), true),
+        declare(fixedPoint ? "mdrtMPIShareWords" : "mdrtMPISharePartials", b.getFunctionType({partial.getType()}, {}), true),
         ValueRange{partial});
   // The partial sums are added in the order of the domains.
   auto loop = scf::ForOp::create(
@@ -2570,6 +2578,7 @@ public:
   void runOnOperation() final {
     ModuleOp module = getOperation();
     Lowering lowering(module, false, 64, 3, haloEvents || mpi, mpi, parallelDomains);
+    lowering.fixedPoint = fixedPoint;
     SmallVector<func::FuncOp> functions(module.getOps<func::FuncOp>());
     for (func::FuncOp function : functions)
       if (failed(lowering.run(function)))

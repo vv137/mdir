@@ -1770,18 +1770,8 @@ With `[execution] deterministic = true`, a continued distributed run on
 another grid uses the same pair words and physical state as an uninterrupted
 run on the same build. Use an explicit one-domain grid for this comparison.
 Omitting the distribution table selects the ordinary driver and its existing
-floating-point reduction, which a deterministic `--continue` refuses (the
-fingerprint, below). A fixed-point range diagnostic names the quantity of
-the term or completed sum that cannot be represented. The formats are
-fitted to their quantities: Q32 for pair energies, virials, kinetic
-energies, and momenta, Q40 for forces, and Q16 for the sum of $F^2/m$ of
-the kinetic correction, whose square of forces leaves the range of Q32
-(below $2^{31}$) for the 864 atoms of argon with 250 times the example's
-$\epsilon$ (distribute-word-formats.test). A decoded word is exact below
-$2^{53}$: $2^{13}$ kJ/mol/nm for a force, $2^{21}$ kJ/mol for a Q32 energy,
-$2^{20}$ for the Q33 total, $2^{37}$ for a Q16 sum; above, the conversion rounds to
-nearest, a function of the word, so that the value is still the same on
-every grid. Intermediate signed
+floating-point reduction. A fixed-point range diagnostic identifies a term
+or completed quantity that cannot be represented. Intermediate signed
 128-bit subtotals retain cancellation. Deterministic HDF5 output omits
 dataset creation timestamps. Matching invocation histories yield identical
 checkpoint files. A continuation records its part number in the checkpoint
