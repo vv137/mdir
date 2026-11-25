@@ -2518,6 +2518,20 @@ void mdrtDeviceActivationClose(void *activation) {
   free(a);
 }
 
+/* An outlined domain returns host partials. Its MATRIX handle and all
+   temporary device fields can return to the pool after that evaluation. */
+int64_t mdrtDeviceDomainEnter(void) {
+  struct Activation *parent = currentActivation;
+  mdrtDeviceActivationEnter(mdrtDeviceActivationOpen());
+  return (int64_t)(intptr_t)parent;
+}
+
+void mdrtDeviceDomainLeave(int64_t parent) {
+  mdrtDeviceActivationClose(currentActivation);
+  mdrtDeviceActivationEnter((void *)(intptr_t)parent);
+}
+
+
 /* Memory of the device that an embedding program holds outside any
    activation, and copies to and from it on the stream of the kernels: the
    state of a simulation at the end of its last part, which a part that

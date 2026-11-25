@@ -1252,6 +1252,7 @@ LogicalResult Lowering::lowerTupleRows(TupleRowsOp op) {
   }
   auto fill = declare(name,
       b.getFunctionType({b.getI64Type(), positions.getType(), source.getType(), result.getType()}, {}), true);
+  fill.setArgAttr(2, "mdrt.read_only", b.getUnitAttr());
   func::CallOp::create(b, loc, fill, ValueRange{op.getGroup() ? storage[layoutOf(op.getHalo())].handle
                                : storage[op.getHalo()].handle, positions, source, result});
   op.getRows().replaceAllUsesWith(rows);
@@ -1271,6 +1272,7 @@ LogicalResult Lowering::lowerNeighborhood(NeighborhoodOp op) {
     auto type = mdrt::getMembersType(cast<md::RelationType>(excluded.getType()));
     Value members = mdrt::ToBufferOp::create(b, loc, type, excluded);
     auto build = declare("mdrtDistExclusions", b.getFunctionType({type}, {i64}), true);
+    build.setArgAttr(0, "mdrt.read_only", b.getUnitAttr());
     Value handle = func::CallOp::create(b, loc, build, members).getResult(0);
     excludedPairs[op.getResult()] = handle;
     OpBuilder cleanup(end);
@@ -2475,6 +2477,11 @@ LogicalResult Lowering::lowerPairGroup(Operation *anchor, DominanceInfo &dominan
   }
   llvm::sort(group, [](Operation *a, Operation *b) { return a->isBeforeInBlock(b); });
   OpBuilder b(anchor);
+  Value parent;
+  if (gpuPairs) {
+    auto start = declare("mdrtDeviceDomainEnter", b.getFunctionType({}, {b.getI64Type()}), false);
+    parent = func::CallOp::create(b, loc, start).getResult(0);
+  }
   domainLoop = scf::ForOp::create(b, loc, domainBound(b, false), domainBound(b, true), index(b, 1));
   domainLoop->setAttr("md_dist.domain_loop", b.getUnitAttr());
   OpBuilder body(domainLoop.getBody()->getTerminator());
@@ -2486,6 +2493,12 @@ LogicalResult Lowering::lowerPairGroup(Operation *anchor, DominanceInfo &dominan
     } else if (failed(lowerGatherPairsExec(cast<GatherPairsOp>(op)))) {
       return failure();
     }
+  }
+  if (parent) {
+    OpBuilder after(domainLoop);
+    after.setInsertionPointAfter(domainLoop);
+    auto leave = declare("mdrtDeviceDomainLeave", after.getFunctionType({after.getI64Type()}, {}), false);
+    func::CallOp::create(after, loc, leave, ValueRange{parent});
   }
   domainFields.clear();
   lastPair = {};
