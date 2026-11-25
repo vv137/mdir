@@ -18,6 +18,15 @@
 // SCHEDULE: md_dist schedule @derived G source={{.*}} reach=2
 // SCHEDULE: md_dist schedule @derived G^T source={{.*}} reach=2
 //
+// RUN: sed 's/GRID/8, 1, 1/' %s \
+// RUN: | mdir-opt --md-distribute="grid=8,1,1 traversal=midpoint potentials=lj" \
+// RUN:     %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \
+// RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+// RUN: | mlir-opt %lower_loops_to_llvm \
+// RUN: | mlir-runner -e main --entry-point-result=void \
+// RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+// RUN: | FileCheck %s
+//
 // RUN: sed 's/GRID/1, 1, 1/' %s \
 // RUN: | mdir-opt --md-distribute="grid=1,1,1 traversal=unique potentials=lj" \
 // RUN:     %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \

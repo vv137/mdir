@@ -1617,20 +1617,15 @@ static int runControlImpl(StringRef controlFile, Emit emit,
         {"candidates", std::move(candidates)},
         {"transport", dist->transport},
         {"transport_source", dist->transportGiven ? "requested" : "default"},
-        {"traversal", dist->traversal},
-        {"traversal_source", dist->traversalGiven ? "requested" : "default"},
-        {"ranks", distRanks},
-        {"cutoff_angstrom", control->cutoffDistance},
-        {"skin_angstrom", control->pairlistDistance - control->cutoffDistance},
-        {"reach_angstrom", control->pairlistDistance}};
-    output.log.print(
-        "MDIR: grid choice %s, requested count %lld, ranks %d; %s transport "
-        "(%s), %s traversal (%s); reach %g Ang = cutoff %g Ang + skin %g Ang\n",
+        {"traversal", dist->traversal}, {"traversal_source", dist->traversalGiven ? "requested" : "default"},
+        {"ranks", distRanks}, {"cutoff_angstrom", control->cutoffDistance},
+        {"skin_angstrom", control->pairlistDistance-control->cutoffDistance},
+        {"reach_angstrom", control->getDistributionReach()}};
+    output.log.print("MDIR: grid choice %s, requested count %lld, ranks %d; %s transport (%s), %s traversal (%s); reach %g Ang, cutoff %g Ang, skin %g Ang\n",
         source, (long long)dist->domains, distRanks, dist->transport.c_str(),
         dist->transportGiven ? "requested" : "default", dist->traversal.c_str(),
-        dist->traversalGiven ? "requested" : "default",
-        control->pairlistDistance, control->cutoffDistance,
-        control->pairlistDistance - control->cutoffDistance);
+        dist->traversalGiven ? "requested" : "default", control->getDistributionReach(),
+        control->cutoffDistance, control->pairlistDistance-control->cutoffDistance);
   }
   if (writer && !control->manifestFile.empty()) {
     auto device = getManifestDevice(control->target);
@@ -2068,13 +2063,11 @@ static int runControlImpl(StringRef controlFile, Emit emit,
                  control->timestep);
   if (control->distribution) {
     const auto &grid = program->domainGrid;
-    output.log.print(
-        "MDIR: domain grid %lld x %lld x %lld, %s transport, "
-        "%s traversal, halo reach %g Ang\n",
-        static_cast<long long>(grid[0]), static_cast<long long>(grid[1]),
-        static_cast<long long>(grid[2]),
-        control->distribution->transport.c_str(),
-        control->distribution->traversal.c_str(), control->pairlistDistance);
+    output.log.print("MDIR: domain grid %lld x %lld x %lld, %s transport, "
+                     "%s traversal, halo reach %g Ang\n",
+                     static_cast<long long>(grid[0]), static_cast<long long>(grid[1]),
+                     static_cast<long long>(grid[2]), control->distribution->transport.c_str(),
+                     control->distribution->traversal.c_str(), control->getDistributionReach());
   }
   if (program->pme)
     output.log.print("MDIR: PME force-only product rule: %s\n", pmeForceProduct);
@@ -2272,7 +2265,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   if (control->distribution) {
     const auto &g = program->domainGrid;
     distLog.emplace(output.log, manifest, distRank, distRanks, g[0]*g[1]*g[2],
-                    firstStep, control->energyPeriod, control->pairlistDistance);
+                    firstStep, control->energyPeriod, control->getDistributionReach());
     const char *prefix = std::getenv("MDIR_DIST_STEP_TRACE");
 #ifdef MDIR_ENABLE_MPI
     if (control->distribution->transport == "mpi") {

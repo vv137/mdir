@@ -347,7 +347,7 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
     const auto &grid = program.domainGrid;
     os << "md-distribute{grid=" << grid[0] << "," << grid[1] << "," << grid[2]
        << " traversal=" << control.distribution->traversal
-       << " reach=" << control.pairlistDistance * driver::units::length << "},";
+       << " reach=" << control.getDistributionReach() * driver::units::length << "},";
   }
   os << "md-differentiate,md-expand-truncation,md-inline,"
      << "dyn-expand-couplings,md-bypass-updates,";

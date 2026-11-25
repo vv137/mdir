@@ -841,9 +841,14 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
   int64_t k = op.getResult().getType().getNumComponents();
   Value ghosts = allocate(b, halo.capacity, k);
   Type i64 = b.getI64Type();
+  bool separateImage = fixedPoint || llvm::any_of(op.getResult().getUsers(),
+      [](Operation *user) {
+        auto relation = dyn_cast<NeighborhoodOp>(user);
+        return relation && relation.getResult().getType().getTraversal() == Traversal::Midpoint;
+      });
   Value image = arith::ConstantOp::create(
-      b, loc, b.getI64IntegerAttr(op.getImage() && !fixedPoint ? 1 : 0));
-  if (op.getImage() && fixedPoint) {
+      b, loc, b.getI64IntegerAttr(op.getImage() && !separateImage ? 1 : 0));
+  if (op.getImage() && separateImage) {
     Value shifts = allocate(b, halo.capacity, 3);
     auto fill = declare("mdrtDistImageShifts",
                         b.getFunctionType({i64, shifts.getType()}, {}), true);
@@ -1076,8 +1081,9 @@ void Lowering::emitPairs(
     function_ref<void(OpBuilder &, Value acc, Value d, Value i)> finishCenter,
     function_ref<void(OpBuilder &, Value acc, Value d)> finishDomain) {
   auto neighborhood = op.getRelation().template getDefiningOp<NeighborhoodOp>();
-  bool unique =
-      op.getRelation().getType().getTraversal() == Traversal::Unique;
+  auto traversal = op.getRelation().getType().getTraversal();
+  bool midpoint = traversal == Traversal::Midpoint;
+  bool unique = traversal != Traversal::Directed;
   double cutoff = neighborhood.getCutoff().convertToDouble();
   Value haloValue = neighborhood.getHalo();
   Storage &halo = storage[haloValue];
@@ -1106,11 +1112,14 @@ void Lowering::emitPairs(
   auto vec3 = VectorType::get({3}, f64);
   Type i64 = b.getI64Type();
   auto indices = MemRefType::get({ShapedType::kDynamic}, i64);
-  auto buildCells = declare(
-      "mdrtDistPairCells",
+  auto buildCells = declare(midpoint ? "mdrtDistMidpointCells" : "mdrtDistPairCells",
       b.getFunctionType({b.getIndexType(), b.getIndexType(), b.getIndexType(),
                          f64, xo.getType(), xg.getType(), xg.getType(), i64,
                          indices, indices}, {}), true);
+  func::FuncOp owns;
+  if (midpoint)
+    owns = declare("mdrtDistMidpointOwns",
+        b.getFunctionType({i64, i64, i64, f64, f64, f64, f64, f64, f64}, {i64}), false);
   auto visitDomain = [&](OpBuilder &bd, Value d) {
         Value owned = arith::IndexCastOp::create(
             bd, loc, bd.getIndexType(),
@@ -1120,19 +1129,53 @@ void Lowering::emitPairs(
             memref::LoadOp::create(bd, loc, halo.rows, ValueRange{d}));
         Value local = arith::AddIOp::create(bd, loc, owned, ghosts);
         Value count = ghostFree ? owned : local;
-        Value order =
-            memref::AllocOp::create(bd, loc, indices, ValueRange{count});
-        Value slots = arith::MulIOp::create(bd, loc, owned, c(bd, 18));
-        Value spans =
-            memref::AllocOp::create(bd, loc, indices, ValueRange{slots});
-        func::CallOp::create(
-            bd, loc, buildCells,
-            ValueRange{
-                d, owned, count, real(bd, cutoff), xo, xg, shifts ? shifts : xg,
-                arith::ConstantIntOp::create(bd, loc, shifts ? 1 : 0, 64),
-                order, spans});
+        Value order = memref::AllocOp::create(bd, loc, indices, ValueRange{count});
+        Value centerCount = midpoint ? count : owned;
+        Value slots = arith::MulIOp::create(bd, loc, centerCount, c(bd, 18));
+        Value spans = memref::AllocOp::create(bd, loc, indices, ValueRange{slots});
+        func::CallOp::create(bd, loc, buildCells,
+            ValueRange{d, owned, count, real(bd, cutoff), xo, xg,
+                       shifts ? shifts : xg,
+                       arith::ConstantIntOp::create(bd, loc, shifts ? 1 : 0, 64),
+                       order, spans});
+        auto readSide = [&](OpBuilder &bk, Value k, Value isOwned, Value ghostRow) {
+          // The values of row k, from the owned or the ghost rows.
+          SmallVector<Type> sideTypes = {vec3};
+          sideTypes.append(types.begin(), types.end());
+          if (shifts) sideTypes.push_back(vec3);
+          if (unique)
+            sideTypes.push_back(i64);
+          auto side = scf::IfOp::create(bk, loc, sideTypes, isOwned,
+                                        /*withElseRegion=*/true);
+          {
+            OpBuilder t = OpBuilder::atBlockEnd(side.thenBlock());
+            SmallVector<Value> values = {load(t, xo, d, k, vec3)};
+            for (unsigned g = 0; g < ownedFields.size(); ++g)
+              values.push_back(
+                  load(t, ownedFields[g], d, k, types[g]));
+            if (shifts) values.push_back(zero(t, vec3));
+            if (unique)
+              values.push_back(memref::LoadOp::create(
+                  t, loc, layout.ids, ValueRange{d, k}));
+            scf::YieldOp::create(t, loc, values);
+          }
+          {
+            OpBuilder e = OpBuilder::atBlockEnd(side.elseBlock());
+            SmallVector<Value> values = {
+                load(e, xg, d, ghostRow, vec3)};
+            for (unsigned g = 0; g < ghostFields.size(); ++g)
+              values.push_back(
+                  load(e, ghostFields[g], d, ghostRow, types[g]));
+            if (shifts) values.push_back(load(e, shifts, d, ghostRow, vec3));
+            if (unique)
+              values.push_back(memref::LoadOp::create(
+                  e, loc, halo.ids, ValueRange{d, ghostRow}));
+            scf::YieldOp::create(e, loc, values);
+          }
+          return side;
+        };
         auto centers = scf::ForOp::create(
-            bd, loc, c(bd, 0), owned, c(bd, 1),
+            bd, loc, c(bd, 0), centerCount, c(bd, 1),
             ValueRange{zero(bd, accumulator)},
             [&](OpBuilder &bi, Location, Value i, ValueRange domainSum) {
               Value spanCount = c(bi, 9);
@@ -1145,13 +1188,25 @@ void Lowering::emitPairs(
                 spanCount = arith::SelectOp::create(bi, loc, active, spanCount,
                                                     c(bi, 0));
               }
-              Value xi = load(bi, xo, d, i, vec3);
+              Value xi, idi, centerShift;
               SmallVector<Value> gi;
-              for (unsigned g = 0; g < ownedFields.size(); ++g)
-                gi.push_back(load(bi, ownedFields[g], d, i, types[g]));
-              Value idi = unique ? Value(memref::LoadOp::create(
-                                       bi, loc, layout.ids, ValueRange{d, i}))
-                                 : Value();
+              if (midpoint) {
+                Value localCenter = arith::CmpIOp::create(
+                    bi, loc, arith::CmpIPredicate::ult, i, owned);
+                Value ghost = arith::SubIOp::create(bi, loc, i, owned);
+                auto side = readSide(bi, i, localCenter, ghost);
+                xi = side.getResult(0);
+                llvm::append_range(gi, side.getResults().slice(1, types.size()));
+                centerShift = side.getResult(1 + types.size());
+                idi = side.getResults().back();
+              } else {
+                xi = load(bi, xo, d, i, vec3);
+                for (unsigned g = 0; g < ownedFields.size(); ++g)
+                  gi.push_back(load(bi, ownedFields[g], d, i, types[g]));
+                idi = unique ? Value(memref::LoadOp::create(
+                                         bi, loc, layout.ids, ValueRange{d, i}))
+                                   : Value();
+              }
               auto slabs = scf::ForOp::create(
                   bi, loc, c(bi, 0), spanCount, c(bi, 1),
                   ValueRange{zero(bi, accumulator)},
@@ -1165,114 +1220,82 @@ void Lowering::emitPairs(
                           bs, memref::LoadOp::create(bs, loc, spans, index));
                     };
                     Value begin = bound(base);
-                    Value end =
-                        bound(arith::AddIOp::create(bs, loc, base, c(bs, 1)));
-                    auto rows = scf::ForOp::create(
-                        bs, loc, begin, end, c(bs, 1), subtotal,
-                        [&](OpBuilder &bk, Location, Value slot,
-                            ValueRange acc) {
-                          Value k = toIndex(
-                              bk, memref::LoadOp::create(bk, loc, order, slot));
-                          Value isOwned = arith::CmpIOp::create(
-                              bk, loc, arith::CmpIPredicate::ult, k, owned);
-                          Value shifted =
-                              arith::SubIOp::create(bk, loc, k, owned);
-                          Value ghostRow = arith::SelectOp::create(
-                              bk, loc, isOwned, c(bk, 0), shifted);
-                          // The values of row k, from the owned or the ghost
-                          // rows.
-                          SmallVector<Type> sideTypes = {vec3};
-                          sideTypes.append(types.begin(), types.end());
-                          if (shifts)
-                            sideTypes.push_back(vec3);
-                          if (unique)
-                            sideTypes.push_back(i64);
-                          auto side =
-                              scf::IfOp::create(bk, loc, sideTypes, isOwned,
-                                                /*withElseRegion=*/true);
-                          {
-                            OpBuilder t =
-                                OpBuilder::atBlockEnd(side.thenBlock());
-                            SmallVector<Value> values = {
-                                load(t, xo, d, k, vec3)};
-                            for (unsigned g = 0; g < ownedFields.size(); ++g)
-                              values.push_back(
-                                  load(t, ownedFields[g], d, k, types[g]));
-                            if (shifts)
-                              values.push_back(zero(t, vec3));
-                            if (unique)
-                              values.push_back(memref::LoadOp::create(
-                                  t, loc, layout.ids, ValueRange{d, k}));
-                            scf::YieldOp::create(t, loc, values);
-                          }
-                          {
-                            OpBuilder e =
-                                OpBuilder::atBlockEnd(side.elseBlock());
-                            SmallVector<Value> values = {
-                                load(e, xg, d, ghostRow, vec3)};
-                            for (unsigned g = 0; g < ghostFields.size(); ++g)
-                              values.push_back(load(e, ghostFields[g], d,
-                                                    ghostRow, types[g]));
-                            if (shifts)
-                              values.push_back(
-                                  load(e, shifts, d, ghostRow, vec3));
-                            if (unique)
-                              values.push_back(memref::LoadOp::create(
-                                  e, loc, halo.ids, ValueRange{d, ghostRow}));
-                            scf::YieldOp::create(e, loc, values);
-                          }
-                          Value xk = side.getResult(0);
-                          // d = x_i − x_k: ghosts carry their images, so no
-                          // minimum image is taken.
-                          Value dvec = arith::SubFOp::create(bk, loc, xi, xk);
-                          if (shifts)
-                            dvec = arith::SubFOp::create(
-                                bk, loc, dvec,
-                                side.getResult(1 + types.size()));
-                          Value r2 = vector::ReductionOp::create(
-                              bk, loc, vector::CombiningKind::ADD,
-                              arith::MulFOp::create(bk, loc, dvec, dvec));
-                          Value inside = arith::CmpFOp::create(
-                              bk, loc, arith::CmpFPredicate::OLT, r2,
-                              arith::ConstantOp::create(
-                                  bk, loc,
-                                  bk.getF64FloatAttr(cutoff * cutoff)));
-                          Value pair;
-                          if (unique)
-                            pair = arith::CmpIOp::create(
-                                bk, loc, arith::CmpIPredicate::slt, idi,
-                                side.getResults().back());
-                          else
-                            pair = arith::CmpIOp::create(
-                                bk, loc, arith::CmpIPredicate::ne, k, i);
-                          Value take =
-                              arith::AndIOp::create(bk, loc, inside, pair);
-                          auto branch =
-                              scf::IfOp::create(bk, loc, {accumulator}, take,
-                                                /*withElseRegion=*/true);
-                          {
-                            OpBuilder t =
-                                OpBuilder::atBlockEnd(branch.thenBlock());
-                            Value r = math::SqrtOp::create(t, loc, r2);
-                            SmallVector<Value> arguments = {r, dvec};
-                            for (unsigned g = 0; g < ownedFields.size(); ++g) {
-                              arguments.push_back(gi[g]);
-                              arguments.push_back(side.getResult(1 + g));
-                            }
-                            Value value =
-                                kernel(t, op.getKernel().front(), arguments);
-                            scf::YieldOp::create(
-                                t, loc,
-                                ValueRange{visit(t, value, acc[0], d, k,
-                                                 isOwned, ghostRow)});
-                          }
-                          {
-                            OpBuilder e =
-                                OpBuilder::atBlockEnd(branch.elseBlock());
-                            scf::YieldOp::create(e, loc, ValueRange{acc[0]});
-                          }
-                          scf::YieldOp::create(bk, loc, branch.getResults());
-                        });
+                    Value end = bound(arith::AddIOp::create(bs, loc, base, c(bs, 1)));
+                    auto rows = scf::ForOp::create(bs, loc, begin, end, c(bs, 1),
+                        subtotal, [&](OpBuilder &bk, Location, Value slot, ValueRange acc) {
+                    Value k = toIndex(bk, memref::LoadOp::create(bk, loc, order, slot));
+                    Value isOwned = arith::CmpIOp::create(
+                        bk, loc, arith::CmpIPredicate::ult, k, owned);
+                    Value shifted = arith::SubIOp::create(bk, loc, k, owned);
+                    Value ghostRow =
+                        arith::SelectOp::create(bk, loc, isOwned, c(bk, 0),
+                                                shifted);
+                    auto side = readSide(bk, k, isOwned, ghostRow);
+                    Value xk = side.getResult(0);
+                    // d = x_i − x_k: ghosts carry their images, so no
+                    // minimum image is taken.
+                    Value dvec = arith::SubFOp::create(bk, loc, xi, xk);
+                    if (shifts) {
+                      Value shift = side.getResult(1 + types.size());
+                      if (midpoint)
+                        shift = arith::SubFOp::create(bk, loc, shift, centerShift);
+                      dvec = arith::SubFOp::create(bk, loc, dvec, shift);
+                    }
+                    Value r2 = vector::ReductionOp::create(
+                        bk, loc, vector::CombiningKind::ADD,
+                        arith::MulFOp::create(bk, loc, dvec, dvec));
+                    Value inside = arith::CmpFOp::create(
+                        bk, loc, arith::CmpFPredicate::OLT, r2,
+                        arith::ConstantOp::create(
+                            bk, loc, bk.getF64FloatAttr(cutoff * cutoff)));
+                    Value pair;
+                    if (unique)
+                      pair = arith::CmpIOp::create(
+                          bk, loc, arith::CmpIPredicate::slt, idi,
+                          side.getResults().back());
+                    else
+                      pair = arith::CmpIOp::create(
+                          bk, loc, arith::CmpIPredicate::ne, k, i);
+                    Value take = arith::AndIOp::create(bk, loc, inside, pair);
+                    if (midpoint) {
+                      auto owner = scf::IfOp::create(bk, loc, take,
+                          [&](OpBuilder &t, Location) {
+                            SmallVector<Value> args{halo.handle};
+                            for (Value idx : {d, i})
+                              args.push_back(arith::IndexCastOp::create(t, loc, i64, idx));
+                            for (Value vec : {xi, dvec})
+                              for (int axis = 0; axis < 3; ++axis)
+                                args.push_back(vector::ExtractOp::create(t, loc, vec, axis));
+                            auto result = func::CallOp::create(t, loc, owns, args);
+                            scf::YieldOp::create(t, loc, arith::TruncIOp::create(
+                                t, loc, t.getI1Type(), result.getResult(0)).getResult());
+                          }, [&](OpBuilder &e, Location) { scf::YieldOp::create(e, loc, take); });
+                      take = owner.getResult(0);
+                    }
+                    auto branch = scf::IfOp::create(bk, loc, {accumulator},
+                                                    take,
+                                                    /*withElseRegion=*/true);
+                    {
+                      OpBuilder t = OpBuilder::atBlockEnd(branch.thenBlock());
+                      Value r = math::SqrtOp::create(t, loc, r2);
+                      SmallVector<Value> arguments = {r, dvec};
+                      for (unsigned g = 0; g < ownedFields.size(); ++g) {
+                        arguments.push_back(gi[g]);
+                        arguments.push_back(side.getResult(1 + g));
+                      }
+                      Value value =
+                          kernel(t, op.getKernel().front(), arguments);
+                      scf::YieldOp::create(
+                          t, loc,
+                          ValueRange{visit(t, value, acc[0], d, k, isOwned,
+                                           ghostRow)});
+                    }
+                    {
+                      OpBuilder e = OpBuilder::atBlockEnd(branch.elseBlock());
+                      scf::YieldOp::create(e, loc, ValueRange{acc[0]});
+                    }
+                    scf::YieldOp::create(bk, loc, branch.getResults());
+                  });
                     scf::YieldOp::create(bs, loc, rows.getResults());
                   });
               Value sum = slabs.getResult(0);
@@ -1435,8 +1458,20 @@ LogicalResult Lowering::lowerGatherPairs(GatherPairsOp op) {
                             pairForce));
       },
       [&](OpBuilder &at, Value sum, Value d, Value i) {
-        if (raw)
-          storeValue(at, sum, raw, d, i);
+        if (op.getRelation().getType().getTraversal() == Traversal::Midpoint) {
+          Value n = toIndex(at, memref::LoadOp::create(at, loc, layout.rows, d));
+          Value local = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, i, n);
+          scf::IfOp::create(at, loc, local, [&](OpBuilder &t, Location) {
+            addValue(t, sum, ownedOut, d, i);
+            scf::YieldOp::create(t, loc);
+          }, [&](OpBuilder &e, Location) {
+            Value r = arith::SubIOp::create(e, loc, i, n);
+            addValue(e, sum, ghostOut, d, r);
+            scf::YieldOp::create(e, loc);
+          });
+          return;
+        }
+        if (raw) storeValue(at, sum, raw, d, i);
         if (twoEnded)
           addValue(at, fixedPoint ? sum : scale(at, sum, weight), ownedOut, d,
                    i);
@@ -1882,6 +1917,8 @@ void Lowering::copyBack(OpBuilder &b, Value field, Value first, Value count,
 }
 
 LogicalResult Lowering::lowerNeighborhoodExec(NeighborhoodOp op) {
+  if (op.getResult().getType().getTraversal() == Traversal::Midpoint)
+    return op.emitOpError("midpoint requires the distributed CPU pair lowering");
   // The precondition under which the relation is that of md.neighborhood,
   // as in the reference executor.
   if (failed(lowerNeighborhood(op)))

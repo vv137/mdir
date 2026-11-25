@@ -912,8 +912,10 @@ LogicalResult NeighborhoodOp::verify() {
     return emitOpError() << "expected positions with 3 components";
   if (failed(verifyCoverage(*this, *this)))
     return failure();
-  return proveCovers(*this, getHalo(), getPositions(),
-                     getCutoff().convertToDouble());
+  double radius = getCutoff().convertToDouble();
+  if (getResult().getType().getTraversal() == Traversal::Midpoint)
+    radius *= 0.5;
+  return proveCovers(*this, getHalo(), getPositions(), radius);
 }
 
 LogicalResult PartitionCentersOp::verify() {
@@ -929,6 +931,12 @@ LogicalResult mdir::md_dist::verifyCoverage(Operation *op,
       neighborhood.getHalo().getType().getReach().convertToDouble();
   if (!(cutoff > 0.0))
     return op->emitOpError() << "expected a positive cutoff";
+  if (neighborhood.getResult().getType().getTraversal() == Traversal::Midpoint) {
+    if (reach < cutoff * 0.5)
+      return op->emitOpError() << "under-covered midpoint halo: reach " << reach
+                               << " is below half the cutoff, " << cutoff * 0.5;
+    return success();
+  }
   if (reach < cutoff)
     return op->emitOpError() << "the reach of the halo, " << reach
                              << ", is less than the cutoff, " << cutoff

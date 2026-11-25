@@ -22,11 +22,13 @@
 // RUN: not mdir-opt %s --md-distribute="grid=9223372036854775807,2,1" -split-input-file 2>&1 | FileCheck %s --check-prefix=OVERFLOW
 // OVERFLOW: the product of grid divisions overflows i64
 // RUN: not mdir-opt %s --md-distribute="grid=2,1,1 traversal=half" -split-input-file 2>&1 | FileCheck %s --check-prefix=TRAVERSAL
-// TRAVERSAL: md-distribute: the traversal is 'directed' or 'unique', not 'half'
+// TRAVERSAL: md-distribute: the traversal is 'directed' or 'unique' or 'midpoint', not 'half'
 // RUN: not mdir-opt %s --md-distribute="grid=2,1,1 potentials=nothing" -split-input-file 2>&1 | FileCheck %s --check-prefix=NAME
 // NAME: md-distribute: no potential is named 'nothing'
 // RUN: not mdir-opt %s --md-distribute="grid=2,1,1 reach=1.5" -split-input-file 2>&1 | FileCheck %s --check-prefix=REACH
 // REACH: error: 'md.potential' op the reach of the halo, 1.500000e+00, is less than the cutoff, 2.000000e+00
+// RUN: not mdir-opt %s --md-distribute="grid=2,1,1 traversal=midpoint reach=0.9" -split-input-file 2>&1 | FileCheck %s --check-prefix=MIDPOINT
+// MIDPOINT: under-covered midpoint halo: reach 9.000000e-01 is below half the cutoff, 1.000000e+00
 
 !vec   = !md.field<@atoms, 3 x f64>
 !pairs = !md.relation<@atoms, 2, unordered>

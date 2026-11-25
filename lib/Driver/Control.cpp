@@ -3377,6 +3377,30 @@ Error Reader::read(const toml::table &root) {
       distributionRefused = true;
       return error;
     }
+    if (Error err = readChoice<std::string>(*table, "transport", dist.transport,
+                                             {{"local", "local"}, {"mpi", "mpi"}}))
+      return err;
+#if !MDIR_ENABLE_MPI
+    if (dist.transport == "mpi")
+      return fail(*table, "MPI transport requires a build with MDIR_ENABLE_MPI=ON");
+#endif
+    if (Error err = readChoice<std::string>(*table, "traversal", dist.traversal,
+                     {{"directed", "directed"}, {"unique", "unique"}, {"midpoint", "midpoint"}}))
+      return err;
+    if (control.pairlistDistance <= control.cutoffDistance)
+      return fail(*table, "distributed halo coverage requires a positive skin");
+    if (control.precision == Precision::Single)
+      return fail(*table, "distributed state requires mixed or double position storage");
+    if (control.target != Target::CPU)
+      return fail(*table, "distributed execution requires a CPU target");
+    if (control.pme || control.ljpme)
+      return fail(*table, "reciprocal sums require a distributed mesh");
+    if (!control.periodic || control.barostat)
+      return fail(*table, "distributed execution requires a fixed periodic cell");
+    if (control.minimize || control.thermostat ||
+        control.integrator != Integrator::VelocityVerlet)
+      return fail(*table, "distributed dynamics requires NVE velocity Verlet");
+  }
 
   // Execution choices of the "same accuracy" class (#790). The rigid
   // units (D424): `ON` is refused where the route cannot
