@@ -608,14 +608,7 @@ struct HostMatrix {
   int64_t width;
 };
 
-/* A memref of rank 2 as the C interface of MLIR passes it. */
-struct HostBuffer2 {
-  void *allocated;
-  void *aligned;
-  int64_t offset;
-  int64_t sizes[2];
-  int64_t strides[2];
-};
+#include "mdrt_host_matrix.h"
 
 static void allocateHostMatrix(struct HostMatrix *matrix) {
   matrix->data = malloc((size_t)(matrix->rows * matrix->width) *
@@ -640,7 +633,7 @@ struct HostActivation {
 };
 static struct HostActivation *currentActivation = NULL;
 
-int64_t mdrtHostMatrixCreate(int64_t rows, int64_t width) {
+int64_t mdrtHostMatrixAllocate(int64_t rows, int64_t width) {
   struct HostMatrix *matrix = calloc(1, sizeof(struct HostMatrix));
   if (!matrix) {
     fprintf(stderr, "mdrt: out of memory of the host\n");
@@ -649,6 +642,20 @@ int64_t mdrtHostMatrixCreate(int64_t rows, int64_t width) {
   matrix->rows = rows > 0 ? rows : 1;
   matrix->width = width > 0 ? width : 1;
   allocateHostMatrix(matrix);
+  return (int64_t)(intptr_t)matrix;
+}
+
+void mdrtHostMatrixRelease(int64_t handle) {
+  struct HostMatrix *matrix = (struct HostMatrix *)(intptr_t)handle;
+  if (matrix) {
+    free(matrix->data);
+    free(matrix);
+  }
+}
+
+int64_t mdrtHostMatrixCreate(int64_t rows, int64_t width) {
+  struct HostMatrix *matrix = (struct HostMatrix *)(intptr_t)
+      mdrtHostMatrixAllocate(rows, width);
   struct HostActivation *a = currentActivation;
   if (a) {
     if (a->numMatrices == a->roomMatrices) {

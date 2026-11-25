@@ -84,7 +84,8 @@ hostpairs::Refusal hostpairs::checkLanes(PairForOp op, int64_t lanes) {
   if (Refusal refused = checkWidth(lanes))
     return refused;
   if (op.getTraversal() != Traversal::Directed ||
-      op.getConflict() != Conflict::OwnerOnly)
+      (op.getConflict() != Conflict::OwnerOnly &&
+       op.getImages() != Images::Explicit))
     return std::string("the policy is not (directed, owner_only): the "
                        "lanes write at the centers alone");
   if (op.getGhostFree())

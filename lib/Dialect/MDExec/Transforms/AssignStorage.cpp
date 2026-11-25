@@ -2018,6 +2018,11 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
                                     unsigned position) {
   OpBuilder &builder = scope.builder;
 
+  if (auto domain = dyn_cast<mdrt::DomainMatrixOp>(op)) {
+    neighbors[domain.getResult()] = builder.clone(*op, mapping)->getResult(0);
+    return success();
+  }
+
   if (auto tabulate = dyn_cast<TabulateOp>(op))
     return convertTabulate(tabulate, scope);
 
@@ -2732,6 +2737,7 @@ LogicalResult Assignment::convertFunction(func::FuncOp function) {
     sharedPartials.clear();
     neighborStorages.clear();
     hostBuffers.clear();
+    hostTables.clear();
     readOnly.clear();
     Block &oldEntry = function.getBody().front();
     this->oldEntry = &oldEntry;
@@ -2746,6 +2752,8 @@ LogicalResult Assignment::convertFunction(func::FuncOp function) {
           scope.owned.insert(newArgument);
       } else {
         mapping.map(oldArgument, newArgument);
+        if (isa<md::TableType>(oldArgument.getType()))
+          hostTables[oldArgument] = newArgument;
       }
     }
     if (failed(convertBlock(oldEntry, scope)))

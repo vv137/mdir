@@ -292,6 +292,9 @@ void emitTupleOnce(mlir::OpBuilder &builder, md_exec::TupleForOp op,
 void emitAtomicAdd(mlir::OpBuilder &builder, mlir::Location loc,
                    mlir::Value value, mlir::Value buffer, mlir::Value row);
 
+void emitHostAtomicAdd(mlir::OpBuilder &builder, mlir::Location loc,
+                   mlir::Value value, mlir::Value buffer, mlir::Value row);
+
 /// Emits what a thread of a loop over tuples with global sums does where
 /// each tuple is evaluated once (D103): the tuples `first`, `first +
 /// stride`, ... below `count`, each as emitTupleOnce does it, and returns

@@ -221,7 +221,7 @@ void kernels::storeElement(OpBuilder &builder, Location loc, Value value,
 
 /// Adds `value`, a scalar or a vector, atomically to the element `row` of
 /// the buffer `buffer` on the host.
-static void emitHostAtomicAdd(OpBuilder &b, Location loc, Value value,
+void kernels::emitHostAtomicAdd(OpBuilder &b, Location loc, Value value,
                               Value buffer, Value row) {
   auto type = cast<MemRefType>(buffer.getType());
   if (type.getRank() == 1) {

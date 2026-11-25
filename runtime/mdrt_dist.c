@@ -13,6 +13,7 @@
    the schedule as it runs. */
 
 #include "mdrt_dist_stats.h"
+#include "mdrt_host_matrix.h"
 #ifdef MDIR_ENABLE_MPI
 #include "mdrt_mpi.h"
 #endif
@@ -93,10 +94,20 @@ struct Layout {
   int64_t *ids;   /* [domains * count]: the particle of each owned row */
 };
 
+struct DomainMatrix {
+  struct DomainMatrix *next;
+  int64_t domain, centers, rows, raw, selected;
+  double cutoff, skin;
+  double *reference;
+  int32_t *counts, *selectedCounts;
+  int valid;
+};
+
 struct Halo {
   int64_t references;
   struct Layout *layout;
   double reach;
+  struct DomainMatrix *matrices;
   int64_t capacity; /* the most ghosts of one domain */
   int64_t *rows;    /* [domains] */
   /* [domains * capacity] each: the source's owner, its owned row, its
@@ -362,6 +373,122 @@ int64_t mdrtDistMidpointOwns(int64_t handle, int64_t d, int64_t i,
     owner = owner*l->grid[k] + division(u - image, l->grid[k]);
   }
   return owner == d;
+}
+
+/* The rank visits its domains serially. The ordinary compiled builder and
+   row kernels parallelize the work inside each visit. The halo fixes row
+   identities and images, but current explicit-image positions still have
+   to satisfy the Verlet displacement bound. */
+int64_t mdrtDistMatrix(int64_t handle, int64_t domain, int64_t centers,
+                       int64_t rows, double cutoff, double skin, int64_t width) {
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  struct DomainMatrix *m = h->matrices;
+  while (m && !(m->domain == domain && m->centers == centers &&
+                m->cutoff == cutoff && m->skin == skin))
+    m = m->next;
+  if (!m) {
+    m = calloc(1, sizeof *m);
+    if (!m) fail("out of memory allocating a domain matrix");
+    m->next = h->matrices;
+    h->matrices = m;
+    m->domain = domain;
+    m->rows = rows;
+    m->centers = centers;
+    m->cutoff = cutoff;
+    m->skin = skin;
+    m->raw = mdrtHostMatrixAllocate(centers, width);
+    m->counts = calloc(rows ? rows : 1, sizeof *m->counts);
+    m->reference = calloc(rows ? rows : 1, 3*sizeof *m->reference);
+    if (!m->counts || !m->reference) fail("out of memory allocating domain rows");
+  }
+  if (rows != m->rows) fail("local row count changed in a live halo");
+  return (int64_t)(intptr_t)m;
+}
+
+int64_t _mlir_ciface_mdrtDistMatrixRebuild(int64_t matrix, struct Memref2D *x) {
+  struct DomainMatrix *m = (struct DomainMatrix *)(intptr_t)matrix;
+  double limit = 0.25*m->skin*m->skin;
+  if (m->valid) {
+    int64_t i = 0;
+    for (; i < m->rows; ++i) {
+      double r2 = 0.0;
+      for (int c = 0; c < 3; ++c) {
+        double dx = *at2(x, i, c) - m->reference[3*i+c];
+        r2 += dx*dx;
+      }
+      if (!(r2 <= limit)) break;
+    }
+    if (i == m->rows) return 0;
+  }
+  for (int64_t i = 0; i < m->rows; ++i)
+    for (int c = 0; c < 3; ++c)
+      m->reference[3*i+c] = *at2(x, i, c);
+  m->valid = 1;
+  return 1;
+}
+
+int64_t mdrtDistMatrixHandle(int64_t matrix, int64_t selected) {
+  struct DomainMatrix *m = (struct DomainMatrix *)(intptr_t)matrix;
+  return selected ? m->selected : m->raw;
+}
+
+struct RowCounts {
+  int32_t *allocated, *aligned;
+  int64_t offset, sizes[1], strides[1];
+};
+
+void _mlir_ciface_mdrtDistMatrixCounts(struct RowCounts *r, int64_t matrix, int64_t selected) {
+  struct DomainMatrix *m = (struct DomainMatrix *)(intptr_t)matrix;
+  r->allocated = r->aligned = selected ? m->selectedCounts : m->counts;
+  r->offset = 0;
+  r->sizes[0] = selected ? m->centers : m->rows;
+  r->strides[0] = 1;
+}
+
+int64_t _mlir_ciface_mdrtDistSelectMatrix(int64_t handle, int64_t matrix,
+    int64_t exclusions, int64_t rule, struct Memref3D *owned, struct Memref3D *ghost) {
+  if (!rule && !exclusions) return 0;
+  struct DomainMatrix *m = (struct DomainMatrix *)(intptr_t)matrix;
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  struct Layout *l = h->layout;
+  int64_t d = m->domain, n = l->rows[d];
+  struct HostBuffer2 src, dst;
+  _mlir_ciface_mdrtHostMatrixEntries(&src, m->raw);
+  if (!m->selected) {
+    m->selected = mdrtHostMatrixAllocate(m->centers, src.sizes[1]);
+    m->selectedCounts = calloc(m->centers ? m->centers : 1, sizeof *m->selectedCounts);
+    if (!m->selectedCounts) fail("out of memory allocating filtered row counts");
+  }
+  mdrtHostMatrixGrow(m->selected, src.sizes[1]);
+  _mlir_ciface_mdrtHostMatrixEntries(&dst, m->selected);
+  for (int64_t i = 0; i < m->centers; ++i) {
+    int64_t gi = d*h->capacity + i-n;
+    int64_t idi = i<n ? l->ids[d*l->count+i] : h->ids[gi];
+    int32_t count = 0;
+    for (int32_t k = 0; k < m->counts[i]; ++k) {
+      int32_t j = ((int32_t *)src.aligned)[i*src.strides[0]+k];
+      int64_t gj = d*h->capacity + j-n;
+      int64_t idj = j<n ? l->ids[d*l->count+j] : h->ids[gj];
+      if (rule && idi >= idj) continue;
+      if (exclusions && !mdrtDistPairAllowed(exclusions, idi < idj ? idi : idj,
+                                             idi < idj ? idj : idi)) continue;
+      if (rule == 2) {
+        double xi[3], dx[3];
+        for (int c = 0; c < 3; ++c) {
+          xi[c] = i<n ? *at3(owned,d,i,c) : *at3(ghost,d,i-n,c);
+          double xj = j<n ? *at3(owned,d,j,c) : *at3(ghost,d,j-n,c);
+          double a = i<n ? 0.0 : h->image[3*gi+c]*l->edges[c];
+          double b = j<n ? 0.0 : h->image[3*gj+c]*l->edges[c];
+          dx[c] = (xi[c]-xj)-(b-a);
+        }
+        if (!mdrtDistMidpointOwns(handle,d,i,xi[0],xi[1],xi[2],dx[0],dx[1],dx[2]))
+          continue;
+      }
+      ((int32_t *)dst.aligned)[i*dst.strides[0]+count++] = j;
+    }
+    m->selectedCounts[i] = count;
+  }
+  return 1;
 }
 
 /* Constraints in a group share the periodic image of the center atom.
@@ -1248,6 +1375,16 @@ void mdrtDistReleaseHalo(int64_t handle) {
   if (--h->references > 0)
     return;
   mdrtDistReleaseLayout((int64_t)(intptr_t)h->layout);
+  while (h->matrices) {
+    struct DomainMatrix *m = h->matrices;
+    h->matrices = m->next;
+    mdrtHostMatrixRelease(m->raw);
+    mdrtHostMatrixRelease(m->selected);
+    free(m->counts);
+    free(m->selectedCounts);
+    free(m->reference);
+    free(m);
+  }
   free(h->rows);
   free(h->edges);
   free(h->sourceDomain);

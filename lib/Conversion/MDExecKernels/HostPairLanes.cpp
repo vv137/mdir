@@ -394,6 +394,23 @@ SmallVector<Value> kernels::emitPairRowLanes(OpBuilder &builder,
     within = arith::AndIOp::create(b, loc, within, distinct);
     if (valid)
       within = arith::AndIOp::create(b, loc, within, valid);
+    if (op.getConflict() == md_exec::Conflict::Atomic && numOuts) {
+      for (int64_t lane = 0; lane < width; ++lane) {
+        Value active = vector::ExtractOp::create(b, loc, within, lane);
+        SmallVector<Value> contributions;
+        for (Value output : yield->getOperands().take_front(numOuts))
+          contributions.push_back(values.getLane(output, output.getType(), lane));
+        scf::IfOp::create(b, loc, active, [&](OpBuilder &at, Location) {
+          for (auto [i, contribution] : llvm::enumerate(contributions)) {
+            Value value = contribution;
+            if (op.getExchange(i) == md::Exchange::Antisymmetric)
+              value = arith::NegFOp::create(at, loc, value);
+            emitHostAtomicAdd(at, loc, value, op.getOuts()[i], other[lane]);
+          }
+          scf::YieldOp::create(at, loc);
+        });
+      }
+    }
     SmallVector<Value> updated;
     for (unsigned i = 0; i != numYields; ++i) {
       Value narrow = getNarrow(i);
@@ -470,6 +487,10 @@ SmallVector<Value> kernels::emitPairRowLanes(OpBuilder &builder,
   for (unsigned i = 0; i != numOuts; ++i) {
     Value destination = op.getOuts()[i];
     Value total = totals[i];
+    if (op.getConflict() == md_exec::Conflict::Atomic) {
+      emitHostAtomicAdd(builder, loc, total, destination, central);
+      continue;
+    }
     if (!op.overwrites(i))
       total = arith::AddFOp::create(
           builder, loc, loadElement(builder, loc, destination, central),
