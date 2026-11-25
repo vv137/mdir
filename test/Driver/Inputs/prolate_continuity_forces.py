@@ -1,6 +1,7 @@
 """Binary64 mesh and point-charge Ewald force references for D440."""
 from itertools import product
 import math
+import os
 from pathlib import Path
 import sys
 
@@ -38,17 +39,30 @@ def density(continuity, terms):
     return u, samples / samples.sum()
 
 
-def mesh_force(continuity, terms, window):
+def mesh_force(continuity, terms, window, observables=False):
     axis = np.rint(np.fft.fftfreq(grid) * grid).astype(int)
     m2 = sum(a*a for a in np.meshgrid(axis, axis, axis, indexing="ij"))
     shells, indices = np.unique(m2, return_inverse=True)
     k = 2*np.pi / edge * np.sqrt(shells)
     u, weights = density(continuity, terms or 40)
     transform = np.cos(cutoff * k[:, None] * u) @ weights
+    if observables:
+        # d chi / d log(k) for a uniform cell dilation at fixed fractional sites.
+        phase = cutoff * k[:, None] * u
+        derivative = -(phase * np.sin(phase)) @ weights
+        _, quadrature = legendre.leggauss(len(u))
+        coeff = legendre.legfit(u, 2*weights/quadrature, 2*(terms or 40)-2)
+        self_energy = -COULOMB_NATIVE * legendre.legval(0., coeff) * (q @ q) / (2*cutoff)
     if not terms and continuity == 0:
         transform[k * cutoff >= bandwidth] = 0
+        if observables:
+            derivative[k * cutoff >= bandwidth] = 0
     influence = np.zeros_like(k)
     influence[1:] = 4*np.pi*COULOMB_NATIVE/edge**3 * transform[1:] / k[1:]**2
+    if observables:
+        trace = influence.copy()
+        trace[1:] += 4*np.pi*COULOMB_NATIVE/edge**3 * derivative[1:] / k[1:]**2
+        trace = trace[indices].reshape(m2.shape)
     influence = influence[indices].reshape(m2.shape)
     rho = np.zeros_like(m2, dtype=float)
     t = x / edge * grid
@@ -71,6 +85,8 @@ def mesh_force(continuity, terms, window):
         slopes = window_polynomial.deriv()(displacements) / 3
     for axis_factor in np.ix_(*([squared]*3)):
         influence /= axis_factor
+        if observables:
+            trace /= axis_factor
     stencil = []
     for offsets in product(range(order), repeat=3):
         idx = tuple(((base + offsets - (order//2-1)) % grid).T)
@@ -79,7 +95,21 @@ def mesh_force(continuity, terms, window):
         grad = [slopes[j, :, a] * w[(a+1)%3] * w[(a+2)%3] for a, j in enumerate(offsets)]
         stencil.append((idx, np.array(grad).T))
     potential = np.fft.ifftn(influence * np.fft.fftn(rho)).real * grid**3
-    return -q[:, None] * grid/edge * sum(potential[idx][:, None]*g for idx, g in stencil)
+    force = -q[:, None] * grid/edge * sum(potential[idx][:, None]*g for idx, g in stencil)
+    if observables:
+        # The stored half mesh assigns +N/2 to all three Nyquist indices.
+        axis[grid//2] = grid//2
+        wave = np.meshgrid(axis, axis, axis[:grid//2+1], indexing="ij", sparse=True)
+        half = np.s_[:, :, :grid//2+1]
+        power = np.abs(np.fft.rfftn(rho))**2
+        power[:, :, [0, -1]] *= 0.5
+        mesh_energy = np.sum(power * influence[half])
+        slope = power * (3*influence[half] - trace[half]) / np.maximum(m2[half], 1)
+        tensor = mesh_energy * np.eye(3)
+        for i, j in product(range(3), repeat=2):
+            tensor[i, j] -= np.sum(slope * wave[i] * wave[j])
+        return force, mesh_energy, self_energy, tensor
+    return force
 
 
 def ewald_force():
@@ -133,6 +163,59 @@ if window_polynomial(0.) < 0:
     window_polynomial = -window_polynomial
 system.pme_tolerance = 2 * window_polynomial(1.)
 state.velocities = np.zeros_like(x)
+if "--axis" in sys.argv:
+    # FrameEvaluator exposes the full strain tensor for a tunable program.
+    # The Lennard-Jones well depth is zero for every ion in this fixture.
+    system.tunables = [mdir.Tunable("sigma", "sigma_pair")]
+    system.tunable_gradient = True
+    for continuity, terms, window in [(0, 0, "PROLATE"), (2, 8, "BSPLINE")]:
+        bandwidth = 14.471 if not terms else 9.5392
+        system.pme_bandwidth = bandwidth
+        system.pme_continuity = continuity
+        if terms:
+            system.pme_basis_terms = terms
+        force, energy, self_energy, tensor = mesh_force(continuity, terms, window, observables=True)
+        state.positions = x
+        integrator = mdir.Integrator()
+        integrator.timestep = 1e-12
+        for mode in ("Mixed", "Double"):
+            execution = mdir.Execution()
+            execution.target = mdir.Target.GPU
+            execution.precision = getattr(mdir.Precision, mode)
+            tol = 2e-4 if mode == "Mixed" else 2e-6
+            baseline = {}
+            for backend in ("off", "on"):
+                os.environ["MDIR_PME_AXIS_FFT"] = backend
+                program = mdir.compile(system, state, integrator, mdir.Ensemble(), execution, mdir.Schedule())
+                axis_symbol = "mdrt_gpu_pme_axis_fft_48x48x48_prolate"
+                assert (axis_symbol in program.lowered_ir) == (backend == "on"), (window, mode, backend)
+                for observed in (False, True):
+                    sim = mdir.Simulation(program)
+                    sim.run(1, energy=observed)
+                    sampled = sim.state()
+                    outputs = [("force", np.asarray(sampled.forces), force)]
+                    if observed:
+                        outputs.extend([("mesh energy", sampled.energies["potential"] - self_energy, energy),
+                                        ("virial", sampled.energies["virial"], np.trace(tensor))])
+                        frame = mdir.FrameEvaluator(program).evaluate(
+                            x[None], np.full((1, 3), edge), gradients=("strain",))
+                        outputs.append(("virial tensor", -frame.gradients["strain"][0], tensor))
+                    for quantity, actual, reference in outputs:
+                        key = (observed, quantity)
+                        comparisons = [("oracle", reference, tol)]
+                        if backend == "off":
+                            baseline[key] = actual
+                        else:
+                            comparisons.append(("cuFFT", baseline[key], 2e-4 if mode == "Mixed" else 1e-10))
+                        for label, ref, limit in comparisons:
+                            scale = np.sqrt(np.mean(np.square(ref)))
+                            delta = np.sqrt(np.mean(np.square(actual - ref)))
+                            print(window, mode, backend, observed, quantity, label,
+                                  f"reference RMS {scale:.10g} difference {delta:.9g} bound {limit*scale:.9g}",
+                                  flush=True)
+                            assert delta < limit * scale
+    sys.exit(0)
+
 full_reference = ewald_force()
 for continuity, terms, window in [(0, 0, "PROLATE"), (2, 8, "BSPLINE"),
                                   (2, 40, "BSPLINE"), (3, 8, "BSPLINE"),
