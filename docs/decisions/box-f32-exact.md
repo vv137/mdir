@@ -1,6 +1,8 @@
-# D[box-f32-exact] Use one representable periodic cell per step
+# D[box-f32-exact]
 
-In mixed and single precision, wrapping, image offsets, neighbor construction,
+Recorded at its merge.
+
+Use one representable periodic cell per step. In mixed and single precision, wrapping, image offsets, neighbor construction,
 PME, exclusions, and virial evaluation all use the same step cell. Round each
 independent reduced-cell component in nm to binary32 and widen it exactly for
 binary64 consumers. The setup log and manifest record the six signed changes.
