@@ -1010,11 +1010,18 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
   // A pair-only halo can scatter directly behind the owned positions.
   // The caller owns the complete device field across outlined pair groups.
   if (gpuPairs && op.getImage() && !op.getResult().use_empty() &&
-      llvm::all_of(op.getResult().getUsers(), [&](Operation *user) {
+      llvm::all_of(op.getResult().getUses(), [&](OpOperand &use) {
+        Operation *user = use.getOwner();
         auto n = dyn_cast<NeighborhoodOp>(user);
+        if (!n) {
+          // A pair traversal names the relation's ghost geometry again.
+          if (!isa<GatherPairsOp, SumPairsOp>(user) || use.getOperandNumber() != 2)
+            return false;
+          n = user->getOperand(0).getDefiningOp<NeighborhoodOp>();
+        }
         return n && n.getPositions() == op.getField() && n.getGhosts() == op.getResult() &&
-               llvm::all_of(n.getResult().getUsers(), [](Operation *use) {
-                 return isa<GatherPairsOp, SumPairsOp>(use);
+               llvm::all_of(n.getResult().getUsers(), [](Operation *consumer) {
+                 return isa<GatherPairsOp, SumPairsOp>(consumer);
                });
       })) {
     auto type = MemRefType::get({ShapedType::kDynamic, 3}, b.getF64Type(),
