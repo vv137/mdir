@@ -1,5 +1,7 @@
 # D[distribute-driver]
 
+Recorded at its merge.
+
 The CPU control-file driver lowers the fixed-cell velocity Verlet program
 onto domains. The potential rewrite supplies the force and energy kernels.
 The step state carries positions, velocities, forces, masses and the real
