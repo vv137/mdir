@@ -143,6 +143,7 @@ then MDIR's sources. The tarball holds:
 | `lib/libomp.so` | The OpenMP runtime of LLVM, for threaded runs on the CPU |
 | `lib/libhdf5.so.*` | HDF5, for checkpoints |
 | `lib/libcufft.so.*` | cuFFT, for particle mesh Ewald on a GPU |
+| `lib/libnvJitLink.so.*`, `lib/libnvrtc*.so.*` | Runtime compilation of cuFFT callbacks in CUDA 13 builds |
 | `lib/libcublas.so.*`, `lib/libcublasLt.so.*` | cuBLAS and the cuBLASLt that it loads, for the products of the shape of a GEMM in the stage bodies (D302) |
 | `share/mdir/cuda` | libdevice, the math functions the kernels link, with the CUDA EULA |
 | `share/mdir/examples`, `share/mdir/LICENSE` | The examples and MDIR's license |
@@ -190,7 +191,7 @@ Releases).
 
 A wheel holds the extension, the runtime, libdevice with the CUDA EULA,
 and HDF5 (in `mdir.libs`); cuFFT, cuBLAS, and ptxas come from NVIDIA's
-wheels `nvidia-cufft`, `nvidia-cublas`, and `nvidia-cuda-nvcc` through the
+wheels `nvidia-cufft`, `nvidia-cublas`, `nvidia-cuda-nvcc`, and `nvidia-cuda-nvrtc` through the
 extra `mdir[cuda]`, and
 the driver's `libcuda` from the system. The `mdir` command is not in the wheels.
 

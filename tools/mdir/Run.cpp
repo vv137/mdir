@@ -745,6 +745,11 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // manifest (D408).
   auto [algPolicy, algPolicyLine] = takeAlgPolicy(*module);
 
+  // Read the compiled choice so custom pipelines report the path they emit.
+  bool hasFusedInverse =
+      module->lookupSymbol("_mlir_ciface_mdrtCudaFFTGaussianBackwardF32");
+  const char *pmeForceProduct = hasFusedInverse ? "inverse_load" : "separate";
+
   // The profile map of the lowered program, which names the source of each
   // parallel region of the host (D398).
   auto writeProfileMap = [&](const std::string &path) -> llvm::Error {
@@ -1168,6 +1173,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
           {"grid", llvm::json::Array{program->pmeGrid[0], program->pmeGrid[1],
                                     program->pmeGrid[2]}},
           {"order", program->pmeOrder},
+          {"force_only_product_rule", pmeForceProduct},
           {"kernel", program->pmeProlate ? "PROLATE" : "GAUSSIAN"}};
     // The prolate kernel's own parameters (D266).
     if (program->pme && program->pmeProlate) {
@@ -1509,6 +1515,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     output.log.print("MDIR: %zu particles, %lld steps of %g ps\n",
                  count, static_cast<long long>(control->numSteps),
                  control->timestep);
+  if (program->pme)
+    output.log.print("MDIR: PME force-only product rule: %s\n", pmeForceProduct);
   // The parameters that the prolate kernel derives (D266).
   if (program->pmeProlate)
     output.log.print("MDIR: the prolate kernel of PME: c = %.6g, c1 = %.6g, "

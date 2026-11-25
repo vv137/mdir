@@ -293,8 +293,15 @@ precision (D78).*
 | | Otherwise | Orders 6 and 8, or f64, without tiles: a thread for each particle and point along $z$, with floating-point atomics; in the deterministic mode the products $q\prod M$ are scaled by $2^{40}$, rounded to 64-bit integers, added with integer atomics, and scaled back, so the grid does not depend on the order of the threads [[LeGrand2013]](references.md#legrand2013) (D70, D84) |
 | Transform | cuFFT | Real-to-complex and back, in the type of the grid; plans are cached and bound to the stream of the kernels |
 | Tables | `tables` | The separable factors of Section 5.2 |
-| Product | `scale` or `convolve` | $\hat Q\leftarrow BC\,\hat Q$. When the energy or the virial is requested, `convolve` also sums $E_\mathbf m$ and the six components of $\mathsf W$: a block of 128 threads reduces in the type of the grid, stores its sums in f64, and one block adds the blocks in f64, in an order that depends only on the size of the grid; the host copies seven numbers |
+| Product | inverse load, `scale`, or `convolve` | $\hat Q\leftarrow BC\,\hat Q$. When the energy or the virial is requested, `convolve` also sums $E_\mathbf m$ and the six components of $\mathsf W$: a block of 128 threads reduces in the type of the grid, stores its sums in f64, and one block adds the blocks in f64, in an order that depends only on the size of the grid; the host copies seven numbers |
 | Gathering | `gather_weights` | Order 4 in f32: four threads a particle; each recomputes the splines and their slopes from the stored fractions by the unrolled recursion, in the type of the grid, and the four sum by shuffles (D102). Otherwise four lanes a particle for order 4 and eight for 6 and 8, which recompute the places |
+
+For a force-only Gaussian Coulomb evaluation in mixed precision on a
+rectangular cell, the inverse cuFFT load can form $BC\,\hat Q$ directly
+from the per-axis tables (D[pme-fused-convolution]). At zero frequency
+the product is zero. This avoids writing and rereading the scaled complex
+grid. Energy and virial reductions and derivatives in the charges keep
+the separate product. The mesh and its accuracy are the same up to rounding.
 
 The fraction along the cell stays f64 because a position of a large cell
 in f32 would lose the digits that place it within a point: the product

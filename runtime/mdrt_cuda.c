@@ -1595,6 +1595,11 @@ void mgpuMemset16(void *destination, unsigned short value, size_t count,
   order of the program without a wait. A plan is kept for each grid. */
 
 #include <cufft.h>
+#ifdef MDIR_PME_CALLBACK
+#include <cufftXt.h>
+#include "pme_callback.inc"
+#endif
+#include "pme_callback.h"
 
 /* The descriptor of a buffer of one dimension of f64 on the device. */
 typedef struct {
@@ -1637,15 +1642,18 @@ static void stopWith(const char *message) {
 
 /* The plans of cuFFT of the process, one for each grid, direction, and
    precision that a program has transformed, kept until the process ends
-   and shared by the programs that transform the same grid. A program in
+   and shared by the programs that transform the same grid. A callback
+   inverse also keys on the table address bound to the plan. A program in
    mixed precision with tunable charges takes four a grid (both directions,
    f32 and f64), so the table grows as programs of other grids come (#323);
    it held 8 before, and the ninth plan ended the process. */
 struct FFTPlan {
   int64_t k1, k2, k3;
   int forward, single;
+  const float *tables;
+  CUdeviceptr callbackInfo;
   cufftHandle plan;
-  /* The plan's workspace, and when it was last taken. */
+  /* The workspace and callback descriptor, and when the plan was last taken. */
   uint64_t bytes, lastUse;
 };
 static struct FFTPlan *fftPlans = NULL;
@@ -1676,6 +1684,8 @@ static uint64_t getFFTPlanBudget(void) {
 static void destroyFFTPlan(int64_t i) {
   finish();
   cufftDestroy(fftPlans[i].plan);
+  if (fftPlans[i].callbackInfo)
+    cuMemFree(fftPlans[i].callbackInfo);
   fftPlanBytes -= fftPlans[i].bytes;
   fftPlans[i] = fftPlans[--numFFTPlans];
 }
@@ -1694,15 +1704,39 @@ static int checkFFT(cufftResult result, const char *what, int64_t k1,
   return 0;
 }
 
+/* A callback descriptor belongs to the plan. Its address stays fixed while
+   the tables kernel refreshes the values before each inverse transform. */
+static cufftResult makeFFTPlan(cufftHandle *plan, int k1, int k2, int k3,
+                               cufftType type, CUdeviceptr info) {
+#ifdef MDIR_PME_CALLBACK
+  if (info) {
+    cufftResult result = cufftCreate(plan);
+    if (result != CUFFT_SUCCESS)
+      return result;
+    void *caller = (void *)(uintptr_t)info;
+    result = cufftXtSetJITCallback(*plan, "mdirGaussianLoad", pmeCallback,
+                                   sizeof pmeCallback, CUFFT_CB_LD_COMPLEX,
+                                   &caller);
+    size_t work;
+    if (result == CUFFT_SUCCESS)
+      result = cufftMakePlan3d(*plan, k1, k2, k3, type, &work);
+    if (result != CUFFT_SUCCESS)
+      cufftDestroy(*plan);
+    return result;
+  }
+#endif
+  return cufftPlan3d(plan, k1, k2, k3, type);
+}
+
 /* The plan of a grid, a direction, and a precision (f32 if `single`), on
    the stream of the kernels, in `plan`; 0 if it cannot be made, and the
    run stops. */
 static int getFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward,
-                      int single, cufftHandle *plan) {
+                      int single, const float *tables, cufftHandle *plan) {
   for (int64_t i = 0; i != numFFTPlans; ++i)
     if (fftPlans[i].k1 == k1 && fftPlans[i].k2 == k2 &&
         fftPlans[i].k3 == k3 && fftPlans[i].forward == forward &&
-        fftPlans[i].single == single) {
+        fftPlans[i].single == single && fftPlans[i].tables == tables) {
       fftPlans[i].lastUse = ++fftUses;
       *plan = fftPlans[i].plan;
       return checkFFT(cufftSetStream(*plan, (cudaStream_t)mgpuStreamCreate()),
@@ -1728,20 +1762,38 @@ static int getFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward,
                           : (forward ? CUFFT_D2Z : CUFFT_Z2D);
   cufftHandle made;
   int64_t before = beginAccount();
-  cufftResult result = cufftPlan3d(&made, (int)k1, (int)k2, (int)k3, type);
-  /* For want of memory, once more after the idle memory is given back. */
+  CUdeviceptr info = 0;
+#ifdef MDIR_PME_CALLBACK
+  if (tables) {
+    PMECallbackInfo desc = {tables, (unsigned)k1, (unsigned)k2, (unsigned)k3};
+    CUresult allocated = cuMemAlloc(&info, sizeof desc);
+    if (allocated == CUDA_ERROR_OUT_OF_MEMORY && trimIdle())
+      allocated = cuMemAlloc(&info, sizeof desc);
+    check(allocated, "PME callback descriptor");
+    check(cuMemcpyHtoD(info, &desc, sizeof desc), "PME callback descriptor");
+  }
+#endif
+  cufftResult result = makeFFTPlan(&made, k1, k2, k3, type, info);
   if (result == CUFFT_ALLOC_FAILED && trimIdle())
-    result = cufftPlan3d(&made, (int)k1, (int)k2, (int)k3, type);
-  if (!checkFFT(result, "cufftPlan3d", k1, k2, k3))
-    return 0;
-  /* The bytes asked for are the plan's workspace. */
+    result = makeFFTPlan(&made, k1, k2, k3, type, info);
+  if (result != CUFFT_SUCCESS) {
+    if (info)
+      cuMemFree(info);
+    return checkFFT(result, tables ? "cuFFT Gaussian callback plan" : "cufftPlan3d",
+                    k1, k2, k3);
+  }
+  /* Include the caller information owned by a callback plan in its budget. */
   size_t workspace = 0;
   cufftGetSize(made, &workspace);
+  if (info)
+    workspace += sizeof(PMECallbackInfo);
   if (before >= 0)
     endAccount(ACCOUNT_FFT, before, (int64_t)workspace);
   if (!checkFFT(cufftSetStream(made, (cudaStream_t)mgpuStreamCreate()),
                 "cufftSetStream", k1, k2, k3)) {
     cufftDestroy(made);
+    if (info)
+      cuMemFree(info);
     return 0;
   }
   /* The plans least recently taken make room for this one in the budget. */
@@ -1758,6 +1810,8 @@ static int getFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward,
   entry->k3 = k3;
   entry->forward = forward;
   entry->single = single;
+  entry->tables = tables;
+  entry->callbackInfo = info;
   entry->plan = made;
   entry->bytes = workspace;
   entry->lastUse = ++fftUses;
@@ -1835,7 +1889,7 @@ void _mlir_ciface_mdrtCudaFFTForward3D(DeviceBuffer1D *real,
   enter();
   double start = begin();
   cufftHandle plan;
-  if (getFFTPlan(k1, k2, k3, 1, 0, &plan))
+  if (getFFTPlan(k1, k2, k3, 1, 0, NULL, &plan))
     checkFFT(cufftExecD2Z(plan,
                           (cufftDoubleReal *)(real->aligned + real->offset),
                           (cufftDoubleComplex *)(complex->aligned +
@@ -1853,7 +1907,7 @@ void _mlir_ciface_mdrtCudaFFTBackward3D(DeviceBuffer1D *complex,
   enter();
   double start = begin();
   cufftHandle plan;
-  if (getFFTPlan(k1, k2, k3, 0, 0, &plan))
+  if (getFFTPlan(k1, k2, k3, 0, 0, NULL, &plan))
     checkFFT(cufftExecZ2D(plan,
                           (cufftDoubleComplex *)(complex->aligned +
                                                  complex->offset),
@@ -1871,7 +1925,7 @@ void _mlir_ciface_mdrtCudaFFTForward3DF32(DeviceBuffer1DF32 *real,
   enter();
   double start = begin();
   cufftHandle plan;
-  if (getFFTPlan(k1, k2, k3, 1, 1, &plan))
+  if (getFFTPlan(k1, k2, k3, 1, 1, NULL, &plan))
     checkFFT(cufftExecR2C(plan, (cufftReal *)(real->aligned + real->offset),
                           (cufftComplex *)(complex->aligned +
                                            complex->offset)),
@@ -1880,14 +1934,13 @@ void _mlir_ciface_mdrtCudaFFTForward3DF32(DeviceBuffer1DF32 *real,
   end(LAUNCH, start);
 }
 
-void _mlir_ciface_mdrtCudaFFTBackward3DF32(DeviceBuffer1DF32 *complex,
-                                           DeviceBuffer1DF32 *real,
-                                           int64_t k1, int64_t k2,
-                                           int64_t k3) {
+static void fftBackwardF32(DeviceBuffer1DF32 *complex, DeviceBuffer1DF32 *real,
+                           const float *tables, int64_t k1, int64_t k2,
+                           int64_t k3) {
   enter();
   double start = begin();
   cufftHandle plan;
-  if (getFFTPlan(k1, k2, k3, 0, 1, &plan))
+  if (getFFTPlan(k1, k2, k3, 0, 1, tables, &plan))
     checkFFT(cufftExecC2R(plan,
                           (cufftComplex *)(complex->aligned + complex->offset),
                           (cufftReal *)(real->aligned + real->offset)),
@@ -1895,6 +1948,20 @@ void _mlir_ciface_mdrtCudaFFTBackward3DF32(DeviceBuffer1DF32 *complex,
   isPending = 1;
   end(LAUNCH, start);
 }
+
+void _mlir_ciface_mdrtCudaFFTBackward3DF32(DeviceBuffer1DF32 *complex,
+                                           DeviceBuffer1DF32 *real,
+                                           int64_t k1, int64_t k2, int64_t k3) {
+  fftBackwardF32(complex, real, NULL, k1, k2, k3);
+}
+
+#ifdef MDIR_PME_CALLBACK
+void _mlir_ciface_mdrtCudaFFTGaussianBackwardF32(
+    DeviceBuffer1DF32 *complex, DeviceBuffer1DF32 *real, DeviceBuffer1DF32 *tables,
+    int64_t k1, int64_t k2, int64_t k3) {
+  fftBackwardF32(complex, real, tables->aligned + tables->offset, k1, k2, k3);
+}
+#endif
 
 /*===----------------------------------------------------------------------===
  * The buffers of a structure of groups of neighbors (D89)

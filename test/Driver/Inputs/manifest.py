@@ -227,6 +227,7 @@ with (gmx / "system.top").open("a") as f:
 command("run", gmx / "run.toml")
 gmxmeta = records(gmx / "run.jsonl")[0]
 paths = hashes(gmxmeta)
+assert gmxmeta["effective"]["pme"]["force_only_product_rule"] == "separate"
 assert gmxmeta["effective"]["pme"]["beta_inverse_angstrom"] > 0
 assert all(x >= 8 for x in gmxmeta["effective"]["pme"]["grid"])
 assert gmxmeta["warnings"] == json.loads(command("check", gmx / "run.toml", "--json"))["warnings"]

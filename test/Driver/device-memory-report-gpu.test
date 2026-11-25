@@ -12,7 +12,7 @@
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' | sed 's|INPUTS|%S/Inputs/dipeptide|' > %t/run.toml
 # RUN: cd %t && env MDIR_DEVICE_MEMORY=2 mdir run run.toml > detail.log 2>&1
-# RUN: FileCheck %s < %t/detail.log
+# RUN: FileCheck %s %if pme-callback %{ -DPLANS=3 %} %else %{ -DPLANS=2 %} < %t/detail.log
 # RUN: cd %t && env MDIR_DEVICE_MEMORY=1 mdir run run.toml > peaks.log 2>&1
 # RUN: FileCheck %s --check-prefix=PEAKS < %t/peaks.log
 #
@@ -24,7 +24,7 @@
 # Every account row's driver-wide growth may be negative; bytes asked for stay nonnegative.
 # CHECK-NEXT: mdrt: the modules {{-?[0-9.]+}} MiB 0.0 MiB {{[0-9]+}}
 # CHECK: mdrt: the blocks of the pool {{-?[0-9.]+}} MiB {{[0-9.]+}} MiB {{[0-9]+}}
-# CHECK-NEXT: mdrt: the plans of cuFFT {{-?[0-9.]+}} MiB {{[0-9.]+}} MiB 2
+# CHECK-NEXT: mdrt: the plans of cuFFT {{-?[0-9.]+}} MiB {{[0-9.]+}} MiB [[PLANS]]{{$}}
 # CHECK-NEXT: mdrt: the structures of the tuples {{-?[0-9.]+}} MiB {{[0-9.]+}} MiB {{[0-9]+}}
 # CHECK-NEXT: mdrt: device memory at the peak in use ({{[0-9.]+}} MiB), by tag and size:
 # CHECK-DAG: mdrt: in use {{[0-9.]+}} MiB {{[0-9]+}} x {{[0-9]+}} bytes groups: entries

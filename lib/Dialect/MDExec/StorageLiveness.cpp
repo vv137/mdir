@@ -114,6 +114,7 @@ static ExternalUse externalUse(StringRef name) {
   // shared stream, kept by no one.
   if (llvm::is_contained({"mdrtCudaFFTForward3D", "mdrtCudaFFTBackward3D",
                           "mdrtCudaFFTForward3DF32", "mdrtCudaFFTBackward3DF32",
+                          "mdrtCudaFFTGaussianBackwardF32",
                           "mdrtDeviceTuplesOrderEnd"},
                          name))
     return ExternalUse::Enqueues;

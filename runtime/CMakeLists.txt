@@ -31,6 +31,27 @@ endif()
 if(MDIR_CUDA_FOUND)
   message(STATUS "CUDA toolkit: ${CUDAToolkit_TARGET_DIR}")
   add_library(mdrt_cuda SHARED mdrt_cuda.c)
+  # Keep older toolkits and header-only installations on the separate pass.
+  if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 13 AND CUDAToolkit_NVCC_EXECUTABLE)
+    set(MDIR_PME_CALLBACK 1)
+    set(MDIR_PME_CALLBACK 1 PARENT_SCOPE)
+    add_custom_command(OUTPUT pme_callback.inc
+      BYPRODUCTS pme_callback.fatbin
+      COMMAND ${CUDAToolkit_NVCC_EXECUTABLE} -dc -fatbin
+              -gencode arch=compute_75,code=lto_75
+              -gencode arch=compute_89,code=lto_89
+              ${CMAKE_CURRENT_SOURCE_DIR}/pme_callback.cu -o pme_callback.fatbin
+      COMMAND ${CUDAToolkit_BIN_DIR}/bin2c --name pmeCallback --type char
+              --static --const pme_callback.fatbin > pme_callback.inc
+      DEPENDS pme_callback.cu pme_callback.h VERBATIM)
+    target_sources(mdrt_cuda PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/pme_callback.inc)
+    target_include_directories(mdrt_cuda PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+    foreach(target mdrt_cuda MDIRMDExecToGPU obj.MDIRMDExecToGPU)
+      if(TARGET ${target})
+        target_compile_definitions(${target} PRIVATE MDIR_PME_CALLBACK=1)
+      endif()
+    endforeach()
+  endif()
   # The FFT of particle mesh Ewald takes cuFFT of the toolkit.
   # The products of the bodies of neural stages take cuBLAS
   # (D302).
@@ -123,6 +144,16 @@ if(MDIR_BUNDLE_LIBRARIES)
     set_target_properties(mdrt_cuda PROPERTIES INSTALL_RPATH "$ORIGIN")
     get_target_property(cufft CUDA::cufft IMPORTED_LOCATION)
     mdir_install_soname("${cufft}")
+    if(MDIR_PME_CALLBACK)
+      # cuFFT loads both JIT libraries from its own directory. NVRTC
+      # loads the builtins with the toolkit major and minor in the name.
+      get_filename_component(cuda_lib "${cufft}" DIRECTORY)
+      mdir_install_soname("${cuda_lib}/libnvJitLink.so")
+      mdir_install_soname("${cuda_lib}/libnvrtc.so")
+      set(builtins "libnvrtc-builtins.so.${CUDAToolkit_VERSION_MAJOR}.${CUDAToolkit_VERSION_MINOR}")
+      get_filename_component(real_builtins "${cuda_lib}/${builtins}" REALPATH)
+      install(FILES "${real_builtins}" DESTINATION lib RENAME "${builtins}" COMPONENT mdir)
+    endif()
     # cuBLAS and the cuBLASLt that it loads (D302).
     get_target_property(cublas CUDA::cublas IMPORTED_LOCATION)
     mdir_install_soname("${cublas}")

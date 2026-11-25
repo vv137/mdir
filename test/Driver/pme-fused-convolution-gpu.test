@@ -1,0 +1,12 @@
+# REQUIRES: python-api, cuda, pme-callback
+# RUN: rm -rf %t
+# RUN: %mdir_python %S/Inputs/pme_force_product.py GPU %t
+# The rule in the run log and manifest comes from the compiled program.
+# RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/pme.test | sed '1d;$d;s/^steps *= 1000/steps = 4/;s/energy_interval = 1000/energy_interval = 2/;s/^\[output\]/[output]\nmanifest = "run.jsonl"/' > %t/run.toml
+# RUN: echo '[execution]' >> %t/run.toml
+# RUN: echo 'target = "GPU"' >> %t/run.toml
+# RUN: echo 'precision = "MIXED"' >> %t/run.toml
+# RUN: cd %t && mdir run run.toml | FileCheck %s
+# RUN: %python -c 'import json,sys; assert json.loads(open(sys.argv[1]).readline())["effective"]["pme"]["force_only_product_rule"] == "inverse_load"' %t/run.jsonl
+# CHECK: PME force-only product rule: inverse_load
