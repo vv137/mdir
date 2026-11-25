@@ -1337,7 +1337,7 @@ insertion order can vary. The pack orders the unique keys before gathering
 the cell-relative coordinates, charge and type and publishing the spans.
 
 For up to 256 atoms in a cell, one warp uses a bitonic network with one,
-two, four or eight keys per lane (D[towers-pack]). A compare across lanes
+two, four or eight keys per lane (D434). A compare across lanes
 uses an XOR shuffle. A compare across batches in the same lane uses two
 registers. Padding with the largest unsigned word places unused slots after
 all legal keys. At 256 slots the network has 36 dependent compare-exchange
