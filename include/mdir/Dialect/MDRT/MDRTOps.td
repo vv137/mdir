@@ -75,6 +75,13 @@ def MDRT_FromBufferOp : MDRT_Op<"from_buffer", [Pure]> {
   let hasVerifier = 1;
 }
 
+def MDRT_SnapshotOp : MDRT_Op<"snapshot", [MemoryEffects<[MemAlloc, MemRead]>]> {
+  let summary = "An independent host copy of the field for a domain partition";
+  let arguments = (ins MD_FieldType:$field);
+  let results = (outs AnyMemRef:$result);
+  let assemblyFormat = "$field attr-dict `:` qualified(type($field)) `to` type($result)";
+}
+
 def MDRT_ToBufferOp : MDRT_Op<"to_buffer", [Pure]> {
   let summary = "The buffer that holds a field";
   let description = [{

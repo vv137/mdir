@@ -2108,6 +2108,21 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
       hostBuffers[{buffer.getType(), set}].push_back(buffer);
     return success();
   }
+  if (auto snapshot = dyn_cast<mdrt::SnapshotOp>(op)) {
+    Value buffer;
+    if (onDevice)
+      return snapshot.emitOpError("requires CPU storage");
+    if (failed(getBuffer(snapshot.getField(), scope, buffer)))
+      return failure();
+    auto type = cast<MemRefType>(snapshot.getResult().getType());
+    if (type != mdrt::getBufferType(snapshot.getField().getType()))
+      return snapshot.emitOpError("requires the buffer shape and type of its field");
+    Value size = memref::DimOp::create(builder, op->getLoc(), buffer, 0);
+    auto copy = memref::AllocOp::create(builder, op->getLoc(), type, ValueRange{size});
+    memref::CopyOp::create(builder, op->getLoc(), buffer, copy);
+    mapping.map(snapshot.getResult(), copy.getResult());
+    return success();
+  }
   if (auto to = dyn_cast<mdrt::ToBufferOp>(op)) {
     auto resultType = cast<MemRefType>(to.getResult().getType());
     bool deviceResult = bool(resultType.getMemorySpace());
@@ -2155,14 +2170,6 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
       return success();
     }
     if (!onDevice) {
-      if (to->hasAttr("mdrt.snapshot")) {
-        Value size = memref::DimOp::create(builder, op->getLoc(), buffer, 0);
-        auto snapshot = memref::AllocOp::create(builder, op->getLoc(), resultType,
-                                                ValueRange{size});
-        memref::CopyOp::create(builder, op->getLoc(), buffer, snapshot);
-        mapping.map(to.getResult(), snapshot.getResult());
-        return success();
-      }
       // The buffer is visible outside from here on. Leave it alone.
       scope.owned.erase(buffer);
       mapping.map(to.getResult(), memref::CastOp::create(

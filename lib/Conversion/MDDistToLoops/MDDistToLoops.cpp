@@ -367,10 +367,9 @@ Storage &Lowering::rowsOf(Value field) {
 // owns it. A snapshot gives those reads block lifetime, even when a later
 // kick or drift reuses the field's storage.
 Value Lowering::inputSnapshot(OpBuilder &b, md::FieldType type, Value field) {
-  auto snapshot = mdrt::ToBufferOp::create(b, loc, mdrt::getBufferType(type), field);
   if (!module->hasAttr("md_dist.driver"))
-    return snapshot.getResult();
-  snapshot->setAttr("mdrt.snapshot", b.getUnitAttr());
+    return mdrt::ToBufferOp::create(b, loc, mdrt::getBufferType(type), field);
+  auto snapshot = mdrt::SnapshotOp::create(b, loc, mdrt::getBufferType(type), field);
   OpBuilder atEnd(end);
   memref::DeallocOp::create(atEnd, loc, snapshot.getResult());
   return snapshot.getResult();
