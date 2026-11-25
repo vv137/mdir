@@ -75,7 +75,7 @@ struct Storage {
 /// positions of its local rows, owned then ghost, as a field of md_exec,
 /// its neighbor structure, and its number of owned rows, the centers.
 struct DomainRelation {
-  Value positions, neighbors, owned, cell;
+  Value positions, neighbors, owned, cell, centers;
 };
 
 class Lowering {
@@ -123,7 +123,7 @@ private:
   /// (memref<D x rows x k>) or of the identities (memref<D x rows>).
   Value makeField(OpBuilder &b, FlatSymbolRefAttr set, int64_t k,
                   Type element, Value d, ArrayRef<Value> parts,
-                  ArrayRef<Value> counts);
+                  ArrayRef<Value> counts, Value ghostShift = {});
   /// Copies `count` rows of `field`, a field of md_exec, from row `first`
   /// on, to the rows of domain `d` of `buffer`, a buffer of all domains.
   void copyBack(OpBuilder &b, Value field, Value first, Value count,
@@ -2030,7 +2030,7 @@ Value Lowering::countOf(OpBuilder &b, Storage &rows, Value d) {
 
 Value Lowering::makeField(OpBuilder &b, FlatSymbolRefAttr set, int64_t k,
                           Type element, Value d, ArrayRef<Value> parts,
-                          ArrayRef<Value> counts) {
+                          ArrayRef<Value> counts, Value ghostShift) {
   auto fieldType = md::FieldType::get(module.getContext(), set, k, element);
   MemRefType type = mdrt::getBufferType(fieldType);
   Value total = index(b, 0);
@@ -2050,6 +2050,10 @@ Value Lowering::makeField(OpBuilder &b, FlatSymbolRefAttr set, int64_t k,
             if (partType.getRank() == 3)
               from.push_back(index(br, c));
             Value v = memref::LoadOp::create(br, loc, part, from);
+            if (ghostShift && part == parts.back()) {
+              Value shift = memref::LoadOp::create(br, loc, ghostShift, from);
+              v = arith::AddFOp::create(br, loc, v, shift);
+            }
             if (element.isInteger(32) && v.getType().isF64())
               v = arith::FPToSIOp::create(br, loc, element, v);
             SmallVector<Value, 2> to = {row};
@@ -2087,7 +2091,7 @@ void Lowering::copyBack(OpBuilder &b, Value field, Value first, Value count,
 }
 
 LogicalResult Lowering::lowerNeighborhoodExec(NeighborhoodOp op) {
-  if (op.getResult().getType().getTraversal() == Traversal::Midpoint)
+  if (!matrixPairs && op.getResult().getType().getTraversal() == Traversal::Midpoint)
     return op.emitOpError("midpoint requires the distributed CPU pair lowering");
   // The precondition under which the relation is that of md.neighborhood,
   // as in the reference executor.
@@ -2119,7 +2123,24 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
   Value nGhosts = countOf(b, halo, d);
   // The local rows, owned then ghost; the ghosts carry their images.
   Value positions = makeField(b, set, 3, b.getF64Type(), d,
-                              {owned, ghosts}, {nOwned, nGhosts});
+                              {owned, ghosts}, {nOwned, nGhosts}, imageShifts.lookup(op.getGhosts()));
+  if (matrixPairs) {
+    auto traversal = op.getResult().getType().getTraversal();
+    bool midpoint = traversal == Traversal::Midpoint;
+    Value centers = midpoint ? Value(arith::AddIOp::create(b, loc, nOwned, nGhosts)) : nOwned;
+    double haloReach = op.getHalo().getType().getReach().convertToDouble();
+    double margin = haloReach - (midpoint ? 0.5 * cutoff : cutoff);
+    Value excluded = excludedPairs.lookup(op.getResult());
+    if (!excluded)
+      excluded = arith::ConstantIntOp::create(b, loc, 0, 64);
+    Value packed = positions.getDefiningOp<mdrt::FromBufferOp>().getBuffer();
+    Value structure = mdrt::DomainMatrixOp::create(b, loc,
+        md_exec::getBuildType(set, md_exec::NeighborKind::Matrix, md_exec::Images::Explicit),
+        halo.handle, d, centers, packed, relation.cell, excluded, owned, ghosts,
+        APFloat(cutoff), APFloat(std::max(0.0, margin)), width,
+        midpoint ? 2 : traversal == Traversal::Unique ? 1 : 0);
+    return {positions, structure, nOwned, relation.cell, centers};
+  }
   Value cells = md_exec::BuildCellsOp::create(
       b, loc, mdrt::CellsType::get(context, set), positions,
       relation.cell,
@@ -2132,7 +2153,7 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
       APFloat(cutoff),
       APFloat(skin), md_exec::NeighborKind::Matrix,
       static_cast<uint64_t>(width), md_exec::Images::Explicit);
-  return {positions, structure, nOwned, relation.cell};
+  return {positions, structure, nOwned, relation.cell, nOwned};
 }
 
 void Lowering::addPairKernel(md_exec::PairForOp loop, Operation *op,
@@ -2187,7 +2208,7 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, Value d, FlatSymbolRefAttr
                          double scale) {
   Value relationValue = op->getOperand(0);
   auto relationType = cast<RelationType>(relationValue.getType());
-  bool unique = relationType.getTraversal() == Traversal::Unique;
+  bool unique = !matrixPairs && relationType.getTraversal() == Traversal::Unique;
   auto neighborhood = relationValue.getDefiningOp<NeighborhoodOp>();
   Storage &halo = storage[neighborhood.getHalo()];
   Storage &layout = storage[layoutOf(neighborhood.getHalo())];
@@ -2238,7 +2259,7 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, Value d, FlatSymbolRefAttr
       md_exec::ConflictAttr::get(context, atomic
                                               ? md_exec::Conflict::Atomic
                                               : md_exec::Conflict::OwnerOnly),
-      exchangeAttr, nOwned, centerSet, b.getBoolAttr(ghostFree),
+      exchangeAttr, relation.centers, centerSet, b.getBoolAttr(ghostFree),
       md_exec::ImagesAttr::get(context, md_exec::Images::Explicit),
       /*scatter=*/md_exec::ScatterAttr(),
       /*hostLanes=*/IntegerAttr());
@@ -2449,9 +2470,7 @@ LogicalResult Lowering::lower(Operation *op) {
   end = op->getBlock()->getTerminator();
   if (matrixPairs) {
     if (auto n = dyn_cast<NeighborhoodOp>(op)) {
-      if (!n.getExcluded() && !imageShifts.count(n.getGhosts()) &&
-          n.getResult().getType().getTraversal() != Traversal::Midpoint)
-        return lowerNeighborhoodExec(n);
+      return lowerNeighborhoodExec(n);
     }
     if (auto sum = dyn_cast<SumPairsOp>(op))
       if (relations.count(sum.getRelation()))
