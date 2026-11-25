@@ -51,6 +51,7 @@ def run(name, domains, ranks, *, stop=False, resume=False, trace=False):
     events = [json.loads(line) for line in (path / "manifest.json").read_text().splitlines()]
     setup = [event["domains"] for event in events if event["event"] == "domain_setup"][-1]
     assert len(setup) == domains and sum(d["owned"] for d in setup) == 864
+    assert all(d["import_volume_angstrom3"] > 0 for d in setup)
     assert all(d["position_import_bytes"] == 24*d["ghosts"] for d in setup)
     return path
 
@@ -62,6 +63,17 @@ def compare(a, b, *, exact):
             ref.visititems(lambda name, obj: datasets.append(name)
                            if isinstance(obj, h5py.Dataset) and obj.dtype.kind in 'iuf' else None)
             assert datasets
+            if filename == "state.h5":
+                meta = ref["parameters/mdir"]
+                assert meta.attrs["seed"] == current["parameters/mdir"].attrs["seed"] == 314159
+                names = []
+                current.visit(names.append)
+                words = {"domain", "domains", "grid", "owner", "ownership", "ghosts", "epoch"}
+                assert not any(words.intersection(path.split("/")) for path in names)
+            other_datasets = []
+            current.visititems(lambda name, obj: other_datasets.append(name)
+                               if isinstance(obj, h5py.Dataset) and obj.dtype.kind in 'iuf' else None)
+            assert other_datasets == datasets
             for name in datasets:
                 x, y = ref[name][()], current[name][()]
                 same = x.tobytes() == y.tobytes()

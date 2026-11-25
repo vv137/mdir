@@ -2074,7 +2074,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
       if (isa<AllReduceOp>(op)) phase = DistReduce;
       if (isa<MigrateOp, RedistributeOp>(op)) phase = DistMigration;
       if (isa<CoveredOp>(op))
-        mark(op->getParentOfType<scf::ForOp>().getBody()->getTerminator(), DistStep);
+        mark(&op->getParentOfType<scf::ForOp>().getBody()->front(), DistStep);
       if (phase) mark(op, phase);
     }
     if (failed(lower(op)))

@@ -1726,7 +1726,9 @@ factor grids and their scores in inverse nm, the source of each choice, and
 the real-space cutoff and skin in Ang. The first halo adds a
 `domain_setup` manifest event. Each entry gives the domain, rank, lower
 and upper Cartesian bounds in Ang, owned and ghost row counts, and the
-position import in bytes (three doubles per ghost image). A rejected
+position import in bytes (three doubles per ghost image). The geometric import
+volume in cubic Ang is the shell within halo reach of the domain box,
+including its rounded edges and corners. A rejected
 distributed control with fresh log and manifest paths records the reason
 in both. Existing diagnostics are protected and the reason goes to stderr.
 
