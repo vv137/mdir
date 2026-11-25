@@ -2440,7 +2440,15 @@ bool Simulation::hasTriclinicCell() const {
           compiledSystem.tilt[2] != 0.0);
 }
 
-void Simulation::setCell(const std::array<double, 6> &cell) {
+static std::array<double, 6> effectiveCell(const Control &control,
+                                           std::array<double, 6> cell) {
+  for (double &component : cell)
+    component = periodicComponent(control, component);
+  return cell;
+}
+
+void Simulation::setCell(const std::array<double, 6> &given) {
+  auto cell = effectiveCell(prepared.control, given);
   for (int k = 0; k != 3; ++k) {
     system.box[k] = output->box[k] = output->checkpoint.box[k] = cell[k];
     system.tilt[k] = output->checkpoint.tilt[k] = cell[3 + k];
@@ -2456,11 +2464,14 @@ void Simulation::setCell(const std::array<double, 6> &cell) {
     }
     output->trajectory->setBox(edges);
     output->trajectory->setTilt(tilts);
+    output->trajectory->setExactEdges(system.box);
+    output->trajectory->setExactTilt(system.tilt);
   }
 }
 
 llvm::Error
-Simulation::checkCommittedCell(const std::array<double, 6> &cell) const {
+Simulation::checkCommittedCell(const std::array<double, 6> &given) const {
+  auto cell = effectiveCell(prepared.control, given);
   static const char *const names[6] = {"a_x", "b_y", "c_z",
                                        "b_x", "c_x", "c_y"};
   const Control &control = compiled->control;
@@ -3301,6 +3312,8 @@ llvm::Error Simulation::evaluateFrames(const FrameBatch &batch) {
   int64_t initialStatus = std::numeric_limits<int64_t>::max();
   std::string cellFailure;
   if (prepared.control.periodic) {
+    for (auto &cell : cells)
+      cell = effectiveCell(prepared.control, cell);
     for (auto [index, cell] : llvm::enumerate(cells))
       if (llvm::Error error = checkCommittedCell(cell)) {
         std::string message = llvm::toString(std::move(error));
@@ -4158,12 +4171,9 @@ Simulation::continueFrom(const Checkpoint &checkpoint, bool stage,
                         " has another type in the checkpoint than in the "
                         "program");
   auto takeCell = [&] {
-    for (int k = 0; k != 3; ++k) {
-      system.box[k] = output->box[k] = output->checkpoint.box[k] =
-          checkpoint.box[k];
-      system.tilt[k] = output->checkpoint.tilt[k] = checkpoint.tilt[k];
-    }
-    output->volume = output->box[0] * output->box[1] * output->box[2];
+    system.setInitialCell(control, checkpoint.box, checkpoint.tilt);
+    setCell({system.box[0], system.box[1], system.box[2],
+             system.tilt[0], system.tilt[1], system.tilt[2]});
   };
   // A minimization takes the positions and the cell of any checkpoint, and
   // a run of dynamics those of a minimization, and begins anew (as
@@ -4262,6 +4272,11 @@ Simulation::continueFrom(const Checkpoint &checkpoint, bool stage,
   system.positions = checkpoint.positions;
   system.velocities = checkpoint.velocities;
   takeCell();
+  if (llvm::any_of(system.boxRounding, [](double d) { return d != 0; })) {
+    takesForces = false;
+    notes.push_back("the checkpoint cell was rounded to binary32; "
+                    "the simulation recomputes its forces and barostat state");
+  }
   // The chain of a Nose-Hoover thermostat continues where the checkpoint
   // left it; that of another thermostat or ensemble is not this one's, and
   // the chain begins at rest, as in `mdir run` (D163a, D172).

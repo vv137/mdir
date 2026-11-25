@@ -14,6 +14,7 @@ struct StrainIRInputs {
   mlir::Value seed, step, target, thermal, rate;
   std::array<mlir::Value, 3> beta;
   mlir::Value half, tension;
+  bool binary32Cell;
 };
 struct StrainIRResult {
   mlir::Value volume, constantTrace, constantDiagonal, logScale, scale, inverse;

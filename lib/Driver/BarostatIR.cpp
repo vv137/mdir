@@ -89,6 +89,10 @@ StrainIRResult mdir::driver::builder::buildBarostatStrain(
     if (index < 3)
       scales[index] = k.extract(result.scale, index);
     Value edge = k.mul(edges[index], scales[columns[index]]);
+    if (in.binary32Cell) {
+      edge = arith::TruncFOp::create(builder, loc, builder.getF32Type(), edge);
+      edge = arith::ExtFOp::create(builder, loc, builder.getF64Type(), edge);
+    }
     result.edges.push_back(edge);
     memref::StoreOp::create(builder, loc, edge, in.boxMemory, ValueRange{in.edgeIndices[index]});
   }

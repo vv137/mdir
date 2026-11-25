@@ -493,7 +493,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           {kinetic, groups, boxMemory, edgeIndices,
            arguments.startValues[*config.barostatConstant], barostat.third, barostat.bar,
            barostat.unitVector, seed, completed, barostat.pressure, barostat.thermal,
-           barostat.rate, beta, half, tension}, config.strainCoupling);
+           barostat.rate, beta, half, tension, config.binary32Cell}, config.strainCoupling);
       Value work = arith::AddFOp::create(inside, loc, groups, strain.constantDiagonal);
       Value xy = arith::MulFOp::create(inside, loc, strain.edges[0], strain.edges[1]);
       Value volume = arith::MulFOp::create(inside, loc, xy, strain.edges[2]);
@@ -575,7 +575,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
             {centers.half, groups, boxMemory, edgeIndices,
              arguments.startValues[*config.barostatConstant], barostat.third, barostat.bar,
              barostat.unitVector, seed, completed, barostat.pressure, barostat.thermal,
-             barostat.rate, beta, half, tension}, config.strainCoupling);
+             barostat.rate, beta, half, tension, config.binary32Cell}, config.strainCoupling);
         Value after = axes;
         if (config.rescales) after = buildScaleKinetic(inside, squared, axes);
         Value oneMinus = buildOneMinusScale(inside, barostat.unitVector, strain.scale);

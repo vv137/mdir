@@ -130,12 +130,13 @@ static int fail(const llvm::Twine &message) {
 /// Warns if the cell of `checkpoint`, which the run takes, differs from that
 /// of the input. Always, on the standard error, so that it shows when the
 /// log goes to a file.
-static void warnAboutCell(const Checkpoint &checkpoint, const System &system,
+static void warnAboutCell(const Control &control, const Checkpoint &checkpoint,
+                          const System &system,
                           StringRef path) {
   bool same = true;
   for (int i = 0; i != 3; ++i)
-    same &= checkpoint.box[i] == system.box[i] &&
-            checkpoint.tilt[i] == system.tilt[i];
+    same &= periodicComponent(control, checkpoint.box[i]) == system.box[i] &&
+            periodicComponent(control, checkpoint.tilt[i]) == system.tilt[i];
   if (same)
     return;
   warn(llvm::formatv("the cell of '{0}', {1:F4} {2:F4} {3:F4} Ang, differs "
@@ -576,6 +577,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
 
   system->referencePositions = system->positions;
   bool writesCheckpoints = control->checkpointPeriod > 0;
+  const auto inputBoxRounding = system->boxRounding;
   bool isRestart = !control->restartInput.empty();
   if ((writesCheckpoints || isRestart) && !hasCheckpointSupport())
     return fail("this build of MDIR has no HDF5, which checkpoints need");
@@ -662,11 +664,8 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     // and a run of dynamics those of a minimization, and begins anew.
     if (control->minimize || checkpoint->integrator == "MINIMIZATION") {
       system->positions = checkpoint->positions;
-      warnAboutCell(*checkpoint, *system, path);
-      for (int i = 0; i != 3; ++i) {
-        system->box[i] = checkpoint->box[i];
-        system->tilt[i] = checkpoint->tilt[i];
-      }
+      warnAboutCell(*control, *checkpoint, *system, path);
+      system->setInitialCell(*control, checkpoint->box, checkpoint->tilt);
       output.log.print("MDIR: begins at the positions of '%s'\n",
                        path.c_str());
       isRestart = false;
@@ -685,12 +684,9 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     // on it (the grid of PME, the reference of restraints). A run's own
     // barostat moving its cell is no news.
     if (!own)
-      warnAboutCell(*checkpoint, *system, path);
-    for (int i = 0; i != 3; ++i) {
-      system->inputBox[i] = system->box[i];
-      system->box[i] = checkpoint->box[i];
-      system->tilt[i] = checkpoint->tilt[i];
-    }
+      warnAboutCell(*control, *checkpoint, *system, path);
+    std::copy_n(system->box, 3, system->inputBox);
+    system->setInitialCell(*control, checkpoint->box, checkpoint->tilt);
     if (checkpoint->forces.empty())
       return fail("'" + path + "' holds no forces, which a step begins "
                   "with");
@@ -732,6 +728,13 @@ static int runControlImpl(StringRef controlFile, Emit emit,
                         "'; its chain begins at rest");
         system->thermostatState.clear();
       }
+    }
+    if (llvm::any_of(system->boxRounding, [](double d) { return d != 0; })) {
+      control->restartRecomputes = true;
+      forces.clear();
+      system->barostatState.clear();
+      notes.push_back("the checkpoint cell was rounded to binary32; "
+                      "the run recomputes its forces and barostat state");
     }
     firstStep = checkpoint->step;
     control->restoredStep = firstStep;
@@ -1494,6 +1497,17 @@ static int runControlImpl(StringRef controlFile, Emit emit,
         {"buffer_precision", llvm::json::Object{{"state", element(program->state)},
             {"force", element(program->force)}, {"mass", element(program->mass)},
             {"parameter", element(program->parameter)}}}, {"pme", std::move(pme)}};
+    if (control->periodic && control->precision != Precision::Double) {
+      auto deltas = [](const std::array<double, 6> &changes) {
+        llvm::json::Array result;
+        for (double d : changes)
+          result.push_back(d);
+        return result;
+      };
+      effective["box_rounding_delta_nm"] = deltas(system->boxRounding);
+      if (checkpoint)
+        effective["input_box_rounding_delta_nm"] = deltas(inputBoxRounding);
+    }
     if (towersShapeReport.getAsObject())
       effective["towers_shape"] = towersShapeReport;
     if (!towersCellHeight.empty())
@@ -1854,6 +1868,16 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   if (towersShapeReport.getAsObject())
     output.log.print("MDIR: TOWERS launch shape %s\n",
                      llvm::formatv("{0}", towersShapeReport).str().c_str());
+  if (control->periodic && control->precision != Precision::Double) {
+    auto logDelta = [&](const char *source, const std::array<double, 6> &d) {
+      output.log.print("MDIR: %sbinary32 box delta (nm, ax by cz bx cx cy): "
+                       "%+.17g %+.17g %+.17g %+.17g %+.17g %+.17g\n",
+                       source, d[0], d[1], d[2], d[3], d[4], d[5]);
+    };
+    if (checkpoint)
+      logDelta("coordinate input ", inputBoxRounding);
+    logDelta("", system->boxRounding);
+  }
   for (const std::string &note : notes)
     output.log.print("MDIR: note: %s\n", note.c_str());
   // The structure that `AUTO` took, and why (D261); a

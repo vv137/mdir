@@ -709,6 +709,18 @@
                 "additionalProperties": false
               }
             },
+            "input_box_rounding_delta_nm": {
+              "type": "array",
+              "minItems": 6,
+              "maxItems": 6,
+              "items": {"type": "number"}
+            },
+            "box_rounding_delta_nm": {
+              "type": "array",
+              "minItems": 6,
+              "maxItems": 6,
+              "items": {"type": "number"}
+            },
             "buffer_precision": {
               "type": "object",
               "properties": {
