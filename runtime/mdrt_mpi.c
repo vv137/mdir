@@ -17,6 +17,14 @@ static void finish(void) {
   }
 }
 
+int mdrtMPIActive(void) { return comm != MPI_COMM_NULL; }
+
+int mdrtMPIMax(int value) {
+  int result;
+  MPI_Allreduce(&value, &result, 1, MPI_INT, MPI_MAX, comm);
+  return result;
+}
+
 void mdrtMPIAbort(const char *reason) {
   fprintf(stderr, "mdrt MPI: %s\n", reason);
   if (comm != MPI_COMM_NULL)
@@ -36,6 +44,8 @@ static void initialize(void) {
     int provided;
     if (MPI_Init_thread(NULL, NULL, MPI_THREAD_FUNNELED, &provided) != MPI_SUCCESS)
       mdrtMPIAbort("MPI_Init_thread failed");
+    if (provided < MPI_THREAD_FUNNELED)
+      MPI_Abort(MPI_COMM_WORLD, 1);
     initializedHere = 1;
   }
   MPI_Comm_dup(MPI_COMM_WORLD, &comm);

@@ -62,6 +62,9 @@ static int tracing(void) {
 }
 
 static void fail(const char *message) {
+#ifdef MDIR_ENABLE_MPI
+  if (mdrtMPIActive()) mdrtMPIAbort(message);
+#endif
   fprintf(stderr, "mdrt_dist: %s\n", message);
   fflush(stderr);
   abort();

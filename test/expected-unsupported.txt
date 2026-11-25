@@ -20,6 +20,7 @@ without cuda: *
 without towers-mma: *
 without volta: Driver/volta-target-gpu.test
 without cuda-toolkit: *
+without mpi: *
 without python-api: *
 without hdf5: *
 

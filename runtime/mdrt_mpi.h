@@ -16,6 +16,8 @@ void mdrtMPIBroadcast(double *values, int64_t count, int root);
 void mdrtMPIExchange(double *send, int *sendCounts, int *sendOffsets,
                      double *recv, int *recvCounts, int *recvOffsets);
 int mdrtMPIAllTrue(int predicate);
+int mdrtMPIActive(void);
+int mdrtMPIMax(int value);
 void mdrtMPIAbort(const char *reason);
 
 #ifdef __cplusplus

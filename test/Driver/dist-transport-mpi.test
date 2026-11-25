@@ -1,0 +1,15 @@
+# Check both endpoint contributions with the unique traversal and migration.
+# REQUIRES: mpi, hdf5
+# RUN: rm -rf %t && mkdir -p %t/local %t/mpi
+# RUN: sed -e 's|argon.pdb|%S/../../examples/argon/argon.pdb|' \
+# RUN:   -e 's/= 2000$/= 10/' -e 's/= 100$/= 5/' -e 's/= 9.5$/= 8.65/' -e 's/= 16$/= 1/' \
+# RUN:   -e '/^\[output\]/a checkpoint = "state.h5"\ncheckpoint_interval = 10' \
+# RUN:   %S/../../examples/argon/argon.toml > %t/local/run.toml
+# RUN: printf '\ndeterministic=true\n[distribute]\ndomains=[2,1,1]\ntraversal="unique"\n' >> %t/local/run.toml
+# RUN: cp %t/local/run.toml %t/mpi/run.toml && echo 'transport="mpi"' >> %t/mpi/run.toml
+# RUN: cd %t/local && mdir run run.toml > out
+# RUN: cd %t/mpi && %mpiexec -n 2 mdir run run.toml > out
+# RUN: grep '^INFO:' %t/local/out > %t/one && grep '^INFO:' %t/mpi/out > %t/two && diff %t/one %t/two
+# RUN: cmp %t/local/argon.dcd %t/mpi/argon.dcd
+# RUN: mdir checkpoint %t/local/state.h5 %t/mpi/state.h5 | FileCheck %s
+# CHECK: identical

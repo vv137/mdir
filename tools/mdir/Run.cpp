@@ -120,6 +120,9 @@ struct Buffer {
 
 static int fail(llvm::Error error) {
   llvm::errs() << "mdir: " << llvm::toString(std::move(error)) << "\n";
+#ifdef MDIR_ENABLE_MPI
+  if (mdrtMPIActive() && mdrtMPISize() > 1) mdrtMPIAbort("rank failed during setup or execution");
+#endif
   return 1;
 }
 
@@ -131,6 +134,9 @@ static void warn(const llvm::Twine &message) {
 
 static int fail(const llvm::Twine &message) {
   llvm::errs() << "mdir: " << message << "\n";
+#ifdef MDIR_ENABLE_MPI
+  if (mdrtMPIActive() && mdrtMPISize() > 1) mdrtMPIAbort("rank failed during setup or execution");
+#endif
   return 1;
 }
 
@@ -536,8 +542,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     writer = mdrtMPIRank() == 0;
     ranks = mdrtMPISize();
     output.log.quiet = !writer;
-    if (options.maxWalltime > 0)
-      return fail("MPI wall-time stops require a collective checkpoint decision");
+    output.checkpointVote = mdrtMPIMax;
   }
 #endif
   Manifest manifest;
