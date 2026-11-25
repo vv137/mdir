@@ -470,7 +470,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   auto refuse = [&](const Control &c, llvm::Error e) {
     std::string reason = llvm::toString(std::move(e));
 #ifdef MDIR_ENABLE_MPI
-      if (emit == Emit::Run && c.distribution && c.distribution->transport == "mpi" && mdrtMPIRank() != 0)
+      if (emit == Emit::Run && c.distribution && c.distribution->transport != "local" && mdrtMPIRank() != 0)
         return 1;
 #endif
     if (emit == Emit::Run && (!c.logFile.empty() || !c.manifestFile.empty())) {
@@ -542,13 +542,22 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   bool writer = true;
   int ranks = 1;
 #ifdef MDIR_ENABLE_MPI
-  if (emit == Emit::Run && control->distribution && control->distribution->transport == "mpi") {
+  if (emit == Emit::Run && control->distribution && control->distribution->transport != "local") {
     writer = mdrtMPIRank() == 0;
     ranks = mdrtMPISize();
     output.log.quiet = !writer;
     output.checkpointVote = mdrtMPIMax;
     const auto &d = *control->distribution;
     auto domains = d.domains ? d.domains : d.grid[0]*d.grid[1]*d.grid[2];
+    if (d.transport == "nccl") {
+      if (!d.gridGiven) {
+        control->distribution->domains = ranks;
+        domains = ranks;
+      }
+      if (domains != ranks)
+        return writer ? refuse(*control, llvm::createStringError("NCCL requires one domain per rank")) : 1;
+      mdrtMPIStartNCCL();
+    }
     if (domains < ranks)
       return writer ? refuse(*control, llvm::createStringError("each rank needs at least one domain")) : 1;
   }
@@ -2139,7 +2148,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
                     firstStep, control->energyPeriod, domainReach);
     const char *prefix = std::getenv("MDIR_DIST_STEP_TRACE");
 #ifdef MDIR_ENABLE_MPI
-    if (control->distribution->transport == "mpi") {
+    if (control->distribution->transport != "local") {
       bool any = mdrtMPIMax(prefix && *prefix);
       bool all = mdrtMPIAllTrue(prefix && *prefix);
       if (any != all)
@@ -2148,7 +2157,11 @@ static int runControlImpl(StringRef controlFile, Emit emit,
 #endif
     bool opened = distLog->error.empty() && distLog->open(prefix, control->restartOutput);
 #ifdef MDIR_ENABLE_MPI
-    if (control->distribution->transport == "mpi") {
+    if (control->distribution->transport != "local") {
+      if (control->distribution->transport == "nccl") {
+        distLog->rankOwner = mdrtMPIOwner;
+        distLog->nodeOfRank = mdrtMPINode;
+      }
       distLog->gather = mdrtMPIGatherTimes;
       opened = mdrtMPIAllTrue(opened);
     }

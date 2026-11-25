@@ -3312,7 +3312,7 @@ Error Reader::read(const toml::table &root) {
     return error;
   if (table) {
     if (Error error = checkKeywords(*table, "distribute",
-                                    {"domains", "transport", "traversal"}))
+                                    {"domains", "transport", "traversal", "placement"}))
       return error;
     auto &dist = control.distribution.emplace();
     dist.gridGiven = table->contains("domains");
@@ -3339,7 +3339,7 @@ Error Reader::read(const toml::table &root) {
       }
     }
     if (Error err = readChoice<std::string>(*table, "transport", dist.transport,
-                                             {{"local", "local"}, {"mpi", "mpi"}}))
+                                             {{"local", "local"}, {"mpi", "mpi"}, {"nccl", "nccl"}}))
       return err;
 #if !MDIR_ENABLE_MPI
     if (dist.transport == "mpi")
@@ -3352,8 +3352,29 @@ Error Reader::read(const toml::table &root) {
       return fail(*table, "distributed halo coverage requires a positive skin");
     if (control.precision == Precision::Single)
       return fail(*table, "distributed state requires mixed or double position storage");
-    if (control.target != Target::CPU)
-      return fail(*table, "distributed execution requires a CPU target");
+    if (dist.transport == "nccl") {
+#if !MDIR_ENABLE_NCCL
+      return fail(*table, "NCCL transport requires a build with MDIR_ENABLE_NCCL=ON");
+#endif
+      if (control.target != Target::GPU)
+        return fail(*table, "NCCL transport requires a GPU target");
+      if (control.deterministic)
+        return fail(*table, "distributed GPU pairs do not implement deterministic fixed-point sums");
+      if (dist.traversal == "midpoint")
+        return fail(*table, "distributed GPU pairs require directed or unique traversal");
+      if (control.neighborStructure != NeighborStructure::Auto &&
+          control.neighborStructure != NeighborStructure::Matrix)
+        return fail(*table, "distributed GPU pairs require MATRIX");
+      control.neighborStructure = NeighborStructure::Matrix;
+      std::string placement = "node";
+      if (Error err = readChoice<std::string>(*table, "placement", placement, {{"node", "node"}}))
+        return err;
+    } else {
+      if (table->contains("placement"))
+        return fail(*table, "node placement requires NCCL transport");
+      if (control.target != Target::CPU)
+        return fail(*table, "distributed execution requires a CPU target");
+    }
     if (control.pme || control.ljpme)
       return fail(*table, "reciprocal sums require a distributed mesh");
     if (!control.periodic || control.barostat)

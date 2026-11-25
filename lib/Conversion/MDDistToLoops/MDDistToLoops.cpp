@@ -91,7 +91,7 @@ public:
         haloEvents(haloEvents), mpi(mpi), parallelDomains(parallelDomains) {}
 
   bool fixedPoint = false;
-  bool matrixPairs = false;
+  bool matrixPairs = false, gpuPairs = false;
   double matrixSkin = 0;
   LogicalResult run(func::FuncOp function);
 
@@ -2240,6 +2240,8 @@ LogicalResult Lowering::lowerNeighborhoodExec(NeighborhoodOp op) {
     return op.emitOpError("midpoint requires the distributed CPU pair lowering");
   // The precondition under which the relation is that of md.neighborhood,
   // as in the reference executor.
+  if (gpuPairs && op.getExcluded())
+    return op.emitOpError("GPU domain MATRIX requires mapped exclusions");
   if (failed(lowerNeighborhood(op)))
     return failure();
   auto &local = relations[op.getResult()];
@@ -2269,7 +2271,7 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
   // The local rows, owned then ghost; the ghosts carry their images.
   Value positions = makeField(b, set, 3, b.getF64Type(), d,
                               {owned, ghosts}, {nOwned, nGhosts}, imageShifts.lookup(op.getGhosts()));
-  if (matrixPairs) {
+  if (matrixPairs && !gpuPairs) {
     auto traversal = op.getResult().getType().getTraversal();
     bool midpoint = traversal == Traversal::Midpoint;
     Value centers = midpoint ? Value(arith::AddIOp::create(b, loc, nOwned, nGhosts)) : nOwned;
@@ -2351,7 +2353,7 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, Value d, FlatSymbolRefAttr
                          double scale) {
   Value relationValue = op->getOperand(0);
   auto relationType = cast<RelationType>(relationValue.getType());
-  bool unique = !matrixPairs && relationType.getTraversal() == Traversal::Unique;
+  bool unique = (!matrixPairs || gpuPairs) && relationType.getTraversal() == Traversal::Unique;
   auto neighborhood = relationValue.getDefiningOp<NeighborhoodOp>();
   Storage &halo = storage[neighborhood.getHalo()];
   Storage &layout = storage[layoutOf(neighborhood.getHalo())];
@@ -3057,6 +3059,7 @@ public:
       module.emitError("matrix-skin must be nonnegative and matrix-width positive");
       return signalPassFailure();
     }
+    lowering.gpuPairs = gpuPairs;
     lowering.matrixSkin = matrixSkin;
     lowering.fixedPoint = fixedPoint;
     lowering.matrixPairs = matrixPairs && !fixedPoint;

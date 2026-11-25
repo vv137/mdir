@@ -364,8 +364,9 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
     else
       os << " matrix-pairs=true matrix-skin=" << program.skin
          << " matrix-width=" << program.neighborWidth;
+    if (control.distribution->transport == "nccl") os << " gpu-pairs=true";
     os << (control.threads > 1 ? " parallel-domains=true" : "")
-       << (control.distribution->transport == "mpi" ? " mpi=true" : "")
+       << (control.distribution->transport != "local" ? " mpi=true" : "")
        << "},lower-mdrt-halo-events,";
   }
   os << "convert-md-to-md-exec{skin=" << program.skin

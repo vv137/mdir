@@ -41,6 +41,7 @@ class DistributionLog {
       "halo_copy", "halo_sum", "all_reduce", "migration", "wait", "list_build",
       "halo_pack", "halo_intra", "halo_inter", "integration", "output", "state", "halo_build"};
   int owner(int64_t d) const {
+    if (rankOwner) return rankOwner(domains, d);
     auto q = domains / ranks, r = domains % ranks;
     return d < r * (q + 1) ? d / (q + 1) : r + (d - r * (q + 1)) / q;
   }
@@ -107,15 +108,20 @@ class DistributionLog {
       row[In] += s.moves[d].in;
       row[Out] += s.moves[d].out;
     }
+    int64_t intra = 0, inter = 0;
     for (auto [edge, bytes] : s.bytes) {
       int from = owner(edge.first), to = owner(edge.second);
       counts[from][Sent] += bytes;
       counts[to][Received] += bytes;
       if (from != to) {
+        if (nodeOfRank) (nodeOfRank(from) == nodeOfRank(to) ? intra : inter) += bytes;
         counts[from][NetworkSent] += bytes;
         counts[to][NetworkReceived] += bytes;
       }
     }
+    if (nodeOfRank)
+      print("DIST: %s step %lld intra-node halo bytes %lld inter-node halo bytes %lld\n",
+            label, (long long)step, (long long)intra, (long long)inter);
     const char *columns[] = {"owned", "ghost", "migrated_in", "migrated_out",
         "sent_bytes", "received_bytes", "network_sent_bytes", "network_received_bytes"};
     for (int i = 0; i < Count; ++i) {
@@ -188,6 +194,8 @@ class DistributionLog {
     }
   }
 public:
+  int (*rankOwner)(int64_t, int64_t) = nullptr;
+  int (*nodeOfRank)(int) = nullptr;
   std::string error;
   void (*gather)(const double *, double *, int) = nullptr;
   DistributionLog(driver::Log &log, Manifest &manifest, int rank, int ranks,

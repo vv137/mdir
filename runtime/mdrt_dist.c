@@ -655,6 +655,7 @@ int64_t _mlir_ciface_mdrtDistPartition(struct Memref2D *x, int64_t gx,
 #ifdef MDIR_ENABLE_MPI
 int64_t _mlir_ciface_mdrtDistMPIPartition(struct Memref2D *x, int64_t gx,
     int64_t gy, int64_t gz, double lx, double ly, double lz) {
+  mdrtMPIPlaceDomains((int64_t[]){gx, gy, gz}, (double[]){lx, ly, lz});
   mdrtMPIDomainBound(gx * gy * gz, 0);
   int64_t handle = _mlir_ciface_mdrtDistPartition(x, gx, gy, gz, lx, ly, lz);
   ((struct Layout *)(intptr_t)handle)->mpi = 1;
