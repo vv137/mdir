@@ -151,6 +151,7 @@ private:
   LogicalResult lowerSumPairs(SumPairsOp op);
   LogicalResult lowerGatherPairs(GatherPairsOp op);
   LogicalResult lowerSumParticles(SumParticlesOp op);
+  void lowerCollectedSum(md::SumParticlesOp op);
   LogicalResult lowerMapParticles(MapParticlesOp op);
   LogicalResult lowerAllReduce(AllReduceOp op);
   LogicalResult lowerPack(PackOp op);
@@ -1266,6 +1267,45 @@ LogicalResult Lowering::lowerSumParticles(SumParticlesOp op) {
   return success();
 }
 
+// Reporting also reads complete fields in particle-set order, including the
+// initial kinetic energy outside the domain step loop. Give these reductions
+// the same integer arithmetic as a sum of owned rows.
+void Lowering::lowerCollectedSum(md::SumParticlesOp op) {
+  OpBuilder b(op);
+  loc = op.getLoc();
+  SmallVector<Value> buffers;
+  for (Value field : op.getGathered()) {
+    auto type = cast<md::FieldType>(field.getType());
+    buffers.push_back(mdrt::ToBufferOp::create(b, loc, mdrt::getBufferType(type), field));
+  }
+  Value count = memref::DimOp::create(b, loc, buffers.front(), 0);
+  Block &kernel = op.getKernel().front();
+  auto loop = scf::ForOp::create(b, loc, index(b, 0), count, index(b, 1),
+      ValueRange{zero(b, sumType(op.getResult().getType()))},
+      [&](OpBuilder &body, Location, Value row, ValueRange acc) {
+        IRMapping mapping;
+        for (auto [argument, buffer] : llvm::zip(kernel.getArguments(), buffers)) {
+          Value value;
+          if (auto vector = dyn_cast<VectorType>(argument.getType())) {
+            SmallVector<Value> parts;
+            for (int64_t c = 0; c < vector.getNumElements(); ++c)
+              parts.push_back(memref::LoadOp::create(body, loc, buffer,
+                  ValueRange{row, index(body, c)}));
+            value = vector::FromElementsOp::create(body, loc, vector, parts);
+          } else {
+            value = memref::LoadOp::create(body, loc, buffer, ValueRange{row});
+          }
+          mapping.map(argument, value);
+        }
+        for (Operation &nested : kernel.without_terminator())
+          body.clone(nested, mapping);
+        Value term = mapping.lookupOrDefault(kernel.getTerminator()->getOperand(0));
+        scf::YieldOp::create(body, loc, add(body, acc[0], quantize(body, term, 32)));
+      });
+  op.replaceAllUsesWith(finish(b, loop.getResult(0), 32));
+  op.erase();
+}
+
 LogicalResult Lowering::lowerMapParticles(MapParticlesOp op) {
   OpBuilder b(op);
   FieldType resultType = op.getResult().getType();
@@ -2101,6 +2141,12 @@ static LogicalResult outlineSteps(ModuleOp module, func::FuncOp function) {
 }
 
 LogicalResult Lowering::run(func::FuncOp function) {
+  if (fixedPoint && module->hasAttr("md_dist.driver")) {
+    SmallVector<md::SumParticlesOp> sums;
+    function.walk([&](md::SumParticlesOp op) { sums.push_back(op); });
+    for (auto sum : sums)
+      lowerCollectedSum(sum);
+  }
   SmallVector<Operation *> ops;
   auto collect = [&] {
     ops.clear();
@@ -2223,6 +2269,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
   } else {
     function.walk([](scf::ForOp loop) { loop->removeAttr(kStepLoop); });
   }
+  imageShifts.clear();
   storage.clear();
   relations.clear();
   ownedEpochs.clear();
