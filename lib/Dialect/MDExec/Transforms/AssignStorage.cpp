@@ -1450,10 +1450,9 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       (grid[0] == 144 && grid[1] == 84 && grid[2] == 80);
   bool requestAxis = axisFFT == "on" || (axisFFT == "auto" && measuredMesh);
   bool pitched =
-      requestAxis && onDevice && gridType.isF32() &&
+      requestAxis && onDevice && (gridType.isF32() || op.getProlate()) &&
       cast<MemRefType>(positions.getType()).getElementType().isF64() &&
-      op.getOrder() == 4 && !fixedOrder && !op.getPotential() && !op.getP3m() &&
-      !op.getProlate() && !op.getDispersion() && kernels::supportsAxisFFT(grid);
+      (op.getOrder() == 4 || op.getProlate()) && !fixedOrder && !op.getPotential() && !op.getP3m() && !op.getDispersion() && kernels::supportsAxisFFT(grid);
   if (pitched)
     half = grid[0] * grid[1] * kernels::axisFFTPitch(grid[2]);
   SmallVector<Value> scratch = {allocate(IntegerType::get(context, 64), points),

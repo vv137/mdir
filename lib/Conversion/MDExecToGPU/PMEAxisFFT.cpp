@@ -1,4 +1,4 @@
-// Gaussian spectral product on the last forward axis [Essmann1995].
+// Spectral product on the last forward axis [Essmann1995, Liang2026].
 #include "DevicePME.h"
 #include "mdir/Conversion/AxisFFTEmitter.h"
 
@@ -6,14 +6,15 @@ using namespace mlir;
 using namespace mdir::kernels;
 
 func::FuncOp DevicePME::emitAxisFFT(StringRef name, ArrayRef<int64_t> grid,
-                                    int64_t pitch, bool observed, bool tilted) {
+                                    int64_t pitch, bool observed, bool tilted,
+                                    bool radial) {
   auto buffer = globalMem({ShapedType::kDynamic}, realType);
   SmallVector<Type> inputs{buffer, buffer, buffer}, results;
   if (observed) {
     inputs.push_back(globalMem({ShapedType::kDynamic}, f64Type));
     results.append({f64Type, VectorType::get({9}, f64Type)});
   }
-  if (observed || tilted)
+  if (!radial && (observed || tilted))
     inputs.push_back(f64Type);
   if (tilted)
     inputs.push_back(VectorType::get({6}, f64Type));
@@ -26,7 +27,7 @@ func::FuncOp DevicePME::emitAxisFFT(StringRef name, ArrayRef<int64_t> grid,
   Value rows, gauss;
   if (observed)
     rows = entry->getArgument(3);
-  if (observed || tilted) {
+  if (!radial && (observed || tilted)) {
     Value beta = entry->getArgument(observed ? 4 : 3);
     Value pi2 =
         arith::ConstantOp::create(b, loc, b.getF64FloatAttr(9.869604401089358));
@@ -62,8 +63,8 @@ func::FuncOp DevicePME::emitAxisFFT(StringRef name, ArrayRef<int64_t> grid,
       factors.push_back(component(2));
       offset += 3 * length;
     }
-    Value zero = arith::ConstantOp::create(b, loc, b.getF32FloatAttr(0));
-    Value one = arith::ConstantOp::create(b, loc, b.getF32FloatAttr(1));
+    Value zero = arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 0));
+    Value one = arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 1));
     if (tilted) {
       auto [i, j, k] = std::make_tuple(wave[0], wave[1], wave[2]);
       wave[0] = mulf(inverseBox[0], i);
@@ -73,7 +74,11 @@ func::FuncOp DevicePME::emitAxisFFT(StringRef name, ArrayRef<int64_t> grid,
       for (Value v : wave)
         square = square ? addf(square, mulf(v, v)) : mulf(v, v);
     }
-    Influence mode = tilted
+    Influence mode = radial
+        ? radialInfluence(tables, arith::ConstantIndexOp::create(b, loc, offset),
+                          arith::ConstantIndexOp::create(b, loc, 1), square, one,
+                          factors[0], factors[1], factors[2])
+        : tilted
         ? gaussianInfluenceTriclinic(square, zero, one, factors[0], factors[1],
                                      factors[2], gauss)
         : gaussianInfluence(square, zero, one, factors[0], factors[1], factors[2]);
@@ -83,12 +88,18 @@ func::FuncOp DevicePME::emitAxisFFT(StringRef name, ArrayRef<int64_t> grid,
       Value first = arith::ConstantIndexOp::create(b, loc, 0);
       Value edge = ori(cmpi(arith::CmpIPredicate::eq, z, first),
                        cmpi(arith::CmpIPredicate::eq, z, last));
-      Value half = arith::ConstantOp::create(b, loc, b.getF32FloatAttr(0.5));
+      Value half = arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 0.5));
       Value e = mulf(mulf(select(edge, half, one), influence),
                      addf(mulf(c.re, c.re), mulf(c.im, c.im)));
       sums[0] = addf(sums[0], e);
-      Value h = addf(mode.virialTerm, gauss);
-      Value eh = mulf(e, addf(h, h));
+      Value eh;
+      if (radial) {
+        Value magnitude = addf(mulf(c.re, c.re), mulf(c.im, c.im));
+        eh = mulf(mulf(select(edge, half, one), mode.virialTerm), magnitude);
+      } else {
+        Value h = addf(mode.virialTerm, gauss);
+        eh = mulf(e, addf(h, h));
+      }
       int col = 1;
       for (int i = 0; i < 3; ++i)
         for (int j = i; j < 3; ++j, ++col)
