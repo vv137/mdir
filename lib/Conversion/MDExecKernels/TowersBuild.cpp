@@ -161,7 +161,7 @@ Values TowersBuild::locate(Value x, Value length, Value width, Value reciprocal,
 void TowersBuild::sortWarp(Value keys, Value base, Value lane, Value count,
                            int batches,
                            function_ref<void(Value, Value)> place) {
-  // A bitonic network sorts one, two or four registers per lane. The
+  // A bitonic network sorts one to eight registers per lane. The
   // sentinel compares after every legal compound key.
   SmallVector<Value> values(batches);
   for (int j = 0; j < batches; ++j) {
@@ -460,17 +460,18 @@ void TowersBuild::emit(bool audit) {
           auto sort = [&](int batches) {
             sortWarp(a[1], base, lane, count, batches, place);
           };
-          ifThenElse(
-              cmpi(CmpIPredicate::ule, count, cx(32)), [&] { sort(1); },
-              [&] {
-                ifThenElse(
-                    cmpi(CmpIPredicate::ule, count, cx(64)), [&] { sort(2); },
-                    [&] {
-                      ifThenElse(
-                          cmpi(CmpIPredicate::ule, count, cx(128)),
-                          [&] { sort(4); }, rankSort);
-                    });
-              });
+          auto selectNetwork = [&](auto &&self, int batches) -> void {
+            ifThenElse(
+                cmpi(CmpIPredicate::ule, count, cx(32 * batches)),
+                [&] { sort(batches); },
+                [&] {
+                  if (batches < 8)
+                    self(self, 2 * batches);
+                  else
+                    rankSort();
+                });
+          };
+          selectNetwork(selectNetwork, 1);
         }
         forLoop(lane, cx(fields), cx(lanes), {}, [&](Value field, ValueRange) {
           Value owner = indexCast(index, load(a[4], {cell, field}));
