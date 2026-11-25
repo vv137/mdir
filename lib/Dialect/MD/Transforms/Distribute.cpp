@@ -114,7 +114,7 @@ LogicalResult Distributor::check() {
     if (isa<ReturnOp>(op))
       continue;
     if (auto neighborhood = dyn_cast<NeighborhoodOp>(op)) {
-      if (neighborhood.getExcluded())
+      if (neighborhood.getExcluded() && traversal != md_dist::Traversal::Midpoint)
         return op.emitOpError()
                << "cannot be distributed: exclusions are pairs of a tuple "
                   "set, which needs the topology across domains (stage 2 of "
@@ -293,7 +293,7 @@ LogicalResult Distributor::rewrite(NeighborhoodOp op) {
                                          decompositionName, traversal);
   relations[op.getResult()] = md_dist::NeighborhoodOp::create(
       builder, op.getLoc(), type, ownedPositions, ghostPositions, halo,
-      op.getCutoffAttr());
+      op.getCutoffAttr(), op.getExcluded());
   return success();
 }
 
