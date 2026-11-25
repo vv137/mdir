@@ -1,0 +1,4 @@
+# RUN: not --crash %python %S/Inputs/dist_word_checks.py %mdrt overflow 2>&1 | FileCheck %s --check-prefix=SUM
+# RUN: not --crash %python %S/Inputs/dist_word_checks.py %mdrt halo 2>&1 | FileCheck %s --check-prefix=HALO
+# SUM: deterministic fixed-point sum exceeds signed 64-bit range
+# HALO: missing halo rows for deterministic pair geometry
