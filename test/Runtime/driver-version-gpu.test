@@ -4,23 +4,23 @@
 # major version of the toolkit of the build before it loads a module, and
 # the run ends with both versions instead of crashing in the driver at the
 # load. MDRT_DRIVER_VERSION stands for the version the driver reports, so
-# that the test needs no older driver: 12040 is CUDA 12.4, the driver of the
-# report in #657.
+# that the test needs no older driver. CUDA 11.4 predates both the CUDA 12
+# toolkit used for Volta and the CUDA 13 toolkit used for newer devices.
 #
 # RUN: rm -rf %t && mkdir -p %t && split-file %s %t
 # With MDRT_TRACE, a module that was loaded would be printed.
-# RUN: cd %t && env MDRT_DRIVER_VERSION=12040 MDRT_TRACE=1 not mdir run run.toml 2>&1 | FileCheck %s --check-prefix=OLD
+# RUN: cd %t && env MDRT_DRIVER_VERSION=11040 MDRT_TRACE=1 not mdir run run.toml 2>&1 | FileCheck %s --check-prefix=OLD
 # OLD-NOT: TRACE module
-# OLD: mdrt: the NVIDIA driver supports CUDA 12.4; this build of MDIR, with CUDA {{[0-9]+\.[0-9]+}}, needs a driver that supports CUDA {{[0-9]+}}.0 or later (D177). Update the NVIDIA driver, or run on the CPU (target = "CPU")
+# OLD: mdrt: the NVIDIA driver supports CUDA 11.4; this build of MDIR, with CUDA {{[0-9]+\.[0-9]+}}, needs a driver that supports CUDA {{[0-9]+}}.0 or later (D177). Update the NVIDIA driver, or run on the CPU (target = "CPU")
 #
 # A driver of a later version runs, as without the variable.
 # RUN: cd %t && env MDRT_DRIVER_VERSION=99000 mdir run run.toml | FileCheck %s --check-prefix=NEW
 # NEW: INFO: 0
 #
 # `mdir doctor` reports the same, and does not run the GPU check.
-# RUN: mkdir -p %t/doctor && env TMPDIR=%t/doctor MDRT_DRIVER_VERSION=12040 not mdir doctor --target=gpu 2>&1 | FileCheck %s --check-prefix=DOCTOR
-# DOCTOR: CUDA driver API: 12.4
-# DOCTOR-NEXT: FAIL CUDA driver: the NVIDIA driver supports CUDA 12.4; this build of MDIR, with CUDA {{[0-9]+\.[0-9]+}}, needs a driver that supports CUDA {{[0-9]+}}.0 or later (D177); update the NVIDIA driver, or use --target=cpu
+# RUN: mkdir -p %t/doctor && env TMPDIR=%t/doctor MDRT_DRIVER_VERSION=11040 not mdir doctor --target=gpu 2>&1 | FileCheck %s --check-prefix=DOCTOR
+# DOCTOR: CUDA driver API: 11.4
+# DOCTOR-NEXT: FAIL CUDA driver: the NVIDIA driver supports CUDA 11.4; this build of MDIR, with CUDA {{[0-9]+\.[0-9]+}}, needs a driver that supports CUDA {{[0-9]+}}.0 or later (D177); update the NVIDIA driver, or use --target=cpu
 # DOCTOR-NOT: Checking gpu
 
 #--- run.toml
