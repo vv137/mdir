@@ -3,6 +3,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Rank intervals are consecutive in the global domain order. */
 int64_t mdrtMPIDomainBound(int64_t domains, int64_t end);
 int mdrtMPIOwner(int64_t domains, int64_t domain);
@@ -14,4 +18,7 @@ void mdrtMPIExchange(double *send, int *sendCounts, int *sendOffsets,
 int mdrtMPIAllTrue(int predicate);
 void mdrtMPIAbort(const char *reason);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

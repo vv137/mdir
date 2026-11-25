@@ -75,3 +75,9 @@ set_target_properties(mdir PROPERTIES
   INSTALL_RPATH_USE_LINK_PATH ON
   )
 install(TARGETS mdir RUNTIME DESTINATION bin COMPONENT mdir)
+
+if(MDIR_ENABLE_MPI)
+  target_link_libraries(mdir PRIVATE mdrt)
+  target_include_directories(mdir PRIVATE ${PROJECT_SOURCE_DIR}/runtime)
+  target_compile_definitions(mdir PRIVATE MDIR_ENABLE_MPI=1)
+endif()
