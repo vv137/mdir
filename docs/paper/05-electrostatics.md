@@ -415,7 +415,7 @@ zero, has no set, and its kernels are those of before.
 difference of $6\times10^{-8}$ (D104). Section 9 compares the terms with
 sander and with a direct Ewald sum.
 
-### Five-pass Gaussian convolution (D[pme-axis-fft])
+### Five-pass Gaussian convolution (D435)
 
 At fixed fractional coordinates the Gaussian mesh energy of Section 5.2
 is quadratic in $Q$. Its first variation at fixed cell is

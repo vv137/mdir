@@ -5,4 +5,4 @@
   Double precision and derivative and analysis entries use continuous forces.
   Each global add checks signed overflow using the preceding 64-bit word
   returned by the atomic instruction.
-  [D[bonded-workunits]](docs/decisions/bonded-workunits.md)
+  [D436](docs/decisions/bonded-workunits.md)

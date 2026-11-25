@@ -535,7 +535,7 @@ or f64 changes. Deterministic PME spreads charges in fixed point (D70,
 D84). Deterministic tuple forces use the ordered rows of their incidence
 structure.
 
-**Partitioning the atoms of a tuple calculation (D[bonded-workunits]).**
+**Partitioning the atoms of a tuple calculation (D436).**
 Cerutti et al. assign interacting atoms to overlapping valence work units,
 which can import positions and share intermediate results within a block
 (Section IV B, Figures 3–6). The work-unit kernel partitions atoms

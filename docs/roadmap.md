@@ -80,7 +80,7 @@ remaining Python consumers and the duplicate-definition check follow in part 2.
 | CHARMM force fields | Done (D121, D122, [charmm.md](charmm.md)). Next: CHARMM-GUI's triclinic cells and cell files, VSWITCH (done since as D175, F3), the lone pairs of CGenFF, and a bilayer at constant pressure against GROMACS and CHARMM |
 | PME stage emitters | Implemented in D427 (#908). The C² splitting and four-point window of #466 build on these stages. |
 | Force-only Gaussian PME product (#959) | Implemented for eligible mixed-precision GPU transforms (D433). |
-| Gaussian PME convolution (#961) | D[pme-axis-fft] generates five device passes and reduces reciprocal observables in the fused X transform. See [PME](pme.md#five-pass-gaussian-convolution-on-a-device). |
+| Gaussian PME convolution (#961) | D435 generates five device passes and reduces reciprocal observables in the fused X transform. See [PME](pme.md#five-pass-gaussian-convolution-on-a-device). |
 | PME grid axes | TODO: the longest edge as the contiguous axis of the grid, with the tables of D104 and the other stages on the permuted axes ([pme.md](pme.md#the-axes-of-the-grid)) |
 | Ewald summation with prolates | Done (D266, #334; measured again with tiles, D282, #336; the direct sum as a table, D280, #380; [pme.md](pme.md#7-the-prolate-kernel-d266), Section 7) |
 | Influence functions of P3M (#468) | In part: step 1, `[pme] influence = "P3M"` (D304; a triclinic cell is #475). Next: the self-force subtraction, the a priori error estimate and a choice of $(\beta, K, P)$, interlacing, and the prolate kernel with an optimal $G$ (#467) |

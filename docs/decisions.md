@@ -730,6 +730,8 @@ specification follow those made with it.
 | [D432](decisions/D432.md) | The existing height rule and launch trial selected the fastest height and split on all eight validation systems. | 2026-11-24 |
 | [D433](decisions/D433.md) | For mixed-precision Gaussian Coulomb PME in an orthorhombic cell, apply the influence function in the inverse cuFFT load on eligible force-only evaluations. | 2026-11-25 |
 | [D434](decisions/D434.md) | Use an eight-key-per-lane bitonic network for GPU cells containing 129–256 atoms. | 2026-11-25 |
+| [D435](decisions/D435.md) | For Gaussian PME on a device, generate a five-pass convolution from MLIR (issue #961, D301). | 2026-11-25 |
+| [D436](decisions/D436.md) | Use checked fixed-point sums for bonded terms in mixed-precision GPU MD. | 2026-11-25 |
 <!-- end decisions-table -->
 
 

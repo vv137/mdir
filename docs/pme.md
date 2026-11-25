@@ -1303,7 +1303,7 @@ call), ms a step:
 
 ## Five-pass Gaussian convolution on a device
 
-D[pme-axis-fft] generates five kernels for a mixed-precision
+D435 generates five kernels for a mixed-precision
 Gaussian mesh. Z packs adjacent real points into complex pairs. Y transforms
 adjacent half-spectrum slots in a tile. The X pass transforms the remaining
 axis, calls the pointwise operation supplied by the PME lowering,
@@ -1343,7 +1343,7 @@ backend and reason for each requested evaluation. Each stage of a generated
 plan records its two factors, lines per block, and physical complex pitch
 in that order. Floating-point evaluation order differs between cuFFT and the
 generated transform. The derivation and method references are in
-[Section 5.3](paper/05-electrostatics.md#five-pass-gaussian-convolution-dpme-axis-fft).
+[Section 5.3](paper/05-electrostatics.md#five-pass-gaussian-convolution-d435).
 
 On the RTX 4090, the two whole-step runs gave the following results for
 Gaussian TOWERS. Entries give µs/step / ns/day over the final 1,000 of

@@ -17,4 +17,4 @@ from 508.5 to 50.6 µs. Changing both reduced it to 36.3 µs. The corresponding
 Cellulose means were 12,572.1, 413.8, and 59.9 µs. These measurements cover
 38 launches of each kernel at a 2 fs time step. The quantization, signed
 overflow checks, and mixed-only selection follow
-[D[bonded-workunits]](bonded-workunits.md).
+[D436](bonded-workunits.md).
