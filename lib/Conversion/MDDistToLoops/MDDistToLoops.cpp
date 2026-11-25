@@ -907,8 +907,23 @@ LogicalResult Lowering::lowerHalo(HaloOp op) {
     name = "mdrtDistEpochHalo";
     args.push_back(arith::ConstantIntOp::create(b, loc, midpoint, 64));
   }
-  Value handle = func::CallOp::create(b, loc,
-      declare(name, b.getFunctionType(ValueRange(args).getTypes(), {i64}), true), args).getResult(0);
+  Value handle;
+  if (parallelDomains && !cache && domains > 1) {
+    args.push_back(arith::ConstantIntOp::create(b, loc, midpoint, 64));
+    Value build = func::CallOp::create(b, loc, declare("mdrtDistBeginHalo",
+        b.getFunctionType(ValueRange(args).getTypes(), {i64}), true), args).getResult(0);
+    auto visit = declare("mdrtDistVisitHalo", b.getFunctionType({i64,i64,positions.getType()}, {}), true);
+    scf::ParallelOp::create(b, loc, ValueRange{index(b,0)}, ValueRange{index(b,domains)},
+        ValueRange{index(b,1)}, [&](OpBuilder &body, Location, ValueRange iv) {
+          Value d = arith::IndexCastOp::create(body, loc, i64, iv[0]);
+          func::CallOp::create(body, loc, visit, ValueRange{build,d,positions});
+        });
+    handle = func::CallOp::create(b, loc, declare("mdrtDistFinishHalo",
+        b.getFunctionType({i64,positions.getType()}, {i64}), true), ValueRange{build,positions}).getResult(0);
+  } else {
+    handle = func::CallOp::create(b, loc,
+        declare(name, b.getFunctionType(ValueRange(args).getTypes(), {i64}), true), args).getResult(0);
+  }
   Value capacity = toIndex(
       b, func::CallOp::create(
              b, loc,
