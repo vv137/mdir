@@ -204,9 +204,22 @@ struct Dispatch {
       initialState = buffer("certificate", mem({2}, narrow));
       initialFailed = buffer("failed conversions", mem({1}, wide));
     }
-    TowersMovingRow input{g, bool(shape.cartesianPositions), positions, cell,
-                          raw, box, geometry, status, charge, types, counts,
-                          keys, local, initialWords, initialState, initialFailed,
+    TowersMovingRow input{g,
+                          bool(shape.cartesianPositions),
+                          positions,
+                          cell,
+                          raw,
+                          box,
+                          geometry,
+                          status,
+                          charge,
+                          types,
+                          counts,
+                          keys,
+                          local,
+                          initialWords,
+                          initialState,
+                          initialFailed,
                           arrivals};
     rows(b, loc, idx(g.atoms), [&](OpBuilder &k, Value i) {
       input.emit(k, loc, i, binsInfo, fields);
@@ -325,9 +338,13 @@ LogicalResult Dispatch::run(Value positions) {
       if (g.cells() > g.atoms)
         launch("towers_insert", n, 128,
                {raw, charge, geometry, counts, keys, local, forward});
-      launch("towers_pack", 32LL * g.cells(), 128,
-             {counts, keys, local, types, map, packed, packedTypes, ids,
-              inverse, spans, status});
+      SmallVector<Value> packArgs{counts,  keys,   local,       types,
+                                  map,     packed, packedTypes, ids,
+                                  inverse, spans,  status};
+      if (!g.alwaysWidePack())
+        launch("towers_pack", 32LL * g.cells(), 128, packArgs);
+      if (g.mayNeedWidePack())
+        launch("towers_pack_wide", 32LL * g.cells(), 128, packArgs);
     }
     if (!force || i != 0) {
       fill(state, narrow);

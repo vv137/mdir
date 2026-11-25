@@ -157,7 +157,7 @@ struct TowersTrial {
         !allocate(raw, 24 * n) ||
         !allocate(box, cell.triclinic ? 72 : 24,
                   cell.triclinic ? cell.lattice.data() : system.box) ||
-        !allocate(map, 4 * entries) || !allocate(counts, 4 * (2 * c + 1)) ||
+        !allocate(map, 4 * entries) || !allocate(counts, 4 * (2 * c + 3)) ||
         !allocate(rebuildStatus, 4) ||
         !allocate(geometry, 24 * (cell.triclinic ? 13 : 3)) ||
         !allocate(charge, 4 * n) || !allocate(types, 4 * n) ||
@@ -194,6 +194,7 @@ struct Sample {
     Inputs,
     Insert,
     Pack,
+    PackWide,
     Force,
     Finish,
     CountRetries,
@@ -236,10 +237,14 @@ struct Sample {
                  {&f.raw, &f.charge, &f.geometry, &f.counts, &f.keys, &f.local,
                   &forward})))
       return false;
-    return launch(Pack, (f.cells + 3) / 4, 128,
-                  {&f.counts, &f.keys, &f.local, &f.types, &f.map, &f.packed,
-                   &f.packedTypes, &f.ids, &f.inverse, &f.spans,
-                   &f.rebuildStatus});
+    std::vector<void *> packArgs{&f.counts,      &f.keys,         &f.local,
+                                 &f.types,       &f.map,          &f.packed,
+                                 &f.packedTypes, &f.ids,          &f.inverse,
+                                 &f.spans,       &f.rebuildStatus};
+    return (f.atoms > 128LL * f.cells ||
+            launch(Pack, (f.cells + 3) / 4, 128, packArgs)) &&
+           (f.atoms <= 128 ||
+            launch(PackWide, (f.cells + 3) / 4, 128, packArgs));
   }
   bool pair(bool count = false) {
     float scale = 262144;
@@ -283,18 +288,18 @@ struct Sample {
                    "launch towers_finish");
   }
   bool measure(const void *image, bool canRetry, TowersTiming &timing) {
-    const char *names[] = {"towers_setup",
-                           "towers_trial_inputs",
-                           "towers_insert",
-                           "towers_pack",
-                           pressure ? "towers_force_virial" : "towers_force",
-                           "towers_finish",
-                           "towers_count_stripe_retries"};
+    const char *names[] = {
+        "towers_setup",     "towers_trial_inputs",
+        "towers_insert",    "towers_pack",
+        "towers_pack_wide", pressure ? "towers_force_virial" : "towers_force",
+        "towers_finish",    "towers_count_stripe_retries"};
     if (!f.check(api().cuModuleLoadData(&module, image),
                  "load trial specialization"))
       return false;
     for (int k = 0; k < (canRetry ? Size : CountRetries); ++k)
-      if (!f.check(api().cuModuleGetFunction(&fn[k], module, names[k]),
+      if (!(k == Pack && f.atoms > 128LL * f.cells) &&
+          !(k == PackWide && f.atoms <= 128) &&
+          !f.check(api().cuModuleGetFunction(&fn[k], module, names[k]),
                    names[k]))
         return false;
     for (int k = Force; k < (canRetry ? Size : CountRetries); ++k)
