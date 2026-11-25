@@ -1972,6 +1972,19 @@ LogicalResult Lowering::lowerMapParticles(MapParticlesOp op) {
       return success();
     }
   }
+  if (sharedState() && op->hasAttr("md_dist.add_terms") && resultType.isOwned() &&
+      resultType.getNumComponents() == 3 && op.getGathered().size() >= 2) {
+    Value sum = storage[op.getGathered().front()].buffer;
+    for (Value term : op.getGathered().drop_front()) {
+      SmallVector<Value> args{rows.handle,sum,storage[term].buffer,sum,result,real(b,1.0),
+                              arith::ConstantIntOp::create(b,loc,0,64)};
+      auto fn = declare("mdrtDistAdvance", b.getFunctionType(ValueRange(args).getTypes(), {}), true);
+      func::CallOp::create(b,loc,fn,args);
+      sum = result;
+    }
+    storage[op.getResult()].buffer = result;
+    return success();
+  }
   for (Value field : op.getGathered()) hostRows(b,storage[field].buffer);
   bool combine = fixedPoint && op->hasAttr("md_dist.add_terms");
   Value raw;
@@ -2710,15 +2723,24 @@ LogicalResult Lowering::lowerSumParticlesExec(SumParticlesOp op) {
   Value partial =
       allocate(b, partialType, {index(b, domains), index(b, length)});
   Storage &layout = rowsOf(op.getGathered()[0]);
-  for (int64_t d = 0; d < domains; ++d) {
-    FlatSymbolRefAttr set =
-        getSet(d, /*local=*/false, layoutOf(op.getGathered()[0]));
-    Value count = countOf(b, layout, index(b, d));
+  auto emit = [&](OpBuilder &b, Value d, FlatSymbolRefAttr set) {
+    Value count = countOf(b, layout, d);
     SmallVector<Value> ins;
-    for (Value field : op.getGathered())
-      ins.push_back(makeField(
-          b, set, cast<FieldType>(field.getType()).getNumComponents(),
-          b.getF64Type(), index(b, d), {storage[field].buffer}, {count}));
+    for (Value field : op.getGathered()) {
+      int64_t k = cast<FieldType>(field.getType()).getNumComponents();
+      if (sharedState()) {
+        auto fieldType = md::FieldType::get(module.getContext(),set,k,b.getF64Type());
+        auto host = mdrt::getBufferType(fieldType);
+        auto device = MemRefType::get(host.getShape(),b.getF64Type(),MemRefLayoutAttrInterface(),b.getI64IntegerAttr(1));
+        SmallVector<Value> args{d,count,storage[field].buffer};
+        auto fn = declare(k == 1 ? "mdrtDistScalarDeviceView" : "mdrtDistVectorDeviceView",
+                          b.getFunctionType(ValueRange(args).getTypes(), {device}), true);
+        Value view = func::CallOp::create(b,loc,fn,args).getResult(0);
+        ins.push_back(mdrt::FromBufferOp::create(b,loc,fieldType,view));
+      } else {
+        ins.push_back(makeField(b,set,k,b.getF64Type(),d,{storage[field].buffer},{count}));
+      }
+    }
     auto loop = md_exec::ParticleForOp::create(
         b, loc, TypeRange{type}, ins, ValueRange(),
         ValueRange{zero(b, type)}, /*scratch=*/ValueRange());
@@ -2740,8 +2762,21 @@ LogicalResult Lowering::lowerSumParticlesExec(SumParticlesOp op) {
       Value part =
           vector ? Value(vector::ExtractOp::create(b, loc, sum, c)) : sum;
       memref::StoreOp::create(b, loc, part, partial,
-                              ValueRange{index(b, d), index(b, c)});
+                              ValueRange{d, index(b, c)});
     }
+  };
+  Value epoch = layoutOf(op.getGathered().front());
+  if (sharedState()) {
+    auto enter = declare("mdrtDeviceDomainEnter",b.getFunctionType({}, {b.getI64Type()}),false);
+    Value parent = func::CallOp::create(b,loc,enter).getResult(0);
+    auto loop = scf::ForOp::create(b,loc,domainBound(b,false),domainBound(b,true),index(b,1));
+    loop->setAttr("md_dist.domain_loop",b.getUnitAttr());
+    OpBuilder body(loop.getBody()->getTerminator());
+    emit(body,loop.getInductionVar(),getSet(0,false,epoch));
+    auto leave = declare("mdrtDeviceDomainLeave",b.getFunctionType({b.getI64Type()}, {}),false);
+    func::CallOp::create(b,loc,leave,ValueRange{parent});
+  } else {
+    for (int64_t d = 0; d < domains; ++d) emit(b,index(b,d),getSet(d,false,epoch));
   }
   storage[op.getResult()].buffer = partial;
   return success();
@@ -2796,6 +2831,13 @@ LogicalResult Lowering::lowerMapParticlesExec(MapParticlesOp op) {
 LogicalResult Lowering::lower(Operation *op) {
   loc = op->getLoc();
   end = op->getBlock()->getTerminator();
+  if (sharedState())
+    if (auto sum = dyn_cast<SumParticlesOp>(op))
+      if (llvm::all_of(sum.getGathered(), [](Value field) {
+            auto t = cast<FieldType>(field.getType());
+            return t.isOwned() && t.getElementType().isF64() &&
+                   (t.getNumComponents() == 1 || t.getNumComponents() == 3);
+          })) return lowerSumParticlesExec(sum);
   // Native host consumers materialize the local slice on first read.
   // Packing, coverage and integration can pass the device version on.
   if (sharedState() && !isa<PackOp, UnpackOp, CoveredOp, MapParticlesOp,

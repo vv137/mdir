@@ -36,6 +36,10 @@ struct Memref2I {
   int64_t *allocated, *aligned;
   int64_t offset, sizes[2], strides[2];
 };
+struct Memref1D {
+  double *allocated, *aligned;
+  int64_t offset, sizes[1], strides[1];
+};
 struct Memref2D {
   double *allocated, *aligned;
   int64_t offset, sizes[2], strides[2];
@@ -788,6 +792,20 @@ void _mlir_ciface_mdrtDistHostRows(struct Memref3D *m) {
     mdrtNCCLDownload(at3(m,field->domain,0,0),field->device,field->bytes);
     field->deviceNewer = 0;
   }
+}
+
+void _mlir_ciface_mdrtDistScalarDeviceView(struct Memref1D *out, int64_t d, int64_t n,
+                                           struct Memref3D *field) {
+  if (field->sizes[2] != 1) fail("expected scalar device rows");
+  double *data = deviceRows(field,d,n,0);
+  *out = (struct Memref1D){data,data,0,{n},{1}};
+}
+
+void _mlir_ciface_mdrtDistVectorDeviceView(struct Memref2D *out, int64_t d, int64_t n,
+                                           struct Memref3D *field) {
+  if (field->sizes[2] != 3) fail("expected vector device rows");
+  double *data = deviceRows(field,d,n,0);
+  *out = (struct Memref2D){data,data,0,{n,3},{3,1}};
 }
 
 void _mlir_ciface_mdrtDistAdvance(int64_t layout, struct Memref3D *x, struct Memref3D *v,
