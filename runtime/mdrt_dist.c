@@ -102,6 +102,9 @@ struct Layout {
   int64_t *migrantOffsets, *migrantIds; /* Old rank, then particle identity. */
 #endif
 #ifdef MDIR_ENABLE_NCCL
+  struct Layout *identityOwner; /* Borrow immutable numberings across stationary epochs. */
+  uint32_t *faceMasks;
+  double faceReach;
   int *deviceMigrationMap;
   int64_t incomingRows;
 #endif
@@ -953,10 +956,18 @@ void mdrtDistReleaseLayout(int64_t handle) {
   free(l->migratedPositions);
   free(l->groups);
   free(l->groupCenters);
-  free(l->owner);
-  free(l->row);
-  free(l->rows);
-  free(l->ids);
+#ifdef MDIR_ENABLE_NCCL
+  free(l->faceMasks);
+  if (l->identityOwner) {
+    mdrtDistReleaseLayout((int64_t)(intptr_t)l->identityOwner);
+  } else
+#endif
+  {
+    free(l->owner);
+    free(l->row);
+    free(l->rows);
+    free(l->ids);
+  }
   free(l);
 }
 
@@ -1288,6 +1299,109 @@ void _mlir_ciface_mdrtDistRedistributeDevice(struct Memref3D *result,
 }
 #endif
 
+#ifdef MDIR_ENABLE_NCCL
+/* All rows outside the local face layer retain their owner and cannot be
+   ghosts. Inside that layer the GPU returns the new owner and a bit for
+   each receiving neighbor, including the local domain's periodic images.
+   The host exchanges these records in place of particle coordinates. */
+int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
+    struct Memref3D *positions, double lx, double ly, double lz, double reach) {
+  struct Layout *old = (void *)(intptr_t)oldHandle;
+  double edges[3] = {lx,ly,lz};
+  double margin = 64*DBL_EPSILON*fmax(lx,fmax(ly,lz));
+  int64_t d = mdrtMPIDomainBound(old->domains,0), rows = old->rows[d];
+  int eligible = old->groupCount == 0 && old->count <= INT_MAX && old->domains <= INT_MAX;
+  for (int k=0; k<3; ++k)
+    eligible = eligible && edges[k] == old->edges[k] && 2*(reach+margin)<edges[k]/old->grid[k];
+  if (!eligible) {
+    _mlir_ciface_mdrtDistHostRows(positions);
+    return migrate(oldHandle,positions,lx,ly,lz,1);
+  }
+  int64_t localCount;
+  int64_t *local = mdrtNCCLFaceRecords(deviceRows(positions,d,rows,0),rows,d,
+      old->grid,edges,reach+margin,&localCount);
+  for (int64_t i=0; i<localCount; ++i) {
+    int64_t r=local[2*i];
+    if (r<0 || r>=rows) fail("invalid position classifying device face rows");
+    local[2*i] = old->ids[d*old->stride+r];
+  }
+  struct Layout *next = calloc(1,sizeof *next);
+  if (!next) fail("out of memory creating device epoch");
+  next->references=1;
+  next->mpi=old->mpi;
+  next->count=old->count;
+  next->domains=old->domains;
+  next->faceReach=reach;
+  memcpy(next->edges,edges,sizeof edges);
+  memcpy(next->grid,old->grid,sizeof next->grid);
+  size_t capacity = old->count ? old->count : 1;
+  next->faceMasks=calloc(capacity,sizeof *next->faceMasks);
+  if (!next->faceMasks) fail("out of memory indexing device face rows");
+  for (int peer=0; peer<mdrtMPISize(); ++peer) {
+    int sender=peer==mdrtMPIRank();
+    int64_t count=sender ? localCount : 0;
+    mdrtMPIBroadcastWords(&count,1,peer);
+    if (!count) continue;
+    int64_t *records=sender ? local : malloc(2*count*sizeof *records);
+    if (!records) fail("out of memory receiving device face rows");
+    mdrtMPIBroadcastWords(records,2*count,peer);
+    for (int64_t i=0; i<count; ++i) {
+      int64_t j=records[2*i], owner=records[2*i+1]>>32;
+      next->faceMasks[j]=(uint32_t)records[2*i+1];
+      if (owner==old->owner[j]) continue;
+      if (!next->owner) {
+        next->owner=malloc(capacity*sizeof *next->owner);
+        if (!next->owner) fail("out of memory recording new domain owners");
+        memcpy(next->owner,old->owner,old->count*sizeof *next->owner);
+      }
+      next->owner[j]=owner;
+      if (observer) observer->migration(observer->context,old->owner[j],owner);
+    }
+    if (!sender) free(records);
+  }
+  free(local);
+  if (next->owner) {
+    next->row=malloc(capacity*sizeof *next->row);
+    next->rows=calloc(next->domains,sizeof *next->rows);
+    if (!next->row || !next->rows) fail("out of memory numbering device migrants");
+    numberOwnedRows(next);
+    indexMigrants(old,next);
+  } else {
+    next->identityOwner=old->identityOwner ? old->identityOwner : old;
+    mdrtDistRetainLayout((int64_t)(intptr_t)next->identityOwner);
+    next->owner=old->owner;
+    next->row=old->row;
+    next->rows=old->rows;
+    next->ids=old->ids;
+    next->stride=old->stride;
+    next->migrantOffsets=calloc(mdrtMPISize()+1,sizeof *next->migrantOffsets);
+    if (!next->migrantOffsets) fail("out of memory retaining stationary rows");
+  }
+  if (tracing()) traceMigration(old,next);
+  return (int64_t)(intptr_t)next;
+}
+
+void _mlir_ciface_mdrtDistEpochPositions(struct Memref3D *result,
+    int64_t oldHandle, int64_t newHandle, struct Memref3D *source) {
+  struct Layout *next=(void *)(intptr_t)newHandle;
+  if (!next->faceMasks) {
+    _mlir_ciface_mdrtDistCreateField(result,next->domains,next->stride,3);
+    _mlir_ciface_mdrtDistMigratedPositions(newHandle,result);
+    return;
+  }
+  int64_t d=mdrtMPIDomainBound(next->domains,0), rows=next->rows[d];
+  double *input;
+  if (next->identityOwner) {
+    _mlir_ciface_mdrtDistCreateField(result,next->domains,next->stride,3);
+    input=deviceRows(source,d,rows,0);
+  } else {
+    _mlir_ciface_mdrtDistRedistributeDevice(result,oldHandle,newHandle,source);
+    input=deviceRows(result,d,rows,0);
+  }
+  mdrtNCCLWrapRows(input,deviceRows(result,d,rows,1),rows,next->edges);
+}
+#endif
+
 /* The box of domain `d`: its region of the grid, widened to hold its owned
    positions, so that every owned particle lies in it whatever the rounding
    of its division (the coverage argument of Section 4.3 needs x_i in it). */
@@ -1494,6 +1608,67 @@ int64_t _mlir_ciface_mdrtDistFinishHalo(int64_t handle, struct Memref3D *x) {
               (long long)h->rows[d]);
   return (int64_t)(intptr_t)h;
 }
+
+#ifdef MDIR_ENABLE_NCCL
+int64_t _mlir_ciface_mdrtDistDeviceEpochHalo(int64_t layout, struct Memref3D *x, double reach) {
+  struct Layout *l=(void *)(intptr_t)layout;
+  if (!l->faceMasks) {
+    int64_t build=_mlir_ciface_mdrtDistBeginHalo(layout,x,reach,0,1);
+    for (int64_t d=0; d<l->domains; ++d) _mlir_ciface_mdrtDistVisitHalo(build,d,x);
+    return _mlir_ciface_mdrtDistFinishHalo(build,x);
+  }
+  if (l->faceReach!=reach) fail("device face map belongs to a different halo reach");
+  struct Halo *h=calloc(1,sizeof *h);
+  struct HaloBuild *build=calloc(1,sizeof *build);
+  struct GhostList *lists=calloc(l->domains,sizeof *lists);
+  if (!h || !build || !lists) fail("out of memory building device face halo");
+  h->references=1;
+  h->layout=l;
+  h->reach=reach;
+  h->rows=calloc(l->domains,sizeof *h->rows);
+  if (!h->rows) fail("out of memory counting device faces");
+  mdrtDistRetainLayout(layout);
+  for (int64_t d=0; d<l->domains; ++d) {
+    int64_t code=d;
+    for (int k=0; k<3; ++k) {
+      int64_t cell=code%l->grid[k];
+      code/=l->grid[k];
+      lists[d].lo[k]=l->edges[k]*cell/l->grid[k];
+      lists[d].hi[k]=l->edges[k]*(cell+1)/l->grid[k];
+    }
+  }
+  // Enumerate in identity then image order, irrespective of GPU arrival.
+  for (int64_t j=0; j<l->count; ++j) {
+    uint32_t mask=l->faceMasks[j];
+    while (mask) {
+      int bit=31-__builtin_clz(mask);
+      mask ^= 1u<<bit;
+      int64_t from=l->owner[j], to=0, stride=1;
+      int relative[3]={bit/9-1,(bit/3)%3-1,bit%3-1};
+      struct GhostRow row={.id=j};
+      for (int k=0; k<3; ++k) {
+        int64_t grid=l->grid[k], dest=from%grid+relative[k];
+        from/=grid;
+        if (dest<0) { dest+=grid; row.image[k]=1; }
+        if (dest>=grid) { dest-=grid; row.image[k]=-1; }
+        to+=dest*stride;
+        stride*=grid;
+      }
+      struct GhostList *list=&lists[to];
+      if (list->size==list->capacity) {
+        list->capacity=list->capacity ? 2*list->capacity : 64;
+        list->data=realloc(list->data,list->capacity*sizeof *list->data);
+        if (!list->data) fail("out of memory indexing device faces");
+      }
+      list->data[list->size++]=row;
+    }
+  }
+  for (int64_t d=0; d<l->domains; ++d) h->rows[d]=lists[d].size;
+  build->halo=h;
+  build->lists=lists;
+  return _mlir_ciface_mdrtDistFinishHalo((int64_t)(intptr_t)build,x);
+}
+#endif
 
 static int64_t buildHalo(int64_t layout, struct Memref3D *x, double reach, int midpoint) {
   int64_t build = _mlir_ciface_mdrtDistBeginHalo(layout,x,reach,midpoint,0);

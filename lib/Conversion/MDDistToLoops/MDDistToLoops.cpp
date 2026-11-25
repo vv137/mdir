@@ -681,6 +681,24 @@ static bool isMigrationPosition(RedistributeOp field) {
   return field.getImage() && move && move.getPositions() == field.getField();
 }
 
+// A packed Verlet rebuild has one halo reach and a wrapped position field.
+// Device face classification is only used for this complete epoch.
+static std::optional<double> rebuildReach(MigrateOp move) {
+  if (!move || !move->getParentOfType<ModuleOp>()->hasAttr("md_dist.driver"))
+    return std::nullopt;
+  std::optional<double> reach;
+  for (Operation *use : move.getLayout().getUsers()) {
+    auto halo = dyn_cast<HaloOp>(use);
+    if (!halo) continue;
+    auto positions = halo.getPositions().getDefiningOp<RedistributeOp>();
+    if (!positions || !isMigrationPosition(positions)) return std::nullopt;
+    double radius = halo.getResult().getType().getReach().convertToDouble();
+    if (reach && *reach != radius) return std::nullopt;
+    reach = radius;
+  }
+  return reach;
+}
+
 LogicalResult Lowering::lowerMigrate(MigrateOp op) {
   OpBuilder b(op);
   if (!op.getPositions().getType().getElementType().isF64())
@@ -695,15 +713,17 @@ LogicalResult Lowering::lowerMigrate(MigrateOp op) {
     auto field = dyn_cast<RedistributeOp>(use);
     return field && field.getNewLayout() == op.getLayout() && isMigrationPosition(field);
   });
-  func::FuncOp migrate = declare(
-      keepPositions ? "mdrtDistMigratePositions" : "mdrtDistMigrate",
-      b.getFunctionType({i64, positions.getType(), f64, f64, f64}, {i64}),
-      true);
-  Value handle = func::CallOp::create(
-                     b, loc, migrate,
-                     ValueRange{old.handle, positions, edges[0], edges[1],
-                                edges[2]})
-                     .getResult(0);
+  SmallVector<Value> args{old.handle, positions, edges[0], edges[1], edges[2]};
+  StringRef name = keepPositions ? "mdrtDistMigratePositions" : "mdrtDistMigrate";
+  auto reach = sharedState() ? rebuildReach(op) : std::nullopt;
+  if (reach) {
+    args.push_back(real(b, *reach));
+    name = "mdrtDistDeviceEpoch";
+  } else {
+    hostRows(b, positions);
+  }
+  auto migrate = declare(name, b.getFunctionType(ValueRange(args).getTypes(), {i64}), true);
+  Value handle = func::CallOp::create(b, loc, migrate, args).getResult(0);
   auto rowsType = MemRefType::get({ShapedType::kDynamic}, i64);
   auto idsType =
       MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, i64);
@@ -853,8 +873,10 @@ LogicalResult Lowering::lowerRedistribute(RedistributeOp op) {
   Value source = storage[op.getField()].buffer;
   int64_t components = op.getField().getType().getNumComponents();
   Type i64 = b.getI64Type();
-  if (sharedState() && !op.getImage() && !isMigrationPosition(op)) {
-    auto migrate = declare("mdrtDistRedistributeDevice",
+  auto move = op.getNewLayout().getDefiningOp<MigrateOp>();
+  bool epochPosition = sharedState() && isMigrationPosition(op) && rebuildReach(move);
+  if (sharedState() && (!op.getImage() || epochPosition)) {
+    auto migrate = declare(epochPosition ? "mdrtDistEpochPositions" : "mdrtDistRedistributeDevice",
         b.getFunctionType({i64, i64, source.getType()}, {source.getType()}), true);
     Value field = func::CallOp::create(b, loc, migrate,
         ValueRange{old.handle, next.handle, source}).getResult(0);
@@ -924,7 +946,15 @@ LogicalResult Lowering::lowerHalo(HaloOp op) {
     args.push_back(arith::ConstantIntOp::create(b, loc, midpoint, 64));
   }
   Value handle;
-  if (parallelDomains && !cache && domains > 1) {
+  auto migratedField = op.getPositions().getDefiningOp<RedistributeOp>();
+  bool deviceEpoch = sharedState() && !cache && !midpoint && migratedField &&
+      isMigrationPosition(migratedField) && rebuildReach(op.getLayout().getDefiningOp<MigrateOp>());
+  if (!deviceEpoch) hostRows(b, positions);
+  if (deviceEpoch) {
+    auto make = declare("mdrtDistDeviceEpochHalo",
+        b.getFunctionType(ValueRange(args).getTypes(), {i64}), true);
+    handle = func::CallOp::create(b, loc, make, args).getResult(0);
+  } else if (parallelDomains && !cache && domains > 1) {
     args.push_back(arith::ConstantIntOp::create(b, loc, midpoint, 64));
     auto field = op.getPositions().getDefiningOp<RedistributeOp>();
     bool migrated = mpi && field && isMigrationPosition(field);
@@ -2896,7 +2926,7 @@ LogicalResult Lowering::lower(Operation *op) {
   // Native host consumers materialize the local slice on first read.
   // Packing, coverage and integration can pass the device version on.
   if (sharedState() && !isa<PackOp, UnpackOp, CoveredOp, MapParticlesOp,
-                             HaloCopyOp, NeighborhoodOp, RedistributeOp>(op)) {
+                             HaloCopyOp, NeighborhoodOp, RedistributeOp, MigrateOp, HaloOp>(op)) {
     OpBuilder b(op);
     for (Value operand : op->getOperands())
       if (isa<FieldType>(operand.getType())) hostRows(b, storage[operand].buffer);
