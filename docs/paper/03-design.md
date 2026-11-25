@@ -1782,3 +1782,11 @@ kicks and drift are functions of the previous physical state and these
 forces. Induction from the indexed initial velocities, or from the
 stored checkpoint state, gives the same subsequent trajectory on the
 same build and traversal.
+D[mpi-transport] partitions the domain sequence among CPU ranks. The
+halo copy is a gather of owner rows, so its derivative distributes each
+ghost-row derivative back to its owner and adds repeated contributions.
+Sending these contributions in the reverse direction implements this
+transpose. Addition in floating point depends on grouping. Replaying the
+reference ghost sequence at the owner and folding scalar partials in
+global domain order preserves the reference grouping as the rank
+partition changes at fixed grid and traversal.
