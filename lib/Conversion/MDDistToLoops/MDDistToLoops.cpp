@@ -92,6 +92,7 @@ public:
         haloEvents(haloEvents), mpi(mpi), parallelDomains(parallelDomains) {}
 
   bool fixedPoint = false;
+  bool deviceSelfFaces = false;
   bool matrixPairs = false, gpuPairs = false, gpuImageGeometry = false;
   double matrixSkin = 0;
   LogicalResult run(func::FuncOp function);
@@ -726,6 +727,7 @@ LogicalResult Lowering::lowerMigrate(MigrateOp op) {
   auto reach = sharedState() ? rebuildReach(op) : std::nullopt;
   if (reach) {
     args.push_back(real(b, *reach));
+    args.push_back(arith::ConstantIntOp::create(b,loc,deviceSelfFaces,64));
     name = "mdrtDistDeviceEpoch";
   } else {
     hostRows(b, positions);
@@ -735,14 +737,25 @@ LogicalResult Lowering::lowerMigrate(MigrateOp op) {
   auto rowsType = MemRefType::get({ShapedType::kDynamic}, i64);
   auto idsType =
       MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, i64);
-  Value rows = allocate(b, rowsType, {index(b, domains)});
   Value capacity = ownedCapacity(b, handle);
-  Value ids = allocate(b, idsType, {index(b, domains), capacity});
-  func::CallOp::create(
-      b, loc,
-      declare("mdrtDistLayoutRows", b.getFunctionType({i64, rowsType, idsType},
-                                                       {}), true),
-      ValueRange{handle, rows, ids});
+  Value rows, ids;
+  if (sharedState()) {
+    auto view = [&](StringRef name, Type type) {
+      auto fn = declare(name,b.getFunctionType({i64,i64},{type}),true);
+      return func::CallOp::create(b,loc,fn,ValueRange{handle,
+          arith::ConstantIntOp::create(b,loc,0,64)}).getResult(0);
+    };
+    rows = view("mdrtDistRowView",rowsType);
+    ids = view("mdrtDistIdView",idsType);
+  } else {
+    rows = allocate(b, rowsType, {index(b, domains)});
+    ids = allocate(b, idsType, {index(b, domains), capacity});
+    func::CallOp::create(
+        b, loc,
+        declare("mdrtDistLayoutRows", b.getFunctionType({i64, rowsType, idsType},
+                                                         {}), true),
+        ValueRange{handle, rows, ids});
+  }
   OpBuilder atEnd(end);
   func::CallOp::create(
       atEnd, loc,
@@ -991,13 +1004,24 @@ LogicalResult Lowering::lowerHalo(HaloOp op) {
   auto rowsType = MemRefType::get({ShapedType::kDynamic}, i64);
   auto idsType =
       MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, i64);
-  Value rows = allocate(b, rowsType, {index(b, domains)});
-  Value ids = allocate(b, idsType, {index(b, domains), capacity});
-  func::CallOp::create(
-      b, loc,
-      declare("mdrtDistHaloRows",
-              b.getFunctionType({i64, rowsType, idsType}, {}), true),
-      ValueRange{handle, rows, ids});
+  Value rows, ids;
+  if (sharedState()) {
+    auto view = [&](StringRef name, Type type) {
+      auto fn = declare(name,b.getFunctionType({i64,i64},{type}),true);
+      return func::CallOp::create(b,loc,fn,ValueRange{handle,
+          arith::ConstantIntOp::create(b,loc,1,64)}).getResult(0);
+    };
+    rows = view("mdrtDistRowView",rowsType);
+    ids = view("mdrtDistIdView",idsType);
+  } else {
+    rows = allocate(b, rowsType, {index(b, domains)});
+    ids = allocate(b, idsType, {index(b, domains), capacity});
+    func::CallOp::create(
+        b, loc,
+        declare("mdrtDistHaloRows",
+                b.getFunctionType({i64, rowsType, idsType}, {}), true),
+        ValueRange{handle, rows, ids});
+  }
   OpBuilder atEnd(end);
   func::CallOp::create(
       atEnd, loc,
@@ -3240,6 +3264,22 @@ LogicalResult Lowering::run(func::FuncOp function) {
     return ops.front()->emitOpError()
            << "has no layout from md_dist.partition to run";
   domains = decomposition.getNumDomains();
+  deviceSelfFaces = domains==1 && sharedState() && matrixPairs && !fixedPoint &&
+      !gpuImageGeometry && module->hasAttr("md_dist.driver") &&
+      llvm::all_of(ops, [](Operation *op) {
+        if (isa<TupleKernelOp, TupleRowsOp, PartitionCentersOp, HaloSumOp>(op)) return false;
+        if (auto n=dyn_cast<NeighborhoodOp>(op))
+          return !n.getExcluded() && n.getResult().getType().getTraversal()==Traversal::Directed;
+        if (auto c=dyn_cast<HaloCopyOp>(op)) {
+          if (c.getResult().use_empty()) return false;
+          if (!c.getImage() && c.getResult().getType().getNumComponents()!=1) return false;
+          return llvm::all_of(c.getResult().getUsers(), [&](Operation *user) {
+            return (c.getImage() && isa<NeighborhoodOp>(user)) ||
+                   isa<GatherPairsOp,SumPairsOp>(user);
+          });
+        }
+        return true;
+      });
   if (throughExec)
     declareSets();
   bool statistics = module->hasAttr("md_dist.driver");

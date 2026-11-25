@@ -104,6 +104,7 @@ struct Layout {
 #ifdef MDIR_ENABLE_NCCL
   struct Layout *identityOwner; /* Borrow immutable numberings across stationary epochs. */
   uint32_t *faceMasks;
+  int selfFaces;
   double faceReach;
   int *deviceMigrationMap;
   int64_t incomingRows;
@@ -1378,8 +1379,18 @@ static int compareIdentities(const void *a, const void *b) {
   return (left>right)-(left<right);
 }
 
+static void borrowNumbering(struct Layout *old, struct Layout *next) {
+  next->identityOwner=old->identityOwner ? old->identityOwner : old;
+  mdrtDistRetainLayout((int64_t)(intptr_t)next->identityOwner);
+  next->owner=old->owner;
+  next->row=old->row;
+  next->rows=old->rows;
+  next->ids=old->ids;
+  next->stride=old->stride;
+}
+
 int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
-    struct Memref3D *positions, double lx, double ly, double lz, double reach) {
+    struct Memref3D *positions, double lx, double ly, double lz, double reach, int64_t selfOnly) {
   struct Layout *old = (void *)(intptr_t)oldHandle;
   double edges[3] = {lx,ly,lz};
   double margin = 64*DBL_EPSILON*fmax(lx,fmax(ly,lz));
@@ -1391,14 +1402,6 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
     _mlir_ciface_mdrtDistHostRows(positions);
     return migrate(oldHandle,positions,lx,ly,lz,1);
   }
-  int64_t localCount;
-  int64_t *local = mdrtNCCLFaceRecords(deviceRows(positions,d,rows,0),rows,d,
-      old->grid,edges,reach+margin,&localCount);
-  for (int64_t i=0; i<localCount; ++i) {
-    int64_t r=local[2*i];
-    if (r<0 || r>=rows) fail("invalid position classifying device face rows");
-    local[2*i] = old->ids[d*old->stride+r];
-  }
   struct Layout *next = calloc(1,sizeof *next);
   if (!next) fail("out of memory creating device epoch");
   next->references=1;
@@ -1408,12 +1411,26 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
   next->faceReach=reach;
   memcpy(next->edges,edges,sizeof edges);
   memcpy(next->grid,old->grid,sizeof next->grid);
+  next->migrantOffsets=calloc(mdrtMPISize()+1,sizeof *next->migrantOffsets);
+  if (!next->migrantOffsets) fail("out of memory indexing device migrants");
+  if (selfOnly && old->domains==1) {
+    next->selfFaces=1;
+    borrowNumbering(old,next);
+    if (tracing()) traceMigration(old,next);
+    return (int64_t)(intptr_t)next;
+  }
+  int64_t localCount;
+  int64_t *local = mdrtNCCLFaceRecords(deviceRows(positions,d,rows,0),rows,d,
+      old->grid,edges,reach+margin,&localCount);
+  for (int64_t i=0; i<localCount; ++i) {
+    int64_t r=local[2*i];
+    if (r<0 || r>=rows) fail("invalid position classifying device face rows");
+    local[2*i] = old->ids[d*old->stride+r];
+  }
   size_t capacity = old->count ? old->count : 1;
   next->faceMasks=calloc(capacity,sizeof *next->faceMasks);
   if (!next->faceMasks) fail("out of memory indexing device face rows");
   int64_t moved=0;
-  next->migrantOffsets=calloc(mdrtMPISize()+1,sizeof *next->migrantOffsets);
-  if (!next->migrantOffsets) fail("out of memory indexing device migrants");
   for (int peer=0; peer<mdrtMPISize(); ++peer) {
     int sender=peer==mdrtMPIRank();
     int64_t count=sender ? localCount : 0;
@@ -1456,13 +1473,7 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
     numberOwnedRows(next);
 
   } else {
-    next->identityOwner=old->identityOwner ? old->identityOwner : old;
-    mdrtDistRetainLayout((int64_t)(intptr_t)next->identityOwner);
-    next->owner=old->owner;
-    next->row=old->row;
-    next->rows=old->rows;
-    next->ids=old->ids;
-    next->stride=old->stride;
+    borrowNumbering(old,next);
 
   }
   if (tracing()) traceMigration(old,next);
@@ -1472,7 +1483,7 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
 void _mlir_ciface_mdrtDistEpochPositions(struct Memref3D *result,
     int64_t oldHandle, int64_t newHandle, struct Memref3D *source) {
   struct Layout *next=(void *)(intptr_t)newHandle;
-  if (!next->faceMasks) {
+  if (!next->faceMasks && !next->selfFaces) {
     _mlir_ciface_mdrtDistCreateField(result,next->domains,next->stride,3);
     _mlir_ciface_mdrtDistMigratedPositions(newHandle,result);
     return;
@@ -1705,6 +1716,34 @@ int64_t _mlir_ciface_mdrtDistFinishHalo(int64_t handle, struct Memref3D *x) {
 #ifdef MDIR_ENABLE_NCCL
 int64_t _mlir_ciface_mdrtDistDeviceEpochHalo(int64_t layout, struct Memref3D *x, double reach) {
   struct Layout *l=(void *)(intptr_t)layout;
+  if (l->selfFaces) {
+    if (reach!=l->faceReach) fail("local face plan belongs to a different halo reach");
+    struct Halo *h=calloc(1,sizeof *h);
+    if (!h) fail("out of memory building local faces");
+    h->references=1;
+    h->layout=l;
+    h->reach=reach;
+    mdrtDistRetainLayout(layout);
+    h->rows=malloc(sizeof *h->rows);
+    if (!h->rows) fail("out of memory counting local faces");
+    double margin=64*DBL_EPSILON*fmax(l->edges[0],fmax(l->edges[1],l->edges[2]));
+    h->ncclPlan=mdrtNCCLSelfPlan(deviceRows(x,0,l->rows[0],0),l->rows[0],
+                                 l->edges,reach+margin,h->rows);
+    h->capacity=h->rows[0] ? h->rows[0] : 1;
+    if (observer) {
+      double lo[3]={0,0,0};
+      observer->domain(observer->context,0,l->rows[0],h->rows[0],lo,l->edges);
+      if (h->rows[0]) {
+        h->edges=malloc(sizeof *h->edges);
+        if (!h->edges) fail("out of memory counting local halo edges");
+        h->edges[h->edgeCount++]=(struct Edge){0,0,h->rows[0]};
+      }
+    }
+    if (tracing())
+      fprintf(stderr,"mdrt_dist: halo reach %g: domain 0 owns %lld rows, holds %lld ghosts\n",
+              reach,(long long)l->rows[0],(long long)h->rows[0]);
+    return (int64_t)(intptr_t)h;
+  }
   if (!l->faceMasks) {
     int64_t build=_mlir_ciface_mdrtDistBeginHalo(layout,x,reach,0,1);
     for (int64_t d=0; d<l->domains; ++d) _mlir_ciface_mdrtDistVisitHalo(build,d,x);

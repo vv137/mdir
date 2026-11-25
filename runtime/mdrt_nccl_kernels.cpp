@@ -32,6 +32,76 @@ extern "C" __global__ void reorder(const double *owned, const double *incoming,
                        : incoming[(-1LL-row)*width+i%width];
 }
 struct Box { double length[3]; int grid[3]; };
+__device__ unsigned faceMask(const double lower[3], const double upper[3], double reach) {
+  unsigned mask=0;
+  // With a cell wider than two reaches only immediate neighbors qualify.
+  for (int a=(lower[0]<=reach ? -1 : 0); a<=(upper[0]<=reach ? 1 : 0); ++a)
+    for (int b=(lower[1]<=reach ? -1 : 0); b<=(upper[1]<=reach ? 1 : 0); ++b)
+      for (int c=(lower[2]<=reach ? -1 : 0); c<=(upper[2]<=reach ? 1 : 0); ++c) {
+        if (!a && !b && !c) continue;
+        double dx=a<0?lower[0]:a>0?upper[0]:0.;
+        double dy=b<0?lower[1]:b>0?upper[1]:0.;
+        double dz=c<0?lower[2]:c>0?upper[2]:0.;
+        if (dx*dx+dy*dy+dz*dz<=reach*reach)
+          mask |= 1u<<((a+1)*9+(b+1)*3+c+1);
+      }
+  return mask;
+}
+
+// Exclusive prefix within a block of 256 contiguous rows. Every thread
+// participates, including the padding after the final particle.
+__device__ int prefix(int count, int *warps) {
+  int lane=threadIdx.x%32, warp=threadIdx.x/32;
+  int total=count;
+  for (int step=1; step<32; step*=2) {
+    int earlier=__shfl_up_sync(0xffffffff,total,step);
+    if (lane>=step) total+=earlier;
+  }
+  if (lane==31) warps[warp]=total;
+  __syncthreads();
+  int first=total-count;
+  for (int w=0; w<warp; ++w) first+=warps[w];
+  return first;
+}
+extern "C" __global__ void selfFaceCounts(const double *x, long long rows, Box box,
+    double reach, unsigned *masks, int *blocks) {
+  long long r=(long long)blockIdx.x*blockDim.x+threadIdx.x;
+  unsigned mask=0;
+  if (r<rows) {
+    double lower[3],upper[3];
+    for (int k=0; k<3; ++k) {
+      lower[k]=fmax(0.,x[3*r+k]);
+      upper[k]=fmax(0.,box.length[k]-x[3*r+k]);
+    }
+    masks[r]=mask=faceMask(lower,upper,reach);
+  }
+  __shared__ int warps[8];
+  int count=__popc(mask);
+  int first=prefix(count,warps);
+  if (threadIdx.x==255) blocks[blockIdx.x]=first+count;
+}
+extern "C" __global__ void selfFaceFill(long long rows, Box box, const unsigned *masks,
+    const int *blocks, int *source, int *dest, double *shifts) {
+  long long r=(long long)blockIdx.x*blockDim.x+threadIdx.x;
+  unsigned mask=r<rows ? masks[r] : 0;
+  __shared__ int warps[8];
+  int place=blocks[blockIdx.x]+prefix(__popc(mask),warps);
+  while (mask) {
+    int bit=31-__clz(mask);
+    mask ^= 1u<<bit;
+    source[place]=(int)r;
+    dest[place]=place;
+    shifts[3LL*place]=(1-bit/9)*box.length[0];
+    shifts[3LL*place+1]=(1-(bit/3)%3)*box.length[1];
+    shifts[3LL*place+2]=(1-bit%3)*box.length[2];
+    ++place;
+  }
+}
+extern "C" __global__ void selfGather(const double *owned, const int *source,
+    const double *shifts, double *ghosts, long long n, int width) {
+  long long i=(long long)blockIdx.x*blockDim.x+threadIdx.x;
+  if (i<n) ghosts[i]=owned[(long long)source[i/width]*width+i%width]+(shifts ? shifts[i] : 0.);
+}
 extern "C" __global__ void faceRecords(const double *x, long long rows, Box box,
     int oldDomain, double reach, int *count, long long *output) {
   long long r = (long long)blockIdx.x*blockDim.x+threadIdx.x;
@@ -53,18 +123,7 @@ extern "C" __global__ void faceRecords(const double *x, long long rows, Box box,
     upper[k]=fmax(0.,length*(cell[k]+1)/grid-wrapped);
   }
   int domain=cell[0]+box.grid[0]*(cell[1]+box.grid[1]*cell[2]);
-  unsigned mask=0;
-  // With a cell wider than two reaches only immediate neighbors qualify.
-  for (int a=(lower[0]<=reach ? -1 : 0); a<=(upper[0]<=reach ? 1 : 0); ++a)
-    for (int b=(lower[1]<=reach ? -1 : 0); b<=(upper[1]<=reach ? 1 : 0); ++b)
-      for (int c=(lower[2]<=reach ? -1 : 0); c<=(upper[2]<=reach ? 1 : 0); ++c) {
-        if (!a && !b && !c) continue;
-        double dx=a<0?lower[0]:a>0?upper[0]:0.;
-        double dy=b<0?lower[1]:b>0?upper[1]:0.;
-        double dz=c<0?lower[2]:c>0?upper[2]:0.;
-        if (dx*dx+dy*dy+dz*dz<=reach*reach)
-          mask |= 1u<<((a+1)*9+(b+1)*3+c+1);
-      }
+  unsigned mask=faceMask(lower,upper,reach);
   if (mask || domain!=oldDomain) {
     int i=atomicAdd(count,1);
     output[2LL*i]=r;
@@ -103,6 +162,7 @@ extern "C" __global__ void coverage(const double *x, const double *ref,
 })";
 CUmodule module;
 CUfunction pack, unpack, advance, coverage, narrow, reorder, faceRecords, wrapRows;
+CUfunction selfFaceCounts, selfFaceFill, selfGather;
 
 void check(CUresult status) {
   if (status == CUDA_SUCCESS) return;
@@ -139,6 +199,9 @@ void compile() {
   check(cuModuleLoadData(&module, ptx.data()));
   check(cuModuleGetFunction(&pack, module, "pack"));
   check(cuModuleGetFunction(&unpack, module, "unpack"));
+  check(cuModuleGetFunction(&selfFaceCounts,module,"selfFaceCounts"));
+  check(cuModuleGetFunction(&selfFaceFill,module,"selfFaceFill"));
+  check(cuModuleGetFunction(&selfGather,module,"selfGather"));
   check(cuModuleGetFunction(&faceRecords,module,"faceRecords"));
   check(cuModuleGetFunction(&wrapRows,module,"wrapRows"));
   check(cuModuleGetFunction(&reorder, module, "reorder"));
@@ -237,4 +300,24 @@ extern "C" void mdrtNCCLWrapRows(const double *source, double *target, long long
   for (int k=0; k<3; ++k) box.length[k]=length[k];
   void *args[]={&source,&target,&rows,&box};
   check(cuLaunchKernel(wrapRows,(3*rows+255)/256,1,1,256,1,1,0,nullptr,args,nullptr));
+}
+
+extern "C" void mdrtNCCLSelfFaces(const double *x, long long rows, const double *length,
+    double reach, unsigned *masks, int *blocks, int *source, int *dest, double *shifts) {
+  if (!rows) return;
+  if (!module) compile();
+  Box box{};
+  for (int k=0; k<3; ++k) box.length[k]=length[k];
+  void *countArgs[]={&x,&rows,&box,&reach,&masks,&blocks};
+  void *fillArgs[]={&rows,&box,&masks,&blocks,&source,&dest,&shifts};
+  check(cuLaunchKernel(source ? selfFaceFill : selfFaceCounts,(rows+255)/256,1,1,
+                       256,1,1,0,nullptr,source ? fillArgs : countArgs,nullptr));
+}
+
+extern "C" void mdrtNCCLSelfGather(const double *owned, const int *source, const double *shifts,
+    double *ghosts, long long elements, int width, CUstream stream) {
+  if (!elements) return;
+  if (!module) compile();
+  void *args[]={&owned,&source,&shifts,&ghosts,&elements,&width};
+  check(cuLaunchKernel(selfGather,(elements+255)/256,1,1,256,1,1,0,stream,args,nullptr));
 }

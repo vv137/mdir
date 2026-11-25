@@ -9,6 +9,8 @@ void mdrtNCCLFinish(void);
 void mdrtNCCLRowsReady(void);
 int mdrtNCCLActive(void);
 struct NCCLPlan;
+struct NCCLPlan *mdrtNCCLSelfPlan(double *x, int64_t rows, const double *edges,
+                                  double reach, int64_t *ghosts);
 struct NCCLPlan *mdrtNCCLPlan(int64_t domains, const int64_t *ghosts,
     int64_t capacity, const int64_t *sourceDomain, const int64_t *sourceRow,
     const int64_t *image, const double *edges);
