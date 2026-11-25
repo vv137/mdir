@@ -152,6 +152,7 @@ if(TARGET obj.MDIRDriver)
 endif()
 
 foreach(target ${MDIR_DRIVER_TARGETS})
+  target_compile_definitions(${target} PRIVATE MDIR_ENABLE_MPI=$<BOOL:${MDIR_ENABLE_MPI}>)
   target_include_directories(${target} SYSTEM PRIVATE
     ${PROJECT_SOURCE_DIR}/third_party/tomlplusplus)
   if(MDIR_HDF5_FOUND)

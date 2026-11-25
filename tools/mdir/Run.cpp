@@ -8,6 +8,9 @@
 #include "DistributionLog.h"
 #include "Manifest.h"
 #include "TowersShape.h"
+#ifdef MDIR_ENABLE_MPI
+#include "mdrt_mpi.h"
+#endif
 
 #include "mdir/Compiler/Compile.h"
 #include "mdir/Compiler/JITEngine.h"
@@ -516,6 +519,17 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // What the run writes (D149). Its log goes to the standard output from
   // here, and to the file of [output] as well once that is open.
   Output output;
+  bool writer = true;
+  int ranks = 1;
+#ifdef MDIR_ENABLE_MPI
+  if (emit == Emit::Run && control->distribution && control->distribution->transport == "mpi") {
+    writer = mdrtMPIRank() == 0;
+    ranks = mdrtMPISize();
+    output.log.quiet = !writer;
+    if (options.maxWalltime > 0)
+      return fail("MPI wall-time stops require a collective checkpoint decision");
+  }
+#endif
   if (trial) {
     // An independent invocation owns its state, callbacks and banks. Use the
     // production shape and checkpoint, with no files or checkpoints to write.
@@ -1311,7 +1325,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // A run that is not continued keeps the outputs of an earlier run that
   // has the same names as `#<name>.<n>#` before it writes its own (D149);
   // those of a continued run are its own.
-  if (!options.continues) {
+  if (writer && !options.continues) {
     std::vector<std::string> written = {control->logFile, control->energyFile,
                                         control->pullFile, control->manifestFile,
                                         control->profileMapFile,
@@ -1342,14 +1356,14 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // The log file holds what the run has printed so far; a continued run
   // appends to it. Without one the log keeps nothing from here on: this
   // is the only place where its file opens (#304).
-  if (!control->logFile.empty()) {
+  if (writer && !control->logFile.empty()) {
     if (llvm::Error error =
             output.log.open(getOutputPath(control->logFile), own.has_value()))
       return fail(std::move(error));
   } else {
     output.log.keepNothing();
   }
-  if (!control->profileMapFile.empty())
+  if (writer && !control->profileMapFile.empty())
     if (llvm::Error error = writeProfileMap(control->profileMapFile))
       return fail(std::move(error));
 
@@ -1559,7 +1573,10 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   for (double &value : startValues)
     arguments.push_back(&value);
 
-  int distRank = 0, distRanks = 1;
+  int distRank = 0, distRanks = ranks;
+#ifdef MDIR_ENABLE_MPI
+  if (ranks > 1) distRank = mdrtMPIRank();
+#endif
   llvm::json::Object distribution;
   if (const auto &dist = control->distribution) {
     const auto &grid = program->domainGrid;
@@ -1602,7 +1619,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
         control->pairlistDistance, control->cutoffDistance,
         control->pairlistDistance - control->cutoffDistance);
   }
-  if (!control->manifestFile.empty()) {
+  if (writer && !control->manifestFile.empty()) {
     auto device = getManifestDevice(control->target);
     if (!device)
       return fail(device.takeError());
@@ -1811,12 +1828,12 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   std::optional<int64_t> keepThrough;
   if (own)
     keepThrough = own->step;
-  if (!control->energyFile.empty())
+  if (writer && !control->energyFile.empty())
     if (llvm::Error error =
             output.energies.open(getOutputPath(control->energyFile),
                                  getEnergyColumns(output), keepThrough))
       return fail(std::move(error));
-  if (control->framePeriod > 0) {
+  if (writer && control->framePeriod > 0) {
     // The cell in Å, from the system: a topology gives it with the
     // coordinates, not the control file.
     double cell[3];
@@ -1907,7 +1924,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // component and the difference of the energy to each state, the input of
   // thermodynamic integration and of MBAR. With one state the differences
   // are identically 0 and are left out (D190).
-  if (!control->freeEnergyFile.empty()) {
+  if (writer && !control->freeEnergyFile.empty()) {
     std::vector<ColumnFile::Column> columns = {{"step", "-", true},
                                                {"time", "ps"}};
     for (const auto &[name, values] : control->freeEnergy.lambdas)
@@ -1927,7 +1944,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // [output] observe (D189): the energy of a term, `<term>.energy`, or its
   // derivative in a constant of its, `<term>.d_<constant>`, per unit of the
   // constant, at every energy of the log.
-  if (!control->observablesFile.empty()) {
+  if (writer && !control->observablesFile.empty()) {
     std::vector<ColumnFile::Column> columns = {{"step", "-", true},
                                                {"time", "ps"}};
     for (const auto &[name, unit] : control->getObservableColumns())
@@ -1936,7 +1953,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
             getOutputPath(control->observablesFile), columns, keepThrough))
       return fail(std::move(error));
   }
-  if (!control->pullFile.empty()) {
+  if (writer && !control->pullFile.empty()) {
     std::vector<ColumnFile::Column> columns = {{"step", "-", true},
                                                {"time", "ps"}};
     for (const TupleTerm &term : system->topology->tupleTerms) {
@@ -1963,7 +1980,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
             getOutputPath(control->pullFile), columns, keepThrough))
       return fail(std::move(error));
   }
-  if (writesCheckpoints) {
+  if (writer && writesCheckpoints) {
     output.checkpointPath = control->restartOutput;
     Checkpoint &checkpoint = output.checkpoint;
     checkpoint.omitObjectTimes = output.distributedWordEnergy;

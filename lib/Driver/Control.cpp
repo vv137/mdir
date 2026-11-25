@@ -3131,8 +3131,12 @@ Error Reader::readDistribute(const toml::table &table) {
     }
   }
   if (Error err = readChoice<std::string>(table, "transport", dist.transport,
-                                          {{"local", "local"}}))
+                                          {{"local", "local"}, {"mpi", "mpi"}}))
     return err;
+#if !MDIR_ENABLE_MPI
+  if (dist.transport == "mpi")
+    return fail(table, "MPI transport requires a build with MDIR_ENABLE_MPI=ON");
+#endif
   if (Error err = readChoice<std::string>(
           table, "traversal", dist.traversal,
           {{"directed", "directed"}, {"unique", "unique"}}))

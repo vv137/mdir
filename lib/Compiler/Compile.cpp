@@ -352,13 +352,10 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
   os << "md-differentiate,md-expand-truncation,md-inline,"
      << "dyn-expand-couplings,md-bypass-updates,";
   if (control.distribution)
-    os << "md-dist-owner-computes,md-distribute-driver-steps"
-       << (control.deterministic ? "{wrap-drift=true}" : "")
-       << ",md-exec-assign-algebra,"
-          "convert-md-dist-to-loops{halo-events=true"
-       << (control.deterministic ? " fixed-point=true" : "")
-       << "},"
-          "lower-mdrt-halo-events,";
+    os << "md-dist-owner-computes,md-distribute-driver-steps,md-exec-assign-algebra,"
+       << "convert-md-dist-to-loops{halo-events=true"
+       << (control.distribution->transport == "mpi" ? " mpi=true" : "")
+       << "},lower-mdrt-halo-events,";
   os << "convert-md-to-md-exec{skin=" << program.skin
      << " width=" << program.neighborWidth << "},";
   os << "md-exec-reuse-neighbors";
