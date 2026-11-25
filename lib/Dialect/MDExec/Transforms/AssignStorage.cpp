@@ -2071,6 +2071,8 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
       Type field = from.getResult().getType();
       Attribute set = getParticleSet(field);
       Value size = sizes.lookup(set);
+      if (!size && onDevice)
+        size = memref::DimOp::create(builder, op->getLoc(), buffer, 0);
       if (!size)
         return op->emitOpError("collected field requires a known particle-set extent");
       Value held = scope.request(getStorageType(field), size, set, op->getLoc());

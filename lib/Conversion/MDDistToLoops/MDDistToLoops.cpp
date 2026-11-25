@@ -2213,7 +2213,10 @@ Value Lowering::makeField(OpBuilder &b, FlatSymbolRefAttr set, int64_t k,
         });
     offset = arith::AddIOp::create(b, loc, offset, count);
   }
-  return mdrt::FromBufferOp::create(b, loc, fieldType, buffer);
+  auto result = mdrt::FromBufferOp::create(b, loc, fieldType, buffer);
+  if (gpuPairs)
+    result->setAttr("mdrt.collect_buffer", b.getUnitAttr());
+  return result;
 }
 
 void Lowering::copyBack(OpBuilder &b, Value field, Value first, Value count,
@@ -2221,7 +2224,8 @@ void Lowering::copyBack(OpBuilder &b, Value field, Value first, Value count,
   auto fieldType = cast<md::FieldType>(field.getType());
   MemRefType type = mdrt::getBufferType(fieldType);
   int64_t k = fieldType.getNumComponents();
-  Value flat = mdrt::ToBufferOp::create(b, loc, type, field);
+  Value flat = gpuPairs ? Value(mdrt::SnapshotOp::create(b, loc, type, field))
+                        : Value(mdrt::ToBufferOp::create(b, loc, type, field));
   scf::ForOp::create(
       b, loc, index(b, 0), count, index(b, 1), ValueRange(),
       [&](OpBuilder &br, Location, Value r, ValueRange) {
@@ -2236,6 +2240,7 @@ void Lowering::copyBack(OpBuilder &b, Value field, Value first, Value count,
         }
         scf::YieldOp::create(br, loc);
       });
+  if (gpuPairs) memref::DeallocOp::create(b, loc, flat);
 }
 
 LogicalResult Lowering::lowerNeighborhoodExec(NeighborhoodOp op) {
