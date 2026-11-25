@@ -89,6 +89,7 @@ public:
         throughExec(throughExec), width(width), cellsPerReach(cellsPerReach),
         haloEvents(haloEvents) {}
 
+  bool fixedPoint = false;
   LogicalResult run(func::FuncOp function);
 
 private:
@@ -180,6 +181,11 @@ private:
   }
   /// A zero of `type`, f64 or a vector of f64.
   Value zero(OpBuilder &b, Type type);
+  Type sumType(Type type);
+  Value quantize(OpBuilder &b, Value value, int fractionalBits);
+  Value finish(OpBuilder &b, Value sum, int fractionalBits);
+  Value add(OpBuilder &b, Value lhs, Value rhs);
+  llvm::DenseMap<Value, Value> imageShifts;
   /// A new buffer of `domains x rows x k` of f64, freed at the end.
   Value allocate(OpBuilder &b, Value rows, int64_t k);
   Value inputSnapshot(OpBuilder &b, md::FieldType type, Value field);
@@ -265,7 +271,68 @@ func::FuncOp Lowering::declare(StringRef name, FunctionType type,
   return function;
 }
 
+// All terms are rounded before entering any center or domain subtotal.
+Type Lowering::sumType(Type type) {
+  if (!fixedPoint) return type;
+  Type word = IntegerType::get(module.getContext(), 64);
+  if (auto vector = dyn_cast<VectorType>(type))
+    return VectorType::get(vector.getShape(), word);
+  return word;
+}
+
+Value Lowering::quantize(OpBuilder &b, Value value, int fractionalBits) {
+  if (!fixedPoint) return value;
+  // The runtime checks the rounded value before casting. There is no
+  // floating-to-integer instruction with an out-of-range operand.
+  auto convert = declare("mdrtDistWord",
+      b.getFunctionType({b.getF64Type(), b.getF64Type()}, {b.getI64Type()}), false);
+  Value scale = real(b, double(uint64_t{1} << fractionalBits));
+  auto scalar = [&](Value x) {
+    return func::CallOp::create(b, loc, convert, ValueRange{x, scale}).getResult(0);
+  };
+  if (auto vector = dyn_cast<VectorType>(value.getType())) {
+    SmallVector<Value> parts;
+    for (int64_t c = 0; c < vector.getNumElements(); ++c)
+      parts.push_back(scalar(vector::ExtractOp::create(b, loc, value, c)));
+    return vector::FromElementsOp::create(b, loc,
+        cast<VectorType>(sumType(vector)), parts);
+  }
+  return scalar(value);
+}
+
+Value Lowering::finish(OpBuilder &b, Value sum, int fractionalBits) {
+  if (!fixedPoint) return sum;
+  Type type = b.getF64Type();
+  Value scale = real(b, 1.0 / double(uint64_t{1} << fractionalBits));
+  if (auto vector = dyn_cast<VectorType>(sum.getType())) {
+    type = VectorType::get(vector.getShape(), type);
+    scale = vector::BroadcastOp::create(b, loc, type, scale);
+  }
+  return arith::MulFOp::create(b, loc,
+      arith::SIToFPOp::create(b, loc, type, sum), scale);
+}
+
+Value Lowering::add(OpBuilder &b, Value lhs, Value rhs) {
+  if (!fixedPoint) return arith::AddFOp::create(b, loc, lhs, rhs);
+  // Check signed overflow for every scalar lane, including reverse updates.
+  auto word = b.getI64Type();
+  auto checked = declare("mdrtDistAddWords", b.getFunctionType({word, word}, {word}), false);
+  auto scalar = [&](Value a, Value v) {
+    return func::CallOp::create(b, loc, checked, ValueRange{a, v}).getResult(0);
+  };
+  if (auto vector = dyn_cast<VectorType>(lhs.getType())) {
+    SmallVector<Value> parts;
+    for (int64_t c = 0; c < vector.getNumElements(); ++c)
+      parts.push_back(scalar(vector::ExtractOp::create(b, loc, lhs, c),
+                             vector::ExtractOp::create(b, loc, rhs, c)));
+    return vector::FromElementsOp::create(b, loc, vector, parts);
+  }
+  return scalar(lhs, rhs);
+}
+
 Value Lowering::zero(OpBuilder &b, Type type) {
+  if (getElementTypeOrSelf(type).isInteger(64))
+    return arith::ConstantOp::create(b, loc, b.getZeroAttr(type));
   if (auto vector = dyn_cast<VectorType>(type))
     return arith::ConstantOp::create(
         b, loc, DenseElementsAttr::get(vector, b.getF64FloatAttr(0.0)));
@@ -291,7 +358,7 @@ void Lowering::fillZero(OpBuilder &b, Value buffer) {
   SmallVector<Value> sizes;
   for (int64_t i = 0; i < type.getRank(); ++i)
     sizes.push_back(memref::DimOp::create(b, loc, buffer, i));
-  Value zeroValue = real(b, 0.0);
+  Value zeroValue = zero(b, type.getElementType());
   std::function<void(OpBuilder &, SmallVector<Value> &)> nest =
       [&](OpBuilder &at, SmallVector<Value> &indices) {
         if (indices.size() == sizes.size()) {
@@ -340,7 +407,7 @@ void Lowering::storeValue(OpBuilder &b, Value value, Value buffer,
 void Lowering::addValue(OpBuilder &b, Value value, Value buffer, Value domain,
                         Value row) {
   Value old = loadValue(b, buffer, domain, row, value.getType());
-  storeValue(b, arith::AddFOp::create(b, loc, old, value), buffer, domain,
+  storeValue(b, add(b, old, value), buffer, domain,
              row);
 }
 
@@ -642,7 +709,14 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
   Value ghosts = allocate(b, halo.capacity, k);
   Type i64 = b.getI64Type();
   Value image = arith::ConstantOp::create(
-      b, loc, b.getI64IntegerAttr(op.getImage() ? 1 : 0));
+      b, loc, b.getI64IntegerAttr(op.getImage() && !fixedPoint ? 1 : 0));
+  if (op.getImage() && fixedPoint) {
+    Value shifts = allocate(b, halo.capacity, 3);
+    auto fill = declare("mdrtDistImageShifts",
+        b.getFunctionType({i64, shifts.getType()}, {}), true);
+    func::CallOp::create(b, loc, fill, ValueRange{halo.handle, shifts});
+    imageShifts[op.getResult()] = shifts;
+  }
   if (haloEvents) {
     auto start = mdrt::HaloCopyStartOp::create(
         b, loc, mdrt::EventType::get(module.getContext()), halo.handle, owned,
@@ -683,6 +757,14 @@ LogicalResult Lowering::lowerHaloSum(HaloSumOp op) {
   Value ghosts = storage[op.getGhosts()].buffer;
   int64_t k = op.getResult().getType().getNumComponents();
   Value result = allocate(b, layout.capacity, k);
+  if (fixedPoint && cast<MemRefType>(owned.getType()).getElementType().isInteger(64)) {
+    auto sum = declare("mdrtDistHaloSumWords",
+        b.getFunctionType({b.getI64Type(), owned.getType(), ghosts.getType(),
+                           result.getType()}, {}), true);
+    func::CallOp::create(b, loc, sum, ValueRange{halo.handle, owned, ghosts, result});
+    storage[op.getResult()].buffer = result;
+    return success();
+  }
   memref::CopyOp::create(b, loc, owned, result);
   if (haloEvents) {
     auto start = mdrt::HaloSumStartOp::create(
@@ -780,6 +862,9 @@ LogicalResult Lowering::lowerPartitionCenters(PartitionCentersOp op) {
                     Value xk = loadValue(bg, xg, d, k,
                                          VectorType::get({3}, bg.getF64Type()));
                     Value delta = arith::SubFOp::create(bg, loc, xi, xk);
+                    if (shifts)
+                      dvec = arith::SubFOp::create(bk, loc, dvec,
+                          side.getResult(1 + types.size()));
                     Value r2 = vector::ReductionOp::create(
                         bg, loc, vector::CombiningKind::ADD,
                         arith::MulFOp::create(bg, loc, delta, delta));
@@ -837,7 +922,8 @@ struct PairSide {
 template <typename OpTy>
 static void emitPairs(
     OpTy op, Location loc, int64_t domains,
-    llvm::DenseMap<Value, Storage> &storage, Type accumulator,
+    llvm::DenseMap<Value, Storage> &storage, Type accumulator, Value shifts,
+    function_ref<Value(OpBuilder &, Value, Value)> add,
     function_ref<Value(OpBuilder &, Type)> zero,
     function_ref<Value(OpBuilder &, Value, Value, Value, Type)> load,
     function_ref<Value(OpBuilder &, Block &, ValueRange)> kernel,
@@ -920,6 +1006,7 @@ static void emitPairs(
                     // The values of row k, from the owned or the ghost rows.
                     SmallVector<Type> sideTypes = {vec3};
                     sideTypes.append(types.begin(), types.end());
+                    if (shifts) sideTypes.push_back(vec3);
                     if (unique)
                       sideTypes.push_back(i64);
                     auto side = scf::IfOp::create(bk, loc, sideTypes, isOwned,
@@ -930,6 +1017,7 @@ static void emitPairs(
                       for (unsigned g = 0; g < ownedFields.size(); ++g)
                         values.push_back(
                             load(t, ownedFields[g], d, k, types[g]));
+                      if (shifts) values.push_back(zero(t, vec3));
                       if (unique)
                         values.push_back(memref::LoadOp::create(
                             t, loc, layout.ids, ValueRange{d, k}));
@@ -942,6 +1030,7 @@ static void emitPairs(
                       for (unsigned g = 0; g < ghostFields.size(); ++g)
                         values.push_back(
                             load(e, ghostFields[g], d, ghostRow, types[g]));
+                      if (shifts) values.push_back(load(e, shifts, d, ghostRow, vec3));
                       if (unique)
                         values.push_back(memref::LoadOp::create(
                             e, loc, halo.ids, ValueRange{d, ghostRow}));
@@ -993,10 +1082,8 @@ static void emitPairs(
                   });
               Value sum = rows.getResult(0);
               finishCenter(bi, sum, d, i);
-              Value next =
-                  accumulator.isF64() || isa<VectorType>(accumulator)
-                      ? Value(arith::AddFOp::create(bi, loc, domainSum[0], sum))
-                      : domainSum[0];
+              Value next = isa<SumPairsOp>(op) ? add(bi, domainSum[0], sum)
+                                               : domainSum[0];
               scf::YieldOp::create(bi, loc, ValueRange{next});
             });
         finishDomain(bd, centers.getResult(0), d);
@@ -1010,7 +1097,7 @@ LogicalResult Lowering::lowerSumPairs(SumPairsOp op) {
   auto vector = dyn_cast<VectorType>(type);
   int64_t length = vector ? vector.getNumElements() : 1;
   auto partialType = MemRefType::get(
-      {ShapedType::kDynamic, ShapedType::kDynamic}, b.getF64Type());
+      {ShapedType::kDynamic, ShapedType::kDynamic}, sumType(b.getF64Type()));
   Value partial =
       allocate(b, partialType, {index(b, domains), index(b, length)});
   bool directed =
@@ -1018,7 +1105,8 @@ LogicalResult Lowering::lowerSumPairs(SumPairsOp op) {
   // Over a directed relation every pair is visited at both of its owners.
   double weight = directed ? 0.5 : 1.0;
   emitPairs(
-      op, loc, domains, storage, type,
+      op, loc, domains, storage, sumType(type), imageShifts.lookup(op.getGhosts()),
+      [&](OpBuilder &at, Value a, Value v) { return add(at, a, v); },
       [&](OpBuilder &at, Type t) { return zero(at, t); },
       [&](OpBuilder &at, Value buffer, Value d, Value row, Type t) {
         return loadValue(at, buffer, d, row, t);
@@ -1027,14 +1115,16 @@ LogicalResult Lowering::lowerSumPairs(SumPairsOp op) {
         return inlineKernel(at, kernel, arguments);
       },
       [&](OpBuilder &at, Value value, Value acc, Value, Value, Value, Value) {
-        return Value(arith::AddFOp::create(at, loc, acc, value));
+        return add(at, acc, quantize(at, value, 32));
       },
       [&](OpBuilder &, Value, Value, Value) {},
       [&](OpBuilder &at, Value sum, Value d) {
-        Value w = real(at, weight);
-        if (vector)
-          w = vector::BroadcastOp::create(at, loc, vector, w);
-        Value scaled = arith::MulFOp::create(at, loc, sum, w);
+        Value scaled = sum;
+        if (!fixedPoint) {
+          Value w = real(at, weight);
+          if (vector) w = vector::BroadcastOp::create(at, loc, vector, w);
+          scaled = arith::MulFOp::create(at, loc, sum, w);
+        }
         for (int64_t c = 0; c < length; ++c) {
           Value part = vector ? Value(vector::ExtractOp::create(at, loc,
                                                                 scaled, c))
@@ -1063,11 +1153,16 @@ LogicalResult Lowering::lowerGatherPairs(GatherPairsOp op) {
   bool directed =
       op.getRelation().getType().getTraversal() == Traversal::Directed;
   double weight = directed && twoEnded ? 0.5 : 1.0;
-  Value ownedOut = allocate(b, layout.capacity, k);
+  auto wordBuffer = MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic,
+                                     ShapedType::kDynamic}, sumType(b.getF64Type()));
+  auto allocateSums = [&](Value rows) {
+    return allocate(b, wordBuffer, {index(b, domains), rows, index(b, k)});
+  };
+  Value ownedOut = twoEnded ? allocateSums(layout.capacity) : allocate(b, layout.capacity, k);
   Value ghostOut;
   if (twoEnded) {
     fillZero(b, ownedOut);
-    ghostOut = allocate(b, halo.capacity, k);
+    ghostOut = allocateSums(halo.capacity);
     fillZero(b, ghostOut);
   }
   // The value at the second particle of a pair computed once: the
@@ -1082,7 +1177,8 @@ LogicalResult Lowering::lowerGatherPairs(GatherPairsOp op) {
     return arith::MulFOp::create(at, loc, value, s);
   };
   emitPairs(
-      op, loc, domains, storage, type,
+      op, loc, domains, storage, sumType(type), imageShifts.lookup(op.getGhosts()),
+      [&](OpBuilder &at, Value a, Value v) { return add(at, a, v); },
       [&](OpBuilder &at, Type t) { return zero(at, t); },
       [&](OpBuilder &at, Value buffer, Value d, Value row, Type t) {
         return loadValue(at, buffer, d, row, t);
@@ -1093,7 +1189,7 @@ LogicalResult Lowering::lowerGatherPairs(GatherPairsOp op) {
       [&](OpBuilder &at, Value value, Value acc, Value d, Value kRow,
           Value isOwned, Value ghostRow) {
         if (twoEnded) {
-          Value other = scale(at, value, sign * weight);
+          Value other = quantize(at, scale(at, value, sign * weight), 40);
           scf::IfOp::create(
               at, loc, isOwned,
               [&](OpBuilder &t, Location) {
@@ -1105,13 +1201,13 @@ LogicalResult Lowering::lowerGatherPairs(GatherPairsOp op) {
                 scf::YieldOp::create(e, loc);
               });
         }
-        return Value(arith::AddFOp::create(at, loc, acc, value));
+        return add(at, acc, quantize(at, fixedPoint ? scale(at, value, weight) : value, 40));
       },
       [&](OpBuilder &at, Value sum, Value d, Value i) {
         if (twoEnded)
-          addValue(at, scale(at, sum, weight), ownedOut, d, i);
+          addValue(at, fixedPoint ? sum : scale(at, sum, weight), ownedOut, d, i);
         else
-          storeValue(at, sum, ownedOut, d, i);
+          storeValue(at, finish(at, sum, 40), ownedOut, d, i);
       },
       [&](OpBuilder &, Value, Value) {});
   storage[op.getResults()[0]].buffer = ownedOut;
@@ -1130,7 +1226,7 @@ LogicalResult Lowering::lowerSumParticles(SumParticlesOp op) {
   auto vector = dyn_cast<VectorType>(type);
   int64_t length = vector ? vector.getNumElements() : 1;
   auto partialType = MemRefType::get(
-      {ShapedType::kDynamic, ShapedType::kDynamic}, b.getF64Type());
+      {ShapedType::kDynamic, ShapedType::kDynamic}, sumType(b.getF64Type()));
   Value partial =
       allocate(b, partialType, {index(b, domains), index(b, length)});
   Storage &rows = rowsOf(op.getGathered()[0]);
@@ -1141,7 +1237,7 @@ LogicalResult Lowering::lowerSumParticles(SumParticlesOp op) {
             bd, memref::LoadOp::create(bd, loc, rows.rows, ValueRange{d}));
         auto loop = scf::ForOp::create(
             bd, loc, index(bd, 0), count, index(bd, 1),
-            ValueRange{zero(bd, type)},
+            ValueRange{zero(bd, sumType(type))},
             [&](OpBuilder &br, Location, Value r, ValueRange acc) {
               SmallVector<Value> arguments;
               for (Value field : op.getGathered())
@@ -1152,7 +1248,7 @@ LogicalResult Lowering::lowerSumParticles(SumParticlesOp op) {
                   inlineKernel(br, op.getKernel().front(), arguments);
               scf::YieldOp::create(
                   br, loc,
-                  ValueRange{arith::AddFOp::create(br, loc, acc[0], value)});
+                  ValueRange{add(br, acc[0], quantize(br, value, 32))});
             });
         Value sum = loop.getResult(0);
         for (int64_t c = 0; c < length; ++c) {
@@ -1207,20 +1303,24 @@ LogicalResult Lowering::lowerAllReduce(AllReduceOp op) {
   // The partial sums are added in the order of the domains.
   auto loop = scf::ForOp::create(
       b, loc, index(b, 0), index(b, domains), index(b, 1),
-      ValueRange{zero(b, type)},
+      ValueRange{zero(b, sumType(type))},
       [&](OpBuilder &bd, Location, Value d, ValueRange acc) {
         SmallVector<Value> parts;
         for (int64_t c = 0; c < length; ++c)
           parts.push_back(memref::LoadOp::create(
               bd, loc, partial, ValueRange{d, index(bd, c)}));
         Value value =
-            vector ? Value(vector::FromElementsOp::create(bd, loc, vector,
+            vector ? Value(vector::FromElementsOp::create(bd, loc, cast<VectorType>(sumType(type)),
                                                           parts))
                    : parts[0];
         scf::YieldOp::create(
-            bd, loc, ValueRange{arith::AddFOp::create(bd, loc, acc[0], value)});
+            bd, loc, ValueRange{add(bd, acc[0], value)});
       });
-  op.getResult().replaceAllUsesWith(loop.getResult(0));
+  int bits = 32;
+  if (auto pairs = op.getPartial().getDefiningOp<SumPairsOp>())
+    if (pairs.getRelation().getType().getTraversal() == Traversal::Directed)
+      ++bits;
+  op.getResult().replaceAllUsesWith(finish(b, loop.getResult(0), bits));
   return success();
 }
 
@@ -1628,7 +1728,7 @@ LogicalResult Lowering::lowerSumPairsExec(SumPairsOp op) {
   auto vector = dyn_cast<VectorType>(type);
   int64_t length = vector ? vector.getNumElements() : 1;
   auto partialType = MemRefType::get(
-      {ShapedType::kDynamic, ShapedType::kDynamic}, b.getF64Type());
+      {ShapedType::kDynamic, ShapedType::kDynamic}, sumType(b.getF64Type()));
   Value partial =
       allocate(b, partialType, {index(b, domains), index(b, length)});
   bool directed =
@@ -1667,10 +1767,15 @@ LogicalResult Lowering::lowerGatherPairsExec(GatherPairsOp op) {
   bool directed =
       op.getRelation().getType().getTraversal() == Traversal::Directed;
   double scale = directed && twoEnded ? 0.5 : 1.0;
-  Value ownedOut = allocate(b, layout.capacity, k);
+  auto wordBuffer = MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic,
+                                     ShapedType::kDynamic}, sumType(b.getF64Type()));
+  auto allocateSums = [&](Value rows) {
+    return allocate(b, wordBuffer, {index(b, domains), rows, index(b, k)});
+  };
+  Value ownedOut = twoEnded ? allocateSums(layout.capacity) : allocate(b, layout.capacity, k);
   Value ghostOut;
   if (twoEnded)
-    ghostOut = allocate(b, halo.capacity, k);
+    ghostOut = allocateSums(halo.capacity);
   for (int64_t d = 0; d < domains; ++d) {
     auto localType = md::FieldType::get(module.getContext(),
                                         getSet(d, /*local=*/true,
@@ -1712,7 +1817,7 @@ LogicalResult Lowering::lowerSumParticlesExec(SumParticlesOp op) {
   auto vector = dyn_cast<VectorType>(type);
   int64_t length = vector ? vector.getNumElements() : 1;
   auto partialType = MemRefType::get(
-      {ShapedType::kDynamic, ShapedType::kDynamic}, b.getF64Type());
+      {ShapedType::kDynamic, ShapedType::kDynamic}, sumType(b.getF64Type()));
   Value partial =
       allocate(b, partialType, {index(b, domains), index(b, length)});
   Storage &layout = rowsOf(op.getGathered()[0]);
@@ -2131,6 +2236,7 @@ public:
   void runOnOperation() final {
     ModuleOp module = getOperation();
     Lowering lowering(module, false, 64, 3, haloEvents);
+    lowering.fixedPoint = fixedPoint;
     SmallVector<func::FuncOp> functions(module.getOps<func::FuncOp>());
     for (func::FuncOp function : functions)
       if (failed(lowering.run(function)))
