@@ -1794,3 +1794,11 @@ the MPI launcher. Give the grid at least one domain per rank. Each rank
 reads the input and rank zero writes the output files. Execution threads
 parallelize disjoint domains within a rank. MPI uses a duplicate of the
 world communicator and finalizes MPI only when the runtime initialized it.
+
+A trace-enabled MPI invocation creates one file for each rank. Rank zero
+writes the merged interval and summary tables. MPI wait is the measured
+arrival-barrier residence, including synchronization latency, before a
+payload collective. Pair, copy, sum, reduction and migration times exclude
+that wait. Cross-rank halo payload excludes replicated state collection
+and logging traffic. A checkpoint-private collect gathers live rows to the
+writer. A collect shared with the following segment also supplies its peers.
