@@ -32,3 +32,12 @@ The rebuild test compares both insertion directions against independently
 sorted keys, checks cell-relative coordinates and enumerates pair ownership.
 Its dense fixture exercises both the eight-key network and the larger-cell
 fallback.
+
+On an RTX 4090 the compact and wide pack entries use 48 and 72 registers
+per thread. In two reversed-order runs at 2 fs, Trp-cage CHARMM36m saved
+7.68 and 8.15 µs per step, and ff19SB + OPC saved 13.95 and 14.78 µs.
+All six benchmark deck inputs were slower in both orders. TIP3P 10k cost
+an additional 1.87 and 2.24 µs per step. On its fixed input keys, adding
+the guarded wide launch increased the event-bracketed pack interval from
+4.99 to 6.14 µs. Across the eight fixed frames, all 4,905,552 Q18 force
+words and their published components matched the reference bitwise.
