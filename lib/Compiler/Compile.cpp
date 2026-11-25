@@ -352,7 +352,7 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
   os << "md-differentiate,md-expand-truncation,md-inline,"
      << "dyn-expand-couplings,md-bypass-updates,";
   if (control.distribution)
-    os << "md-dist-owner-computes,md-exec-assign-algebra,"
+    os << "md-dist-owner-computes,md-distribute-driver-steps,md-exec-assign-algebra,"
           "convert-md-dist-to-loops{halo-events=true},"
           "lower-mdrt-halo-events,";
   os << "convert-md-to-md-exec{skin=" << program.skin
