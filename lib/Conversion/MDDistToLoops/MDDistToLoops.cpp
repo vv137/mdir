@@ -1273,10 +1273,11 @@ LogicalResult Lowering::lowerSumParticles(SumParticlesOp op) {
 void Lowering::lowerCollectedSum(md::SumParticlesOp op) {
   OpBuilder b(op);
   loc = op.getLoc();
+  end = op->getBlock()->getTerminator();
   SmallVector<Value> buffers;
   for (Value field : op.getGathered()) {
     auto type = cast<md::FieldType>(field.getType());
-    buffers.push_back(mdrt::ToBufferOp::create(b, loc, mdrt::getBufferType(type), field));
+    buffers.push_back(inputSnapshot(b, type, field));
   }
   Value count = memref::DimOp::create(b, loc, buffers.front(), 0);
   Block &kernel = op.getKernel().front();
