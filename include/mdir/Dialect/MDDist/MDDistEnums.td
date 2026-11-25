@@ -20,7 +20,9 @@ def MDDist_Traversal : I32EnumAttr<"Traversal", "traversal of a relation", [
     // Every pair at the owner of each of its particles: twice in all.
     I32EnumAttrCase<"Directed", 0, "directed">,
     // Every pair once, at the owner of the particle of the lesser identity.
-    I32EnumAttrCase<"Unique", 1, "unique">
+    I32EnumAttrCase<"Unique", 1, "unique">,
+    // Once in the half-open grid box containing the canonical midpoint.
+    I32EnumAttrCase<"Midpoint", 2, "midpoint">
   ]> {
   let cppNamespace = "::mdir::md_dist";
 }

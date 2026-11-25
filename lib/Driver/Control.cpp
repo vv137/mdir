@@ -3346,7 +3346,7 @@ Error Reader::read(const toml::table &root) {
       return fail(*table, "MPI transport requires a build with MDIR_ENABLE_MPI=ON");
 #endif
     if (Error err = readChoice<std::string>(*table, "traversal", dist.traversal,
-                     {{"directed", "directed"}, {"unique", "unique"}}))
+                     {{"directed", "directed"}, {"unique", "unique"}, {"midpoint", "midpoint"}}))
       return err;
     if (control.pairlistDistance <= control.cutoffDistance)
       return fail(*table, "distributed halo coverage requires a positive skin");

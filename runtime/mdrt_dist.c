@@ -117,11 +117,11 @@ typedef __int128 DistWide;
 /* Bucket the local rows by their current Cartesian image. Each center
    covers three adjacent x bins in each of nine (y,z) slabs. The caller
    still evaluates the original distance, cutoff and identity predicate. */
-void _mlir_ciface_mdrtDistPairCells(int64_t d, int64_t owned, int64_t count,
+static void pairCells(int64_t d, int64_t owned, int64_t count, int64_t centers,
     double cutoff, struct Memref3D *xo, struct Memref3D *xg,
     struct Memref3D *shifts, int64_t shifted, struct Memref1I *order,
     struct Memref1I *spans) {
-  if (!owned)
+  if (!centers)
     return;
   int64_t *rows = order->aligned + order->offset;
   int64_t *ranges = spans->aligned + spans->offset;
@@ -176,7 +176,7 @@ void _mlir_ciface_mdrtDistPairCells(int64_t d, int64_t owned, int64_t count,
   /* Fill backward. offset[b+1] then points at the start of bin b. */
   for (int64_t r = count; r-- > 0;)
     rows[--offset[cell[r]+1]] = r;
-  for (int64_t i = 0; i < owned; ++i) {
+  for (int64_t i = 0; i < centers; ++i) {
     int64_t x = cell[i] % shape[0], yz = cell[i] / shape[0];
     int64_t y = yz % shape[1], z = yz / shape[1];
     for (int dz = -1; dz <= 1; ++dz)
@@ -197,6 +197,20 @@ void _mlir_ciface_mdrtDistPairCells(int64_t d, int64_t owned, int64_t count,
   free(offset);
 }
 
+
+void _mlir_ciface_mdrtDistPairCells(int64_t d, int64_t owned, int64_t count,
+    double cutoff, struct Memref3D *xo, struct Memref3D *xg,
+    struct Memref3D *shifts, int64_t shifted, struct Memref1I *order,
+    struct Memref1I *spans) {
+  pairCells(d, owned, count, owned, cutoff, xo, xg, shifts, shifted, order, spans);
+}
+
+void _mlir_ciface_mdrtDistMidpointCells(int64_t d, int64_t owned, int64_t count,
+    double cutoff, struct Memref3D *xo, struct Memref3D *xg,
+    struct Memref3D *shifts, int64_t shifted, struct Memref1I *order,
+    struct Memref1I *spans) {
+  pairCells(d, owned, count, count, cutoff, xo, xg, shifts, shifted, order, spans);
+}
 
 DistWide mdrtDistAddWide(DistWide a, DistWide b) {
   DistWide result;
@@ -244,6 +258,27 @@ static int64_t division(double u, int64_t g) {
   if (a >= g)
     a = g - 1;
   return a;
+}
+
+/* xi is the untranslated position of the lesser identity. Form its midpoint
+   before choosing a grid. Of all common translations of this pair, use
+   exactly the one that puts the midpoint in the primary cell. */
+int64_t mdrtDistMidpointOwns(int64_t handle, int64_t d, int64_t i,
+    double x, double y, double z, double dx, double dy, double dz) {
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  struct Layout *l = h->layout;
+  double midpoint[3] = {x - 0.5*dx, y - 0.5*dy, z - 0.5*dz};
+  int64_t owner = 0;
+  for (int k = 2; k >= 0; --k) {
+    double u = midpoint[k] / l->edges[k];
+    double image = floor(u);
+    int64_t n = i < l->rows[d] ? 0 :
+        h->image[3*(d*h->capacity + i-l->rows[d]) + k];
+    if (image != -(double)n)
+      return 0;
+    owner = owner*l->grid[k] + division(u - image, l->grid[k]);
+  }
+  return owner == d;
 }
 
 int64_t _mlir_ciface_mdrtDistPartition(struct Memref2D *x, int64_t gx,

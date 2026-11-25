@@ -244,6 +244,10 @@ struct Control {
     std::string transport = "local";
   };
   std::optional<Distribution> distribution;
+  double getDistributionReach() const {
+    return distribution && distribution->traversal == "midpoint"
+               ? pairlistDistance - 0.5 * cutoffDistance : pairlistDistance;
+  }
   // [input]
   std::string pdbFile;
   /// A topology and the coordinates of Amber, in place of `pdbFile` and the

@@ -120,7 +120,9 @@ LogicalResult Distributor::check() {
                   "set, which needs the topology across domains (stage 2 of "
                   "#31)";
       needsHalo = true;
-      reach = std::max(reach, neighborhood.getCutoff().convertToDouble());
+      double cutoff = neighborhood.getCutoff().convertToDouble();
+      reach = std::max(reach, traversal == md_dist::Traversal::Midpoint
+                                  ? 0.5 * cutoff : cutoff);
       continue;
     }
     if (isa<SumRelationOp, GatherRelationOp, SumParticlesOp, MapParticlesOp>(
@@ -146,6 +148,9 @@ LogicalResult Distributor::check() {
       return op.emitOpError() << "cannot be distributed by md-distribute";
   }
   if (requestedReach > 0.0) {
+    if (requestedReach < reach && traversal == md_dist::Traversal::Midpoint)
+      return potential.emitOpError() << "under-covered midpoint halo: reach " << requestedReach
+                                     << " is below half the cutoff, " << reach;
     if (requestedReach < reach)
       return potential.emitOpError()
              << "the reach of the halo, " << requestedReach
@@ -337,7 +342,7 @@ LogicalResult Distributor::rewrite(GatherRelationOp op) {
   if (op.getPositions() != positions || op.getCell() != cell)
     return op.emitOpError() << "cannot be distributed: it is not of the "
                                "positions and the cell of the potential";
-  if (traversal == md_dist::Traversal::Unique &&
+  if (traversal != md_dist::Traversal::Directed &&
       op.getExchange() == Exchange::None)
     return op.emitOpError()
            << "cannot be distributed on the unique traversal: each pair is "
@@ -367,7 +372,7 @@ LogicalResult Distributor::rewrite(GatherRelationOp op) {
   Operation *gather = builder.create(state);
   cloneKernel(op, gather);
   Value result = gather->getResult(0);
-  if (traversal == md_dist::Traversal::Unique)
+  if (traversal != md_dist::Traversal::Directed)
     result = md_dist::HaloSumOp::create(builder, op.getLoc(), type,
                                         gather->getResult(0),
                                         gather->getResult(1), halo);
@@ -492,9 +497,11 @@ public:
       kind = md_dist::Traversal::Directed;
     else if (traversal == "unique")
       kind = md_dist::Traversal::Unique;
+    else if (traversal == "midpoint")
+      kind = md_dist::Traversal::Midpoint;
     else {
       module.emitError() << "md-distribute: the traversal is 'directed' or "
-                            "'unique', not '"
+                            "'unique' or 'midpoint', not '"
                          << traversal << "'";
       return signalPassFailure();
     }
