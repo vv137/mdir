@@ -51,3 +51,14 @@ On the same TIP3P frame, a CUDA graph IF/ELSE node with a device
 condition took 10.24 µs including the condition-setting kernel and
 9.22 µs with that kernel outside the interval. Two guarded entries took
 6.14 µs in either measurement order.
+
+With setup-time specialization, the moving compact pack instruction bytes
+and launch dimensions matched the reference on all six benchmark decks.
+Across two reversed-order runs, the four smaller decks differed by at most
+0.25 µs per step. Cellulose differed by +1 and 0 µs, and STMV by 0 and
++3 µs. Trp-cage CHARMM36m saved 8.43 and 8.45 µs per step, and ff19SB +
+OPC saved 13.65 and 13.69 µs. All 4,905,552 fixed-frame force words and
+their published components matched the reference. Profiling the previous
+guarded schedule also found a cost in the fused insertion kernel. Its
+median duration increased by 2.86 µs on Cellulose and 8.91 µs on STMV.
+The extra guarded launch took 2.37 and 4.05 µs, respectively.
