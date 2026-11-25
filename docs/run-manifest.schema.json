@@ -511,14 +511,6 @@
                 "rest": {
                   "type": "object"
                 },
-                "ranks": {"type": "integer", "minimum": 1},
-                "cutoff_angstrom": {"type": "number"},
-                "skin_angstrom": {"type": "number"},
-                "grid_reason": {"type": "string"},
-                "requested_count": {"type": ["integer", "null"]},
-                "candidates": {"type": "array"},
-                "transport_source": {"enum": ["requested", "default"]},
-                "traversal_source": {"enum": ["requested", "default"]},
                 "reach_angstrom": {
                   "type": "number"
                 },
