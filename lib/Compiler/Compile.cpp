@@ -342,8 +342,19 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
                                const Program &program) {
   std::string pipeline;
   llvm::raw_string_ostream os(pipeline);
-  os << "md-check-exchange,md-differentiate,md-expand-truncation,md-inline,"
+  os << "md-check-exchange,";
+  if (control.distribution) {
+    const auto &grid = program.domainGrid;
+    os << "md-distribute{grid=" << grid[0] << "," << grid[1] << "," << grid[2]
+       << " traversal=" << control.distribution->traversal
+       << " reach=" << control.pairlistDistance * driver::units::length << "},";
+  }
+  os << "md-differentiate,md-expand-truncation,md-inline,"
      << "dyn-expand-couplings,md-bypass-updates,";
+  if (control.distribution)
+    os << "md-dist-owner-computes,md-exec-assign-algebra,"
+          "convert-md-dist-to-md-exec{halo-events=true},convert-md-dist-to-loops,"
+          "lower-mdrt-halo-events,";
   os << "convert-md-to-md-exec{skin=" << program.skin
      << " width=" << program.neighborWidth << "},";
   os << "md-exec-reuse-neighbors";

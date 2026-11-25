@@ -3101,7 +3101,7 @@ Error Reader::read(const toml::table &root) {
            "dynamics",
            "minimize",
            "ensemble", "thermostat", "barostat",
-           "boundary", "execution", "constraints", "restraints",
+           "boundary", "execution", "distribute", "constraints", "restraints",
            "performance"},
           {}))
     return error;
@@ -3307,6 +3307,50 @@ Error Reader::read(const toml::table &root) {
   if (table)
     if (Error error = readExecution(*table))
       return error;
+
+  if (Error error = getTable("distribute", false, table))
+    return error;
+  if (table) {
+    if (Error error = checkKeywords(*table, "distribute",
+                                    {"domains", "transport", "traversal"}))
+      return error;
+    auto &dist = control.distribution.emplace();
+    if (const auto *node = table->get("domains")) {
+      if (auto *grid = node->as_array()) {
+        if (grid->size() != 3)
+          return fail(*node, "domains grid requires three positive integers");
+        int64_t product = 1;
+        for (size_t axis = 0; axis < 3; ++axis) {
+          const auto *division = (*grid)[axis].as_integer();
+          if (!division || division->get() < 1)
+            return fail((*grid)[axis], "domain division must be a positive integer");
+          dist.grid[axis] = division->get();
+          if (dist.grid[axis] > INT64_MAX / product)
+            return fail(*node, "product of domain divisions overflows i64");
+          product *= dist.grid[axis];
+        }
+      } else if (node->is_integer() && node->as_integer()->get() > 0) {
+        dist.domains = node->as_integer()->get();
+      } else {
+        return fail(*node, "domains requires a positive count or a three-axis grid");
+      }
+    }
+    if (Error err = readChoice<std::string>(*table, "transport", dist.transport,
+                                             {{"local", "local"}}))
+      return err;
+    if (Error err = readChoice<std::string>(*table, "traversal", dist.traversal,
+                     {{"directed", "directed"}, {"unique", "unique"}}))
+      return err;
+    if (control.target != Target::CPU)
+      return fail(*table, "distributed execution requires a CPU target");
+    if (control.pme || control.ljpme)
+      return fail(*table, "reciprocal sums require a distributed mesh");
+    if (!control.periodic || control.barostat)
+      return fail(*table, "distributed execution requires a fixed periodic cell");
+    if (control.minimize || control.thermostat ||
+        control.integrator != Integrator::VelocityVerlet)
+      return fail(*table, "distributed dynamics requires NVE velocity Verlet");
+  }
 
   // Execution choices of the "same accuracy" class (#790). The rigid
   // units (D424): `ON` is refused where the route cannot

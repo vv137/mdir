@@ -2,6 +2,7 @@
 // points of mdir/Driver/Builder.h (docs/driver.md, Section 2.12).
 
 #include "BuilderImpl.h"
+#include "mdir/Dialect/MDDist/Grid.h"
 #include "EntryBoundaryIR.h"
 #include "ReorderIR.h"
 #include "mdir/Dialect/MD/MDOps.h"
@@ -449,6 +450,20 @@ llvm::Expected<Program> mdir::driver::buildProgram(const Control &control,
                                                    const BuildKept *kept) {
   if (llvm::Error error = checkEntryControl(control)) return std::move(error);
   Program program;
+  if (control.distribution) {
+    if (system.numConstraints || system.numSettles)
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+          "distributed constraints require cross-domain constraint partners");
+    if (llvm::any_of(system.tilt, [](double t) { return t != 0.0; }))
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+          "distributed halos require an orthorhombic cell");
+    program.domainGrid = control.distribution->grid;
+    if (control.distribution->domains) {
+      auto grid = mdir::md_dist::selectGrid(control.distribution->domains,
+                                           system.box);
+      llvm::copy(grid, program.domainGrid.begin());
+    }
+  }
   Builder builder(control, system, program);
   builder.kept = kept;
   if (llvm::Error error = builder.build())
