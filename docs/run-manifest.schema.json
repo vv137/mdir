@@ -464,7 +464,6 @@
                   "minItems": 3,
                   "maxItems": 3
                 },
-                "ranks": {"type": "integer", "minimum": 1},
                 "transport": {"enum": ["local", "mpi"]},
                 "traversal": {"enum": ["directed", "unique"]},
                 "ranks": {"type": "integer", "minimum": 1},

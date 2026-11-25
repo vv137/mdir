@@ -51,6 +51,8 @@ static _Thread_local struct DistObserver *observer;
 
 void mdrtDistObserve(struct DistObserver *value) { observer = value; }
 
+int mdrtDistObserving(void) { return observer != NULL; }
+
 void mdrtDistPhase(int64_t phase) {
   if (observer)
     observer->phase(observer->context, phase);

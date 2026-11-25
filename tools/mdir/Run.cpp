@@ -2263,14 +2263,18 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   Observe observe = nullptr;
   if (control->distribution) {
     const auto &g = program->domainGrid;
-    distLog.emplace(output.log, manifest, distRank, distRanks,
-                    g[0] * g[1] * g[2], firstStep, control->energyPeriod,
-                    control->pairlistDistance);
-    bool opened = distLog->open(std::getenv("MDIR_DIST_STEP_TRACE"),
-                                control->restartOutput);
+    distLog.emplace(output.log, manifest, distRank, distRanks, g[0]*g[1]*g[2],
+                    firstStep, control->energyPeriod, control->pairlistDistance);
+    bool opened = distLog->open(std::getenv("MDIR_DIST_STEP_TRACE"), control->restartOutput);
+#ifdef MDIR_ENABLE_MPI
+    if (control->distribution->transport == "mpi") {
+      distLog->gather = mdrtMPIGatherTimes;
+      opened = mdrtMPIAllTrue(opened);
+    }
+#endif
     if (!opened) {
-      output.log.print("MDIR: distributed setup refused: %s\n",
-                       distLog->error.c_str());
+      if (distLog->error.empty()) distLog->error = "a peer could not create its distributed trace";
+      output.log.print("MDIR: distributed setup refused: %s\n", distLog->error.c_str());
       if (auto e = manifest.finish("refused", firstStep, distLog->error))
         return fail(std::move(e));
       return fail(distLog->error);
