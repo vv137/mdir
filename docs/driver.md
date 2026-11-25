@@ -1721,16 +1721,18 @@ default grid is one domain. An integer count chooses the minimum-area
 factor grid for the cell, using the lexicographically first grid on ties.
 An explicit grid has three positive integer divisions, with x varying
 fastest. Directed traversal evaluates both centers. Unique traversal
-evaluates each pair once and returns the neighbor contribution. The halo
-reach is the outer pair-list distance in angstroms. The manifest records
+evaluates each pair once and returns the neighbor contribution. Midpoint traversal (`traversal = "midpoint"`) evaluates the pair in the
+domain containing its periodic midpoint. Its halo reach in angstroms is
+half the cutoff plus the skin and the maximum setup tuple extent.
+Directed traversal uses the outer pair-list distance. The manifest records
 the resolved grid, traversal, transport, and reach under
 `effective.distribute`.
 
 The CPU path takes a fixed periodic orthorhombic cell, NVE velocity Verlet
 and finite-range pair kernels with real particle parameters. The state
-uses a positive skin. Reciprocal space needs a distributed mesh, bonded
-terms and exclusions need cross-domain partners, and constraints need a
-distributed constraint solve. Analytic EAM has an IR oracle in ML2
+uses a positive skin. The midpoint path schedules bonded interactions and 1–4 corrections
+by topology row and filters exclusions by atom identity. Hydrogen groups
+and rigid waters migrate together. Reciprocal space needs a distributed mesh. Analytic EAM has an IR oracle in ML2
 Section 15.
 
 The setup log and the manifest start event give the requested domain count,

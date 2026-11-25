@@ -762,3 +762,32 @@ check the existing Lennard-Jones, bonded, tabulated, and generalized-Born
 configurations. The checker supports CPU f64 only; general cell
 orientations and the other three tensor entries are not independently
 checked. It is a diagnostic pass for small systems.
+
+### Midpoint and constraint ownership (D[distribute-midpoint])
+
+Choose the lower particle index first and form the canonical periodic
+displacement from the second particle to the first. Subtracting half this
+displacement from the first position gives a midpoint independent of grid
+shape. Its translation into the primary cell selects one periodic image.
+Half-open domain intervals partition that cell, hence exactly one domain
+contains the point, including on a division face. Both endpoint images lie
+within $r_c/2$ of that domain. Omitting an excluded identity pair commutes
+with this assignment.
+
+For a topology row, unwrap about the lowest-index member with the same
+integer-image convention on each axis. The midpoint of the componentwise
+extremes is independent of row orientation and all members lie within the
+half-diagonal of the resulting box. Applying the same half-open rule gives
+one owner per row. By the triangle inequality, a displacement of at most
+$r_c/2$ followed by a tuple offset of at most $e$ requires at most
+$r_c/2+e$ of import width. The driver adds $s$ for its neighbor-list
+margin. It computes $e$ from setup coordinates. At evaluation the tuple
+schedule checks that the owner actually has each required image, including
+when a tuple has stretched.
+
+For a disjoint hydrogen group, unwrap each member about its heavy atom
+(oxygen for a rigid water) before averaging in topology order. Assign
+all sites to the domain containing this center. Each constraint projection
+then reads all its coordinates on one owner. Disjoint groups have no
+shared output rows, so moving the group between domains preserves the
+order of floating-point operations within its projection.
