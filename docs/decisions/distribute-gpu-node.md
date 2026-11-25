@@ -6,9 +6,10 @@ Stage 1 selects GPU MATRIX pairs with `[execution] target = "GPU"` and
 `[distribute] transport = "nccl"`. Build with MPI and `MDIR_ENABLE_NCCL`.
 Use one domain per MPI rank. The product of the domain grid dimensions
 must equal the communicator size. Directed traversal evaluates both
-orientations. Unique traversal returns ghost forces to the owners. Stage 1 refuses
-midpoint GPU traversal, which needs a moving ownership filter for each pair. GPU deterministic execution is refused at setup until it can
-implement the integer force and observable sums of ruling B.
+orientations. Unique traversal returns ghost forces to the owners. Midpoint traversal needs a moving ownership filter for each
+pair. Stage 1 diagnoses a midpoint or deterministic GPU request at setup.
+Deterministic GPU execution requires the integer force and observable
+sums of ruling B.
 
 The default `[distribute] placement = "node"` groups domains into compact
 blocks on each shared-memory node. Minimize the predicted bytes on faces
@@ -24,7 +25,10 @@ and receives, and order them with the pair kernel on CUDA streams. NCCL
 selects the link between peers. Host migration can rebuild ownership and
 the halo plan. Log directed face bytes per step by node locality, counting
 each send once. The host step state supplies the local field before each
-pack and consumes its result after each device unpack. Reverse-force bytes and time are accounted separately.
+pack and consumes its result after each device unpack. Each rank runs the
+MATRIX pair terms on its GPU. Bonded tuple evaluation, migration and the
+outer step still use host state. MPI reduces the scalar observables.
+Reverse-force bytes and time are accounted separately.
 The first validation targets fixed-cell finite-range Coulomb/LJ, including
 reaction field. Reciprocal-space decomposition is outside this stage.
 
