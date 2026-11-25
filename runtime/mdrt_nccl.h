@@ -14,6 +14,8 @@ struct NCCLPlan *mdrtNCCLPlan(int64_t domains, const int64_t *ghosts,
 void mdrtNCCLFreePlan(struct NCCLPlan *p);
 void mdrtNCCLHalo(const struct NCCLPlan *p, double *owned, int64_t nOwned,
     double *ghosts, int k, int image, int reverse);
+double *mdrtNCCLPositions(const struct NCCLPlan *plan, double *owned, int64_t rows);
+void mdrtNCCLFreePositions(double *positions);
 int mdrtNCCLNode(int rank);
 
 #endif

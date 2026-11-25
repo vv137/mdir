@@ -1568,6 +1568,34 @@ static struct TransferPlan *transferPlan(struct Halo *h, int transpose) {
   return plan;
 }
 
+#ifdef MDIR_ENABLE_NCCL
+static struct NCCLPlan *devicePlan(struct Halo *h) {
+  if (!h->ncclPlan)
+    h->ncclPlan = mdrtNCCLPlan(h->layout->domains, h->rows, h->capacity,
+        h->sourceDomain, h->sourceRow, h->image, h->layout->edges);
+  return h->ncclPlan;
+}
+
+void _mlir_ciface_mdrtDistDevicePositions(struct Memref2D *result, int64_t handle,
+                                          struct Memref3D *owned) {
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  int64_t d = mdrtMPIDomainBound(h->layout->domains, 0);
+  if (owned->sizes[2] != 3 || owned->strides[1] != 3 || owned->strides[2] != 1)
+    fail("NCCL positions require contiguous triples");
+  if (observer)
+    for (size_t i = 0; i < h->edgeCount; ++i) {
+      struct Edge edge = h->edges[i];
+      observer->transfer(observer->context, edge.from, edge.to, edge.rows*3*sizeof(double), 0);
+    }
+  double *data = mdrtNCCLPositions(devicePlan(h), at3(owned,d,0,0), h->layout->rows[d]);
+  *result = (struct Memref2D){data, data, 0, {h->layout->rows[d]+h->rows[d], 3}, {3, 1}};
+}
+
+void _mlir_ciface_mdrtDistReleaseDevicePositions(struct Memref2D *rows) {
+  mdrtNCCLFreePositions(rows->allocated);
+}
+#endif
+
 static void exchangeHalo(struct Halo *h, struct Memref3D *owned,
                          struct Memref3D *ghosts, int image, int transpose,
                          struct Memref3W *ownedWords, struct Memref3W *ghostWords) {
@@ -1578,10 +1606,7 @@ static void exchangeHalo(struct Halo *h, struct Memref3D *owned,
         owned->strides[1] != owned->sizes[2] || ghosts->strides[1] != ghosts->sizes[2])
       fail("NCCL halo fields require contiguous rows");
     int64_t d = mdrtMPIDomainBound(h->layout->domains, 0);
-    if (!h->ncclPlan)
-      h->ncclPlan = mdrtNCCLPlan(h->layout->domains, h->rows, h->capacity,
-          h->sourceDomain, h->sourceRow, h->image, h->layout->edges);
-    mdrtNCCLHalo(h->ncclPlan, at3(owned,d,0,0), h->layout->rows[d],
+    mdrtNCCLHalo(devicePlan(h), at3(owned,d,0,0), h->layout->rows[d],
                  at3(ghosts,d,0,0), owned->sizes[2], image, transpose);
     return;
   }

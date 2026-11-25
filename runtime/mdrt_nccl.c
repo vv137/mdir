@@ -166,20 +166,24 @@ extern void mdrtDistPhase(int64_t phase);
 extern void mdrtNCCLRows(int gather, const double *input, const int *rows,
     double *output, long long n, int k, const double *shift, int transpose, CUstream stream);
 
-void mdrtNCCLHalo(const struct NCCLPlan *p, double *owned, int64_t nOwned,
-    double *ghosts, int k, int image, int reverse) {
+static void exchange(const struct NCCLPlan *p, double *owned, int64_t nOwned,
+    double *ghosts, int k, int image, int reverse, double *packed) {
   if (image && k != 3) mdrtMPIAbort("imaged halo positions require three components");
   size_t row = (size_t)k * sizeof(double);
-  reserve(&ownedField, &ownedCapacity, nOwned*row);
-  reserve(&ghostField, &ghostCapacity, p->recvRows*row);
+  if (!packed) {
+    reserve(&ownedField, &ownedCapacity, nOwned*row);
+    reserve(&ghostField, &ghostCapacity, p->recvRows*row);
+  }
+  double *ownedDevice = packed ? packed : ownedField;
+  double *ghostDevice = packed ? packed + nOwned*k : ghostField;
   int send = reverse ? p->recvRows : p->sendRows;
   int recv = reverse ? p->sendRows : p->recvRows;
   reserve(&outgoing, &outCapacity, send*row);
   reserve(&incoming, &inCapacity, recv*row);
-  if (nOwned) checkCuda(cudaMemcpyAsync(ownedField, owned, nOwned*row, cudaMemcpyHostToDevice, stream));
+  if (nOwned) checkCuda(cudaMemcpyAsync(ownedDevice, owned, nOwned*row, cudaMemcpyHostToDevice, stream));
   if (reverse && p->recvRows)
-    checkCuda(cudaMemcpyAsync(ghostField, ghosts, p->recvRows*row, cudaMemcpyHostToDevice, stream));
-  mdrtNCCLRows(1, reverse ? ghostField : ownedField, reverse ? p->dest : p->source,
+    checkCuda(cudaMemcpyAsync(ghostDevice, ghosts, p->recvRows*row, cudaMemcpyHostToDevice, stream));
+  mdrtNCCLRows(1, reverse ? ghostDevice : ownedDevice, reverse ? p->dest : p->source,
                outgoing, (long long)send*k, k, NULL, reverse, stream);
   checkCuda(cudaStreamSynchronize(stream));
   int rank = mdrtMPIRank();
@@ -205,13 +209,32 @@ void mdrtNCCLHalo(const struct NCCLPlan *p, double *owned, int64_t nOwned,
     checkCuda(cudaStreamSynchronize(stream));
     if (!reverse) mdrtDistPhase(-phase);
   }
-  double *result = reverse ? ownedField : ghostField;
+  double *result = reverse ? ownedDevice : ghostDevice;
   mdrtNCCLRows(0, incoming, reverse ? p->source : p->dest, result,
                (long long)recv*k, k, image ? p->shifts : NULL, reverse, stream);
   size_t bytes = (reverse ? nOwned : p->recvRows)*row;
-  if (bytes) checkCuda(cudaMemcpyAsync(reverse ? owned : ghosts, result, bytes,
+  if (!packed && bytes) checkCuda(cudaMemcpyAsync(reverse ? owned : ghosts, result, bytes,
                                        cudaMemcpyDeviceToHost, stream));
   checkCuda(cudaStreamSynchronize(stream));
+}
+
+void mdrtNCCLHalo(const struct NCCLPlan *plan, double *owned, int64_t rows,
+    double *ghosts, int k, int image, int reverse) {
+  exchange(plan, owned, rows, ghosts, k, image, reverse, NULL);
+}
+
+/* The outlined MATRIX borrows this immutable buffer until its block ends.
+   Owned rows precede ghosts in the order of the neighborhood. */
+double *mdrtNCCLPositions(const struct NCCLPlan *plan, double *owned, int64_t rows) {
+  double *positions;
+  size_t count = rows + (size_t)plan->recvRows;
+  checkCuda(cudaMalloc((void **)&positions, (count ? count : 1)*3*sizeof(double)));
+  exchange(plan, owned, rows, NULL, 3, 1, 0, positions);
+  return positions;
+}
+
+void mdrtNCCLFreePositions(double *positions) {
+  checkCuda(cudaFree(positions));
 }
 
 void mdrtNCCLFinish(void) {

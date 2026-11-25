@@ -218,6 +218,7 @@ void emitPairs(
   Value quantize(OpBuilder &b, Value value, int fractionalBits);
   Value finish(OpBuilder &b, Value sum, int fractionalBits);
   Value add(OpBuilder &b, Value lhs, Value rhs);
+  llvm::DenseMap<Value, Value> devicePositions;
   llvm::DenseMap<Value, Value> imageShifts, fieldWords, excludedPairs;
   llvm::DenseMap<Value, std::pair<Value, int>> observableWords;
   Value decodeObservable(OpBuilder &b, Value sum, int bits);
@@ -966,7 +967,6 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
         return constraintKernels.contains(use);
       }))
     return success();
-  Value ghosts = allocate(b, halo.capacity, k);
   Type i64 = b.getI64Type();
   bool separateImage = fixedPoint || gpuImageGeometry || llvm::any_of(op.getResult().getUsers(),
       [](Operation *user) {
@@ -983,6 +983,27 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
     func::CallOp::create(b, loc, fill, ValueRange{halo.handle, shifts});
     imageShifts[op.getResult()] = shifts;
   }
+  // A pair-only halo can scatter directly behind the owned positions.
+  // The caller owns the complete device field across outlined pair groups.
+  if (gpuPairs && op.getImage() && !op.getResult().use_empty() &&
+      llvm::all_of(op.getResult().getUsers(), [&](Operation *user) {
+        auto n = dyn_cast<NeighborhoodOp>(user);
+        return n && n.getPositions() == op.getField() && n.getGhosts() == op.getResult();
+      })) {
+    auto type = MemRefType::get({ShapedType::kDynamic, 3}, b.getF64Type(),
+                                MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
+    auto acquire = declare("mdrtDistDevicePositions",
+        b.getFunctionType({i64, owned.getType()}, {type}), true);
+    Value positions = func::CallOp::create(b, loc, acquire,
+                                           ValueRange{halo.handle, owned}).getResult(0);
+    devicePositions[op.getResult()] = positions;
+    OpBuilder cleanup(end);
+    auto release = declare("mdrtDistReleaseDevicePositions",
+                           b.getFunctionType({type}, {}), true);
+    func::CallOp::create(cleanup, loc, release, ValueRange{positions});
+    return success();
+  }
+  Value ghosts = allocate(b, halo.capacity, k);
   if (haloEvents) {
     auto start = mdrt::HaloCopyStartOp::create(
         b, loc, mdrt::EventType::get(module.getContext()), halo.handle, owned,
@@ -2276,8 +2297,14 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
   Value nOwned = countOf(b, layout, d);
   Value nGhosts = countOf(b, halo, d);
   // The local rows, owned then ghost; the ghosts carry their images.
-  Value positions = makeField(b, set, 3, b.getF64Type(), d,
-                              {owned, ghosts}, {nOwned, nGhosts}, imageShifts.lookup(op.getGhosts()));
+  Value positions;
+  if (Value device = devicePositions.lookup(op.getGhosts())) {
+    auto type = md::FieldType::get(context, set, 3, b.getF64Type());
+    positions = mdrt::FromBufferOp::create(b, loc, type, device);
+  } else {
+    positions = makeField(b, set, 3, b.getF64Type(), d, {owned, ghosts},
+                          {nOwned, nGhosts}, imageShifts.lookup(op.getGhosts()));
+  }
   if (matrixPairs && !gpuPairs) {
     auto traversal = op.getResult().getType().getTraversal();
     bool midpoint = traversal == Traversal::Midpoint;
