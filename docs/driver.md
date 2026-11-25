@@ -952,7 +952,7 @@ in their calls.
 **Run manifest (D168).** Optional `manifest = "run.jsonl"` in `[output]`
 writes UTF-8 JSON Lines, one object per line, with `schema_version = 1`.
 It records executions, not trajectory frames. A `start` event precedes
-execution and an `end` event records `completed` or `stopped`; a start
+execution and an `end` event records `completed`, `stopped`, or a distributed setup refusal (`refused`); a start
 without an end means completion was not recorded (for example, a crash
 or a forced kill). Each event has an `invocation` number local to the file.
 The [JSON schema](run-manifest.schema.json) defines every event. The start
@@ -1003,8 +1003,7 @@ An already complete run leaves the manifest untouched. A malformed or
 unsupported existing manifest is refused before appending; use a new
 manifest path to retain a damaged file. The manifest is disabled when its
 key is omitted; `mdir check` reports its path without creating it, and
-`mdir emit` creates no manifest. An execution that fails before the start
-record is written has no record. A manifest is provenance, not a restart
+`mdir emit` creates no manifest. A rejected distributed setup can create a standalone `refused` event with its reason before the start record. A manifest is provenance, not a restart
 compatibility check or a copy of its inputs.
 
 **Files of columns.** The energies and the terms over centers share one

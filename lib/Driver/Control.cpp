@@ -3753,6 +3753,10 @@ llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {
   return Error::success();
 }
 
+llvm::Expected<Control> mdir::driver::readControl(StringRef path) {
+  return readControl(path, nullptr);
+}
+
 llvm::Expected<Control> mdir::driver::readControl(StringRef path, Control *refusedDistribution) {
   toml::parse_result result = toml::parse_file(std::string_view(path));
   if (!result) {

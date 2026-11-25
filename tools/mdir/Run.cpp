@@ -40,6 +40,7 @@
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Pass/PassManager.h"
@@ -1061,6 +1062,14 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   std::string reproducer = "mdir-reproducer.mlir";
   if (const char *path = std::getenv("MDIR_REPRODUCER"))
     reproducer = path;
+  std::string distDiagnostic;
+  std::optional<mlir::ScopedDiagnosticHandler> handler;
+  if (control->distribution)
+    handler.emplace(&context, [&](mlir::Diagnostic &diagnostic) {
+      if (diagnostic.getSeverity() == mlir::DiagnosticSeverity::Error && distDiagnostic.empty())
+        distDiagnostic = diagnostic.str();
+      return mlir::failure(); // Also emit the diagnostic at its IR location.
+    });
   // Unsupported ordinary-loop layouts are choices for AUTO. Keep genuine
   // compiler errors on the usual error path.
   mlir::ScopedDiagnosticHandler graphDiagnostics(&context, [&](mlir::Diagnostic &diag) {
@@ -1075,11 +1084,14 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // Its executable already contains the lowered kernels and host entry.
   if ((!trial || !trial->compiled.entry) && mlir::failed(manager.run(*module))) {
     if (trial && !trial->refusal.empty()) return 0;
+    if (!distDiagnostic.empty())
+      return refuse(*control, llvm::createStringError("%s", distDiagnostic.c_str()));
     return fail("cannot compile the run; this is a defect of mdir. The "
                 "input of the passes is in '" + reproducer + "'. Please "
                 "report it with the directory that `mdir bug-report " +
                 controlFile + "` writes");
   }
+  handler.reset();
   // The execution parameters of the md_alg ops, for the log and the
   // manifest (D408).
   auto [algPolicy, algPolicyLine] = takeAlgPolicy(*module);
@@ -2066,8 +2078,13 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     const auto &g = program->domainGrid;
     distLog.emplace(output.log, manifest, distRank, distRanks, g[0]*g[1]*g[2],
                     firstStep, control->energyPeriod, control->pairlistDistance);
-    bool opened = distLog->open(std::getenv("MDIR_DIST_STEP_TRACE"));
-    if (!opened) return fail(distLog->error);
+    bool opened = distLog->open(std::getenv("MDIR_DIST_STEP_TRACE"), control->restartOutput);
+    if (!opened) {
+      output.log.print("MDIR: distributed setup refused: %s\n", distLog->error.c_str());
+      if (auto e = manifest.finish("refused", firstStep, distLog->error))
+        return fail(std::move(e));
+      return fail(distLog->error);
+    }
     observe = reinterpret_cast<Observe>(findRuntime("mdrtDistObserve", "mdrtDistObserve"));
     if (!observe) return fail("distributed statistics require mdrtDistObserve");
     observe(&distLog->observer);

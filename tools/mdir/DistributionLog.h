@@ -185,9 +185,17 @@ public:
       : log(log), manifest(manifest), rank(rank), ranks(ranks), domains(n),
         first(first), step(first), period(period), reach(reach), owned(n), ghosts(n),
         current(n), interval(n), total(n) {}
-  bool open(const char *prefix) {
+  bool open(const char *prefix, const std::string &checkpoint) {
     if (!prefix || !*prefix) return true;
     auto path = std::string(prefix) + ".rank" + std::to_string(rank) + ".log";
+    if (!checkpoint.empty()) {
+      std::vector<std::string> reserved{checkpoint, checkpoint + ".partial",
+                                        driver::getPreviousCheckpointPath(checkpoint)};
+      if (auto e = checkManifestPath(path, {}, reserved)) {
+        error = "distributed trace path conflicts with checkpoint: " + llvm::toString(std::move(e));
+        return false;
+      }
+    }
     trace = std::fopen(path.c_str(), "wx");
     if (!trace) error = "cannot create distributed trace '" + path + "': " + std::strerror(errno);
     return trace != nullptr;
