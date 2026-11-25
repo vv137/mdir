@@ -1615,7 +1615,7 @@ llvm::Expected<Topology> TopologyReader::read() {
     return std::move(error);
 
   std::string section;
-  for (const Line &line : lines) {
+  for (auto [number, line] : llvm::enumerate(lines)) {
     StringRef text = line.text;
     if (text.starts_with("[")) {
       StringRef name = text.drop_front().take_until(
@@ -1638,6 +1638,24 @@ llvm::Expected<Topology> TopologyReader::read() {
           {"virtualsitesn", "M2a"},    {"dummies1", "M2a"},
           {"dummies2", "M2a"},
           {"dummies4", "M2a"},         {"dummiesn", "M2a"}};
+      if (section == "constraints") {
+        std::map<long, long> partner;
+        for (const Line &entry : llvm::ArrayRef(lines).drop_front(number + 1)) {
+          if (StringRef(entry.text).starts_with("[")) break;
+          auto tokens = tokenize(entry.text);
+          long atoms[2];
+          if (tokens.size() < 2 || !readInteger(tokens[0], atoms[0]) ||
+              !readInteger(tokens[1], atoms[1]))
+            continue;
+          for (unsigned i = 0; i < 2; ++i) {
+            auto [it, added] = partner.emplace(atoms[i], atoms[1-i]);
+            if (!added && it->second != atoms[1-i])
+              return fail(entry, "coupled constraint chain: atoms " +
+                  std::to_string(it->second) + ", " + std::to_string(atoms[i]) +
+                  ", " + std::to_string(atoms[1-i]) + " share constraint rows");
+          }
+        }
+      }
       auto found = planned.find(section);
       if (found != planned.end())
         return fail(line, "[ " + name.trim() + " ] is not supported yet; it "

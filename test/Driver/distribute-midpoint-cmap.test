@@ -1,0 +1,24 @@
+# The peptide contains a CMAP and twenty hydrogen bond constraints.
+# Compare the deterministic force evaluation and projected trajectory across
+# a single domain and four domains for the same seeded initial velocities.
+# RUN: rm -rf %t && mkdir -p %t/one %t/four
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/shake.test | sed -e '1d;$d' -e 's|= "vacuum|= "%S/Inputs/ff19sb/vacuum|' -e 's/= 500/= 2/' -e 's/= 100/= 1/g' -e 's/= 28.0/= 8.0/' -e 's/= 29.0/= 10.0/' -e '/^\[dynamics\]/a seed = 314159' > %t/one/run.toml
+# RUN: echo '[execution]' >> %t/one/run.toml
+# RUN: echo 'target = "cpu"' >> %t/one/run.toml
+# RUN: echo 'precision = "double"' >> %t/one/run.toml
+# RUN: echo 'deterministic = true' >> %t/one/run.toml
+# RUN: echo '[distribute]' >> %t/one/run.toml
+# RUN: echo 'traversal = "midpoint"' >> %t/one/run.toml
+# RUN: cp %t/one/run.toml %t/four/run.toml
+# RUN: echo 'domains = 4' >> %t/four/run.toml
+# RUN: cd %t/one && mdir run run.toml > run.log
+# RUN: cd %t/four && mdir run run.toml > run.log
+# RUN: FileCheck %s < %t/four/run.log
+# RUN: grep "^INFO:" %t/one/run.log > %t/one/energy
+# RUN: grep "^INFO:" %t/four/run.log > %t/four/energy
+# RUN: diff -u %t/one/energy %t/four/energy
+# RUN: %python %S/Inputs/dcd_frames.py %t/one/shake.dcd %t/four/shake.dcd
+# RUN: %python %S/Inputs/check_bonds.py %S/Inputs/ff19sb/vacuum.prmtop %t/four/shake.dcd | FileCheck %s --check-prefix=BONDS
+# CHECK: CMAP {{ *}}0.096326
+# BONDS: bonds 20, frames
+# BONDS: bonds ok
