@@ -65,7 +65,11 @@ an individual row moves by at most half the halo margin. Between two force
 evaluations in that epoch each of two rows can therefore move by a full
 margin. Building candidates at the cutoff plus twice the margin covers this
 relative displacement. The pair traversal applies its original cutoff.
-Destroying the halo invalidates the cached device matrix.
+Periodic bin keys index the search, and explicit imaged coordinates determine
+candidate distances. This keeps a second periodic copy of a particle out
+of the list when that particular image lies beyond its reach. The halo owns
+the entry allocation across temporary force evaluations and releases it
+when its row map expires.
 
 When the grid cells are wider than twice the halo reach, an unconstrained
 packed Verlet rebuild classifies owners and faces on the device. A row
@@ -79,8 +83,9 @@ identity and periodic image. The runtime wraps physical positions on
 the device and retains immutable numbering when no ownership changes.
 
 For other grids and constrained systems the host plans ownership and halo
-membership from coordinates. The current implementation also runs
-the topology tuple and constraint paths. A host tuple or output consumer can
-require a local field slice. The constrained native integrator can also
-materialize global fields. Forward peer exchanges complete before the pair
+membership from coordinates. A topology schedule shares positions for its
+member identities. Host tuple kernels gather the owned and ghost rows they
+read. An immutable field records which rows the host has already received.
+The native constrained integrator and output can still materialize global
+fields at partition and collection boundaries. Forward peer exchanges complete before the pair
 evaluation starts.

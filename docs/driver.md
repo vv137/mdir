@@ -1803,5 +1803,7 @@ report the intra-node and inter-node byte totals count directed logical
 payloads crossing ranks. Self-images stay local. Device kernels pack local rows, translate ghost images, and sum reverse
 contributions. The unconstrained Verlet path retains owned state on the
 device between kicks. A pair-only position halo feeds device MATRIX
-directly. Ownership planning, topology, and output can require host fields.
-MPI exchanges migrating rows and reduces scalar observables.
+directly. For an unconstrained grid with cells wider than twice the halo
+reach, device face records supply the ownership and halo rebuild. Other
+grids, topology, and output can require host fields. MPI exchanges
+migrating rows and reduces scalar observables.

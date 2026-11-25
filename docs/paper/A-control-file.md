@@ -609,5 +609,6 @@ domains on each shared-memory node (D[distribute-gpu-node]). The domain
 count must match the number of ranks. This execution mode requires a build
 with MPI, CUDA, and NCCL and floating-point distributed reductions.
 For unconstrained Verlet dynamics each device retains its owned field
-values across kicks. The host plans ownership changes, and only crossing
-rows of unshifted fields are exchanged between owners.
+values across kicks. When every domain is wider than twice the reach,
+the GPU reports the rows that change owner or enter a neighboring halo.
+Only crossing rows of unshifted fields are exchanged between owners.

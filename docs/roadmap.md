@@ -318,6 +318,6 @@ D[distribute-steady] adds exclusive CPU phase clocks and epoch-local transport s
 
 D[distribute-gpu-node] introduces node placement, rank-local MATRIX pairs,
 and NCCL peer exchange for finite-range dynamics. The unconstrained Verlet
-path keeps integration and force combination on the device. Host ownership
-planning, constrained integration, overlap of the halo with pair work,
+path keeps integration and force combination on the device. Constrained integration,
+overlap of the halo with pair work,
 midpoint GPU traversal, and reproducible integer GPU sums remain open.
