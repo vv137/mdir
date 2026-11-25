@@ -1072,8 +1072,8 @@ rules of the AD (Section 11; built, Section 14), EAM (built, Section 15), the sc
 3. **Communication**, in the order of Section 9.
 4. **Outputs and checkpoints** stay in the order of the particle set,
    independent of the number of domains; the grid and the transport go in
-   the run manifest (D168). Results are the same to the bit for a fixed
-   grid, not across grids.
+   the run manifest (D168). Deterministic driver runs reproduce the same bits across grids
+   on the same build, including a continuation on a different grid.
 
 The order of the passes of Section 11 stands as designed.
 
@@ -1563,5 +1563,5 @@ access to the seeded xoshiro transition preserves the previous serial draws.
 NVE takes no subsequent random draws. V-rescale in the ordinary driver uses
 Philox with the seed, absolute step, entity zero and stream zero. Supporting
 a distributed bath would also require identical kinetic-energy input to
-that draw. Fixed-grid deterministic replay is tested independently from
-cross-grid numerical agreement.
+that draw. Deterministic NVE tests compare the numerical dataset bytes across
+decompositions, including a change of decomposition at restart.
