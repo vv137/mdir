@@ -22,17 +22,17 @@ md.function @f(%x: !md.field<@local, 3 x f64>, %cell: !md.cell, %n: index) {
 md.particle_set @local
 md.particle_set @pairs
 
-// Exclusions across domains are the topology of stage 2.
+// Local exclusions must name the particle set of the domain rows.
 md.function @f(%x: !md.field<@local, 3 x f64>, %cell: !md.cell,
-               %ex: !mdrt.incidence<@local, 2, @pairs>) {
+               %ex: !mdrt.incidence<@pairs, 2, @pairs>) {
   %cells = md_exec.build_cells %x, %cell width(0.67)
              : !md.field<@local, 3 x f64> -> !mdrt.cells<@local>
-  // expected-error@+1 {{a structure with 'centers' or 'images(explicit)' leaves out no pairs}}
+  // expected-error@+1 {{the excluded pairs are on @pairs, but the structure is on @local}}
   %nl = md_exec.build_neighbors %cells, %x, %cell
           cutoff(2.0) skin(0.0) kind(matrix) width(64) images(explicit)
-          exclude(%ex : !mdrt.incidence<@local, 2, @pairs>)
+          exclude(%ex : !mdrt.incidence<@pairs, 2, @pairs>)
           : !mdrt.cells<@local>, !md.field<@local, 3 x f64>
-          -> !mdrt.neighbors<@local, directed, minimum, masked, stable(owner, search)>
+          -> !mdrt.neighbors<@local, directed, explicit, masked, stable(owner, search)>
   md.return
 }
 

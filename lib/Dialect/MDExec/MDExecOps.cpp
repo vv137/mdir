@@ -736,16 +736,11 @@ LogicalResult BuildNeighborsOp::verify() {
                          << skin;
   if (getWidth() <= 0)
     return emitOpError() << "expected a positive width, got " << getWidth();
-  // The rows of a domain (D290): a matrix, without exclusions, which
-  // across domains are the topology of stage 2.
-  if (getCenters() || getImages() == Images::Explicit) {
-    if (getKind() != NeighborKind::Matrix)
-      return emitOpError() << "a structure with 'centers' or "
-                              "'images(explicit)' is a matrix";
-    if (getExcluded())
-      return emitOpError() << "a structure with 'centers' or "
-                              "'images(explicit)' leaves out no pairs";
-  }
+  // Exclusions on explicit images use the indices of the local row set.
+  if ((getCenters() || getImages() == Images::Explicit) &&
+      getKind() != NeighborKind::Matrix)
+    return emitOpError() << "a structure with 'centers' or "
+                            "'images(explicit)' is a matrix";
   if (failed(verifyGuarantee(getOperation(), neighbors,
                              getBuildGuarantee(getKind(), getImages()))))
     return failure();

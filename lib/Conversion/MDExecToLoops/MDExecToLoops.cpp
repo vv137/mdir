@@ -1056,7 +1056,7 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
     scf::ParallelOp::create(
         builder, profile::refine(loc, "exclusion_filter"),
         ValueRange{createIndex(builder, loc, 0)},
-        ValueRange{structure.size}, ValueRange{createIndex(builder, loc, 1)},
+        ValueRange{centers ? centers : structure.size}, ValueRange{createIndex(builder, loc, 1)},
         [&](OpBuilder &body, Location, ValueRange ivs) {
           emitExclusionFilter(body, loc, structure.counts, filtered,
                               structure.excluded, ivs[0]);
