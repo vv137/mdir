@@ -13,6 +13,7 @@
    the schedule as it runs. */
 
 #include "mdrt_dist_stats.h"
+#include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -103,6 +104,89 @@ void mdrtDistCheckWordCount(int64_t count) {
 }
 
 typedef __int128 DistWide;
+/* Bucket the local rows by their current Cartesian image. Each center
+   covers three adjacent x bins in each of nine (y,z) slabs. The caller
+   still evaluates the original distance, cutoff and identity predicate. */
+void _mlir_ciface_mdrtDistPairCells(int64_t d, int64_t owned, int64_t count,
+    double cutoff, struct Memref3D *xo, struct Memref3D *xg,
+    struct Memref3D *shifts, int64_t shifted, struct Memref1I *order,
+    struct Memref1I *spans) {
+  if (!owned)
+    return;
+  int64_t *rows = order->aligned + order->offset;
+  int64_t *ranges = spans->aligned + spans->offset;
+  double lo[3] = {INFINITY, INFINITY, INFINITY};
+  double hi[3] = {-INFINITY, -INFINITY, -INFINITY};
+  double magnitude = cutoff;
+  for (int64_t r = 0; r < count; ++r)
+    for (int k = 0; k < 3; ++k) {
+      double x = r < owned ? *at3(xo, d, r, k) : *at3(xg, d, r-owned, k);
+      double shift = shifted && r >= owned ? *at3(shifts, d, r-owned, k) : 0;
+      magnitude = fmax(magnitude, fmax(fabs(x), fabs(shift)));
+      x += shift;
+      if (!isfinite(x))
+        fail("non-finite pair cell coordinate");
+      lo[k] = fmin(lo[k], x);
+      hi[k] = fmax(hi[k], x);
+    }
+  /* Include the rounding error of binning x + image when the pair uses
+     (center - x) - image. Coarsen unusually sparse boxes to bound storage. */
+  double width = cutoff + (32 * DBL_EPSILON) * magnitude;
+  int64_t shape[3];
+  for (;;) {
+    double bins = 1;
+    for (int k = 0; k < 3; ++k) {
+      double n = floor((hi[k]/width) - (lo[k]/width)) + 1;
+      if (n > count) { bins = INFINITY; break; }
+      shape[k] = (int64_t)n;
+      bins *= n;
+    }
+    if (bins <= 4.0 * count)
+      break;
+    width *= 2;
+  }
+  int64_t nbin = shape[0] * shape[1] * shape[2];
+  int64_t *offset = calloc(nbin + 1, sizeof *offset);
+  int64_t *cell = malloc(count * sizeof *cell);
+  if (!offset || !cell)
+    fail("out of memory building pair cells");
+  for (int64_t r = 0; r < count; ++r) {
+    int64_t bin = 0;
+    for (int k = 2; k >= 0; --k) {
+      double x = r < owned ? *at3(xo,d,r,k) : *at3(xg,d,r-owned,k);
+      if (shifted && r >= owned)
+        x += *at3(shifts,d,r-owned,k);
+      bin = bin * shape[k] + (int64_t)floor(x/width - lo[k]/width);
+    }
+    cell[r] = bin;
+    ++offset[bin+1];
+  }
+  for (int64_t b = 1; b <= nbin; ++b)
+    offset[b] += offset[b-1];
+  /* Fill backward. offset[b+1] then points at the start of bin b. */
+  for (int64_t r = count; r-- > 0;)
+    rows[--offset[cell[r]+1]] = r;
+  for (int64_t i = 0; i < owned; ++i) {
+    int64_t x = cell[i] % shape[0], yz = cell[i] / shape[0];
+    int64_t y = yz % shape[1], z = yz / shape[1];
+    for (int dz = -1; dz <= 1; ++dz)
+      for (int dy = -1; dy <= 1; ++dy) {
+        int64_t begin = 0, end = 0;
+        if (y+dy >= 0 && y+dy < shape[1] && z+dz >= 0 && z+dz < shape[2]) {
+          int64_t slab = ((z+dz)*shape[1] + y+dy)*shape[0];
+          int64_t first = slab + (x > 0 ? x-1 : x);
+          int64_t last = slab + (x+1 < shape[0] ? x+1 : x);
+          begin = offset[first+1];
+          end = last+1 == nbin ? count : offset[last+2];
+        }
+        *ranges++ = begin;
+        *ranges++ = end;
+      }
+  }
+  free(cell);
+  free(offset);
+}
+
 
 DistWide mdrtDistAddWide(DistWide a, DistWide b) {
   DistWide result;

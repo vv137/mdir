@@ -148,6 +148,19 @@ private:
   LogicalResult lowerZeros(ZerosOp op);
   LogicalResult lowerNeighborhood(NeighborhoodOp op);
   LogicalResult lowerPartitionCenters(PartitionCentersOp op);
+  template <typename OpTy>
+void emitPairs(
+    OpTy op, Location loc, int64_t domains,
+    llvm::DenseMap<Value, Storage> &storage, Type accumulator, Value shifts,
+    function_ref<Value(OpBuilder &, Value, Value)> add,
+    function_ref<Value(OpBuilder &, Type)> zero,
+    function_ref<Value(OpBuilder &, Value, Value, Value, Type)> load,
+    function_ref<Value(OpBuilder &, Block &, ValueRange)> kernel,
+    function_ref<Value(OpBuilder &, Value value, Value acc, Value d, Value k,
+                       Value isOwned, Value ghostRow)>
+        visit,
+    function_ref<void(OpBuilder &, Value acc, Value d, Value i)> finishCenter,
+    function_ref<void(OpBuilder &, Value acc, Value d)> finishDomain);
   LogicalResult lowerSumPairs(SumPairsOp op);
   LogicalResult lowerGatherPairs(GatherPairsOp op);
   LogicalResult lowerSumParticles(SumParticlesOp op);
@@ -959,7 +972,7 @@ struct PairSide {
 /// visit returns the new accumulator of `i`. `finishCenter` receives the
 /// accumulator of each center, `finishDomain` the sum over its centers.
 template <typename OpTy>
-static void emitPairs(
+void Lowering::emitPairs(
     OpTy op, Location loc, int64_t domains,
     llvm::DenseMap<Value, Storage> &storage, Type accumulator, Value shifts,
     function_ref<Value(OpBuilder &, Value, Value)> add,
@@ -1001,6 +1014,11 @@ static void emitPairs(
   Type f64 = b.getF64Type();
   auto vec3 = VectorType::get({3}, f64);
   Type i64 = b.getI64Type();
+  auto indices = MemRefType::get({ShapedType::kDynamic}, i64);
+  auto buildCells = declare("mdrtDistPairCells",
+      b.getFunctionType({b.getIndexType(), b.getIndexType(), b.getIndexType(),
+                         f64, xo.getType(), xg.getType(), xg.getType(), i64,
+                         indices, indices}, {}), true);
   scf::ForOp::create(
       b, loc, c(b, 0), c(b, domains), c(b, 1), ValueRange(),
       [&](OpBuilder &bd, Location, Value d, ValueRange) {
@@ -1011,18 +1029,27 @@ static void emitPairs(
             bd, loc, bd.getIndexType(),
             memref::LoadOp::create(bd, loc, halo.rows, ValueRange{d}));
         Value local = arith::AddIOp::create(bd, loc, owned, ghosts);
+        Value count = ghostFree ? owned : local;
+        Value order = memref::AllocOp::create(bd, loc, indices, ValueRange{count});
+        Value slots = arith::MulIOp::create(bd, loc, owned, c(bd, 18));
+        Value spans = memref::AllocOp::create(bd, loc, indices, ValueRange{slots});
+        func::CallOp::create(bd, loc, buildCells,
+            ValueRange{d, owned, count, real(bd, cutoff), xo, xg,
+                       shifts ? shifts : xg,
+                       arith::ConstantIntOp::create(bd, loc, shifts ? 1 : 0, 64),
+                       order, spans});
         auto centers = scf::ForOp::create(
             bd, loc, c(bd, 0), owned, c(bd, 1),
             ValueRange{zero(bd, accumulator)},
             [&](OpBuilder &bi, Location, Value i, ValueRange domainSum) {
-              Value rowEnd = ghostFree ? owned : local;
+              Value spanCount = c(bi, 9);
               if (centerMask) {
                 Value bit = memref::LoadOp::create(
                     bi, loc, centerMask, ValueRange{d, i, c(bi, 0)});
                 Value active = arith::CmpIOp::create(
                     bi, loc, arith::CmpIPredicate::ne, bit,
                     arith::ConstantIntOp::create(bi, loc, 0, 32));
-                rowEnd = arith::SelectOp::create(bi, loc, active, rowEnd,
+                spanCount = arith::SelectOp::create(bi, loc, active, spanCount,
                                                 c(bi, 0));
               }
               Value xi = load(bi, xo, d, i, vec3);
@@ -1032,10 +1059,21 @@ static void emitPairs(
               Value idi = unique ? Value(memref::LoadOp::create(
                                        bi, loc, layout.ids, ValueRange{d, i}))
                                  : Value();
-              auto rows = scf::ForOp::create(
-                  bi, loc, c(bi, 0), rowEnd, c(bi, 1),
+              auto slabs = scf::ForOp::create(
+                  bi, loc, c(bi, 0), spanCount, c(bi, 1),
                   ValueRange{zero(bi, accumulator)},
-                  [&](OpBuilder &bk, Location, Value k, ValueRange acc) {
+                  [&](OpBuilder &bs, Location, Value slab, ValueRange subtotal) {
+                    Value base = arith::AddIOp::create(bs, loc,
+                        arith::MulIOp::create(bs, loc, i, c(bs, 18)),
+                        arith::MulIOp::create(bs, loc, slab, c(bs, 2)));
+                    auto bound = [&](Value index) {
+                      return toIndex(bs, memref::LoadOp::create(bs, loc, spans, index));
+                    };
+                    Value begin = bound(base);
+                    Value end = bound(arith::AddIOp::create(bs, loc, base, c(bs, 1)));
+                    auto rows = scf::ForOp::create(bs, loc, begin, end, c(bs, 1),
+                        subtotal, [&](OpBuilder &bk, Location, Value slot, ValueRange acc) {
+                    Value k = toIndex(bk, memref::LoadOp::create(bk, loc, order, slot));
                     Value isOwned = arith::CmpIOp::create(
                         bk, loc, arith::CmpIPredicate::ult, k, owned);
                     Value shifted = arith::SubIOp::create(bk, loc, k, owned);
@@ -1122,12 +1160,16 @@ static void emitPairs(
                     }
                     scf::YieldOp::create(bk, loc, branch.getResults());
                   });
-              Value sum = rows.getResult(0);
+                    scf::YieldOp::create(bs, loc, rows.getResults());
+                  });
+              Value sum = slabs.getResult(0);
               finishCenter(bi, sum, d, i);
               Value next = isa<SumPairsOp>(op) ? add(bi, domainSum[0], sum)
                                                : domainSum[0];
               scf::YieldOp::create(bi, loc, ValueRange{next});
             });
+        memref::DeallocOp::create(bd, loc, spans);
+        memref::DeallocOp::create(bd, loc, order);
         finishDomain(bd, centers.getResult(0), d);
         scf::YieldOp::create(bd, loc);
       });
