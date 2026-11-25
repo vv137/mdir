@@ -195,6 +195,7 @@ void emitPairs(
   Value copyForState(OpBuilder &b, Value buffer);
   bool sharedState() const { return gpuPairs && mpi; }
   void releaseField(OpBuilder &b, Value field);
+  void hostRows(OpBuilder &b, Value field);
 
   /// The decomposition of a type of md_dist, and its number of domains.
   DecompositionOp getDecomposition(Operation *op, FlatSymbolRefAttr name);
@@ -422,6 +423,14 @@ Value Lowering::zero(OpBuilder &b, Type type) {
     return arith::ConstantOp::create(
         b, loc, DenseElementsAttr::get(vector, b.getF64FloatAttr(0.0)));
   return real(b, 0.0);
+}
+
+void Lowering::hostRows(OpBuilder &b, Value field) {
+  if (!sharedState() || !field) return;
+  auto type = cast<MemRefType>(field.getType());
+  if (type.getRank() != 3 || !type.getElementType().isF64()) return;
+  auto fn = declare("mdrtDistHostRows", b.getFunctionType({type}, {}), true);
+  func::CallOp::create(b, loc, fn, ValueRange{field});
 }
 
 void Lowering::releaseField(OpBuilder &b, Value field) {
@@ -955,7 +964,7 @@ LogicalResult Lowering::lowerCovered(CoveredOp op) {
   Type i64 = b.getI64Type();
   Value answer = func::CallOp::create(
                      b, loc,
-                     declare("mdrtDistCovered",
+                     declare(sharedState() ? "mdrtDistDeviceCovered" : "mdrtDistCovered",
                              b.getFunctionType({i64, reference.getType(),
                                                 current.getType(), b.getF64Type()},
                                                {i64}),
@@ -1021,6 +1030,7 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
     func::CallOp::create(cleanup, loc, release, ValueRange{positions});
     return success();
   }
+  hostRows(b, owned);
   Value ghosts = allocate(b, halo.capacity, k);
   if (haloEvents && !sharedState()) {
     auto start = mdrt::HaloCopyStartOp::create(
@@ -1946,6 +1956,23 @@ LogicalResult Lowering::lowerMapParticles(MapParticlesOp op) {
   FieldType resultType = op.getResult().getType();
   Storage &rows = rowsOf(op.getGathered()[0]);
   Value result = allocate(b, rows.capacity, resultType.getNumComponents());
+  if (sharedState() && (op->hasAttr("md_dist.verlet_kick") || op->hasAttr("md_dist.verlet_drift"))) {
+    llvm::SetVector<Value> captures;
+    getUsedValuesDefinedAbove(op.getKernel(), captures);
+    if (captures.size() == 1 && captures.front().getType().isF64()) {
+      bool kick = op->hasAttr("md_dist.verlet_kick");
+      Value x = storage[op.getGathered()[0]].buffer;
+      Value v = storage[op.getGathered()[1]].buffer;
+      Value mass = kick ? storage[op.getGathered()[2]].buffer : x;
+      SmallVector<Value> args{rows.handle,x,v,mass,result,captures.front(),
+                              arith::ConstantIntOp::create(b,loc,kick,64)};
+      auto fn = declare("mdrtDistAdvance", b.getFunctionType(ValueRange(args).getTypes(), {}), true);
+      func::CallOp::create(b,loc,fn,args);
+      storage[op.getResult()].buffer = result;
+      return success();
+    }
+  }
+  for (Value field : op.getGathered()) hostRows(b,storage[field].buffer);
   bool combine = fixedPoint && op->hasAttr("md_dist.add_terms");
   Value raw;
   if (combine && needsWords(op.getResult())) {
@@ -2235,6 +2262,7 @@ Value Lowering::makeField(OpBuilder &b, FlatSymbolRefAttr set, int64_t k,
   Value buffer = memref::AllocOp::create(b, loc, type, ValueRange{total});
   Value offset = index(b, 0);
   for (auto [part, count] : llvm::zip(parts, counts)) {
+    hostRows(b, part);
     auto partType = part ? cast<MemRefType>(part.getType()) : MemRefType();
     scf::ForOp::create(
         b, loc, index(b, 0), count, index(b, 1), ValueRange(),
@@ -2272,6 +2300,15 @@ void Lowering::copyBack(OpBuilder &b, Value field, Value first, Value count,
   auto fieldType = cast<md::FieldType>(field.getType());
   MemRefType type = mdrt::getBufferType(fieldType);
   int64_t k = fieldType.getNumComponents();
+  if (sharedState() && k == 3) {
+    auto device = MemRefType::get(type.getShape(), type.getElementType(),
+                                  MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
+    Value flat = mdrt::ToBufferOp::create(b, loc, device, field);
+    SmallVector<Value> args{buffer, d, count, first, flat};
+    auto fn = declare("mdrtDistImportForces", b.getFunctionType(ValueRange(args).getTypes(), {}), true);
+    func::CallOp::create(b, loc, fn, args);
+    return;
+  }
   Value flat = gpuPairs ? Value(mdrt::SnapshotOp::create(b, loc, type, field))
                         : Value(mdrt::ToBufferOp::create(b, loc, type, field));
   scf::ForOp::create(
@@ -2759,6 +2796,14 @@ LogicalResult Lowering::lowerMapParticlesExec(MapParticlesOp op) {
 LogicalResult Lowering::lower(Operation *op) {
   loc = op->getLoc();
   end = op->getBlock()->getTerminator();
+  // Native host consumers materialize the local slice on first read.
+  // Packing, coverage and integration can pass the device version on.
+  if (sharedState() && !isa<PackOp, UnpackOp, CoveredOp, MapParticlesOp,
+                             HaloCopyOp, NeighborhoodOp>(op)) {
+    OpBuilder b(op);
+    for (Value operand : op->getOperands())
+      if (isa<FieldType>(operand.getType())) hostRows(b, storage[operand].buffer);
+  }
   if (matrixPairs) {
     if (auto n = dyn_cast<NeighborhoodOp>(op)) {
       return lowerNeighborhoodExec(n);

@@ -180,7 +180,7 @@ static void exchange(const struct NCCLPlan *p, double *owned, int64_t nOwned,
   int recv = reverse ? p->sendRows : p->recvRows;
   reserve(&outgoing, &outCapacity, send*row);
   reserve(&incoming, &inCapacity, recv*row);
-  if (nOwned) checkCuda(cudaMemcpyAsync(ownedDevice, owned, nOwned*row, cudaMemcpyHostToDevice, stream));
+  if (nOwned) checkCuda(cudaMemcpyAsync(ownedDevice, owned, nOwned*row, packed ? cudaMemcpyDeviceToDevice : cudaMemcpyHostToDevice, stream));
   if (reverse && p->recvRows)
     checkCuda(cudaMemcpyAsync(ghostDevice, ghosts, p->recvRows*row, cudaMemcpyHostToDevice, stream));
   mdrtNCCLRows(1, reverse ? ghostDevice : ownedDevice, reverse ? p->dest : p->source,
@@ -229,12 +229,35 @@ double *mdrtNCCLPositions(const struct NCCLPlan *plan, double *owned, int64_t ro
   double *positions;
   size_t count = rows + (size_t)plan->recvRows;
   checkCuda(cudaMalloc((void **)&positions, (count ? count : 1)*3*sizeof(double)));
+  // The integration kernel writes owned rows on the default stream.
+  checkCuda(cudaStreamSynchronize(0));
   exchange(plan, owned, rows, NULL, 3, 1, 0, positions);
   return positions;
 }
 
 void mdrtNCCLFreePositions(double *positions) {
   checkCuda(cudaFree(positions));
+}
+
+double *mdrtNCCLAllocate(size_t bytes) {
+  double *device;
+  checkCuda(cudaMalloc((void **)&device, bytes ? bytes : sizeof(double)));
+  return device;
+}
+
+void mdrtNCCLUpload(double *device, const double *host, size_t bytes) {
+  if (bytes) checkCuda(cudaMemcpy(device, host, bytes, cudaMemcpyHostToDevice));
+}
+
+void mdrtNCCLDownload(double *host, const double *device, size_t bytes) {
+  if (bytes) checkCuda(cudaMemcpy(host, device, bytes, cudaMemcpyDeviceToHost));
+}
+
+void mdrtNCCLImport(double *dest, const double *device, size_t bytes) {
+  // The ordinary pair runtime owns the producer stream and temporary.
+  checkCuda(cudaDeviceSynchronize());
+  if (bytes) checkCuda(cudaMemcpy(dest, device, bytes, cudaMemcpyDeviceToDevice));
+  checkCuda(cudaStreamSynchronize(0));
 }
 
 void mdrtNCCLFinish(void) {

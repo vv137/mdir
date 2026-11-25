@@ -729,6 +729,12 @@ static void shareRows(struct Layout *l, const int64_t *rows, struct Memref3D *fi
    domain's scratch rows without changing this rank's owned values. */
 struct StateField {
   size_t refs;
+#ifdef MDIR_ENABLE_NCCL
+  double *device;
+  size_t bytes;
+  int64_t domain;
+  int deviceNewer;
+#endif
   double data[];
 };
 
@@ -741,7 +747,7 @@ void _mlir_ciface_mdrtDistCreateField(struct Memref3D *out, int64_t domains,
   size_t count = (size_t)domains*rows*width;
   struct StateField *field = malloc(sizeof *field + count*sizeof(double));
   if (!field) fail("out of memory allocating distributed field");
-  field->refs = 1;
+  *field = (struct StateField){.refs = 1};
   *out = (struct Memref3D){(double *)field, field->data, 0,
                            {domains,rows,width}, {rows*width,width,1}};
 }
@@ -752,8 +758,64 @@ void _mlir_ciface_mdrtDistRetainField(struct Memref3D *m) {
 
 void _mlir_ciface_mdrtDistReleaseField(struct Memref3D *m) {
   struct StateField *field = (struct StateField *)m->allocated;
-  if (!--field->refs) free(field);
+  if (--field->refs) return;
+#ifdef MDIR_ENABLE_NCCL
+  if (field->device) mdrtNCCLFreePositions(field->device);
+#endif
+  free(field);
 }
+
+#ifdef MDIR_ENABLE_NCCL
+static double *deviceRows(struct Memref3D *m, int64_t domain, int64_t rows, int output) {
+  struct StateField *field = (struct StateField *)m->allocated;
+  if (rows < 0 || rows > m->sizes[1]) fail("invalid distributed device extent");
+  size_t bytes = (size_t)rows*m->sizes[2]*sizeof(double);
+  if (!field->device) {
+    field->device = mdrtNCCLAllocate(bytes);
+    field->domain = domain;
+    field->bytes = bytes;
+    if (!output) mdrtNCCLUpload(field->device, at3(m,domain,0,0), bytes);
+  } else if (field->domain != domain || field->bytes != bytes) {
+    fail("distributed field changed its local row extent");
+  }
+  if (output) field->deviceNewer = 1;
+  return field->device;
+}
+
+void _mlir_ciface_mdrtDistHostRows(struct Memref3D *m) {
+  struct StateField *field = (struct StateField *)m->allocated;
+  if (field->deviceNewer) {
+    mdrtNCCLDownload(at3(m,field->domain,0,0),field->device,field->bytes);
+    field->deviceNewer = 0;
+  }
+}
+
+void _mlir_ciface_mdrtDistAdvance(int64_t layout, struct Memref3D *x, struct Memref3D *v,
+    struct Memref3D *mass, struct Memref3D *out, double dt, int64_t kick) {
+  struct Layout *l = (struct Layout *)(intptr_t)layout;
+  int64_t d = mdrtMPIDomainBound(l->domains,0), n = l->rows[d];
+  mdrtNCCLAdvance(deviceRows(x,d,n,0),deviceRows(v,d,n,0),
+      kick ? deviceRows(mass,d,n,0) : NULL,deviceRows(out,d,n,1),n,dt);
+}
+
+void _mlir_ciface_mdrtDistImportForces(struct Memref3D *field, int64_t domain,
+    int64_t rows, int64_t start, struct Memref2D *forces) {
+  if (forces->sizes[1] != 3 || start < 0 || rows > forces->sizes[0]-start)
+    fail("invalid distributed force slice");
+  mdrtNCCLImport(deviceRows(field,domain,rows,1),at2(forces,start,0),rows*3*sizeof(double));
+}
+
+int64_t _mlir_ciface_mdrtDistDeviceCovered(int64_t halo, struct Memref3D *ref,
+    struct Memref3D *current, double cutoff) {
+  struct Halo *h = (struct Halo *)(intptr_t)halo;
+  int64_t d = mdrtMPIDomainBound(h->layout->domains,0), n = h->layout->rows[d];
+  double half = 0.5*(h->reach-cutoff);
+  if (!(cutoff > 0 && half > 0)) fail("coverage requires a positive cutoff and skin");
+  int flag = mdrtNCCLCoverage(deviceRows(current,d,n,0),deviceRows(ref,d,n,0),n,half*half);
+  if (flag == 2) fail("coverage requires finite displacement");
+  return mdrtMPIAllTrue(!flag);
+}
+#endif
 
 void _mlir_ciface_mdrtMPICopyState(struct Memref3D *source, struct Memref3D *dest) {
   int64_t domains = source->sizes[0];
@@ -1618,7 +1680,7 @@ void _mlir_ciface_mdrtDistDevicePositions(struct Memref2D *result, int64_t handl
       struct Edge edge = h->edges[i];
       observer->transfer(observer->context, edge.from, edge.to, edge.rows*3*sizeof(double), 0);
     }
-  double *data = mdrtNCCLPositions(devicePlan(h), at3(owned,d,0,0), h->layout->rows[d]);
+  double *data = mdrtNCCLPositions(devicePlan(h), deviceRows(owned,d,h->layout->rows[d],0), h->layout->rows[d]);
   *result = (struct Memref2D){data, data, 0, {h->layout->rows[d]+h->rows[d], 3}, {3, 1}};
 }
 

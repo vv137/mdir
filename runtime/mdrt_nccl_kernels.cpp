@@ -21,9 +21,28 @@ extern "C" __global__ void unpack(const double *wire, const int *row,
   long long dest = (long long)row[i/k]*k + i%k;
   if (transpose) atomicAdd(field + dest, wire[i]);
   else field[dest] = wire[i] + (shift ? shift[(i/k)*3+i%k] : 0.);
+}
+extern "C" __global__ void advance(const double *field, const double *slope,
+    const double *mass, double *result, long long n, double dt) {
+  long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= 3*n) return;
+  double w = !mass ? dt : mass[i/3] == 0. ? 0. : dt/mass[i/3];
+  result[i] = __dadd_rn(field[i], __dmul_rn(w, slope[i]));
+}
+extern "C" __global__ void coverage(const double *x, const double *ref,
+    long long n, double limit, int *flag) {
+  long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n) return;
+  double r2 = 0.;
+  for (int c = 0; c < 3; ++c) {
+    double v = x[3*i+c]-ref[3*i+c];
+    if (!isfinite(v)) { atomicMax(flag,2); return; }
+    r2 = __dadd_rn(r2,__dmul_rn(v,v));
+  }
+  if (!(r2 < limit)) atomicMax(flag,1);
 })";
 CUmodule module;
-CUfunction pack, unpack;
+CUfunction pack, unpack, advance, coverage;
 
 void check(CUresult status) {
   if (status == CUDA_SUCCESS) return;
@@ -60,6 +79,8 @@ void compile() {
   check(cuModuleLoadData(&module, ptx.data()));
   check(cuModuleGetFunction(&pack, module, "pack"));
   check(cuModuleGetFunction(&unpack, module, "unpack"));
+  check(cuModuleGetFunction(&advance, module, "advance"));
+  check(cuModuleGetFunction(&coverage, module, "coverage"));
 }
 }
 
@@ -71,4 +92,27 @@ extern "C" void mdrtNCCLRows(int gather, const double *input, const int *rows,
   void *args[] = {&input, &rows, &output, &n, &k, &shifts, &transpose};
   check(cuLaunchKernel(gather ? pack : unpack, (n + 255)/256, 1, 1, 256, 1, 1,
                        0, stream, args, nullptr));
+}
+
+extern "C" void mdrtNCCLAdvance(const double *x, const double *v,
+    const double *mass, double *result, long long rows, double dt) {
+  if (!rows) return;
+  if (!module) compile();
+  void *args[] = {&x,&v,&mass,&result,&rows,&dt};
+  check(cuLaunchKernel(advance, (3*rows+255)/256,1,1,256,1,1,0,nullptr,args,nullptr));
+}
+
+extern "C" int mdrtNCCLCoverage(const double *x, const double *ref,
+                                long long rows, double limit) {
+  if (!rows) return 0;
+  if (!module) compile();
+  CUdeviceptr flag;
+  check(cuMemAlloc(&flag,sizeof(int)));
+  check(cuMemsetD32(flag,0,1));
+  void *args[] = {&x,&ref,&rows,&limit,&flag};
+  check(cuLaunchKernel(coverage,(rows+255)/256,1,1,256,1,1,0,nullptr,args,nullptr));
+  int value;
+  check(cuMemcpyDtoH(&value,flag,sizeof(value)));
+  check(cuMemFree(flag));
+  return value;
 }

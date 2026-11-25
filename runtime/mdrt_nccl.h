@@ -16,6 +16,12 @@ void mdrtNCCLHalo(const struct NCCLPlan *p, double *owned, int64_t nOwned,
     double *ghosts, int k, int image, int reverse);
 double *mdrtNCCLPositions(const struct NCCLPlan *plan, double *owned, int64_t rows);
 void mdrtNCCLFreePositions(double *positions);
+double *mdrtNCCLAllocate(size_t bytes);
+void mdrtNCCLUpload(double *device, const double *host, size_t bytes);
+void mdrtNCCLDownload(double *host, const double *device, size_t bytes);
+void mdrtNCCLImport(double *dest, const double *device, size_t bytes);
+void mdrtNCCLAdvance(const double *, const double *, const double *, double *, long long, double);
+int mdrtNCCLCoverage(const double *, const double *, long long, double);
 int mdrtNCCLNode(int rank);
 
 #endif
