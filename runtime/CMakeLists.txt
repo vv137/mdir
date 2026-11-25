@@ -52,9 +52,18 @@ if(MDIR_CUDA_FOUND)
       endif()
     endforeach()
   endif()
+  # The graph certificate kernels are scalar. Embed a second PTX image
+  # for Volta when the toolkit can generate it. The driver chooses the
+  # highest compatible image at load, retaining the original image on
+  # Turing and later devices.
+  set(step_targets -arch=compute_75 -code=compute_75)
+  if(CUDAToolkit_VERSION VERSION_LESS 13.0)
+    set(step_targets -gencode arch=compute_70,code=compute_70
+                     -gencode arch=compute_75,code=compute_75)
+  endif()
   set(step_object "${CMAKE_CURRENT_BINARY_DIR}/mdrt_step_graph.o")
   add_custom_command(OUTPUT "${step_object}"
-    COMMAND "${CUDAToolkit_NVCC_EXECUTABLE}" -std=c++17 -O2 -arch=compute_75 -code=compute_75
+    COMMAND "${CUDAToolkit_NVCC_EXECUTABLE}" -std=c++17 -O2 ${step_targets}
       -Xcompiler=-fPIC -c "${CMAKE_CURRENT_SOURCE_DIR}/mdrt_step_graph.cu" -o "${step_object}"
     DEPENDS mdrt_step_graph.cu VERBATIM)
   target_sources(mdrt_cuda PRIVATE "${step_object}")

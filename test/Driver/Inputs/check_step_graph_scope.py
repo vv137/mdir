@@ -1,5 +1,6 @@
 """Exercise graph eligibility before any device-dependent setup."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -27,6 +28,11 @@ for text, reason in cases:
     for request in ("GRAPH", "AUTO"):
         control.write_text(text.replace('step_graph = "GRAPH"', f'step_graph = "{request}"'))
         proc = subprocess.run([sys.argv[2], "check", "--json", str(control)], capture_output=True, text=True)
+        if (request == "AUTO" and '"TOWERS"' in control.read_text()
+                and os.environ.get("MDIR_LIT_GPU_CHIP") in ("sm_70", "sm_72")):
+            errors = json.loads(proc.stdout)["errors"]
+            assert proc.returncode and any("TOWERS requires mma.sync" in e for e in errors), errors
+            continue
         if request == "GRAPH":
             assert proc.returncode and reason in proc.stdout, (reason, proc.stdout, proc.stderr)
         else:
