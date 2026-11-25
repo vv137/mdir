@@ -306,3 +306,7 @@ are involved, where all pairs of frames are (clustering), or where the
 frames never reach a file.
 
 The first runtime-interface slice of #558 stage 2 is #623: a shared, versioned neighbor-group slot contract, with descriptor-driven extents and range checks (D350).
+
+D[distribute-midpoint] extends the CPU reference executor with midpoint
+pair ownership, bonded topology schedules, and whole-group migration.
+Distributed reciprocal space remains a separate milestone.

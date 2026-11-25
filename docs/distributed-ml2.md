@@ -1585,3 +1585,21 @@ payload collective measures arrival wait plus barrier latency. The rank
 table reports actual inter-rank halo payload separately from logical
 intra-rank copies. With a fixed grid, assigning the same domain partials
 to another number of ranks preserves their order in the reduction.
+
+## Midpoint owners and topology
+
+D[distribute-midpoint] adds `midpoint` to the CPU neighborhood traversal.
+Each identity-ordered pair supplies its canonical displacement and integer
+image. The midpoint is tested in the primary cell, including its lower
+faces and excluding its upper faces. A domain may evaluate two imported
+rows. Exclusions use an unordered key of the original particle indices.
+Special 1–4 interactions are separate topology rows.
+
+For a tuple, `md_dist.tuple_rows` supplies one owner and one image-qualified
+local row per member in topology order. A missing member identifies the
+tuple, domain and atom. The tuple kernel evaluates scalar coordinates and
+uses the differentiated force law on those rows. For a constraint group
+the schedule supplies owned rows of the partition that declared the group.
+Partitioning and migration assign the entire group by its unwrapped center.
+The CPU reference executor assembles positions to resolve the topology
+schedule. This adds communication beyond importing the pair halo.

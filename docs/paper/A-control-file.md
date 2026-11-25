@@ -582,7 +582,7 @@ D350 formalizes the internal neighbor-group buffer ABI and adds no control-file 
 Within `[distribute]`, `domains` accepts a positive count or three positive
 axis counts and defaults to 1. A count chooses the factorization with the
 smallest domain surface area for the input cell. The traversal is
-`"directed"` (default) or `"unique"`, and the in-process transport is
+`"directed"` (default), `"unique"`, or `"midpoint"` (D[distribute-midpoint]). The in-process transport is
 `"local"`. Without the table the ordinary single-domain pipeline runs.
 
 The run log reports the selected factors, domain bounds, imports and

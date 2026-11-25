@@ -138,3 +138,7 @@ an *ulp* is a unit in the last place. A *mode* (`single`, `mixed`,
 (D1, D2, ...) in `docs/decisions.md`, with the measurement that motivated
 it; the paper cites them as "(D95)". File names are relative to the root
 of the repository.
+
+For spatial decomposition, $r_c$ denotes the interaction cutoff, $s$ the
+neighbor-list skin, and $e$ the largest half-diagonal of an unwrapped
+topology tuple's Cartesian bounding box.
