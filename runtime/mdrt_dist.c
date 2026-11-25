@@ -1306,6 +1306,11 @@ void _mlir_ciface_mdrtDistRedistributeDevice(struct Memref3D *result,
    ghosts. Inside that layer the GPU returns the new owner and a bit for
    each receiving neighbor, including the local domain's periodic images.
    The host exchanges these records in place of particle coordinates. */
+static int compareIdentities(const void *a, const void *b) {
+  int64_t left=*(const int64_t *)a, right=*(const int64_t *)b;
+  return (left>right)-(left<right);
+}
+
 int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
     struct Memref3D *positions, double lx, double ly, double lz, double reach) {
   struct Layout *old = (void *)(intptr_t)oldHandle;
@@ -1339,14 +1344,19 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
   size_t capacity = old->count ? old->count : 1;
   next->faceMasks=calloc(capacity,sizeof *next->faceMasks);
   if (!next->faceMasks) fail("out of memory indexing device face rows");
+  int64_t moved=0;
+  next->migrantOffsets=calloc(mdrtMPISize()+1,sizeof *next->migrantOffsets);
+  if (!next->migrantOffsets) fail("out of memory indexing device migrants");
   for (int peer=0; peer<mdrtMPISize(); ++peer) {
     int sender=peer==mdrtMPIRank();
     int64_t count=sender ? localCount : 0;
     mdrtMPIBroadcastIndices(&count,1,peer);
+    next->migrantOffsets[peer+1]=moved;
     if (!count) continue;
     int64_t *records=sender ? local : malloc(2*count*sizeof *records);
     if (!records) fail("out of memory receiving device face rows");
     mdrtMPIBroadcastIndices(records,2*count,peer);
+    int64_t arrivals=0;
     for (int64_t i=0; i<count; ++i) {
       int64_t j=records[2*i], owner=records[2*i+1]>>32;
       next->faceMasks[j]=(uint32_t)records[2*i+1];
@@ -1356,8 +1366,18 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
         if (!next->owner) fail("out of memory recording new domain owners");
         memcpy(next->owner,old->owner,old->count*sizeof *next->owner);
       }
+      // Compact in place after reading this row's identity and mask.
+      records[arrivals++]=j;
       next->owner[j]=owner;
       if (observer) observer->migration(observer->context,old->owner[j],owner);
+    }
+    if (arrivals) {
+      next->migrantIds=realloc(next->migrantIds,(moved+arrivals)*sizeof *next->migrantIds);
+      if (!next->migrantIds) fail("out of memory recording device migrants");
+      qsort(records,arrivals,sizeof *records,compareIdentities);
+      memcpy(next->migrantIds+moved,records,arrivals*sizeof *records);
+      moved+=arrivals;
+      next->migrantOffsets[peer+1]=moved;
     }
     if (!sender) free(records);
   }
@@ -1367,7 +1387,7 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
     next->rows=calloc(next->domains,sizeof *next->rows);
     if (!next->row || !next->rows) fail("out of memory numbering device migrants");
     numberOwnedRows(next);
-    indexMigrants(old,next);
+
   } else {
     next->identityOwner=old->identityOwner ? old->identityOwner : old;
     mdrtDistRetainLayout((int64_t)(intptr_t)next->identityOwner);
@@ -1376,8 +1396,7 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
     next->rows=old->rows;
     next->ids=old->ids;
     next->stride=old->stride;
-    next->migrantOffsets=calloc(mdrtMPISize()+1,sizeof *next->migrantOffsets);
-    if (!next->migrantOffsets) fail("out of memory retaining stationary rows");
+
   }
   if (tracing()) traceMigration(old,next);
   return (int64_t)(intptr_t)next;
@@ -1546,6 +1565,43 @@ void _mlir_ciface_mdrtDistVisitHalo(int64_t handle, int64_t domain, struct Memre
   h->rows[domain] = build->lists[domain].size;
 }
 
+static int64_t finishHaloMetadata(struct Halo *h, struct GhostList *lists) {
+  int64_t domains = h->layout->domains;
+  if (observer) {
+    // Count neighbor multiplicities once per halo, including periodic
+    // self-images. Later transfers scale these counts by their field width.
+    int64_t *counts = calloc(domains, sizeof *counts);
+    if (!counts) fail("out of memory counting halo imports");
+    for (int64_t d = 0; d < domains; ++d) {
+      const double *lo = lists[d].lo, *hi = lists[d].hi;
+      observer->domain(observer->context, d, h->layout->rows[d], h->rows[d], lo, hi);
+      for (int64_t g = 0; g < h->rows[d]; ++g)
+        ++counts[h->sourceDomain[d * h->capacity + g]];
+      size_t neighbors = 0;
+      for (int64_t e = 0; e < domains; ++e)
+        neighbors += counts[e] != 0;
+      if (neighbors) {
+        h->edges = realloc(h->edges, (h->edgeCount + neighbors) * sizeof *h->edges);
+        if (!h->edges) fail("out of memory counting halo edges");
+      }
+      for (int64_t e = 0; e < domains; ++e)
+        if (counts[e]) {
+          h->edges[h->edgeCount++] = (struct Edge){e, d, counts[e]};
+          counts[e] = 0;
+        }
+    }
+  }
+  free(lists);
+  if (tracing())
+    for (int64_t d = 0; d < domains; ++d)
+      fprintf(stderr,
+              "mdrt_dist: halo reach %g: domain %lld owns %lld rows, "
+              "holds %lld ghosts\n",
+              h->reach, (long long)d, (long long)h->layout->rows[d],
+              (long long)h->rows[d]);
+  return (int64_t)(intptr_t)h;
+}
+
 int64_t _mlir_ciface_mdrtDistFinishHalo(int64_t handle, struct Memref3D *x) {
   struct HaloBuild *build = (struct HaloBuild *)(intptr_t)handle;
   struct Halo *h = build->halo;
@@ -1576,39 +1632,7 @@ int64_t _mlir_ciface_mdrtDistFinishHalo(int64_t handle, struct Memref3D *x) {
     }
     free(lists[d].data);
   }
-  if (observer) {
-    // Count neighbor multiplicities once per halo, including periodic
-    // self-images. Later transfers scale these counts by their field width.
-    int64_t *counts = calloc(domains, sizeof *counts);
-    if (!counts) fail("out of memory counting halo imports");
-    for (int64_t d = 0; d < domains; ++d) {
-      const double *lo = lists[d].lo, *hi = lists[d].hi;
-      observer->domain(observer->context, d, h->layout->rows[d], h->rows[d], lo, hi);
-      for (int64_t g = 0; g < h->rows[d]; ++g)
-        ++counts[h->sourceDomain[d * cap + g]];
-      size_t neighbors = 0;
-      for (int64_t e = 0; e < domains; ++e)
-        neighbors += counts[e] != 0;
-      if (neighbors) {
-        h->edges = realloc(h->edges, (h->edgeCount + neighbors) * sizeof *h->edges);
-        if (!h->edges) fail("out of memory counting halo edges");
-      }
-      for (int64_t e = 0; e < domains; ++e)
-        if (counts[e]) {
-          h->edges[h->edgeCount++] = (struct Edge){e, d, counts[e]};
-          counts[e] = 0;
-        }
-    }
-  }
-  free(lists);
-  if (tracing())
-    for (int64_t d = 0; d < domains; ++d)
-      fprintf(stderr,
-              "mdrt_dist: halo reach %g: domain %lld owns %lld rows, "
-              "holds %lld ghosts\n",
-              h->reach, (long long)d, (long long)h->layout->rows[d],
-              (long long)h->rows[d]);
-  return (int64_t)(intptr_t)h;
+  return finishHaloMetadata(h, lists);
 }
 
 #ifdef MDIR_ENABLE_NCCL
@@ -1621,15 +1645,19 @@ int64_t _mlir_ciface_mdrtDistDeviceEpochHalo(int64_t layout, struct Memref3D *x,
   }
   if (l->faceReach!=reach) fail("device face map belongs to a different halo reach");
   struct Halo *h=calloc(1,sizeof *h);
-  struct HaloBuild *build=calloc(1,sizeof *build);
   struct GhostList *lists=calloc(l->domains,sizeof *lists);
-  if (!h || !build || !lists) fail("out of memory building device face halo");
+  if (!h || !lists) fail("out of memory building device face halo");
   h->references=1;
   h->layout=l;
   h->reach=reach;
   h->rows=calloc(l->domains,sizeof *h->rows);
   if (!h->rows) fail("out of memory counting device faces");
   mdrtDistRetainLayout(layout);
+  // Each direction selects one receiving domain and periodic translation,
+  // independently of the row identity. Resolve it once per domain.
+  struct Destination { int64_t domain, image[3]; };
+  struct Destination *routes=calloc(l->domains*27,sizeof *routes);
+  if (!routes) fail("out of memory routing device face rows");
   for (int64_t d=0; d<l->domains; ++d) {
     int64_t code=d;
     for (int k=0; k<3; ++k) {
@@ -1638,37 +1666,58 @@ int64_t _mlir_ciface_mdrtDistDeviceEpochHalo(int64_t layout, struct Memref3D *x,
       lists[d].lo[k]=l->edges[k]*cell/l->grid[k];
       lists[d].hi[k]=l->edges[k]*(cell+1)/l->grid[k];
     }
-  }
-  // Enumerate in identity then image order, irrespective of GPU arrival.
-  for (int64_t j=0; j<l->count; ++j) {
-    uint32_t mask=l->faceMasks[j];
-    while (mask) {
-      int bit=31-__builtin_clz(mask);
-      mask ^= 1u<<bit;
-      int64_t from=l->owner[j], to=0, stride=1;
+    for (int bit=0; bit<27; ++bit) {
+      struct Destination *route=&routes[d*27+bit];
       int relative[3]={bit/9-1,(bit/3)%3-1,bit%3-1};
-      struct GhostRow row={.id=j};
+      int64_t from=d, stride=1;
       for (int k=0; k<3; ++k) {
         int64_t grid=l->grid[k], dest=from%grid+relative[k];
         from/=grid;
-        if (dest<0) { dest+=grid; row.image[k]=1; }
-        if (dest>=grid) { dest-=grid; row.image[k]=-1; }
-        to+=dest*stride;
+        if (dest<0) { dest+=grid; route->image[k]=1; }
+        if (dest>=grid) { dest-=grid; route->image[k]=-1; }
+        route->domain+=dest*stride;
         stride*=grid;
       }
-      struct GhostList *list=&lists[to];
-      if (list->size==list->capacity) {
-        list->capacity=list->capacity ? 2*list->capacity : 64;
-        list->data=realloc(list->data,list->capacity*sizeof *list->data);
-        if (!list->data) fail("out of memory indexing device faces");
-      }
-      list->data[list->size++]=row;
     }
   }
-  for (int64_t d=0; d<l->domains; ++d) h->rows[d]=lists[d].size;
-  build->halo=h;
-  build->lists=lists;
-  return _mlir_ciface_mdrtDistFinishHalo((int64_t)(intptr_t)build,x);
+  int64_t cap=1;
+  for (int pass=0; pass<2; ++pass) {
+    for (int64_t j=0; j<l->count; ++j) {
+      uint32_t mask=l->faceMasks[j];
+      if (!mask) continue;
+      const struct Destination *domainRoutes=routes+27*l->owner[j];
+      // Descending direction bits give ascending periodic images.
+      while (mask) {
+        int bit=31-__builtin_clz(mask);
+        mask ^= 1u<<bit;
+        const struct Destination *dest=domainRoutes+bit;
+        int64_t d=dest->domain;
+        if (!pass) {
+          ++h->rows[d];
+        } else {
+          int64_t r=d*cap+lists[d].size++;
+          h->sourceDomain[r]=l->owner[j];
+          h->sourceRow[r]=l->row[j];
+          h->ids[r]=j;
+          memcpy(h->image+3*r,dest->image,sizeof dest->image);
+        }
+      }
+    }
+    if (!pass) {
+      for (int64_t d=0; d<l->domains; ++d)
+        if (h->rows[d]>cap) cap=h->rows[d];
+      h->capacity=cap;
+      size_t slots=(size_t)cap*l->domains;
+      h->sourceDomain=malloc(slots*sizeof *h->sourceDomain);
+      h->sourceRow=malloc(slots*sizeof *h->sourceRow);
+      h->ids=malloc(slots*sizeof *h->ids);
+      h->image=malloc(3*slots*sizeof *h->image);
+      if (!h->sourceDomain || !h->sourceRow || !h->ids || !h->image)
+        fail("out of memory indexing device faces");
+    }
+  }
+  free(routes);
+  return finishHaloMetadata(h,lists);
 }
 #endif
 
