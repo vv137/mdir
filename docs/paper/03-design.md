@@ -1722,3 +1722,10 @@ op. Activity retains the operation that prevented a proof, and diagnostics
 routed through sums or intermediate fields point at that operation's
 location. The numerical semantics are unchanged. An injected unsupported
 scalar operation tests that the error names the source term.
+
+For an orthorhombic box with edge lengths $L_i$, a Cartesian grid with
+$g_i$ divisions on each axis gives subdomains with volume
+$V_d=\prod_i(L_i/g_i)$. A boundary normal to axis $i$ has area
+$V_d g_i/L_i$. Thus at fixed domain count the minimum-area factorization
+minimizes $\sum_i g_i/L_i$. D[distribute-driver] uses the same geometric
+criterion for an integer domain count as the potential rewrite.

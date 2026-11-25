@@ -306,3 +306,7 @@ are involved, where all pairs of frames are (clustering), or where the
 frames never reach a file.
 
 The first runtime-interface slice of #558 stage 2 is #623: a shared, versioned neighbor-group slot contract, with descriptor-driven extents and range checks (D350).
+
+D[distribute-driver] connects CPU control-file selection to the distributed
+potential rewrite. The stateful driver trajectory and its numerical gates
+are tracked in #832.

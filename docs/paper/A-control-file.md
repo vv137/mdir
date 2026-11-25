@@ -576,3 +576,11 @@ strategy switch is `MDIR_STAGE_SHORT_REDUCTIONS`, documented in
 [environment.md](../environment.md).
 
 D350 formalizes the internal neighbor-group buffer ABI and adds no control-file key or input behavior.
+
+### CPU decomposition (D[distribute-driver])
+
+Within `[distribute]`, `domains` accepts a positive count or three positive
+axis counts and defaults to 1. A count chooses the factorization with the
+smallest domain surface area for the input cell. The traversal is
+`"directed"` (default) or `"unique"`, and the in-process transport is
+`"local"`. Without the table the ordinary single-domain pipeline runs.
