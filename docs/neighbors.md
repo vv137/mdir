@@ -144,6 +144,9 @@ match `towers_recover`. It reads the replay word on the device. On failure
 it visits the whole grid with one block, including all physical corrections.
 The multi-block sequence remains available for parallel wide recovery.
 
+D[towers-scalar-screen] uses the same lattice, padded cutoff and source masks
+on devices with the matrix instruction and on devices with the scalar screen.
+
 The control-file shape for preflight is `[execution] towers_shape`. The
 fields and the current geometry qualification are in
 [Appendix A](paper/A-control-file.md).

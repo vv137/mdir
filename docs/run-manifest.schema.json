@@ -391,6 +391,7 @@
                 "effective": {"type": "object"},
                 "candidate_cells": {"type": "array"},
                 "launch_candidates": {"type": "array"},
+                "screen_reason": {"type": "string"},
                 "register_check": {"type": ["object", "string"]}
               }
             },
