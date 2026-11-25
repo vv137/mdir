@@ -2155,6 +2155,14 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
       return success();
     }
     if (!onDevice) {
+      if (to->hasAttr("mdrt.snapshot")) {
+        Value size = memref::DimOp::create(builder, op->getLoc(), buffer, 0);
+        auto snapshot = memref::AllocOp::create(builder, op->getLoc(), resultType,
+                                                ValueRange{size});
+        memref::CopyOp::create(builder, op->getLoc(), buffer, snapshot);
+        mapping.map(to.getResult(), snapshot.getResult());
+        return success();
+      }
       // The buffer is visible outside from here on. Leave it alone.
       scope.owned.erase(buffer);
       mapping.map(to.getResult(), memref::CastOp::create(

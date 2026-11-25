@@ -181,6 +181,7 @@ private:
   Value zero(OpBuilder &b, Type type);
   /// A new buffer of `domains x rows x k` of f64, freed at the end.
   Value allocate(OpBuilder &b, Value rows, int64_t k);
+  Value inputSnapshot(OpBuilder &b, md::FieldType type, Value field);
   /// A new buffer of the given type and sizes, freed at the end.
   Value allocate(OpBuilder &b, MemRefType type, ValueRange sizes);
   void fillZero(OpBuilder &b, Value buffer);
@@ -362,6 +363,19 @@ Storage &Lowering::rowsOf(Value field) {
 // Ownership and halos
 //===----------------------------------------------------------------------===//
 
+// Partition and distribution read the input while the ordinary step still
+// owns it. A snapshot gives those reads block lifetime, even when a later
+// kick or drift reuses the field's storage.
+Value Lowering::inputSnapshot(OpBuilder &b, md::FieldType type, Value field) {
+  auto snapshot = mdrt::ToBufferOp::create(b, loc, mdrt::getBufferType(type), field);
+  if (!module->hasAttr("md_dist.driver"))
+    return snapshot.getResult();
+  snapshot->setAttr("mdrt.snapshot", b.getUnitAttr());
+  OpBuilder atEnd(end);
+  memref::DeallocOp::create(atEnd, loc, snapshot.getResult());
+  return snapshot.getResult();
+}
+
 LogicalResult Lowering::lowerPartition(PartitionOp op) {
   OpBuilder b(op);
   Value edges[3];
@@ -370,8 +384,7 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
   auto fieldType = cast<md::FieldType>(op.getPositions().getType());
   if (!fieldType.getElementType().isF64())
     return op.emitOpError() << "the reference executor runs f64 only";
-  Value positions = mdrt::ToBufferOp::create(
-      b, loc, mdrt::getBufferType(fieldType), op.getPositions());
+  Value positions = inputSnapshot(b, fieldType, op.getPositions());
   auto wide = MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
                               b.getF64Type());
   Value cast = memref::CastOp::create(b, loc, wide, positions);
@@ -458,8 +471,7 @@ LogicalResult Lowering::lowerDistribute(DistributeOp op) {
     return failure();
   Storage &layout = storage[op.getLayout()];
   int64_t k = fieldType.getNumComponents();
-  Value global = mdrt::ToBufferOp::create(
-      b, loc, mdrt::getBufferType(fieldType), op.getField());
+  Value global = inputSnapshot(b, fieldType, op.getField());
   Value owned = allocate(b, layout.capacity, k);
   // owned[d][r] = field[ids[d][r]], wrapped into the cell with `image`.
   scf::ForOp::create(

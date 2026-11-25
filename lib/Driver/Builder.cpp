@@ -457,6 +457,7 @@ llvm::Expected<Program> mdir::driver::buildProgram(const Control &control,
     if (llvm::any_of(system.tilt, [](double t) { return t != 0.0; }))
       return llvm::createStringError(llvm::inconvertibleErrorCode(),
           "distributed halos require an orthorhombic cell");
+    program.distributed = true;
     program.domainGrid = control.distribution->grid;
     if (control.distribution->domains) {
       auto grid = mdir::md_dist::selectGrid(control.distribution->domains,
