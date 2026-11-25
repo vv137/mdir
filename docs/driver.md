@@ -420,7 +420,7 @@ record's `value` to pin that choice and skip the trial. Python exposes the
 same strings through `Execution.step_graph`. `mdir pin MANIFEST` prints
 the latest invocation’s resolved `[execution]` keys as TOML, including
 the TOWERS shape when present and the step timings in a comment. Python's segmented simulations
-currently resolve AUTO to LAUNCH. See D[towers-graph].
+currently resolve AUTO to LAUNCH. See D439.
 
 For periodic TOWERS preflight, `[execution] towers_shape` accepts an
 inline table such as `{threads = 512, blocks_per_sm = 2, panel = 352,

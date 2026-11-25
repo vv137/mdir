@@ -465,7 +465,7 @@ Boundary copies must establish completion and host visibility on the actual
 producer queue before storage is released. It does not infer overlap
 from tokens or change the existing reciprocal implementation.
 
-**Ordinary TOWERS steps (D[towers-graph]).** For fixed-cell velocity Verlet
+**Ordinary TOWERS steps (D439).** For fixed-cell velocity Verlet
 with Gaussian PME and V-rescale, the ordinary steps between host actions
 can share one graph launch. The compiler unrolls up to 16 steps. Each phase
 reads accepted particle and force banks and writes proposals through a device
