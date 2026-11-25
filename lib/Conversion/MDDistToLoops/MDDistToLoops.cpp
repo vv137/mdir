@@ -150,6 +150,7 @@ private:
                                     ValueRange reduce, DenseF64ArrayAttr weights,
                                     bool atomic, double scale);
   llvm::DenseMap<Value, Value> trajectoryCaches;
+  llvm::DenseSet<std::pair<Block *, Value>> sharedTuplePositions;
   LogicalResult lowerPartition(PartitionOp op);
   LogicalResult lowerMigrate(MigrateOp op);
   LogicalResult lowerDistribute(DistributeOp op);
@@ -856,7 +857,12 @@ LogicalResult Lowering::lowerHalo(HaloOp op) {
                  llvm::all_of(copy.getResult().getUsers(), [&](Operation *u) {
                    return constraintKernels.contains(u);
                  });
-        return constraintKernels.contains(use);
+        auto kernel = dyn_cast<TupleKernelOp>(use);
+        return kernel && constraintKernels.contains(use) &&
+               llvm::none_of(kernel->getResultTypes(), [](Type t) {
+                 auto field = dyn_cast<FieldType>(t);
+                 return field && field.getPartial();
+               });
       }))
     return success();
   Storage &layout = storage[op.getLayout()];
@@ -1230,7 +1236,21 @@ LogicalResult Lowering::lowerTupleRows(TupleRowsOp op) {
   Value source = memref::CastOp::create(b, loc, dynamic(b.getI32Type()), members);
   Value result = memref::CastOp::create(b, loc, dynamic(b.getI64Type()), rows);
   Value positions = storage[op.getPositions()].buffer;
-  auto fill = declare(op.getGroup() ? "mdrtDistConstraintRows" : "mdrtDistTupleRows",
+  StringRef name = op.getGroup() ? "mdrtDistConstraintRows" : "mdrtDistTupleRows";
+  if (mpi && !op.getGroup()) {
+    // The field is immutable within its SSA lifetime. All tuple sets in
+    // this block can read the same replicated coordinates.
+    if (sharedTuplePositions.insert({op->getBlock(), op.getPositions()}).second) {
+      Value layout = storage[layoutOf(op.getHalo())].handle;
+      auto share = declare("mdrtMPICollectRows",
+          b.getFunctionType({b.getI64Type(),positions.getType()}, {}), true);
+      func::CallOp::create(b, loc, share, ValueRange{layout,positions});
+    }
+    if (matrixPairs && module->hasAttr("md_dist.driver") &&
+        llvm::all_of(op.getRows().getUsers(), [](Operation *u) { return isa<TupleKernelOp>(u); }))
+      name = "mdrtDistLocalTupleRows";
+  }
+  auto fill = declare(name,
       b.getFunctionType({b.getI64Type(), positions.getType(), source.getType(), result.getType()}, {}), true);
   func::CallOp::create(b, loc, fill, ValueRange{op.getGroup() ? storage[layoutOf(op.getHalo())].handle
                                : storage[op.getHalo()].handle, positions, source, result});
@@ -3018,6 +3038,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
   grouped.clear();
   relations.clear();
   trajectoryCaches.clear();
+  sharedTuplePositions.clear();
   ownedEpochs.clear();
   localEpochs.clear();
   decomposition = nullptr;
