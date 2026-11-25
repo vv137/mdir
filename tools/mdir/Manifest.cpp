@@ -264,7 +264,7 @@ llvm::Error Manifest::write(Object event) {
   return llvm::Error::success();
 }
 
-llvm::Error Manifest::start(const std::string &given, bool append, Object metadata) {
+llvm::Error Manifest::open(const std::string &given, bool append) {
   path = given;
   if (append && llvm::sys::fs::exists(path)) {
     std::ifstream previous(path);
@@ -309,17 +309,18 @@ llvm::Error Manifest::start(const std::string &given, bool append, Object metada
   if (!file)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "cannot open manifest '%s'", path.c_str());
+  return llvm::Error::success();
+}
+
+llvm::Error Manifest::start(const std::string &given, bool append, Object metadata) {
+  if (auto e = open(given, append)) return e;
   began = std::chrono::steady_clock::now();
   metadata["event"] = "start";
   return write(std::move(metadata));
 }
 
 llvm::Error Manifest::refuse(const std::string &given, llvm::StringRef reason) {
-  path = given;
-  file = std::fopen(path.c_str(), "wx");
-  if (!file)
-    return llvm::createStringError(std::error_code(errno, std::generic_category()),
-                                   "cannot create refusal manifest '%s'", path.c_str());
+  if (auto e = open(given, true)) return e;
   return write(Object{{"event", "refused"}, {"reason", reason}});
 }
 

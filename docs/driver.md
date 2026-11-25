@@ -1727,9 +1727,10 @@ the real-space cutoff and skin in Ang. The first halo adds a
 and upper Cartesian bounds in Ang, owned and ghost row counts, and the
 position import in bytes (three doubles per ghost image). The geometric import
 volume in cubic Ang is the shell within halo reach of the domain box,
-including its rounded edges and corners. A rejected
-distributed control with fresh log and manifest paths records the reason
-in both. Existing diagnostics are protected and the reason goes to stderr.
+including its rounded edges and corners. A rejected distributed control records the reason in its log and manifest.
+An existing MDIR log and a valid manifest history accept another refusal.
+An unsafe output alias or unrecognized existing file is protected and the
+reason goes to stderr.
 
 At each energy interval, `DIST:` rows give the latest occupancy,
 migrations since the last interval, and logical bytes per directed domain
