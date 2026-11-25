@@ -270,20 +270,10 @@ SmallVector<Value> kernels::emitParticleKernel(OpBuilder &builder,
 //===----------------------------------------------------------------------===//
 
 Value kernels::pairDifference(OpBuilder &b, Location loc, Value center,
-                              Value other, Type computed, Type stored, Value centerImage,
-                              Value otherImage) {
-  if (!centerImage)
-    return convertReal(b, loc, arith::SubFOp::create(b, loc, center, other), computed);
-  // Restore both coordinates before the storage-precision rounding.
-  // The ordinary kernel subtracts the stored coordinates, then applies
-  // the periodic translation in its compute precision.
-  Value a = arith::SubFOp::create(b, loc, center, centerImage);
-  Value z = arith::SubFOp::create(b, loc, other, otherImage);
-  a = convertReal(b, loc, a, stored);
-  z = convertReal(b, loc, z, stored);
-  Value raw = convertReal(b, loc, arith::SubFOp::create(b, loc, a, z), computed);
-  Value image = convertReal(b, loc, arith::SubFOp::create(b, loc, otherImage, centerImage), computed);
-  return arith::SubFOp::create(b, loc, raw, image);
+                              Value other, Type computed, Value otherImage) {
+  Value raw = convertReal(b, loc, arith::SubFOp::create(b, loc, center, other), computed);
+  if (!otherImage) return raw;
+  return arith::SubFOp::create(b, loc, raw, otherImage);
 }
 
 SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
@@ -325,10 +315,8 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
   Value one = createIndex(builder, loc, 1);
 
   Value centralPosition = loadElement(builder, loc, positions, central);
-  Type storedPosition = getElementTypeOrSelf(centralPosition);
   if (imagePositions)
     centralPosition = loadElement(builder, loc, imagePositions, central);
-  Value centralImage = imageShifts ? loadElement(builder, loc, imageShifts, central) : Value();
   SmallVector<Value> centralValues;
   for (Value buffer : insBuffers)
     centralValues.push_back(loadElement(builder, loc, buffer, central));
@@ -381,8 +369,7 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
           // the rows carry their images (D290).
           Value otherPosition = loadElement(pair, loc, imagePositions ? imagePositions : positions, other);
           Value otherImage = imageShifts ? loadElement(pair, loc, imageShifts, other) : Value();
-          Value raw = pairDifference(pair, loc, centralPosition, otherPosition, computed, storedPosition,
-                                     centralImage, otherImage);
+          Value raw = pairDifference(pair, loc, centralPosition, otherPosition, computed, otherImage);
           Value d = explicitImages ? raw
                                    : emitMinimumImage(pair, loc, raw,
                                                       boxComputed,

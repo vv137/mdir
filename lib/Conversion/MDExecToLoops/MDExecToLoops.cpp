@@ -390,8 +390,28 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
     auto shifts = getOrDeclare("mdrtDistMatrixImages", builder.getFunctionType(
         {builder.getI64Type(), builder.getI64Type()}, {type}));
     shifts->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
-    imageShifts = func::CallOp::create(builder, loc, shifts,
+    Value translations = func::CallOp::create(builder, loc, shifts,
                       ValueRange{structure.halo, structure.domainMatrix}).getResult(0);
+    // Directed and unique rows have owned centers with zero translation.
+    // Restore each stored coordinate once, in the same precision and
+    // order as the scalar pair operation, before gathering neighbors.
+    Value rows = createSize(builder, loc, imagePositions);
+    auto allocateRows = [&](Type element) -> Value {
+      auto buffer = MemRefType::get({ShapedType::kDynamic, 3}, element);
+      return memref::AllocOp::create(builder, loc, buffer, ValueRange{rows});
+    };
+    Value restored = allocateRows(real);
+    imageShifts = allocateRows(builder.getF32Type());
+    scf::ParallelOp::create(builder, loc, ValueRange{createIndex(builder, loc, 0)},
+        ValueRange{rows}, ValueRange{createIndex(builder, loc, 1)},
+        [&](OpBuilder &at, Location, ValueRange ivs) {
+          Value shift = loadElement(at, loc, translations, ivs[0]);
+          Value position = loadElement(at, loc, imagePositions, ivs[0]);
+          Value base = arith::SubFOp::create(at, loc, position, shift);
+          storeElement(at, loc, convertReal(at, loc, base, real), restored, ivs[0]);
+          storeElement(at, loc, convertReal(at, loc, shift, at.getF32Type()), imageShifts, ivs[0]);
+        });
+    imagePositions = restored;
   }
   Value entries = getMatrixEntries(builder, loc, structure.handle);
   Value zero = createIndex(builder, loc, 0);
@@ -445,6 +465,10 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
           createReduction(body, loc, contributions, /*isSum=*/true);
       });
 
+  if (imageShifts) {
+    memref::DeallocOp::create(builder, loc, imagePositions);
+    memref::DeallocOp::create(builder, loc, imageShifts);
+  }
   for (unsigned i = 0, e = op.getNumResults(); i != e; ++i)
     op.getResult(i).replaceAllUsesWith(loop.getResult(i));
   return success();
