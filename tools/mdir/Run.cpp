@@ -1733,6 +1733,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       // potential energy of a frame is that of the row of its step, where
       // every frame is a step of energy.
       H5MDOptions options;
+      options.omitObjectTimes = output.distributedWordEnergy;
       options.single = control->trajectorySingle;
       options.variableStrings = control->trajectoryVariableStrings;
       options.energy = !control->minimize && control->energyPeriod > 0 &&
@@ -1851,6 +1852,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   if (writesCheckpoints) {
     output.checkpointPath = control->restartOutput;
     Checkpoint &checkpoint = output.checkpoint;
+    checkpoint.omitObjectTimes = output.distributedWordEnergy;
     checkpoint.masses = system->masses;
     checkpoint.species.assign(system->types.begin(), system->types.end());
     for (int i = 0; i != 3; ++i) {

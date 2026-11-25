@@ -85,6 +85,10 @@ def run(name, domains, ranks, *, stop=False, resume=False, trace=False):
 
 
 def compare(a, b):
+    assert (a / "traj.h5").read_bytes() == (b / "traj.h5").read_bytes()
+    # Continuations increment the checkpoint part even for an identical physical state.
+    if not (b / "resume.log").exists():
+        assert (a / "state.h5").read_bytes() == (b / "state.h5").read_bytes()
     assert (a / "energy.dat").read_bytes() == (b / "energy.dat").read_bytes()
     for filename in ["state.h5", "traj.h5"]:
         with h5py.File(a / filename) as ref, h5py.File(b / filename) as current:

@@ -262,7 +262,11 @@ private:
 /// does nothing.
 class Writer {
 public:
-  explicit Writer(hid_t file) : file(file) {}
+  Writer(hid_t file, bool omitTimes)
+      : file(file), datasets(H5Pcreate(H5P_DATASET_CREATE), H5Pclose) {
+    failed = !datasets.isValid() ||
+             (omitTimes && H5Pset_obj_track_times(datasets, false) < 0);
+  }
 
   bool hasFailed() const { return failed; }
 
@@ -307,7 +311,7 @@ public:
     Handle space(H5Screate_simple(shape.size(), shape.data(), nullptr),
                  H5Sclose);
     Handle dataset(H5Dcreate2(parent, name, type, space, H5P_DEFAULT,
-                              H5P_DEFAULT, H5P_DEFAULT),
+                              datasets, H5P_DEFAULT),
                    H5Dclose);
     failed |= !dataset.isValid() ||
               H5Dwrite(dataset, type, H5S_ALL, H5S_ALL, H5P_DEFAULT, data) < 0;
@@ -325,7 +329,7 @@ public:
     H5Tset_strpad(type, H5T_STR_NULLTERM);
     Handle space(H5Screate(H5S_SCALAR), H5Sclose);
     Handle dataset(H5Dcreate2(parent, name, type, space, H5P_DEFAULT,
-                              H5P_DEFAULT, H5P_DEFAULT),
+                              datasets, H5P_DEFAULT),
                    H5Dclose);
     failed |= !dataset.isValid() ||
               H5Dwrite(dataset, type, H5S_ALL, H5S_ALL, H5P_DEFAULT,
@@ -347,6 +351,7 @@ public:
 
 private:
   hid_t file;
+  Handle datasets;
   bool failed = false;
 };
 
@@ -502,7 +507,7 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
     if (!file.isValid())
       return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                      "cannot write '%s'", partial.c_str());
-    Writer writer(file);
+    Writer writer(file, checkpoint.omitObjectTimes);
     size_t count = checkpoint.getNumParticles();
 
     {
