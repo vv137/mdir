@@ -526,6 +526,47 @@
                 {
                   "type": "object",
                   "properties": {
+                    "fft_plans": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "category": {"const": "rule"},
+                          "requested": {"enum": ["auto", "on"]},
+                          "backend": {"enum": ["axis", "cufft"]},
+                          "evaluation": {"enum": ["forces", "observed"]},
+                          "reason": {"type": "string"},
+                          "grid": {
+                            "type": "array", "minItems": 3, "maxItems": 3,
+                            "items": {"type": "integer", "minimum": 1}
+                          },
+                          "twiddles": {"type": "string"},
+                          "influence": {"type": "string"},
+                          "z_r2c": {
+                            "type": "array", "minItems": 4, "maxItems": 4,
+                            "items": {"type": "integer", "minimum": 1}
+                          },
+                          "y_forward": {
+                            "type": "array", "minItems": 4, "maxItems": 4,
+                            "items": {"type": "integer", "minimum": 1}
+                          },
+                          "x_convolve": {
+                            "type": "array", "minItems": 4, "maxItems": 4,
+                            "items": {"type": "integer", "minimum": 1}
+                          },
+                          "y_inverse": {
+                            "type": "array", "minItems": 4, "maxItems": 4,
+                            "items": {"type": "integer", "minimum": 1}
+                          },
+                          "z_c2r": {
+                            "type": "array", "minItems": 4, "maxItems": 4,
+                            "items": {"type": "integer", "minimum": 1}
+                          }
+                        },
+                        "required": ["category", "requested", "backend", "evaluation", "reason", "grid"],
+                        "additionalProperties": false
+                      }
+                    },
                     "force_only_product_rule": {
                       "enum": ["inverse_load", "separate", "axis_x"]
                     },
