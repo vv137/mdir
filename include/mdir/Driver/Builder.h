@@ -90,6 +90,7 @@ private:
 /// the tuple sets, which it declares `mdrt.read_only` and the compile proves
 /// so (D258): a caller may hand it the arrays below.
 struct Program {
+  std::array<int64_t, 3> domainGrid{1, 1, 1};
   /// The module, as text.
   std::string module;
   /// The name of the entry function.
