@@ -288,7 +288,7 @@ llvm::Error Manifest::start(const std::string &given, bool append, Object metada
            (end && last > 0 && number == last && !ended));
       if (end && record) {
         auto status = record->getString("status");
-        valid &= status && (*status == "completed" || *status == "stopped");
+        valid &= status && (*status == "completed" || *status == "stopped" || *status == "refused");
       }
       if (!json)
         llvm::consumeError(json.takeError());

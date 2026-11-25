@@ -856,7 +856,8 @@ struct Control {
 
 /// Reads the control file `path`. Paths of files in it are relative to the
 /// directory of the control file.
-llvm::Expected<Control> readControl(llvm::StringRef path, Control *refusedDistribution = nullptr);
+llvm::Expected<Control> readControl(llvm::StringRef path);
+llvm::Expected<Control> readControl(llvm::StringRef path, Control *refusedDistribution);
 
 /// Validate and resolve cross-field options without parsing a file.
 llvm::Error validateControl(Control &control, llvm::StringRef context);
