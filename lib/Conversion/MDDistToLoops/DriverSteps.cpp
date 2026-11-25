@@ -126,6 +126,24 @@ Value Segment::loop(OpBuilder &b, scf::ForOp source, Value state, IRMapping map)
       } else if (auto collect = dyn_cast<dd::CollectOp>(op)) {
         e.fields[2] = map.lookup(collect.getField());
         slot[collect.getResult()] = 2;
+      } else if (auto sum = dyn_cast<md::SumParticlesOp>(op);
+                 sum && !wrapDrift && llvm::all_of(sum.getGathered(),
+                     [&](Value field) { return slot.contains(field); })) {
+        // Reporting a sum needs only one partial per domain. Keep its
+        // fields in owned-row order throughout the integration loop.
+        SmallVector<Value> fields;
+        for (Value field : sum.getGathered()) fields.push_back(e.fields[slot.lookup(field)]);
+        Type type = sum.getResult().getType();
+        auto local = dd::SumParticlesOp::create(body, loc,
+            dd::PartialType::get(body.getContext(), type), fields);
+        IRMapping kernelMap(map);
+        sum.getKernel().cloneInto(&local.getKernel(), kernelMap);
+        Operation *term = local.getKernel().front().getTerminator();
+        OpBuilder inside(term);
+        dd::YieldOp::create(inside, loc, term->getOperands());
+        term->erase();
+        auto total = dd::AllReduceOp::create(body, loc, type, local.getResult());
+        map.map(sum.getResult(), total.getResult());
       } else {
         for (Value operand : op.getOperands()) {
           auto it = slot.find(operand);
