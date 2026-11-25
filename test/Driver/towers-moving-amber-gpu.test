@@ -1,4 +1,4 @@
-# REQUIRES: cuda
+# REQUIRES: cuda, towers-mma
 # RUN: rm -rf %t && mkdir %t
 # RUN: %python %S/Inputs/towers_moving_amber.py mdir %S/Inputs/dipeptide %t
 # RUN: env MDIR_TUPLE_SUMS=workunits %python %S/Inputs/towers_moving_amber.py mdir %S/Inputs/dipeptide %t

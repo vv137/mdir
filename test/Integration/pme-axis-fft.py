@@ -2,6 +2,7 @@
 import contextlib
 import importlib.util
 from pathlib import Path
+import os
 import subprocess
 import sys
 
@@ -29,7 +30,7 @@ def run(grid, mixed, axis, force_only=False, tilted=False):
     selected = b"call @mdrt_gpu_pme_axis_fft_" in ir
     assert selected == (axis and mixed), (grid, selected)
     binary = subprocess.check_output(
-        ["mlir-opt", "--gpu-lower-to-nvvm-pipeline=cubin-format=isa",
+        ["mlir-opt", f"--gpu-lower-to-nvvm-pipeline=cubin-format=isa cubin-chip={os.environ['MDIR_LIT_GPU_CHIP']}",
          "--convert-ub-to-llvm", "--reconcile-unrealized-casts"], input=ir)
     result = subprocess.check_output(
         ["mlir-runner", "-e", "main", "--entry-point-result=void",

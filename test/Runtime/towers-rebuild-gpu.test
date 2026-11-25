@@ -1,4 +1,4 @@
-# REQUIRES: cuda
+# REQUIRES: cuda, towers-mma
 # RUN: rm -rf %t %t-force
 # RUN: %python %S/Inputs/towers_rebuild.py %t gpu mdir-opt
 # RUN: %python %S/Inputs/towers_force.py %t-force gpu mdir-opt

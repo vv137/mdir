@@ -2706,7 +2706,7 @@ static long getMarkDelay(void) {
 /* A kernel that fails (a trap) on the stream of the kernels, as a defect of
    a kernel would fail a run, for the tests. */
 static void launchTrap(void) {
-  static const char trap[] = ".version 7.5\n.target sm_75\n"
+  static const char trap[] = ".version 7.5\n.target sm_70\n"
                              ".address_size 64\n"
                              ".visible .entry mdrtFault() { trap; }\n";
   CUmodule module;

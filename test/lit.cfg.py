@@ -187,23 +187,26 @@ for name in ("CUDA_ROOT", "CUDA_HOME", "CUDA_PATH"):
     if os.environ.get(name):
         config.mdir_cuda_root = os.environ[name]
         break
+gpu_chip = ""
 if config.mdir_cuda:
     # Emission/lowering needs the toolkit, not a visible device.
     config.available_features.add("cuda-toolkit")
     import subprocess
 
     try:
-        devices = subprocess.run(
-            ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"],
-            capture_output=True,
-            text=True,
-            timeout=30,
+        # Probe in a child so lit can fork workers without a CUDA context.
+        probe = subprocess.run(
+            [sys.executable, os.path.join(config.test_source_root, "Inputs", "cuda-chip.py")],
+            capture_output=True, text=True, timeout=30,
         )
-        # nvidia-smi lists every device whatever CUDA_VISIBLE_DEVICES
-        # hides; an empty choice hides them all.
-        hidden = os.environ.get("CUDA_VISIBLE_DEVICES") == ""
-        if devices.returncode == 0 and devices.stdout.strip() and not hidden:
+        if probe.returncode == 0:
+            gpu_chip = probe.stdout.strip()
             config.available_features.add("cuda")
+            config.environment["MDIR_LIT_GPU_CHIP"] = gpu_chip
+            if int(gpu_chip[3:]) >= 75:
+                config.available_features.add("towers-mma")
+            elif gpu_chip in ("sm_70", "sm_72"):
+                config.available_features.add("volta")
     except (OSError, subprocess.SubprocessError):
         pass
     config.environment["CUDA_ROOT"] = config.mdir_cuda_root
@@ -385,10 +388,11 @@ md_exec_gpu_lowering = (
 config.substitutions.append(
     ("%md_exec_gpu_passes", md_exec_transforms + md_exec_gpu_lowering)
 )
+gpu_chip_option = f"cubin-chip={gpu_chip}" if gpu_chip else ""
 config.substitutions.append(
     (
         "%lower_gpu_to_llvm",
-        '--gpu-lower-to-nvvm-pipeline="cubin-format=isa"'
+        f'--gpu-lower-to-nvvm-pipeline="cubin-format=isa {gpu_chip_option}"'
         " --reconcile-unrealized-casts",
     )
 )

@@ -897,7 +897,7 @@ Two environment variables choose the binaries:
 |---|---|
 | `MDIR_GPU_BINARY=auto` | The default. Cubins for the device's architecture. Where no `ptxas` is found, or it fails for the architecture, the kernels are PTX for that architecture, and a message says so once. Where the architecture is not known, they are PTX for `sm_75`, as before this item. |
 | `MDIR_GPU_BINARY=cubin` | Cubins. An unknown architecture, a missing `ptxas`, or a failure of `ptxas` is an error. |
-| `MDIR_GPU_BINARY=ptx` | PTX, which the driver compiles at load: for `MDIR_GPU_ARCH` if it is set, else for `sm_75`. For debugging the driver's compilation, or for programs that run on other GPUs. |
+| `MDIR_GPU_BINARY=ptx` | PTX, which the driver compiles at load: for `MDIR_GPU_ARCH` if it is set, for the detected chip on Volta, and otherwise for `sm_75`. For debugging the driver's compilation, or for programs that run on other GPUs. |
 | `MDIR_GPU_ARCH=sm_XY` | The architecture to compile for, instead of the device's. For compiling on one GPU for another. LLVM's NVPTX back end must know it. |
 
 The architecture of the device comes from NVML

@@ -1,4 +1,4 @@
-# REQUIRES: cuda, hdf5
+# REQUIRES: cuda, towers-mma, hdf5
 # RUN: rm -rf %t && mkdir %t
 # RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t/
 # RUN: sed -n '/^\[input\]/,$p' %s > %t/pinned.toml

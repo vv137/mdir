@@ -39,7 +39,7 @@
 
 # CUBIN: mdir-gpu-lower-to-nvvm{cubin-chip=sm_{{[0-9]+}} cubin-format=bin binary=auto}
 # PTX: mdir-gpu-lower-to-nvvm{cubin-format=isa binary=auto}
-# FORCED: mdir-gpu-lower-to-nvvm{cubin-format=isa binary=ptx}
+# FORCED: mdir-gpu-lower-to-nvvm{{{(cubin-chip=sm_7[02] )?}}cubin-format=isa binary=ptx}
 # ARCH: mdir-gpu-lower-to-nvvm{cubin-chip=sm_80 cubin-format=bin binary=auto}
 # BADARCH: MDIR_GPU_ARCH='sm_1' is not an architecture that LLVM's NVPTX back end knows
 # BADBINARY: MDIR_GPU_BINARY='fatbin' is not auto, cubin, or ptx

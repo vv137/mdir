@@ -6,8 +6,7 @@
 //
 // RUN: cat %S/../../lib/Runtime/Templates/NeighborsMatrix.mlir %s \
 // RUN: | mdir-opt --add-matrix-build --convert-md-alg-to-gpu \
-// RUN: | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-format=isa" \
-// RUN:     --reconcile-unrealized-casts \
+// RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt_cuda \
 // RUN: | FileCheck %s

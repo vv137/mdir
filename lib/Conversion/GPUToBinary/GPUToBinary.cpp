@@ -872,7 +872,9 @@ llvm::Expected<std::string> mdir::getGpuPipelineOptions(int64_t device) {
   // PTX for the architecture given, else for the default one, as before.
   if (binary == "ptx") {
     const char *given = std::getenv("MDIR_GPU_ARCH");
-    return (given && *given ? "cubin-chip=" + *chip + " " : std::string()) +
+    // Keep the portable PTX image on newer devices. Volta cannot JIT
+    // the upstream default target (sm_75).
+    return ((given && *given) || *chip == "sm_70" || *chip == "sm_72" ? "cubin-chip=" + *chip + " " : std::string()) +
            "cubin-format=isa binary=ptx";
   }
   if (chip->empty()) {

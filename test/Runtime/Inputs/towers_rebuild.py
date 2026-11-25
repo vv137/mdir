@@ -5,6 +5,7 @@ import itertools
 import math
 import random
 import re
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -50,7 +51,7 @@ def compile_entries(
         ir = subprocess.check_output(
             opts
             + [
-                "--gpu-lower-to-nvvm-pipeline=cubin-format=isa cubin-chip=sm_80 "
+                f"--gpu-lower-to-nvvm-pipeline=cubin-format=isa cubin-chip={os.environ['MDIR_LIT_GPU_CHIP']} "
                 "kernel-bare-ptr-calling-convention=true"
             ],
             input=ir,
