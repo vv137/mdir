@@ -2057,7 +2057,7 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     if (from->hasAttr("mdrt.collect_buffer")) {
       // Each other use fills the buffer before this handoff.
       auto allocated = from.getBuffer().getDefiningOp<memref::AllocOp>();
-      if (onDevice || !allocated || llvm::any_of(from.getBuffer().getUsers(),
+      if (!allocated || llvm::any_of(from.getBuffer().getUsers(),
           [&](Operation *user) {
             if (user == op)
               return false;
@@ -2074,7 +2074,10 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
       if (!size)
         return op->emitOpError("collected field requires a known particle-set extent");
       Value held = scope.request(getStorageType(field), size, set, op->getLoc());
-      memref::CopyOp::create(builder, op->getLoc(), buffer, held);
+      if (onDevice)
+        createTransfer(builder, op->getLoc(), held, buffer);
+      else
+        memref::CopyOp::create(builder, op->getLoc(), buffer, held);
       memref::DeallocOp::create(builder, op->getLoc(), buffer);
       bind(from.getResult(), held, scope);
       return success();
