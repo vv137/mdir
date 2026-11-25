@@ -395,7 +395,11 @@ private:
                                 ValueRange{atom, createIndex(body, loc, c)});
     });
   }
-  LogicalResult lowerBondedUnits(ArrayRef<md_exec::TupleForOp> loops);
+  LogicalResult launchOnceTuple(OpBuilder &builder, md_exec::TupleForOp op,
+                                Value members, Value count, Value box,
+                                Value inverse);
+  LogicalResult lowerBondedUnits(ArrayRef<md_exec::TupleForOp> loops,
+                                 md_exec::TupleForOp correction = {});
   LogicalResult checkBondedUnits(ArrayRef<md_exec::TupleForOp> loops,
                                  OpBuilder &at, OpBuilder &setup, Value box,
                                  Value inverse, Value size);
@@ -1800,7 +1804,13 @@ void Lowering::findOnceRuns(func::FuncOp function) {
                    loop.getPositions() == run.front().getPositions() &&
                    loop.getCellMutable().get() ==
                        run.front().getCellMutable().get();
-      if (joins && (usesBondedUnits(loop) || usesBondedUnits(run.front())))
+      bool correctionFirst =
+          joins && run.front()->hasAttr("mdir.bonded_publication");
+      if (correctionFirst)
+        joins = usesBondedUnits(loop) && run.size() <= 5 &&
+                loop.getOuts()[0] == run.front().getOuts()[0] &&
+                !loop.overwrites(0);
+      else if (joins && (usesBondedUnits(loop) || usesBondedUnits(run.front())))
         joins = usesBondedUnits(loop) && usesBondedUnits(run.front()) &&
                 run.size() < 5 &&
                 loop.getOuts()[0] == run.front().getOuts()[0] &&
@@ -2046,6 +2056,9 @@ LogicalResult Lowering::lowerScatterAdd(md_exec::ScatterAddOp op) {
 
 LogicalResult Lowering::lowerOnceRun(ArrayRef<md_exec::TupleForOp> run) {
   md_exec::TupleForOp first = run.front();
+  if (first->hasAttr("mdir.bonded_publication") && run.size() > 1 &&
+      usesBondedUnits(run[1]))
+    return lowerBondedUnits(run.drop_front(), first);
   if (usesBondedUnits(first))
     return lowerBondedUnits(run);
   Location loc = first.getLoc();
@@ -4712,7 +4725,8 @@ LogicalResult Lowering::checkBondedUnits(ArrayRef<md_exec::TupleForOp> loops,
   return success();
 }
 
-LogicalResult Lowering::lowerBondedUnits(ArrayRef<md_exec::TupleForOp> loops) {
+LogicalResult Lowering::lowerBondedUnits(ArrayRef<md_exec::TupleForOp> loops,
+                                         md_exec::TupleForOp correction) {
   auto op = loops.back();
   setPurpose(op);
   auto found = bondedPlans.find(op.getIncidence());
@@ -4803,10 +4817,48 @@ LogicalResult Lowering::lowerBondedUnits(ArrayRef<md_exec::TupleForOp> loops) {
           body, loc, createZero(body, loc, body.getI32Type()), arrivals, group);
     });
   }
-  auto launch =
-      emitBondedUnits(at, loops, blocks, directory, plan.place, box, inverse,
-                      words, observerTerms, mode, arrivals, bondedUnits == 4);
-  bringIn(launch);
+  auto emitPhysical = [&](OpBuilder &body, md_exec::TupleForOp excluded = {},
+                          Value pairs = {}, bool hash = false) {
+    bringIn(emitBondedUnits(body, loops, blocks, directory, plan.place, box,
+                            inverse, words, observerTerms, mode, arrivals,
+                            bondedUnits == 4, excluded, pairs, hash));
+  };
+  if (correction && (!arrivals || readsDestination(correction))) {
+    if (failed(lowerTupleFor(correction)))
+      return failure();
+    correction = {};
+  }
+  if (correction) {
+    Value pairs = members.lookup(correction.getIncidence());
+    if (!pairs)
+      return correction.emitOpError("missing exclusion pair members");
+    Value count = createSize(at, loc, pairs);
+    Value small = arith::CmpIOp::create(
+        at, loc, arith::CmpIPredicate::ult, count,
+        createIndex(at, loc, correction.getScatterAttr().getLeast()));
+    // Short lists use device atomics already, so their CTAs can share the
+    // physical grid. Long lists retain their selected hash policy.
+    auto choice = scf::IfOp::create(at, loc, small, /*withElseRegion=*/true);
+    OpBuilder few = choice.getThenBodyBuilder();
+    emitPhysical(few, correction, pairs);
+    OpBuilder many = choice.getElseBodyBuilder();
+    auto scatter = correction.getScatterAttr();
+    if (md_exec::scatter::Refusal refused = md_exec::scatter::checkHash(
+            scatter.getSlots(), correction.getOuts().getTypes(),
+            md_exec::algebra::getDestinationAlgebras(correction),
+            launch.blockMemoryBytes))
+      return correction.emitOpError() << *refused;
+    if (scatter.getSlots() <= 256 &&
+        getElementTypeOrSelf(dest.getType()) == real) {
+      emitPhysical(many, correction, pairs, true);
+    } else {
+      if (failed(launchOnceTuple(many, correction, pairs, count, box, inverse)))
+        return failure();
+      emitPhysical(many);
+    }
+  } else {
+    emitPhysical(at);
+  }
   if (bondedUnits == 4 &&
       failed(checkBondedUnits(loops, at, setup, box, inverse, size)))
     return failure();
@@ -4877,6 +4929,30 @@ LogicalResult Lowering::lowerBondedUnits(ArrayRef<md_exec::TupleForOp> loops) {
   return finishSums(op, at, op.getReduce(), op.getScratch(), rows);
 }
 
+LogicalResult Lowering::launchOnceTuple(OpBuilder &builder,
+                                        md_exec::TupleForOp op,
+                                        Value tupleMembers, Value tuples,
+                                        Value box, Value inverse) {
+  Location loc = op.getLoc();
+  auto emitItemTo = [&](OpBuilder &body, Value tuple, AddToBuffer add) {
+    IRMapping local;
+    auto toBuffer = [&](OpBuilder &c, unsigned out, Value member, Value value) {
+      add(c, op.getOuts()[out], member, value);
+    };
+    emitTupleOnce(body, op, tupleMembers, tuple, box, inverse, local,
+                  add ? AddToMember(toBuffer) : AddToMember());
+  };
+  FailureOr<bool> launched =
+      launchTupleBlocks(builder, loc, tuples, {op}, emitItemTo);
+  if (failed(launched))
+    return failure();
+  if (!*launched)
+    launchOver(builder, loc, tuples, [&](OpBuilder &body, Value tuple) {
+      emitItemTo(body, tuple, nullptr);
+    });
+  return success();
+}
+
 LogicalResult Lowering::lowerTupleFor(md_exec::TupleForOp op) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
@@ -4905,24 +4981,7 @@ LogicalResult Lowering::lowerTupleFor(md_exec::TupleForOp op) {
              << "has no members on the device to evaluate each tuple once";
     Value tuples = createSize(builder, loc, tupleMembers);
     if (op.getReduce().empty()) {
-      auto emitItemTo = [&](OpBuilder &body, Value tuple, AddToBuffer add) {
-        IRMapping local;
-        auto toBuffer = [&](OpBuilder &c, unsigned out, Value member,
-                            Value value) {
-          add(c, op.getOuts()[out], member, value);
-        };
-        emitTupleOnce(body, op, tupleMembers, tuple, box, inverse, local,
-                      add ? AddToMember(toBuffer) : AddToMember());
-      };
-      FailureOr<bool> launched =
-          launchTupleBlocks(builder, loc, tuples, {op}, emitItemTo);
-      if (failed(launched))
-        return failure();
-      if (!*launched)
-        launchOver(builder, loc, tuples, [&](OpBuilder &body, Value tuple) {
-          emitItemTo(body, tuple, nullptr);
-        });
-      return success();
+      return launchOnceTuple(builder, op, tupleMembers, tuples, box, inverse);
     }
     // With global sums, a thread for each of m rows, the tuples or the
     // particles if they are fewer, takes the tuples r, r + m, ..., and
@@ -11728,6 +11787,13 @@ public:
     if (bondedUnits) {
       getOperation().walk([&](md_exec::TupleForOp op) {
         auto set = op->getAttrOfType<FlatSymbolRefAttr>("md_exec.tuple_set");
+        if ((bondedUnits == 1 || bondedUnits == 4) &&
+            !getOperation()->hasAttr("mdir.towers_grid") && set &&
+            set.getValue() == "excluded" && op.getOuts().size() == 1 &&
+            op.getReduce().empty() && !op.getDisjoint() && !op.overwrites(0) &&
+            op.getScatterAttr() && op.getScatterAttr().isHash() &&
+            op.getScatterAttr().getLeast() > 0)
+          op->setAttr("mdir.bonded_publication", UnitAttr::get(&getContext()));
         if (set && set.getValue() == "cmap")
           op->setAttr("mdir.bonded_cmap", UnitAttr::get(&getContext()));
         if (set && ((getOperation()->hasAttr("mdir.towers_grid") &&

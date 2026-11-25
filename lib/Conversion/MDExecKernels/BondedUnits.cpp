@@ -2,6 +2,7 @@
 #include "mdir/Conversion/BondedUnits.h"
 #include "NeighborBuildCode.h"
 #include "mdir/Conversion/MDExecKernels.h"
+#include "mdir/Conversion/ScatterEmitter.h"
 #include "mdir/Support/ForceWords.h"
 
 using namespace mlir;
@@ -66,7 +67,7 @@ struct UnitKernel : NeighborBuildCode {
                                   retry, ValueRange{cx(0)});
     });
   }
-  void publish(Value words, Value row, Value dest, Value atom,
+  void publish(Value words, Value row, Value dest, Value atom, bool concurrent,
                function_ref<void(int, Value)> afterLoad) {
     Type real = getElementTypeOrSelf(dest.getType());
     Value total = createZero(b, loc, VectorType::get({3}, real));
@@ -77,13 +78,17 @@ struct UnitKernel : NeighborBuildCode {
                            createReal(b, loc, real, 1.0 / forceWordScale));
       total = vector::InsertOp::create(b, loc, decoded, total, c);
     }
+    if (concurrent) {
+      emitAtomicAdd(b, loc, total, dest, atom);
+      return;
+    }
     storeElement(b, loc, addf(loadElement(b, loc, dest, atom), total), dest,
                  atom);
   }
   void emit(ArrayRef<md_exec::TupleForOp> ops, Value block, Value lane,
             Value stream, Value place, Value box, Value inverse, Value global,
             ValueRange outputs, ValueRange shared, int mode, Value arrivals,
-            bool checkWords) {
+            bool checkWords, bool concurrent) {
     Value positions = shared[0], liveIds = shared[1], owned = shared[2],
           forces = shared[3];
     auto word = [&](Value p) { return load(stream, {p}); };
@@ -225,7 +230,7 @@ struct UnitKernel : NeighborBuildCode {
             ifThenElse(
                 single,
                 [&] {
-                  publish(forces, i, firstOp.getOuts()[0], atom,
+                  publish(forces, i, firstOp.getOuts()[0], atom, concurrent,
                           [&](int component, Value word) {
                             if (checkWords)
                               store(word, global, {atom, cx(component)});
@@ -263,7 +268,7 @@ struct UnitKernel : NeighborBuildCode {
                  [&] {
                    Value atom =
                        place ? indexCast(index, load(place, {file})) : file;
-                   publish(global, atom, firstOp.getOuts()[0], atom,
+                   publish(global, atom, firstOp.getOuts()[0], atom, concurrent,
                            [&](int component, Value) {
                              if (!checkWords)
                                store(cl(0), global, {atom, cx(component)});
@@ -278,7 +283,8 @@ struct UnitKernel : NeighborBuildCode {
 gpu::LaunchOp kernels::emitBondedUnits(
     OpBuilder &b, ArrayRef<md_exec::TupleForOp> ops, Value blocks,
     Value instructions, Value place, Value box, Value inverse, Value forceWords,
-    ValueRange observerTerms, int mode, Value arrivals, bool checkWords) {
+    ValueRange observerTerms, int mode, Value arrivals, bool checkWords,
+    md_exec::TupleForOp correction, Value members, bool hash) {
   auto first = ops.front();
   Location loc = first.getLoc();
   auto space =
@@ -295,14 +301,74 @@ gpu::LaunchOp kernels::emitBondedUnits(
     shared.push_back(mem({1}, b.getI32Type()));
   }
   Value one = createIndex(b, loc, 1);
+  Value grid = blocks, terms;
+  if (correction) {
+    terms = memref::DimOp::create(b, loc, members, 0);
+    grid = arith::AddIOp::create(
+        b, loc, blocks,
+        arith::CeilDivUIOp::create(b, loc, terms, createIndex(b, loc, 128)));
+  }
   auto launch =
-      gpu::LaunchOp::create(b, loc, blocks, one, one, createIndex(b, loc, 128),
+      gpu::LaunchOp::create(b, loc, grid, one, one, createIndex(b, loc, 128),
                             one, one, nullptr, nullptr, ValueRange{}, shared);
   OpBuilder at = OpBuilder::atBlockEnd(&launch.getBody().front());
-  UnitKernel(at, loc).emit(
-      ops, launch.getBlockIds().x, launch.getThreadIds().x, instructions, place,
-      box, inverse, forceWords, observerTerms,
-      launch.getWorkgroupAttributionBBArgs(), mode, arrivals, checkWords);
+  Value block = launch.getBlockIds().x, lane = launch.getThreadIds().x;
+  auto physical = [&](OpBuilder &body) {
+    UnitKernel(body, loc).emit(ops, block, lane, instructions, place, box,
+                               inverse, forceWords, observerTerms,
+                               launch.getWorkgroupAttributionBBArgs(), mode,
+                               arrivals, checkWords, bool(correction));
+  };
+  if (correction) {
+    Value mine = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult,
+                                       block, blocks);
+    scf::IfOp::create(
+        at, loc, mine,
+        [&](OpBuilder &body, Location) {
+          physical(body);
+          scf::YieldOp::create(body, loc);
+        },
+        [&](OpBuilder &body, Location) {
+          Value group = arith::SubIOp::create(body, loc, block, blocks);
+          Value item = arith::AddIOp::create(
+              body, loc, lane,
+              arith::MulIOp::create(body, loc, group,
+                                    createIndex(body, loc, 128)));
+          Value valid = arith::CmpIOp::create(
+              body, loc, arith::CmpIPredicate::ult, item, terms);
+          std::optional<BlockHashTable> table;
+          if (hash) {
+            // An exclusion CTA never executes the valence branch. Reuse its
+            // owner flags as keys and its imported positions as vector sums.
+            ValueRange scratch = launch.getWorkgroupAttributionBBArgs();
+            Value sums = memref::CollapseShapeOp::create(
+                body, loc, mem({768}, real), scratch[0],
+                ArrayRef<ReassociationIndices>{ReassociationIndices{0, 1}});
+            SmallVector<Value> tableWords{scratch[2], sums};
+            table.emplace(body, loc, correction.getScatterAttr().getSlots(),
+                          correction.getScatterAttr().getProbes(), tableWords,
+                          ArrayRef<Value>{correction.getOuts()[0]},
+                          ArrayRef<md_exec::scatter::Destination>{{real, 3}},
+                          lane, createIndex(body, loc, 128));
+            table->emitClear(body);
+          }
+          scf::IfOp::create(body, loc, valid, [&](OpBuilder &inner, Location) {
+            IRMapping local;
+            auto aggregate = [&](OpBuilder &at, unsigned out, Value member,
+                                 Value value) {
+              table->add(at, correction.getOuts()[out], member, value);
+            };
+            emitTupleOnce(inner, correction, members, item, box, inverse, local,
+                          table ? AddToMember(aggregate) : AddToMember());
+            scf::YieldOp::create(inner, loc);
+          });
+          if (table)
+            table->emitFlush(body);
+          scf::YieldOp::create(body, loc);
+        });
+  } else {
+    physical(at);
+  }
   gpu::TerminatorOp::create(at, loc);
   return launch;
 }

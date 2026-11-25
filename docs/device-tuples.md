@@ -618,7 +618,11 @@ count orders their checked subtotals before the last block decodes and
 clears the interval. An underfilled four-family packed grid admits at
 most 64 instructions per block. Its force-only kernel may first try
 int32 shared additions and repeat a block in int64 on narrowing or
-intermediate overflow. On failure the GPU traps and the
+intermediate overflow. Short excluded-pair lists join the physical grid
+when the scatter policy selects direct atomics. Both producers use
+atomic floating additions to the same force in that launch. Long lists can also share the grid when their hash keys
+and vector sums fit the owner and position arrays of a work unit. Each exclusion block
+uses those arrays exclusively for its table. On int64 failure the GPU traps and the
 simulation stops. On a successful evaluation, the integer sum is
 independent of thread order. Slot-zero owners add Q32 energy words
 directly to a checked int64 total for each bonded energy output. They

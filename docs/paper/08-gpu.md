@@ -603,8 +603,22 @@ one publisher. Its checked shared subtotal equals its entire word since
 the eliminated global addition would have had zero as predecessor.
 After the block barrier its owning lane decodes that word and adds it to
 the existing floating force. Other blocks read only independent inputs
-and write disjoint atoms. The integration kernel follows completion of
-the force kernel, including every conversion and overflow test.
+and write disjoint bonded subtotals. When the excluded-pair loop permits
+arbitrary addition order and its pair count falls below the scatter
+policy's hash threshold, additional blocks in the same grid evaluate
+the correction once per pair. In this case both the correction and the
+decoded bonded force use relaxed device-scope floating additions to the
+destination. They do not exchange data through that destination; its
+next reader is ordered by kernel completion. For long lists, an exclusion
+block can use the owner-flag and position arrays as its hash keys and
+component sums when the slot count and type fit. Every thread in a block
+takes the same branch, so the two uses of the storage have disjoint
+lifetimes. The exclusion block clears and flushes
+its table using the same barriers as the separate correction kernel.
+Its flush adds atomically to the floating destination. A table too large
+for these arrays, or a different sum type, retains the separate kernel.
+The integration kernel follows completion of the force kernel, including
+every conversion and overflow test.
 
 In a split interval, each block first publishes all its subtotals using
 device-scope checked integer atomics. A block barrier orders those
