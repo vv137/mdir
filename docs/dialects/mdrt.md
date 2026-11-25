@@ -409,7 +409,7 @@ Effects: `MemoryEffects::Effect{}`
 
 | Operand | Description |
 | :-----: | ----------- |
-| `field` | A per-particle field or A table of parameters, indexed by types |
+| `field` | A per-particle field or A set of tuples of distinct particles or A table of parameters, indexed by types |
 
 #### Results:
 

@@ -552,7 +552,8 @@ _The pairs within a cutoff, over owned and ghost rows_
 Syntax:
 
 ```
-operation ::= `md_dist.neighborhood` $positions `,` $ghosts `,` $halo `cutoff` `(` $cutoff `)` attr-dict
+operation ::= `md_dist.neighborhood` $positions `,` $ghosts `,` $halo `cutoff` `(` $cutoff `)`
+              (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)? attr-dict
               `:` qualified(type($positions)) `,` qualified(type($ghosts)) `,`
               qualified(type($halo)) `->` qualified(type($result))
 ```
@@ -591,6 +592,7 @@ Effects: `MemoryEffects::Effect{}`
 | `positions` | A field over the owned or the ghost rows of every domain |
 | `ghosts` | A field over the owned or the ghost rows of every domain |
 | `halo` | The ghosts of each domain |
+| `excluded` | A set of tuples of distinct particles |
 
 #### Results:
 
@@ -658,7 +660,8 @@ _The layout that gives each particle to the domain it is in_
 Syntax:
 
 ```
-operation ::= `md_dist.partition` $positions `,` $cell attr-dict `:` qualified(type($positions)) `->`
+operation ::= `md_dist.partition` $positions `,` $cell (`groups` `(` $groups^ `:` type($groups) `)`)? attr-dict
+              `:` qualified(type($positions)) `->`
               qualified(type($layout))
 ```
 
@@ -683,6 +686,7 @@ Effects: `MemoryEffects::Effect{}`
 | :-----: | ----------- |
 | `positions` | field at the reference precision, with elements of type f64, i32, or i64 |
 | `cell` | A simulation cell |
+| `groups` | variadic of A set of tuples of distinct particles |
 
 #### Results:
 
@@ -887,6 +891,84 @@ Traits: `RecursiveMemoryEffects`, `SingleBlock`
 
 
 
+### `md_dist.tuple_kernel` (::mdir::md_dist::TupleKernelOp)
+
+_Evaluate a topology tuple once on its scheduled CPU domain_
+
+Traits: `AttrSizedOperandSegments`, `RecursiveMemoryEffects`, `SingleBlock`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>coordinate_kinds</code></td><td>::mlir::DenseI32ArrayAttr</td><td>i32 dense array attribute</td></tr>
+<tr><td><code>coordinate_members</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `rows` | memref of 64-bit signless integer values |
+| `positions` | A field over the owned or the ghost rows of every domain |
+| `ghosts` | A field over the owned or the ghost rows of every domain |
+| `halo` | The ghosts of each domain |
+| `gathered` | variadic of A field over the owned or the ghost rows of every domain |
+| `parameters` | variadic of field at the reference precision, with elements of type f64, i32, or i64 |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `results` | variadic of any non-token type |
+
+
+
+### `md_dist.tuple_rows` (::mdir::md_dist::TupleRowsOp)
+
+_Locate every topology tuple at its periodic midpoint owner_
+
+Syntax:
+
+```
+operation ::= `md_dist.tuple_rows` $tuples `,` $positions `,` $halo (`group` $group^)? attr-dict `:` type($tuples) `,`
+              qualified(type($positions)) `,` qualified(type($halo)) `->` type($rows)
+```
+
+One row per input tuple in input order. Column zero names its unique
+domain. Each subsequent column names the corresponding local member
+(owned rows, then ghost rows). A missing member is a coverage error.
+The executor resolves the integer images again at current positions.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>group</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `tuples` | A set of tuples of distinct particles |
+| `positions` | A field over the owned or the ghost rows of every domain |
+| `halo` | The ghosts of each domain |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `rows` | memref of 64-bit signless integer values |
+
+
+
 ### `md_dist.unpack` (::mdir::md_dist::UnpackOp)
 
 _The layout, halo, reference positions, and fields of a state_
@@ -942,7 +1024,7 @@ Syntax:
 operation ::= `md_dist.yield` attr-dict ($values^ `:` type($values))?
 ```
 
-Traits: `AlwaysSpeculatableImplTrait`, `HasParent<SumPairsOp, GatherPairsOp, SumParticlesOp, MapParticlesOp>`, `ReturnLike`, `Terminator`
+Traits: `AlwaysSpeculatableImplTrait`, `HasParent<SumPairsOp, GatherPairsOp, SumParticlesOp, MapParticlesOp, TupleKernelOp>`, `ReturnLike`, `Terminator`
 
 Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `RegionBranchTerminatorOpInterface`
 
@@ -1111,7 +1193,7 @@ Syntax:
 ```
 !md_dist.relation<
   ::mlir::FlatSymbolRefAttr,   # decomposition
-  `directed` | `unique`   # traversal
+  `directed` | `unique` | `midpoint`   # traversal
 >
 ```
 
@@ -1181,6 +1263,7 @@ _Traversal of a relation_
 | :----: | :---: | ------ |
 | Directed | `0` | directed |
 | Unique | `1` | unique |
+| Midpoint | `2` | midpoint |
 
 ### CoordinateKind
 
