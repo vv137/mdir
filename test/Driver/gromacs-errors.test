@@ -9,6 +9,10 @@
 # RUN: not mdir check %t/type.toml 2>&1 | FileCheck %s --check-prefix=TYPE
 # RUN: not mdir check %t/missing.toml 2>&1 | FileCheck %s --check-prefix=MISSING
 
+# RUN: sed 's/rb.top/chain.top/' %t/rb.toml > %t/chain.toml
+# RUN: not mdir check %t/chain.toml 2>&1 | FileCheck %s --check-prefix=CHAIN
+# CHAIN: coupled constraint chain: atoms 1, 2, 3 share constraint rows
+
 # DIHEDRAL: rb.top:17: only periodic dihedrals (functions 1, 4, and 9), harmonic impropers (function 2), and dihedrals of Ryckaert and Bellemans (3) and Fourier (5) are supported, not 8
 # CMAP: cmap.top:9: a map of 25 by 25 points is not supported; the numbers must be equal and even
 # ENDIF: endif.top:1: #endif without #ifdef in this file
@@ -172,3 +176,8 @@ Four atoms
     1M       C3    3   0.300   0.240   0.100
     1M       C4    4   0.450   0.250   0.100
    3.00000   3.00000   3.00000
+
+#--- chain.top
+[ constraints ]
+1 2 1 0.1
+2 3 1 0.1
