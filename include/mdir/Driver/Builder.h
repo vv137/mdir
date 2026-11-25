@@ -91,6 +91,8 @@ private:
 /// so (D258): a caller may hand it the arrays below.
 struct Program {
   bool distributed = false;
+  bool domainTopology = false;
+  double domainTupleExtent = 0.0; // Maximum tuple radius at setup, in nm.
   std::array<int64_t, 3> domainGrid{1, 1, 1};
   /// The module, as text.
   std::string module;

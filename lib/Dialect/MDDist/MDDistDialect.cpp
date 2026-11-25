@@ -5,6 +5,7 @@
 
 #include "mdir/Dialect/MDDist/MDDistDialect.h"
 #include "mdir/Dialect/MDDist/MDDistOps.h"
+#include "mdir/Dialect/MD/MDCoordinates.h"
 #include "mdir/Dialect/MDDist/MDDistTypes.h"
 
 #include "mdir/Dialect/MD/MDTypes.h"
@@ -269,6 +270,8 @@ Value mdir::md_dist::haloOf(Value value) {
   Operation *def = value.getDefiningOp();
   if (!def)
     return {};
+  if (auto op = dyn_cast<TupleKernelOp>(def))
+    return op.getHalo();
   if (auto op = dyn_cast<NeighborhoodOp>(def))
     return op.getHalo();
   if (auto op = dyn_cast<HaloCopyOp>(def))
@@ -307,6 +310,8 @@ Value mdir::md_dist::layoutOf(Value value) {
   }
   if (!field)
     return {};
+  if (auto op = dyn_cast<TupleKernelOp>(def))
+    return layoutOf(op.getHalo());
   if (auto op = dyn_cast<DistributeOp>(def))
     return op.getLayout();
   if (auto op = dyn_cast<RedistributeOp>(def))
@@ -802,8 +807,8 @@ LogicalResult HaloSumOp::verify() {
            << "expected both operands complete, or both partial (the "
               "contributions of one traversal at owned and at ghost rows)";
   if (owned.getPartial()) {
-    auto producer = getOwned().getDefiningOp<GatherPairsOp>();
-    if (!producer || getGhosts().getDefiningOp() != producer ||
+    Operation *producer = getOwned().getDefiningOp();
+    if (!isa_and_nonnull<GatherPairsOp, TupleKernelOp>(producer) || getGhosts().getDefiningOp() != producer ||
         cast<OpResult>(getOwned()).getResultNumber() != 0 ||
         cast<OpResult>(getGhosts()).getResultNumber() != 1)
       return emitOpError()
@@ -920,7 +925,7 @@ LogicalResult NeighborhoodOp::verify() {
     auto type = cast<md::RelationType>(excluded.getType());
     auto decomposition = SymbolTable::lookupNearestSymbolFrom<DecompositionOp>(
         *this, halo.getDecomposition());
-    if (getResult().getType().getTraversal() != Traversal::Midpoint ||
+    if (getResult().getType().getTraversal() == Traversal::Directed ||
         !type.getTupleSet() || type.getArity() != 2 ||
         !decomposition || type.getParticleSet() != decomposition.getParticleSetAttr())
       return emitOpError("exclusions require pairs of a tuple set on the midpoint decomposition's particle set");
@@ -951,6 +956,57 @@ LogicalResult TupleRowsOp::verify() {
       failed(verifyOwnedComplete(*this, "tuple positions", getPositions())))
     return emitOpError("tuple ownership requires complete f64 positions");
   return verifySameLayout(*this, "tuple positions", getPositions(), layoutOf(getHalo()));
+}
+
+LogicalResult TupleKernelOp::verify() {
+  auto schedule = getRows().getDefiningOp<TupleRowsOp>();
+  if (!schedule || schedule.getPositions() != getPositions() || schedule.getHalo() != getHalo())
+    return emitOpError("missing tuple owner schedule for these positions and halo");
+  auto tuples = cast<md::RelationType>(schedule.getTuples().getType());
+  if (failed(md::verifyCoordinates(*this, getCoordinateKinds(), getCoordinateMembers(), tuples.getArity())) ||
+      failed(verifyGhostCopy(*this, "tuple positions", getPositions(), getGhosts(), getHalo(), true)) ||
+      failed(verifyPartialUses(*this)))
+    return failure();
+  if (getGathered().size() % 2)
+    return emitOpError("expected paired owned and ghost fields for tuple members");
+  for (unsigned i = 0; i < getGathered().size(); i += 2)
+    if (failed(verifyGhostCopy(*this, "tuple field", getGathered()[i], getGathered()[i+1], getHalo(), false)))
+      return failure();
+  for (Value field : getParameters())
+    if (cast<md::FieldType>(field.getType()).getParticleSet() != tuples.getTupleSet())
+      return emitOpError("tuple parameters must belong to the scheduled tuple set");
+  if (getNumResults() == 1 && isa<PartialType>(getResult(0).getType()))
+    return success();
+  auto pos = getPositions().getType();
+  if (getNumResults() != 2 || getResult(0).getType() != pos.with(Role::Owned, true) ||
+      getResult(1).getType() != pos.with(Role::Ghost, true))
+    return emitOpError("expected a partial sum or two partial vector forces");
+  return success();
+}
+
+LogicalResult TupleKernelOp::verifyRegions() {
+  auto schedule = getRows().getDefiningOp<TupleRowsOp>();
+  auto arity = cast<md::RelationType>(schedule.getTuples().getType()).getArity();
+  SmallVector<Type> types;
+  for (auto kind : getCoordinateKinds())
+    types.push_back(md::getCoordinateType(static_cast<md::CoordinateKind>(kind),
+                                          Float64Type::get(getContext())));
+  for (size_t i = 0; i < getGathered().size(); i += 2)
+    types.append(arity, cast<FieldType>(getGathered()[i].getType()).getKernelValueType());
+  for (Value field : getParameters())
+    types.push_back(cast<md::FieldType>(field.getType()).getKernelValueType());
+  auto &block = getKernel().front();
+  auto yield = dyn_cast<YieldOp>(block.getTerminator());
+  if (!yield || block.getArgumentTypes() != ArrayRef<Type>(types))
+    return emitOpError("expected kernel arguments for coordinates, member fields and tuple parameters");
+  types.clear();
+  if (getNumResults() == 1)
+    types.push_back(cast<PartialType>(getResult(0).getType()).getValueType());
+  else
+    types.append(arity, getPositions().getType().getKernelValueType());
+  if (yield.getOperandTypes() != ArrayRef<Type>(types))
+    return emitOpError("expected one quantity to sum or one force per tuple member");
+  return success();
 }
 
 LogicalResult PartitionCentersOp::verify() {
