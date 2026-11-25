@@ -241,3 +241,10 @@ set(MDIR_CUDA_FOUND ${MDIR_CUDA_FOUND} PARENT_SCOPE)
 set(MDIR_CUDA_ROOT "${CUDAToolkit_TARGET_DIR}" PARENT_SCOPE)
 
 set(MDIR_CUDA_VERSION "${CUDAToolkit_VERSION}" PARENT_SCOPE)
+
+if(MDIR_ENABLE_MPI)
+  find_package(MPI REQUIRED COMPONENTS C)
+  target_sources(mdrt PRIVATE mdrt_mpi.c)
+  target_link_libraries(mdrt PRIVATE MPI::MPI_C)
+  target_compile_definitions(mdrt PRIVATE MDIR_ENABLE_MPI=1)
+endif()

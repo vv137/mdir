@@ -50,6 +50,7 @@ include_directories(${MDIR_BINARY_DIR}/include)
 link_directories(${LLVM_BUILD_LIBRARY_DIR})
 add_definitions(${LLVM_DEFINITIONS})
 
+option(MDIR_ENABLE_MPI "Build the CPU domain transport with MPI" OFF)
 add_subdirectory(include)
 add_subdirectory(lib)
 add_subdirectory(runtime)
