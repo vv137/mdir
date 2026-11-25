@@ -602,3 +602,9 @@ zero owns the merged log. Other ranks write only their requested traces.
 D[distribute-pair-lowering] uses the existing pair-list distance and CPU
 thread count inside each domain. Default precision follows the host pair
 policy. Deterministic distribution retains its cross-grid word reductions.
+
+For GPU MATRIX trajectories, `[distribute] transport = "nccl"` selects
+one MPI rank per GPU. The default `placement = "node"` groups neighboring
+domains on each shared-memory node (D[distribute-gpu-node]). The domain
+count must match the number of ranks. This execution mode requires a build
+with MPI, CUDA, and NCCL and floating-point distributed reductions.

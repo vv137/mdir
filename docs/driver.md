@@ -1785,3 +1785,21 @@ payload collective. Pair, copy, sum, reduction and migration times exclude
 that wait. Cross-rank halo payload excludes replicated state collection
 and logging traffic. A checkpoint-private collect gathers live rows to the
 writer. A collect shared with the following segment also supplies its peers.
+
+### GPU spatial decomposition (D[distribute-gpu-node])
+
+With MPI, CUDA, and NCCL enabled at build time, select a GPU target,
+`[distribute] transport = "nccl"`, and `placement = "node"`. The latter
+is the default. Each MPI rank owns one domain and one distinct CUDA
+device. The default grid has one domain per rank. An explicit count or
+grid must match the MPI world size. Local ranks index the visible GPUs
+when launched with a shared visibility mask. A rank that sees a single
+assigned GPU uses ordinal zero. Stage 1 uses MATRIX with directed or
+unique traversal and floating-point accumulation. A deterministic GPU
+request fails at setup.
+
+Node placement groups neighboring domains by periodic face area. At each
+report the intra-node and inter-node byte totals count directed logical
+payloads crossing ranks. Self-images stay local. The current step state
+stages packed host rows through persistent device buffers for NCCL sends
+and receives. Migration and the reduced observables use the MPI path.

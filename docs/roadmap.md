@@ -315,3 +315,8 @@ D[distribute-pair-lowering] connects default distributed CPU pairs to the
 ordinary MATRIX list, host lane chooser, and threaded center traversal.
 
 D[distribute-steady] adds exclusive CPU phase clocks and epoch-local transport schedules.
+
+D[distribute-gpu-node] introduces node placement, rank-local MATRIX pairs,
+and NCCL peer exchange for finite-range dynamics. Device-resident packing
+and integration, midpoint GPU traversal, and reproducible integer GPU
+reductions remain further work.

@@ -992,3 +992,24 @@ runtime adapter replaces them. Completion records an event on the current
 producer queue and waits for it before host access, and a scoped completion
 precedes device release even for unused results. Legacy copies, the host
 default, and the current reciprocal route are unchanged.
+
+### Domain forces across GPU ranks (D[distribute-gpu-node])
+
+A finite-range potential is a sum of domain energies. On a domain,
+evaluate its energy at the owned coordinates and the imaged ghost
+coordinates. A periodic image adds a constant lattice translation at
+fixed cell, so its coordinate derivative with respect to its source is
+the identity. The chain rule for the negative energy gradient therefore
+adds the ghost forces back to their sources by $G^\mathsf T$ (Section 2).
+A directed list visits both orientations of each pair and weights its
+energy by one half. A unique list visits one orientation and returns
+both endpoint forces. Changing the device that holds a domain preserves
+these weights and the equilibrium Boltzmann factor.
+
+The forward copy $G$ and the reverse sum use global communicator ranks
+as endpoints. The width of a uniform halo shell times a node boundary's
+area gives its leading-order volume. At uniform number density and fixed
+row size, the expected forward bytes therefore scale with the sum of
+inter-node face areas. Compact groups of domains reduce that term.
+Edge and corner traffic, density variation, and topology can change
+the payload. The runtime records the actual bytes from the halo plan.
