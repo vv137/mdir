@@ -12,6 +12,7 @@
    of each domain when a halo is built, and the rows each transfer moves:
    the schedule as it runs. */
 
+#include "mdrt_dist_stats.h"
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -40,6 +41,15 @@ static double *at2(struct Memref2D *m, int64_t i, int64_t j) {
 static double *at3(struct Memref3D *m, int64_t d, int64_t r, int64_t c) {
   return m->aligned + m->offset + d * m->strides[0] + r * m->strides[1] +
          c * m->strides[2];
+}
+
+static _Thread_local struct DistObserver *observer;
+
+void mdrtDistObserve(struct DistObserver *value) { observer = value; }
+
+void mdrtDistPhase(int64_t phase) {
+  if (observer)
+    observer->phase(observer->context, phase);
 }
 
 static int tracing(void) {
@@ -74,6 +84,8 @@ struct Halo {
   int64_t *rows;    /* [domains] */
   /* [domains * capacity] each: the source's owner, its owned row, its
      identity, and the image n (3 per ghost). */
+  struct Edge { int64_t from, to, rows; } *edges;
+  size_t edgeCount;
   int64_t *sourceDomain, *sourceRow, *ids, *image;
 };
 
@@ -262,6 +274,8 @@ int64_t _mlir_ciface_mdrtDistMigrate(int64_t oldHandle,
     }
     int64_t d = cell[0] + next->grid[0] *
                             (cell[1] + next->grid[1] * cell[2]);
+    if (observer && old->owner[j] != d)
+      observer->migration(observer->context, old->owner[j], d);
     next->owner[j] = d;
     next->row[j] = next->rows[d];
     next->ids[d * cap + next->rows[d]] = j;
@@ -396,6 +410,31 @@ int64_t _mlir_ciface_mdrtDistHalo(int64_t layout, struct Memref3D *x,
     fail("out of memory");
   for (int64_t d = 0; d < domains; ++d)
     visitGhosts(h, x, d, 1);
+  if (observer) {
+    // Count neighbor multiplicities once per halo, including periodic
+    // self-images. Later transfers scale these counts by their field width.
+    int64_t *counts = calloc(domains, sizeof *counts);
+    if (!counts) fail("out of memory counting halo imports");
+    for (int64_t d = 0; d < domains; ++d) {
+      double lo[3], hi[3];
+      domainBox(h->layout, x, d, lo, hi);
+      observer->domain(observer->context, d, h->layout->rows[d], h->rows[d], lo, hi);
+      for (int64_t g = 0; g < h->rows[d]; ++g)
+        ++counts[h->sourceDomain[d * cap + g]];
+      size_t neighbors = 0;
+      for (int64_t e = 0; e < domains; ++e)
+        neighbors += counts[e] != 0;
+      if (neighbors) {
+        h->edges = realloc(h->edges, (h->edgeCount + neighbors) * sizeof *h->edges);
+        if (!h->edges) fail("out of memory counting halo edges");
+      }
+      for (int64_t e = 0; e < domains; ++e)
+        if (counts[e]) {
+          h->edges[h->edgeCount++] = (struct Edge){e, d, counts[e]};
+          counts[e] = 0;
+        }
+    }
+  }
   if (tracing())
     for (int64_t d = 0; d < domains; ++d)
       fprintf(stderr,
@@ -476,6 +515,12 @@ static int64_t movedRows(struct Halo *h) {
 void _mlir_ciface_mdrtDistHaloCopy(int64_t handle, struct Memref3D *owned,
                                    struct Memref3D *ghosts, int64_t image) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
+  if (observer)
+    for (size_t i = 0; i < h->edgeCount; ++i) {
+      struct Edge edge = h->edges[i];
+      observer->transfer(observer->context, edge.from, edge.to,
+                         edge.rows * owned->sizes[2] * (int64_t)sizeof(double));
+    }
   int64_t k = owned->sizes[2];
   for (int64_t d = 0; d < h->layout->domains; ++d)
     for (int64_t g = 0; g < h->rows[d]; ++g) {
@@ -499,6 +544,12 @@ void _mlir_ciface_mdrtDistHaloCopy(int64_t handle, struct Memref3D *owned,
 void _mlir_ciface_mdrtDistHaloSum(int64_t handle, struct Memref3D *ghosts,
                                   struct Memref3D *owned) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
+  if (observer)
+    for (size_t i = 0; i < h->edgeCount; ++i) {
+      struct Edge edge = h->edges[i];
+      observer->transfer(observer->context, edge.to, edge.from,
+                         edge.rows * owned->sizes[2] * (int64_t)sizeof(double));
+    }
   int64_t k = owned->sizes[2];
   for (int64_t d = 0; d < h->layout->domains; ++d)
     for (int64_t g = 0; g < h->rows[d]; ++g) {
@@ -543,6 +594,7 @@ void mdrtDistReleaseHalo(int64_t handle) {
     return;
   mdrtDistReleaseLayout((int64_t)(intptr_t)h->layout);
   free(h->rows);
+  free(h->edges);
   free(h->sourceDomain);
   free(h->sourceRow);
   free(h->ids);

@@ -283,6 +283,7 @@ llvm::Error Manifest::start(const std::string &given, bool append, Object metada
       bool valid = record && record->getInteger("schema_version") == 1 && number > 0 &&
           record->getString("timestamp_utc") &&
           ((start && number == last + 1) ||
+           (event && *event == "domain_setup" && last > 0 && number == last && !ended && record->getArray("domains")) ||
            (end && last > 0 && number == last && !ended));
       if (end && record) {
         auto status = record->getString("status");
@@ -310,6 +311,11 @@ llvm::Error Manifest::start(const std::string &given, bool append, Object metada
   began = std::chrono::steady_clock::now();
   metadata["event"] = "start";
   return write(std::move(metadata));
+}
+
+llvm::Error Manifest::domainSetup(llvm::json::Array domains) {
+  if (!file) return llvm::Error::success();
+  return write(Object{{"event", "domain_setup"}, {"domains", std::move(domains)}});
 }
 
 llvm::Error Manifest::finish(StringRef status, int64_t step, StringRef reason) {

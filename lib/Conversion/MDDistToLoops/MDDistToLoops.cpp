@@ -1,3 +1,4 @@
+#include "../../../runtime/mdrt_dist_stats.h"
 // The executors of md_dist: every domain in one process.
 //
 // See docs/distributed-ml2.md, Sections 6 and 7 (D275, D290). Every
@@ -2055,9 +2056,31 @@ LogicalResult Lowering::run(func::FuncOp function) {
   domains = decomposition.getNumDomains();
   if (throughExec)
     declareSets();
-  for (Operation *op : ops)
+  bool statistics = module->hasAttr("md_dist.driver_statistics");
+  auto mark = [&](Operation *before, int code) {
+    OpBuilder b(before);
+    auto type = b.getFunctionType({b.getI64Type()}, {});
+    auto value = arith::ConstantIntOp::create(b, before->getLoc(), code, 64);
+    func::CallOp::create(b, before->getLoc(), declare("mdrtDistPhase", type, false),
+                         ValueRange{value});
+  };
+  for (Operation *op : ops) {
+    int phase = 0;
+    if (statistics) {
+      if (isa<SumPairsOp, GatherPairsOp>(op)) phase = DistPairs;
+      if (isa<SumParticlesOp, MapParticlesOp>(op)) phase = DistOther;
+      if (isa<HaloCopyOp>(op)) phase = DistCopy;
+      if (isa<HaloSumOp>(op)) phase = DistSum;
+      if (isa<AllReduceOp>(op)) phase = DistReduce;
+      if (isa<MigrateOp, RedistributeOp>(op)) phase = DistMigration;
+      if (isa<CoveredOp>(op))
+        mark(op->getParentOfType<scf::ForOp>().getBody()->getTerminator(), DistStep);
+      if (phase) mark(op, phase);
+    }
     if (failed(lower(op)))
       return failure();
+    if (phase) mark(op, -phase);
+  }
   // The casts of the structural conversion: a cast of a state to its tuple
   // takes the tuple of the state; a cast of a tuple to a state goes with the
   // ops of the state.

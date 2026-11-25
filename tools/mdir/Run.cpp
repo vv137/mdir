@@ -7,6 +7,8 @@
 #include "Commands.h"
 #include "TowersShape.h"
 #include "Manifest.h"
+#include "DistributionLog.h"
+#include "mdir/Dialect/MDDist/Grid.h"
 
 #include "mdir/Conversion/GPUToBinary.h"
 #include "mdir/Conversion/AxisFFTEmitter.h"
@@ -1417,6 +1419,36 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   for (double &value : startValues)
     arguments.push_back(&value);
 
+  int distRank = 0, distRanks = 1;
+  llvm::json::Object distribution;
+  if (const auto &dist = control->distribution) {
+    const auto &grid = program->domainGrid;
+    const char *source = dist->domains ? "minimum surface area; lexicographic ties" :
+        dist->gridGiven ? "explicit grid" : "default one domain";
+    llvm::json::Array candidates;
+    if (dist->domains)
+      mdir::md_dist::selectGrid(dist->domains, system->box,
+          [&](int64_t x, int64_t y, int64_t z, long double score) {
+        candidates.push_back(llvm::json::Object{{"grid", llvm::json::Array{x,y,z}},
+                                                {"score_per_nm", double(score)}});
+        output.log.print("MDIR: grid candidate %lld x %lld x %lld score %.17g /nm\n",
+                         (long long)x, (long long)y, (long long)z, double(score));
+      });
+    distribution = llvm::json::Object{
+        {"grid", llvm::json::Array{grid[0],grid[1],grid[2]}}, {"grid_reason", source},
+        {"requested_count", dist->domains ? llvm::json::Value(dist->domains) : llvm::json::Value(nullptr)},
+        {"candidates", std::move(candidates)}, {"transport", dist->transport},
+        {"transport_source", dist->transportGiven ? "requested" : "default"},
+        {"traversal", dist->traversal}, {"traversal_source", dist->traversalGiven ? "requested" : "default"},
+        {"ranks", distRanks}, {"cutoff_angstrom", control->cutoffDistance},
+        {"skin_angstrom", control->pairlistDistance-control->cutoffDistance},
+        {"reach_angstrom", control->pairlistDistance}};
+    output.log.print("MDIR: grid choice %s, requested count %lld, ranks %d; %s transport (%s), %s traversal (%s); reach %g Ang = cutoff %g Ang + skin %g Ang\n",
+        source, (long long)dist->domains, distRanks, dist->transport.c_str(),
+        dist->transportGiven ? "requested" : "default", dist->traversal.c_str(),
+        dist->traversalGiven ? "requested" : "default", control->pairlistDistance,
+        control->cutoffDistance, control->pairlistDistance-control->cutoffDistance);
+  }
   if (!control->manifestFile.empty()) {
     auto device = getManifestDevice(control->target);
     if (!device)
@@ -1510,14 +1542,8 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       if (checkpoint)
         effective["input_box_rounding_delta_nm"] = deltas(inputBoxRounding);
     }
-    if (control->distribution) {
-      const auto &grid = program->domainGrid;
-      effective["distribute"] = llvm::json::Object{
-          {"grid", llvm::json::Array{grid[0], grid[1], grid[2]}},
-          {"transport", control->distribution->transport},
-          {"traversal", control->distribution->traversal},
-          {"reach_angstrom", control->pairlistDistance}};
-    }
+    if (control->distribution)
+      effective["distribute"] = std::move(distribution);
     if (towersShapeReport.getAsObject())
       effective["towers_shape"] = towersShapeReport;
     if (!towersCellHeight.empty())
@@ -2012,9 +2038,27 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     if (void *enter = findRuntime("mdrtTuplesEnter", "mdrtDeviceTuplesEnter"))
       reinterpret_cast<void (*)(void *)>(enter)(tupleStore);
 
+  std::optional<DistributionLog> distLog;
+  using Observe = void (*)(DistObserver *);
+  Observe observe = nullptr;
+  if (control->distribution) {
+    const auto &g = program->domainGrid;
+    distLog.emplace(output.log, manifest, distRank, distRanks, g[0]*g[1]*g[2],
+                    firstStep, control->energyPeriod);
+    bool opened = distLog->open(std::getenv("MDIR_DIST_STEP_TRACE"));
+    if (!opened) return fail(distLog->error);
+    observe = reinterpret_cast<Observe>(findRuntime("mdrtDistObserve", "mdrtDistObserve"));
+    if (!observe) return fail("distributed statistics require mdrtDistObserve");
+    observe(&distLog->observer);
+  }
   begin = std::chrono::steady_clock::now();
   output.lastCheckpoint = begin;
   compiled.entry(arguments.data());
+  if (distLog) {
+    observe(nullptr);
+    distLog->finish();
+    if (!distLog->error.empty()) return fail(distLog->error);
+  }
   // The wait of the end of the run: the checkpoint at the last step is
   // written by a thread of its own (D336), and the run ends
   // once it has passed all three of its events (CheckpointThread in
