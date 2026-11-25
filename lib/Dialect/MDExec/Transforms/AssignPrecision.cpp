@@ -812,7 +812,7 @@ LogicalResult Assigner::run() {
   // In the deterministic mode the type of a buffer decides that of its
   // copy alone: the fields of the steps are stored as their roles say,
   // whatever buffers the program reaches them from or hands them to.
-  if (deterministic)
+  if (deterministic || function->getParentOfType<ModuleOp>()->hasAttr("md_dist.driver"))
     isolateBoundaries();
   for (BlockArgument argument : function.getArguments())
     if (isRealField(argument.getType()))
