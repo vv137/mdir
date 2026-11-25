@@ -1993,8 +1993,18 @@ LogicalResult Lowering::lowerUnpack(UnpackOp op) {
   results.append(op.getFields().begin(), op.getFields().end());
   for (auto [result, buffer] :
        llvm::zip(results, ArrayRef<Value>(tuple).drop_front(2))) {
-    storage[result].buffer = buffer;
-    memref::DeallocOp::create(atEnd, loc, buffer);
+    // A transfer event requires a direct allocation for its alias proof.
+    if (haloEvents && llvm::any_of(result.getUsers(), [](Operation *use) {
+          return isa<HaloCopyOp, HaloSumOp>(use);
+        })) {
+      Value copy = copyForState(b, buffer);
+      storage[result].buffer = copy;
+      memref::DeallocOp::create(b, loc, buffer);
+      memref::DeallocOp::create(atEnd, loc, copy);
+    } else {
+      storage[result].buffer = buffer;
+      memref::DeallocOp::create(atEnd, loc, buffer);
+    }
   }
   return success();
 }
