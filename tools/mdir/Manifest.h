@@ -36,6 +36,7 @@ public:
   ~Manifest();
   llvm::Error start(const std::string &path, bool append,
                      llvm::json::Object metadata);
+  llvm::Error refuse(const std::string &path, llvm::StringRef reason);
   llvm::Error domainSetup(llvm::json::Array domains);
   llvm::Error finish(llvm::StringRef status, int64_t step,
                       llvm::StringRef reason = "");

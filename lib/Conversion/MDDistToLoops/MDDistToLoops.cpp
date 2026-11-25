@@ -2056,7 +2056,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
   domains = decomposition.getNumDomains();
   if (throughExec)
     declareSets();
-  bool statistics = module->hasAttr("md_dist.driver_statistics");
+  bool statistics = module->hasAttr("md_dist.driver");
   auto mark = [&](Operation *before, int code) {
     OpBuilder b(before);
     auto type = b.getFunctionType({b.getI64Type()}, {});

@@ -21,3 +21,9 @@
 # RUN: sed 's/domains = 8/traversal = "both"/' %t/grid.toml > %t/bad.toml
 # RUN: not mdir run %t/bad.toml 2>&1 | FileCheck %s --check-prefix=TRAVERSAL
 # TRAVERSAL: expected one of directed, unique
+# RUN: sed '/^\[output\]/a manifest="refused.jsonl"\nlog="refused.log"' %t/bad.toml > %t/refuse.toml
+# RUN: cd %t && not mdir run refuse.toml 2>&1 | FileCheck %s --check-prefix=TRAVERSAL
+# RUN: FileCheck %s --check-prefix=REFUSED < %t/refused.jsonl
+# RUN: FileCheck %s --check-prefix=TRAVERSAL < %t/refused.log
+# REFUSED: "event":"refused"
+# REFUSED-SAME: expected one of directed, unique

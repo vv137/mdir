@@ -454,9 +454,30 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // Read
   //===--------------------------------------------------------------------===//
 
-  auto control = readControl(controlFile);
+  // A rejected setup can precede path and overwrite checks. Create a fresh
+  // diagnostic file exclusively so an invalid input cannot damage prior output.
+  auto refuse = [&](const Control &c, llvm::Error e) {
+    std::string reason = llvm::toString(std::move(e));
+    if (emit == Emit::Run) {
+      if (!c.logFile.empty() && c.logFile != c.manifestFile) {
+        if (FILE *file = std::fopen(c.logFile.c_str(), "wx")) {
+          std::fprintf(file, "MDIR: distributed setup refused: %s\n", reason.c_str());
+          std::fclose(file);
+        } else {
+          warn("cannot create refusal log '" + c.logFile + "': " + std::strerror(errno));
+        }
+      }
+      Manifest refusal;
+      if (!c.manifestFile.empty())
+        if (auto err = refusal.refuse(c.manifestFile, reason))
+          warn(llvm::toString(std::move(err)));
+    }
+    return fail(reason);
+  };
+  Control rejected;
+  auto control = readControl(controlFile, &rejected);
   if (!control)
-    return fail(control.takeError());
+    return refuse(rejected, control.takeError());
   // What the run writes (D149). Its log goes to the standard output from
   // here, and to the file of [output] as well once that is open.
   Output output;
@@ -934,7 +955,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     *control = compiler::getSegmentsControl(*control);
   auto program = buildProgram(*control, *system);
   if (!program)
-    return fail(program.takeError());
+    return control->distribution ? refuse(*control, program.takeError()) : fail(program.takeError());
   if (emit == Emit::Module) {
     llvm::outs() << printModuleForReading(*program);
     // The profile map is of the lowered program (D398).
@@ -2050,14 +2071,16 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     observe = reinterpret_cast<Observe>(findRuntime("mdrtDistObserve", "mdrtDistObserve"));
     if (!observe) return fail("distributed statistics require mdrtDistObserve");
     observe(&distLog->observer);
+    output.finishDistribution = [&] {
+      observe(nullptr);
+      distLog->finish();
+    };
   }
   begin = std::chrono::steady_clock::now();
   output.lastCheckpoint = begin;
   compiled.entry(arguments.data());
   if (distLog) {
-    observe(nullptr);
-    distLog->finish();
-    if (!distLog->error.empty()) return fail(distLog->error);
+    output.finishDistribution();
   }
   // The wait of the end of the run: the checkpoint at the last step is
   // written by a thread of its own (D336), and the run ends
@@ -2067,6 +2090,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // And for the frames that the thread of the frames still holds
   // (D400).
   finishFrames(output);
+  if (distLog && !distLog->error.empty()) return fail(distLog->error);
   double runTime = std::chrono::duration<double>(
                        std::chrono::steady_clock::now() - begin)
                        .count();

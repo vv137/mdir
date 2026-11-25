@@ -87,16 +87,47 @@ class DistributionLog {
         print("DIST: %s step %lld domain %lld sent %lld bytes to domain %lld received %lld bytes\n",
               label, (long long)step, (long long)edge.first, (long long)bytes,
               (long long)edge.second, (long long)bytes);
-    if (detailed) {
-      for (int i = 0; i < DistPhaseCount; ++i)
-        print("DIST: step %lld rank %d %s %.9g s\n", (long long)step, rank, names[i], s.seconds[i]);
-      if (std::fflush(trace)) error = "cannot flush distributed step trace";
-      return;
+    // A logical halo edge includes self-images and in-process copies.
+    // Network traffic includes only edges crossing the rank boundary.
+    enum { Owned, Ghost, In, Out, Sent, Received, NetworkSent, NetworkReceived, Count };
+    std::vector<std::array<int64_t, Count>> counts(ranks);
+    for (int64_t d = 0; d < domains; ++d) {
+      auto &row = counts[owner(d)];
+      row[Owned] += owned[d];
+      row[Ghost] += ghosts[d];
+      row[In] += s.moves[d].in;
+      row[Out] += s.moves[d].out;
+    }
+    for (auto [edge, bytes] : s.bytes) {
+      int from = owner(edge.first), to = owner(edge.second);
+      counts[from][Sent] += bytes;
+      counts[to][Received] += bytes;
+      if (from != to) {
+        counts[from][NetworkSent] += bytes;
+        counts[to][NetworkReceived] += bytes;
+      }
+    }
+    const char *columns[] = {"owned", "ghost", "migrated_in", "migrated_out",
+        "sent_bytes", "received_bytes", "network_sent_bytes", "network_received_bytes"};
+    for (int i = 0; i < Count; ++i) {
+      int64_t low = counts.front()[i], high = low, sum = 0;
+      for (auto &row : counts) {
+        low = std::min(low, row[i]);
+        high = std::max(high, row[i]);
+        sum += row[i];
+      }
+      print("DIST: %s step %lld %s min/mean/max %lld %.8g %lld\n", label,
+            (long long)step, columns[i], (long long)low, double(sum)/ranks, (long long)high);
+      for (int r = 0; r < ranks; ++r)
+        if (!detailed || r == rank)
+          print("DIST: %s step %lld rank %d %s %lld share %.6f\n", label,
+                (long long)step, r, columns[i], (long long)counts[r][i],
+                sum ? double(counts[r][i])/sum : 0.);
     }
     std::vector<double> times(size_t(ranks) * DistPhaseCount);
     if (gather) gather(s.seconds.data(), times.data(), DistPhaseCount);
     else std::copy(s.seconds.begin(), s.seconds.end(), times.begin());
-    if (rank) return;
+    if (rank && !detailed) return;
     for (int i = 0; i < DistPhaseCount; ++i) {
       double sum = 0, low = times[i], high = times[i];
       for (int r = 0; r < ranks; ++r) {
@@ -108,18 +139,20 @@ class DistributionLog {
       print("DIST: %s step %lld %s min/mean/max %.9g %.9g %.9g s\n",
             label, (long long)step, names[i], low, sum/ranks, high);
       for (int r = 0; r < ranks; ++r) {
+        if (detailed && r != rank) continue;
         double v = times[r * DistPhaseCount + i];
         print("DIST: %s step %lld rank %d %s %.9g s share %.6f\n",
               label, (long long)step, r, names[i], v, sum ? v/sum : 0.);
       }
     }
+    if (detailed && std::fflush(trace)) error = "cannot flush distributed step trace";
   }
   void phase(int64_t code) {
     auto now = Clock::now();
     if (code == DistStep) {
       ++step;
       current.seconds[0] = std::chrono::duration<double>(now-began).count();
-      if (trace) rows(current, "step", true);
+      if (trace) rows(current, "trace", true);
       add(interval, current);
       current = Sample(domains);
       if (period > 0 && (step-first) % period == 0) {
