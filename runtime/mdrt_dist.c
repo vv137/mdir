@@ -189,7 +189,7 @@ void _mlir_ciface_mdrtDistLocalExclusions(struct Members *result, int64_t halo,
   if (!head || !next) fail("out of memory indexing domain exclusions");
   for (int64_t i = 0; i < l->count; ++i) head[i] = -1;
   for (int64_t i = 0; i < rows; ++i) {
-    int64_t id = i < owned ? l->ids[domain*l->count + i] :
+    int64_t id = i < owned ? l->ids[domain*l->stride + i] :
                              h->ids[domain*h->capacity + i-owned];
     next[i] = head[id];
     head[id] = (int32_t)i;
