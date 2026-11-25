@@ -1753,8 +1753,17 @@ Q32 gives energy and virial a range below $2^{31}$ and a half quantum
 of $2^{-33}$. Directed energy and virial count both orientations. Their
 words carry one extra factor of two until final conversion. The singular
 repulsive potential admits no finite universal $B$. The implementation
-checks the rounded term and every integer addition and diagnoses an
-unrepresentable operand or subtotal.
+checks the rounded term before converting to a signed 64-bit word.
+For a set of $N\leq 2^{32}$ particles there are at most $N(N-1)$ directed
+pair visits. Multiplying this count by $2^{63}$ gives a strict upper bound
+of $2^{127}$ on the magnitude of any subtotal. Consequently a signed
+128-bit accumulator covers every ordering, including a large intermediate
+cancellation. The layout checks the particle count. The implementation
+checks wide addition and narrows the completed quantity with a range
+check. An intermediate subtotal may exceed the 64-bit output range.
+A directed observable's completed unhalved word has twice the physical
+scale, so the largest positive physical value it can report is below
+$2^{30}$ in internal energy units.
 
 For representable sums, associativity of integer addition gives the
 same final word under any partition of the pair set. In NVE the two

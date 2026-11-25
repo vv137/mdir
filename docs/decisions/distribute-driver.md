@@ -14,8 +14,10 @@ finite-range LJ and a truncated Coulomb/LJ mixture, with both mixed and
 double output storage. The reference executor computes its domain kernels
 in double. In deterministic mode the same build must reproduce the same physical
 trajectory across decompositions. Round each force component to Q40 and each
-energy or virial component to Q32 before its first addition. Check conversion
-and signed 64-bit addition, including reverse halo sums.
+energy or virial component to Q32 before its first addition. Encode each term in a signed 64-bit word. Accumulate in checked
+signed 128-bit words, including reverse halo sums, and range-check the
+completed quantity before narrowing. At most $2^{32}$ particles ensures
+that the number of directed pair visits is below $2^{64}$.
 
 Log every candidate grid score, selected geometry, import size and source
 of the traversal and transport. Sample occupancy, migrations, directed halo
