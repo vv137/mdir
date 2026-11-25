@@ -1340,11 +1340,11 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
   for (int peer=0; peer<mdrtMPISize(); ++peer) {
     int sender=peer==mdrtMPIRank();
     int64_t count=sender ? localCount : 0;
-    mdrtMPIBroadcastWords(&count,1,peer);
+    mdrtMPIBroadcastIndices(&count,1,peer);
     if (!count) continue;
     int64_t *records=sender ? local : malloc(2*count*sizeof *records);
     if (!records) fail("out of memory receiving device face rows");
-    mdrtMPIBroadcastWords(records,2*count,peer);
+    mdrtMPIBroadcastIndices(records,2*count,peer);
     for (int64_t i=0; i<count; ++i) {
       int64_t j=records[2*i], owner=records[2*i+1]>>32;
       next->faceMasks[j]=(uint32_t)records[2*i+1];

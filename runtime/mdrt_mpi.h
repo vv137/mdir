@@ -16,6 +16,7 @@ void mdrtMPIStartNCCL(void);
 int mdrtMPIRank(void);
 int mdrtMPISize(void);
 void mdrtMPIRowsToRoot(double *values, int64_t count, int owner);
+void mdrtMPIBroadcastIndices(int64_t *values, int64_t count, int root);
 void mdrtMPIBroadcastWords(void *values, int64_t count, int root);
 void mdrtMPIBroadcast(double *values, int64_t count, int root);
 void mdrtMPIExchange(void *send, int *sendCounts, int *sendOffsets,

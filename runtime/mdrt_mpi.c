@@ -194,6 +194,16 @@ void mdrtMPIRowsToRoot(double *values, int64_t count, int owner) {
   }
 }
 
+void mdrtMPIBroadcastIndices(int64_t *values, int64_t count, int root) {
+  while (count > 0) {
+    int n = count > INT_MAX ? INT_MAX : (int)count;
+    arrival();
+    MPI_Bcast(values,n,MPI_INT64_T,root,comm);
+    values += n;
+    count -= n;
+  }
+}
+
 void mdrtMPIBroadcastWords(void *buffer, int64_t count, int root) {
   unsigned char *values = buffer;
   while (count > 0) {
