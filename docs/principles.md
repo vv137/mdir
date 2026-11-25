@@ -225,6 +225,70 @@ or guarded, backward inputs stay private, and copy completion releases only
 the buffers and queue dependencies it actually covers. D358 checks its copy/completion pairs before backend selection; general
 wait scheduling remains separate.
 
+## 11. Lowering strategies and shared primitives
+
+Status: adopted (the maintainer, 2026-10-22; first recorded in #444, which
+follows D285). The emitters, their status, and the portability contract are
+in [device-primitives.md](device-primitives.md); the sites are in
+[primitives-map.md](primitives-map.md).
+
+A computation that has more than one implementation is lowered in five
+parts:
+
+1. **A semantic op** in `md_exec` states what is computed, not how (for
+   example a scatter-accumulate into a field at indices).
+2. **A strategy attribute** states how, with its parameters
+   (`#md_exec.scatter` with `tile`, `hash`, `atomic`).
+3. **A chooser pass** sets the attribute where its preconditions hold. The
+   preconditions are functions that the chooser and the lowering both call,
+   so they cannot disagree (Section 2); with `explain` the chooser states
+   each choice or refusal.
+4. **An emitter library** generates each strategy's code, and every site
+   calls the same emitter.
+5. **A switch and tests per strategy**: lit tests of the generated IR,
+   numerical comparisons between strategies, and sanitizer runs, so that the
+   strategies can be compared (Section 3).
+
+The pattern is applied where it pays: an area qualifies when it has at
+least two sites, or at least two strategies with a measured difference. A
+single case is not generalized ahead of need.
+
+**Sites move onto the shared primitive when the move loses nothing.** Once
+a shared primitive or emitter exists, every site that keeps a hand-written
+copy moves onto it, even without a gain. "Loses nothing" means all of:
+
+- the results are the same: bitwise in the deterministic mode, otherwise
+  within the oracle's tolerances;
+- the site's kernel time and the step time on the Amber suite are not
+  slower, beyond the spread between runs on the same device;
+- peak device memory does not grow.
+
+A site keeps its own code only when a measurement shows a loss; the PR
+states the measurement and the status table in
+[device-primitives.md](device-primitives.md#1-status) lists the site with
+the reason. A new strategy becomes the default only where it wins by
+measurement.
+
+**The same PR updates the documents.** A site moved onto a primitive is
+described as an instance of that primitive and strategy: its rows in
+[device-primitives.md](device-primitives.md) and
+[primitives-map.md](primitives-map.md), its design document by topic, and
+the white paper (Section 8 for device code). Where a document derived the
+site's own algorithm, it cites the primitive's derivation and states only
+the site's preconditions, parameters, and strategy.
+
+**Primitives are portable** by the rules of
+[device-primitives.md, Section 6](device-primitives.md#6-portability-one-target-contract-several-implementations):
+capabilities come from the target description, a required capability is a
+stated precondition, `nvvm.*` appears only inside an emitter's NVIDIA
+implementation, and NVIDIA's generated code stays byte-identical.
+
+**No literal threshold stays in a lowering.** Thresholds and launch
+parameters come from the per-architecture tuning policies
+([device-primitives.md, Section 8](device-primitives.md#8-tuning-policies-d420);
+#433), and the choices they make are reported and can be pinned like every
+other automatic choice (#952).
+
 ## Planned work
 
 1. The storage form carries the set of field, loop-reduction scratch, tuple-member, and
