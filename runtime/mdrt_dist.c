@@ -1663,7 +1663,7 @@ void _mlir_ciface_mdrtDistHaloSumWords(int64_t handle, struct Memref3W *owned,
     for (size_t i = 0; i < h->edgeCount; ++i) {
       struct Edge edge = h->edges[i];
       observer->transfer(observer->context, edge.to, edge.from,
-                         edge.rows * components * (int64_t)sizeof(DistWide));
+                         edge.rows * components * (int64_t)sizeof(DistWide), 1);
     }
 #ifdef MDIR_ENABLE_MPI
   if (h->layout->mpi)
@@ -1699,7 +1699,7 @@ void _mlir_ciface_mdrtDistHaloCopy(int64_t handle, struct Memref3D *owned,
     for (size_t i = 0; i < h->edgeCount; ++i) {
       struct Edge edge = h->edges[i];
       observer->transfer(observer->context, edge.from, edge.to,
-                         edge.rows * owned->sizes[2] * (int64_t)sizeof(double));
+                         edge.rows * owned->sizes[2] * (int64_t)sizeof(double), 0);
     }
 #ifdef MDIR_ENABLE_MPI
   if (h->layout->mpi) {
@@ -1734,7 +1734,7 @@ void _mlir_ciface_mdrtDistHaloSum(int64_t handle, struct Memref3D *ghosts,
     for (size_t i = 0; i < h->edgeCount; ++i) {
       struct Edge edge = h->edges[i];
       observer->transfer(observer->context, edge.to, edge.from,
-                         edge.rows * owned->sizes[2] * (int64_t)sizeof(double));
+                         edge.rows * owned->sizes[2] * (int64_t)sizeof(double), 1);
     }
 #ifdef MDIR_ENABLE_MPI
   if (h->layout->mpi) {

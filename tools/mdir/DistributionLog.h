@@ -19,6 +19,7 @@ class DistributionLog {
   struct Sample {
     Times seconds{};
     std::vector<Counts> moves;
+    std::array<int64_t, 2> haloBytes{}, faceBytes{}, reverseBytes{};
     std::map<Edge, int64_t> bytes;
     explicit Sample(size_t n) : moves(n) {}
   };
@@ -79,6 +80,11 @@ class DistributionLog {
       to.moves[i].in += from.moves[i].in;
       to.moves[i].out += from.moves[i].out;
     }
+    for (int i = 0; i < 2; ++i) {
+      to.haloBytes[i] += from.haloBytes[i];
+      to.faceBytes[i] += from.faceBytes[i];
+      to.reverseBytes[i] += from.reverseBytes[i];
+    }
     for (auto [edge, bytes] : from.bytes) to.bytes[edge] += bytes;
   }
 
@@ -108,20 +114,18 @@ class DistributionLog {
       row[In] += s.moves[d].in;
       row[Out] += s.moves[d].out;
     }
-    int64_t intra = 0, inter = 0;
     for (auto [edge, bytes] : s.bytes) {
       int from = owner(edge.first), to = owner(edge.second);
       counts[from][Sent] += bytes;
       counts[to][Received] += bytes;
       if (from != to) {
-        if (nodeOfRank) (nodeOfRank(from) == nodeOfRank(to) ? intra : inter) += bytes;
         counts[from][NetworkSent] += bytes;
         counts[to][NetworkReceived] += bytes;
       }
     }
     if (nodeOfRank)
       print("DIST: %s step %lld intra-node halo bytes %lld inter-node halo bytes %lld\n",
-            label, (long long)step, (long long)intra, (long long)inter);
+            label, (long long)step, (long long)s.haloBytes[0], (long long)s.haloBytes[1]);
     const char *columns[] = {"owned", "ghost", "migrated_in", "migrated_out",
         "sent_bytes", "received_bytes", "network_sent_bytes", "network_received_bytes"};
     for (int i = 0; i < Count; ++i) {
@@ -172,6 +176,11 @@ class DistributionLog {
         return;
       }
       ++step;
+      if (nodeOfRank && rank == 0)
+        log.print("DIST: step %lld forward halo bytes intra %lld inter %lld; face bytes intra %lld inter %lld; reverse bytes intra %lld inter %lld\n",
+                  (long long)step, (long long)current.haloBytes[0], (long long)current.haloBytes[1],
+                  (long long)current.faceBytes[0], (long long)current.faceBytes[1],
+                  (long long)current.reverseBytes[0], (long long)current.reverseBytes[1]);
       current.seconds[0] = std::chrono::duration<double>(now-began).count();
       if (trace) rows(current, "trace", true);
       add(interval, current);
@@ -196,6 +205,7 @@ class DistributionLog {
 public:
   int (*rankOwner)(int64_t, int64_t) = nullptr;
   int (*nodeOfRank)(int) = nullptr;
+  std::array<int64_t, 3> grid{};
   std::string error;
   void (*gather)(const double *, double *, int) = nullptr;
   DistributionLog(driver::Log &log, Manifest &manifest, int rank, int ranks,
@@ -233,8 +243,25 @@ public:
       auto &s = static_cast<DistributionLog *>(p)->current;
       ++s.moves[from].out;
       ++s.moves[to].in;
-    }, [](void *p, int64_t from, int64_t to, int64_t bytes) {
-      static_cast<DistributionLog *>(p)->current.bytes[{from,to}] += bytes;
+    }, [](void *p, int64_t from, int64_t to, int64_t bytes, int reverse) {
+      auto &report = *static_cast<DistributionLog *>(p);
+      auto &s = report.current;
+      s.bytes[{from,to}] += bytes;
+      if (!report.nodeOfRank || from == to) return;
+      int inter = report.nodeOfRank(report.owner(from)) != report.nodeOfRank(report.owner(to));
+      if (reverse) {
+        s.reverseBytes[inter] += bytes;
+        return;
+      }
+      s.haloBytes[inter] += bytes;
+      int distance = 0;
+      for (auto width : report.grid) {
+        auto difference = std::abs(from % width - to % width);
+        distance += std::min(difference, width - difference);
+        from /= width;
+        to /= width;
+      }
+      if (distance == 1) s.faceBytes[inter] += bytes;
     }, [](void *p, int64_t code) { static_cast<DistributionLog *>(p)->phase(code); }};
 };
 } // namespace mdir::tool

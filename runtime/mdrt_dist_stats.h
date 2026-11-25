@@ -10,7 +10,7 @@ struct DistObserver {
   void *context;
   void (*domain)(void *, int64_t, int64_t, int64_t, const double *, const double *);
   void (*migration)(void *, int64_t, int64_t);
-  void (*transfer)(void *, int64_t, int64_t, int64_t);
+  void (*transfer)(void *, int64_t, int64_t, int64_t, int reverse);
   void (*phase)(void *, int64_t);
 };
 #endif

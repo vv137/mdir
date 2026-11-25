@@ -70,6 +70,7 @@ struct NCCLPlan {
   int *source, *dest;
   double *shifts;
   int sendRows, recvRows;
+  int hasPeers[2];
 };
 
 static void *upload(const void *host, size_t bytes) {
@@ -126,6 +127,8 @@ struct NCCLPlan *mdrtNCCLPlan(int64_t domains, const int64_t *ghosts,
       for (int peer = 0; peer < size; ++peer) {
         if (p->ns[peer] > INT_MAX - p->sendRows || p->nr[peer] > INT_MAX - p->recvRows)
           mdrtMPIAbort("halo row displacement exceeds int");
+        if (p->ns[peer] || p->nr[peer])
+          p->hasPeers[nodes[rank] != nodes[peer]] = 1;
         p->os[peer] = ws[peer] = p->sendRows;
         p->offsetRecv[peer] = wr[peer] = p->recvRows;
         p->sendRows += p->ns[peer]; p->recvRows += p->nr[peer];
@@ -181,6 +184,7 @@ void mdrtNCCLHalo(const struct NCCLPlan *p, double *owned, int64_t nOwned,
   checkCuda(cudaStreamSynchronize(stream));
   int rank = mdrtMPIRank();
   for (int inter = 0; inter <= 1; ++inter) {
+    if (!p->hasPeers[inter]) continue;
     int phase = inter ? DistInterHalo : DistIntraHalo;
     if (!reverse) mdrtDistPhase(phase);
     checkNCCL(ncclGroupStart());

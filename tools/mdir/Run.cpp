@@ -2162,6 +2162,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       if (control->distribution->transport == "nccl") {
         distLog->rankOwner = mdrtMPIOwner;
         distLog->nodeOfRank = mdrtMPINode;
+        distLog->grid = g;
       }
       distLog->gather = mdrtMPIGatherTimes;
       opened = mdrtMPIAllTrue(opened);
