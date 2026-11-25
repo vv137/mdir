@@ -2881,6 +2881,27 @@ LogicalResult Lowering::run(func::FuncOp function) {
                          declare("mdrtDistPhase", type, false),
                          ValueRange{value});
   };
+  if (statistics) {
+    SmallVector<std::pair<Operation *, int>> measured;
+    function.walk([&](Operation *op) {
+      if (auto call = dyn_cast<func::CallOp>(op)) {
+        if (call.getCallee().starts_with("mdrtWrite"))
+          measured.emplace_back(op, DistOutput);
+      } else if (op->getName().getStringRef() == "dyn.kick" ||
+                 op->getName().getStringRef() == "dyn.drift") {
+        measured.emplace_back(op, DistIntegrate);
+      }
+    });
+    for (auto [op, phase] : measured) {
+      mark(op, phase);
+      mark(op->getNextNode(), -phase);
+    }
+  }
+  llvm::SmallPtrSet<Operation *, 8> constraints;
+  for (Operation *op : ops)
+    if (auto rows = dyn_cast<TupleRowsOp>(op))
+      if (rows.getGroup())
+        constraints.insert(rows->getUsers().begin(), rows->getUsers().end());
   DominanceInfo dominance(function);
   for (Operation *op : ops) {
     if (grouped.contains(op)) continue;
@@ -2888,6 +2909,12 @@ LogicalResult Lowering::run(func::FuncOp function) {
     if (statistics) {
       if (isa<SumPairsOp, GatherPairsOp>(op)) phase = DistPairs;
       if (isa<SumParticlesOp, MapParticlesOp, TupleRowsOp, TupleKernelOp>(op)) phase = DistOther;
+      if (op->hasAttr("md_dist.integration")) phase = DistIntegrate;
+      if (auto rows = dyn_cast<TupleRowsOp>(op))
+        if (rows.getGroup()) phase = DistIntegrate;
+      if (constraints.contains(op)) phase = DistIntegrate;
+      if (isa<PackOp, UnpackOp>(op)) phase = DistState;
+      if (isa<HaloOp>(op)) phase = DistHaloBuild;
       if (isa<HaloCopyOp>(op)) phase = DistCopy;
       if (isa<HaloSumOp>(op)) phase = DistSum;
       if (isa<AllReduceOp>(op)) phase = DistReduce;

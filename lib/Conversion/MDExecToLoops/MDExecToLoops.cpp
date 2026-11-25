@@ -1,3 +1,4 @@
+#include "../../../runtime/mdrt_dist_stats.h"
 // Conversion of md_exec loops in the storage form to loops over buffers.
 //
 // Every op of md_exec becomes `scf` loops that load from and store to
@@ -914,6 +915,12 @@ LogicalResult Lowering::lowerDomainMatrix(mdrt::DomainMatrixOp op) {
   Value stale = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne, rebuild, word(0));
   auto branch = scf::IfOp::create(b, loc, stale, false);
   OpBuilder build = branch.getThenBodyBuilder();
+  auto markBuild = [&](int phase) {
+    auto fn = getOrDeclare("mdrtDistPhase", build.getFunctionType({i64}, {}));
+    func::CallOp::create(build, loc, fn, ValueRange{
+        arith::ConstantIntOp::create(build, loc, phase, 64)});
+  };
+  markBuild(DistList);
   SmallVector<Value> edges;
   auto edge = getOrDeclare("mdrtDistMatrixEdge", b.getFunctionType({i64, i64}, {b.getF64Type()}));
   for (int axis = 0; axis < 3; ++axis) {
@@ -924,6 +931,7 @@ LogicalResult Lowering::lowerDomainMatrix(mdrt::DomainMatrixOp op) {
   if (failed(emitMatrixBuild(build, loc, list, x, box, cutoff + skin,
                              (cutoff + skin) / 3, op.getCenters())))
     return failure();
+  markBuild(-DistList);
   Value rule = word(op.getRule());
   Value selected = call("mdrtDistSelectMatrix", i64, {matrix, op.getExclusions(), rule});
   Value filter = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne, selected, word(0));
