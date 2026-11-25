@@ -2097,13 +2097,13 @@ LogicalResult Lowering::lowerUnpack(UnpackOp op) {
              ValueRange{layoutHandle})
              .getResult(0));
   Value capacity = ownedCapacity(b, layoutHandle);
-  Value rows = allocate(b, rowsType, {index(b, domains)});
-  Value ids = allocate(b, idsType, {index(b, domains), capacity});
-  func::CallOp::create(
-      b, loc,
-      declare("mdrtDistLayoutRows",
-              b.getFunctionType({i64, rowsType, idsType}, {}), true),
-      ValueRange{layoutHandle, rows, ids});
+  auto view = [&](StringRef name, Type type, Value handle, bool ghosts) {
+    auto fn = declare(name, b.getFunctionType({i64,i64}, {type}), true);
+    return func::CallOp::create(b, loc, fn, ValueRange{
+        handle, arith::ConstantIntOp::create(b, loc, ghosts, 64)}).getResult(0);
+  };
+  Value rows = view("mdrtDistRowView", rowsType, layoutHandle, false);
+  Value ids = view("mdrtDistIdView", idsType, layoutHandle, false);
   // The halo, likewise.
   Value haloCapacity = toIndex(
       b, func::CallOp::create(
@@ -2112,13 +2112,8 @@ LogicalResult Lowering::lowerUnpack(UnpackOp op) {
                      false),
              ValueRange{haloHandle})
              .getResult(0));
-  Value haloRows = allocate(b, rowsType, {index(b, domains)});
-  Value haloIds = allocate(b, idsType, {index(b, domains), haloCapacity});
-  func::CallOp::create(
-      b, loc,
-      declare("mdrtDistHaloRows",
-              b.getFunctionType({i64, rowsType, idsType}, {}), true),
-      ValueRange{haloHandle, haloRows, haloIds});
+  Value haloRows = view("mdrtDistRowView", rowsType, haloHandle, true);
+  Value haloIds = view("mdrtDistIdView", idsType, haloHandle, true);
   OpBuilder atEnd(end);
   func::CallOp::create(
       atEnd, loc,
