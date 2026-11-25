@@ -1578,3 +1578,10 @@ logical AND. After migration and before collection, broadcasts make the
 live domain rows available for repacking or output. All ranks retain
 layout metadata and capacity for the global rows. Scalar reductions
 broadcast domain partials and fold them in domain order.
+
+For MPI, rank clocks use local monotonic time. Rank extrema compare
+durations and need no clock synchronization. A rendezvous before each
+payload collective measures arrival wait plus barrier latency. The rank
+table reports actual inter-rank halo payload separately from logical
+intra-rank copies. With a fixed grid, assigning the same domain partials
+to another number of ranks preserves their order in the reduction.

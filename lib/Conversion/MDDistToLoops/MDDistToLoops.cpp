@@ -644,10 +644,20 @@ LogicalResult Lowering::lowerCollect(CollectOp op) {
     auto call = dyn_cast<mdrt::HostCallOp>(user);
     return call && call.getCallee() == "mdrtWriteCheckpoint";
   });
-  if (mpi)
-    func::CallOp::create(b, loc,
-        declare(checkpointOnly ? "mdrtMPICheckpointRows" : "mdrtMPICollectRows", b.getFunctionType({b.getI64Type(), owned.getType()}, {}), true),
-        ValueRange{layout.handle, owned});
+  Value limit = index(b, domains);
+  if (mpi) {
+    SmallVector<Type> args{b.getI64Type(), owned.getType()};
+    if (checkpointOnly) {
+      auto gather = declare("mdrtMPICheckpointRows",
+                            b.getFunctionType(args, {b.getI64Type()}), true);
+      Value count = func::CallOp::create(b, loc, gather,
+          ValueRange{layout.handle, owned}).getResult(0);
+      limit = toIndex(b, count);
+    } else {
+      auto share = declare("mdrtMPICollectRows", b.getFunctionType(args, {}), true);
+      func::CallOp::create(b, loc, share, ValueRange{layout.handle, owned});
+    }
+  }
   int64_t k = fieldType.getNumComponents();
   MemRefType type = mdrt::getBufferType(fieldType);
   // The buffer is handed to the program as a field, which owns it from
@@ -655,7 +665,7 @@ LogicalResult Lowering::lowerCollect(CollectOp op) {
   Value global =
       memref::AllocOp::create(b, loc, type, ValueRange{layout.count});
   scf::ForOp::create(
-      b, loc, index(b, 0), index(b, domains), index(b, 1), ValueRange(),
+      b, loc, index(b, 0), limit, index(b, 1), ValueRange(),
       [&](OpBuilder &bd, Location, Value d, ValueRange) {
         Value rows = toIndex(
             bd, memref::LoadOp::create(bd, loc, layout.rows, ValueRange{d}));
