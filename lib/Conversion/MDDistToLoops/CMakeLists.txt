@@ -1,6 +1,7 @@
 add_mlir_conversion_library(MDIRMDDistToLoops
   MDDistToLoops.cpp
   PrintSchedule.cpp
+  DriverSteps.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mdir/Conversion
@@ -10,6 +11,7 @@ add_mlir_conversion_library(MDIRMDDistToLoops
 
   LINK_LIBS PUBLIC
   MDIRMD
+  MDIRDyn
   MDIRMDDist
   MDIRMDExec
   MDIRMDRT

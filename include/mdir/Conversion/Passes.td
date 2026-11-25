@@ -756,6 +756,10 @@ def MDDistPrintSchedule
   }];
 }
 
+def MDistributeDriverSteps : Pass<"md-distribute-driver-steps", "::mlir::ModuleOp"> {
+  let summary = "Carry the velocity Verlet state on domains through output intervals";
+}
+
 def ConvertMDDistToLoops
     : Pass<"convert-md-dist-to-loops", "::mlir::ModuleOp"> {
   let summary = "Runs every domain of md_dist in one process";
