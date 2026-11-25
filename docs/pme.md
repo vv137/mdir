@@ -1384,7 +1384,18 @@ zero and `"BSPLINE"` otherwise. The prolate window takes orders 5–8
 order 4. On the GPU, positive continuity with this window uses the Gaussian
 order-4 charge assignment and force gathering kernels. The radial influence
 uses the cosine transform of the constrained density and the inverse squared
-B-spline transform on each axis. The split bandwidth comes from `bandwidth` or the usual
+B-spline transform on each axis. D[prolate-axis-fft] uses the same tables between the forward and inverse X
+transforms for either assignment window. The double mesh uses binary64
+butterflies and cross phases. On observed steps the X pass accumulates the
+energy and six independent virials before scaling the coefficient. The
+setup log and manifest record the backend and reason. For mixed TOWERS on
+`sm_89`, the measured orthorhombic meshes for the original density with
+a six-point prolate window and for C2 with eight terms and order-four
+B-spline assignment are 30³ and 48³. The latter split also qualifies on
+105 × 60 × 60. AUTO uses the axis plan on these meshes and cuFFT on
+189 × 90 × 90. The override also permits measuring unqualified meshes and
+double precision. Unsupported lengths
+such as 188 (prime factor 47) keep cuFFT. The split bandwidth comes from `bandwidth` or the usual
 `tolerance` rule. The initial automatic grid spacing is $\pi r_c/c$.
 The original aliasing refinement applies to the original density and
 prolate window. Gaussian inputs reject all three new keys. Prolate inputs

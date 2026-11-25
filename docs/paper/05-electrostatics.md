@@ -1094,12 +1094,18 @@ potential. Differentiation then preserves the cutoff zeros. Other basis
 sizes use the Chebyshev recurrence. The reciprocal calculation uses the cosine transform
 of this density. The default assignment for positive continuity is a four-point B-spline.
 Its deconvolution corrects the spline assignment while the radial factor
-retains the cosine transform of the constrained density. On the GPU,
-cuFFT transforms the charge grid and the radial product is applied before
-the inverse transform. The Gaussian product in the inverse-load callback
-(D433) and in the five-pass axis transform (D435) would change the
-reciprocal force for this split. Both prolate windows therefore use the
-separate radial product, including under automatic FFT selection.
+retains the cosine transform of the constrained density. For either window the
+five-pass FFT applies this same diagonal product in the X pass
+(D[prolate-axis-fft]). At fixed fractional sites a cell strain changes
+the inverse volume and wave vector. Write $m=\lvert\mathbf m\rvert$
+and evaluate $\hat\chi$ at $2\pi r_c m$. Differentiating
+$\hat\chi/m^2$ with respect to $\log m$ gives
+$(d\hat\chi/d\log m-2\hat\chi)/m^2$. The anisotropic virial therefore
+uses $2\hat\chi-d\hat\chi/d\log m$ with the window correction and
+the original charge power. Accumulating this expression directly also
+covers zeros of the spectrum. Force-only steps need only the scaled
+coefficient for the inverse transform. On meshes outside the axis plan,
+cuFFT uses the same product in a separate kernel.
 
 The u-series gives a different smooth decomposition using Gaussians
 [[Predescu2020]](references.md#predescu2020).
