@@ -769,6 +769,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
               mlir::cast<mlir::StringAttr>(field.getValue()).getValue().str();
         }
       }
+      if (!hasFusedInverse && record.getString("backend") == "axis" &&
+          record.getString("evaluation") == "forces")
+        pmeForceProduct = "axis_x";
       fftPlans.push_back(std::move(record));
     }
     (*module)->removeAttr(kernels::kAxisFFTPlans);

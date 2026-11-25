@@ -393,8 +393,10 @@ in a 32-bit unsigned offset. Other grids and builds use the separate pass.
 cuFFT loads NVRTC and nvJitLink when it creates the callback plan.
 See the [cuFFT callback requirements](https://docs.nvidia.com/cuda/archive/13.2.0/cufft/index.html#cufft-callback-routines).
 The setup log and the manifest field `effective.pme.force_only_product_rule`
-record `inverse_load` when the compiled program contains the callback,
-or `separate` otherwise. There is no control key.
+record `inverse_load` when the compiled program contains the D433 callback.
+Otherwise, `axis_x` identifies a force-only axis plan that multiplies the
+spectrum between the forward and inverse X transforms. The remaining
+programs report `separate`. There is no control key.
 
 The device lowering unrolls the loops over the order and promotes the
 B-spline arrays to values
