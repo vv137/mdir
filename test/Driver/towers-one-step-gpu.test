@@ -4,3 +4,12 @@
 # RUN: mdir run %t/towers-one-step.toml | FileCheck %s
 # CHECK: TOWERS launch shape {{.*}}"selection":"derived shape (no force-only region)"
 # CHECK: INFO: 1 0.0050
+
+# The manifest of a TOWERS run, with its effective structure and launch
+# shape, satisfies the public schema.
+# RUN: sed -e 's|energy_interval = 1|energy_interval = 1\nmanifest = "run.json"|' %t/towers-one-step.toml > %t/manifest.toml
+# RUN: cd %t && mdir run manifest.toml > /dev/null
+# RUN: %python %S/Inputs/manifest_schema.py %S/../../docs/run-manifest.schema.json %t/run.json | FileCheck %s --check-prefix=SCHEMA
+# RUN: %python -c "import json; e = json.loads(open('%t/run.json').readline())['effective']; print(e['neighbor_structure'], e['towers_shape']['selection'])" | FileCheck %s --check-prefix=EFFECTIVE
+# SCHEMA: valid run.json
+# EFFECTIVE: towers derived shape (no force-only region)

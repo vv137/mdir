@@ -154,17 +154,33 @@
                 "H5MD"
               ]
             },
+            "towers_shape": {
+              "type": "object",
+              "required": ["requested", "source", "selection"],
+              "properties": {
+                "requested": {"anyOf": [{"const": "AUTO"}, {"type": "object"}]},
+                "source": {"type": "object"},
+                "selection": {"type": "string"},
+                "effective": {"type": "object"},
+                "candidate_cells": {"type": "array"},
+                "launch_candidates": {"type": "array"},
+                "register_check": {"type": ["object", "string"]}
+              }
+            },
+            "towers_cell_height": {"enum": ["FULL", "HALF"]},
             "neighbor_structure_requested": {
               "enum": [
                 "auto",
                 "matrix",
-                "groups"
+                "groups",
+                "towers"
               ]
             },
             "neighbor_structure": {
               "enum": [
                 "matrix",
-                "groups"
+                "groups",
+                "towers"
               ]
             },
             "neighbor_structure_reason": {
@@ -400,7 +416,8 @@
               "items": {
                 "enum": [
                   "matrix",
-                  "groups"
+                  "groups",
+                  "towers"
                 ]
               }
             },
