@@ -582,6 +582,14 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
                      arith::ConstantOp::create(b, loc, b.getI64IntegerAttr(grid[2])),
                      edges[0], edges[1], edges[2]})
           .getResult(0);
+  for (Value group : op.getGroups()) {
+    auto type = mdrt::getMembersType(mlir::cast<md::RelationType>(group.getType()));
+    Value members = mdrt::ToBufferOp::create(b, loc, type, group);
+    auto dynamic = MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, b.getI32Type());
+    Value view = memref::CastOp::create(b, loc, dynamic, members);
+    auto apply = declare("mdrtDistGroupOwners", b.getFunctionType({i64, wide, dynamic}, {}), true);
+    func::CallOp::create(b, loc, apply, ValueRange{handle, cast, view});
+  }
   Value count = memref::DimOp::create(b, loc, positions, 0);
   Value capacity = arith::MaxUIOp::create(b, loc, count, index(b, 1));
   auto rowsType = MemRefType::get({ShapedType::kDynamic}, i64);

@@ -646,6 +646,12 @@ PartitionOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError() << "'" << name.getValue()
                          << "' does not name a decomposition";
   auto positions = cast<md::FieldType>(getPositions().getType());
+  for (Value group : getGroups()) {
+    auto relation = cast<md::RelationType>(group.getType());
+    if (!relation.getTupleSet() || relation.getParticleSet() != positions.getParticleSet() ||
+        relation.getArity() < 2 || relation.getArity() > 4)
+      return emitOpError("constraint groups require two to four members of the partitioned particle set");
+  }
   if (positions.getParticleSet() != decomposition.getParticleSetAttr())
     return emitOpError() << "the positions are of "
                          << positions.getParticleSet()

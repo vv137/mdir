@@ -207,8 +207,7 @@ LogicalResult Segment::run(scf::ForOp root) {
   SmallVector<Value> inputs(root.getInitArgs());
   llvm::append_range(inputs, parameters);
   Epoch e;
-  e.layout = dd::PartitionOp::create(b, loc, partition.getLayout().getType(),
-                                     inputs[0], cell);
+  e.layout = dd::PartitionOp::create(b, loc, partition.getLayout().getType(), inputs[0], cell, partition.getGroups());
   auto decomposition = partition.getLayout().getType().getDecomposition();
   SmallVector<Type> types;
   for (auto [i, v] : llvm::enumerate(inputs)) {
