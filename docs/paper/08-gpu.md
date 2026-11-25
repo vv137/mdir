@@ -575,7 +575,7 @@ device trap ends the run before the next kernel can publish or integrate
 the force. This also rejects an overflowing intermediate sum followed by
 cancellation.
 
-**Ordering the checked adds (D[bonded-word-atomics]).** Each component
+**Ordering the checked adds (D437).** Each component
 of the quantized force is an independent integer sum. In the modification
 order of one word, an atomic addition returns its immediate predecessor.
 Adding the same contribution to that predecessor modulo $2^{64}$ gives
