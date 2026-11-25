@@ -33,3 +33,9 @@ contract. An explicit one-domain grid selects the distributed contract.
 
 Disable wall-clock dataset timestamps for deterministic distributed HDF5
 output. Preserve checkpoint part history and integrity checks on continuation.
+
+The CPU pair executor bins the current owned and imaged ghost positions
+at each traversal. A center visits the neighboring cells, with the same
+identity predicate, strict cutoff and fixed-point arithmetic as the full
+row scan. The cell width includes a rounding margin for the separate
+image subtraction in deterministic mode.
