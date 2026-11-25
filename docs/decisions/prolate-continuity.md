@@ -1,0 +1,38 @@
+# D[prolate-continuity]
+
+Recorded at its merge.
+
+With `kernel = "PROLATE"`, `continuity` sets the number of continuous
+derivatives at the cutoff (0 through 3). At zero, omitting `basis_terms`
+uses the existing prolate spheroidal function. An explicit basis has
+between $k+2$ and 40 even Legendre terms. Positive continuity defaults
+to eight terms. The assignment `window` defaults to `"PROLATE"` at
+zero and `"BSPLINE"` otherwise. The prolate window takes orders 5–8
+(default 6) and accepts `window_bandwidth`. The B-spline window takes
+order 4. The split bandwidth comes from `bandwidth` or the usual
+`tolerance` rule. The initial automatic grid spacing is $\pi r_c/c$.
+The original aliasing refinement applies to the original density and
+prolate window. Gaussian inputs reject all three new keys. Prolate inputs
+reject explicit `beta` and `influence`.
+
+The constrained density maximizes in-band Fourier power subject to vanishing endpoint derivatives. The direct and reciprocal terms share this density. The independent assignment choice changes spreading, gathering and deconvolution together. The construction, basis-size study and prototype drift measurements are in [PME](../pme.md#cutoff-continuity-of-the-prolate-splitting).
+
+At bandwidths 9.5392, 12.024, and 14.471 the default normalized density
+agreed exactly with the original binary64 implementation at 513 equally
+spaced points. For an explicit 40-term basis, the largest absolute
+differences were $7.13\times10^{-12}$, $5.06\times10^{-10}$, and
+$5.19\times10^{-8}$. Finite-basis diagonalization therefore remains opt-in
+at zero continuity.
+
+For eight terms the shared pair region evaluates the degree-seven polynomial
+in squared distance by Horner's rule with the analytic cutoff factor. The
+force follows by differentiation of the same energy. Other explicit basis
+sizes retain Clenshaw evaluation. The [cutoff comparison](../pme.md#cutoff-continuity-of-the-prolate-splitting)
+gives the binary32 errors and the TOWERS instruction counts.
+
+The GPU uses cuFFT for both assignment windows. With cubic B-splines it
+combines spline weights and deconvolution with the radial influence of
+the selected density. A force-only step applies that influence before
+the inverse transform. Steps that request energy or virial also accumulate
+the reciprocal observables there. D433's inverse-load callback and D435's
+five-pass axis FFT implement the Gaussian product.

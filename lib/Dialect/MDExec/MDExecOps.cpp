@@ -471,6 +471,8 @@ void LinearTransformOp::getEffects(
 }
 
 LogicalResult ReciprocalOp::verify() {
+  if (getSplineAssignment() && (!getProlate() || getOrder() != 4))
+    return emitOpError() << "spline_assignment requires prolate with order 4";
   return verifyScatter(*this, getScatterAttr(), ScatterStrategy::Tile,
                        "the template of the spreading has the kernels of "
                        "tiles alone");

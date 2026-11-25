@@ -186,6 +186,41 @@ int main() {
                 epsilon, series.size(), worst, atEdge, atEdge / edge, worstSlope,
                 ok ? "ok" : "FAIL");
   }
+  for (double c : {9.5392, 12.024, 14.471}) {
+    Function original(c), defaultSplit(c, 0, 0), finiteSplit(c, 0, 40);
+    double exact = 0, finite = 0;
+    for (int i = 0; i <= 512; ++i) {
+      double x = i / 512.;
+      double reference = original.value(x) / original.halfIntegral();
+      exact = std::max(exact, std::abs(defaultSplit.value(x) / defaultSplit.halfIntegral() - reference));
+      finite = std::max(finite, std::abs(finiteSplit.value(x) / finiteSplit.halfIntegral() - reference));
+    }
+    std::printf("k=0 c=%g default max error %.8g, finite N=40 %.8g\n", c, exact, finite);
+    failures += exact != 0 || finite > 1e-7;
+  }
+  for (double c : {9.5392, 12.024, 14.471}) {
+    for (auto [k, terms] : {std::pair{1, 8}, {2, 8}, {2, 40}, {3, 8}, {3, 40}}) {
+      Function split(c, k, terms);
+      auto polynomial = split.squaredDistanceSeries();
+      llvm::SmallVector<double> series(polynomial.begin(), polynomial.end());
+      double derivatives[4];
+      for (int i = 0; i < 4; ++i) {
+        derivatives[i] = mdir::md::evaluateChebyshev(series, 1);
+        series = mdir::md::getChebyshevDerivative(series);
+      }
+      // Interior limits of 1/r - L(2(r/rc)^2-1)/rc at rc = 8 angstrom.
+      constexpr double rc = 8;
+      auto [v, d, dd, ddd] = derivatives;
+      double jumps[] = {(1 - v) / rc, (-1 - 4 * d) / (rc * rc),
+                        (2 - 4 * d - 16 * dd) / std::pow(rc, 3),
+                        (-6 - 48 * dd - 64 * ddd) / std::pow(rc, 4)};
+      bool ok = std::abs(jumps[0]) < 1e-14 && std::abs(jumps[1]) < 1e-13 &&
+                (k < 2 || std::abs(jumps[2]) < 1e-12) && (k < 3 || std::abs(jumps[3]) < 1e-10);
+      failures += !ok;
+      std::printf("C%d cutoff N=%d at c %g: %.2e %.2e %.2e %.2e %s\n",
+                  k, terms, c, jumps[0], jumps[1], jumps[2], jumps[3], ok ? "ok" : "FAIL");
+    }
+  }
   std::printf("%d failures\n", failures);
   return failures ? 1 : 0;
 }

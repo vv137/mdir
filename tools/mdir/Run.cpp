@@ -1452,8 +1452,15 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     if (program->pme && program->pmeProlate) {
       llvm::json::Object &object = *pme.getAsObject();
       object["bandwidth"] = program->pmeBandwidth;
-      object["window_bandwidth"] = program->pmeWindowBandwidth;
-      object["aliasing_estimate"] = program->pmeAliasing;
+      object["continuity"] = control->pmeContinuity;
+      if (control->pmeBasisTerms)
+        object["basis_terms"] = control->pmeBasisTerms;
+      object["window"] = control->pmeWindow;
+      if (control->pmeWindow == "PROLATE") {
+        object["window_bandwidth"] = program->pmeWindowBandwidth;
+        if (!control->pmeBasisTerms)
+          object["aliasing_estimate"] = program->pmeAliasing;
+      }
     }
     llvm::json::Object effective{
         {"seed", std::to_string(control->seed)}, {"time_step_ps", control->timestep},
@@ -1793,7 +1800,14 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   if (program->pme)
     output.log.print("MDIR: PME force-only product rule: %s\n", pmeForceProduct);
   // The parameters that the prolate kernel derives (D266).
-  if (program->pmeProlate)
+  if (program->pmeProlate && (control->pmeBasisTerms || control->pmeWindow == "BSPLINE")) {
+    output.log.print("MDIR: prolate PME, continuity %lld, c = %.6g, %s window, order %lld\n",
+                     static_cast<long long>(control->pmeContinuity), program->pmeBandwidth,
+                     control->pmeWindow.c_str(), static_cast<long long>(program->pmeOrder));
+    if (control->pmeBasisTerms)
+      output.log.print("MDIR: %lld even Legendre terms\n",
+                       static_cast<long long>(control->pmeBasisTerms));
+  } else if (program->pmeProlate)
     output.log.print("MDIR: the prolate kernel of PME: c = %.6g, c1 = %.6g, "
                      "%lld points of the window, a grid of %lld x %lld x "
                      "%lld, the aliasing estimate %.2g\n",

@@ -1294,6 +1294,7 @@ operation ::= `md.reciprocal` $positions `,` $charges `,` $cell `,` $moduli
               `grid` `(` $grid `)` `order` `(` $order `)` `beta` `(` $beta `)`
               `coulomb` `(` $coulomb `)` (`dispersion` $dispersion^)?
               (`prolate` $prolate^)?
+              (`spline_assignment` $spline_assignment^)?
               (`p3m` $p3m^)?
               (`gather_all` $gather_all^)?
               attr-dict `:` qualified(type($positions)) `,` qualified(type($charges))
@@ -1420,6 +1421,7 @@ Effects: `MemoryEffects::Effect{}`
 <tr><td><code>coulomb</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
 <tr><td><code>dispersion</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
 <tr><td><code>prolate</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
+<tr><td><code>spline_assignment</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
 <tr><td><code>p3m</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
 <tr><td><code>gather_all</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
 </table>

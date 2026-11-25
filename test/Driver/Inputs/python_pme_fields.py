@@ -104,6 +104,16 @@ def refusals():
     expect(mdir.InputError, lambda: model(prolate | {"pme_alpha": 3.0}), "'beta' is for kernel")
     expect(mdir.InputError, lambda: model({"pme_bandwidth": 12.0}),
            "'bandwidth' and 'window_bandwidth' are for kernel")
+    smooth = prolate | {"pme_continuity": 2}
+    for field, value, message in [
+        ("pme_alpha", 0.0, "'beta'"), ("pme_window_bandwidth", 0.0, "PROLATE window"),
+        ("pme_influence", mdir.PMEInfluence.SPME, "'influence'"),
+        ("pme_order", 6, "not yet supported"), ("pme_basis_terms", 3, "continuity + 2"),
+        ("pme_basis_terms", 41, "at most 40"), ("pme_continuity", 4, "0 through 3"),
+        ("pme_window", "CUBIC", "BSPLINE or PROLATE")]:
+        expect(mdir.InputError, lambda: model(smooth | {field: value}), message)
+    for field, value in [("pme_continuity", 0), ("pme_basis_terms", 8), ("pme_window", "PROLATE")]:
+        expect(mdir.InputError, lambda: model({field: value}), "is for kernel")
     print("pme fields refusals passed")
 
 

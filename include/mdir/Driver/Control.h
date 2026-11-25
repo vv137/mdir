@@ -618,6 +618,8 @@ struct Control {
   int64_t pmeGrid[3] = {0, 0, 0};
   double pmeMaxSpacing = 1.2;
   int64_t pmeOrder = 4;
+  int64_t pmeContinuity = 0, pmeBasisTerms = 0;
+  std::string pmeWindow;
   bool pmeShift = false;
   /// The influence function: that of Essmann et al. times a factor for
   /// each edge that the aliasing of the B-splines sets, as sander has it,

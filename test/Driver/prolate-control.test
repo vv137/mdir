@@ -35,6 +35,43 @@
 # RUN: not mdir run %t/floor5.toml 2>&1 | FileCheck %s --check-prefix=FLOOR5
 # FLOOR5: with 5 points of the window stays above half the tolerance 1e-09 of [pme] on every grid: {{.*}}; give more points of the window in 'order' (up to 8), a looser 'tolerance', or 'grid'
 
+# RUN: sed 's/^#PME$/continuity = 0/' %t/base.toml > %t/refused.toml
+# RUN: not mdir run %t/refused.toml 2>&1 | FileCheck %s --check-prefix=REFUSE-0
+# REFUSE-0: is for kernel
+# RUN: sed 's/^#PME$/window = "BSPLINE"/' %t/base.toml > %t/refused.toml
+# RUN: not mdir run %t/refused.toml 2>&1 | FileCheck %s --check-prefix=REFUSE-1
+# REFUSE-1: is for kernel
+# RUN: sed 's/^#PME$/basis_terms = 8/' %t/base.toml > %t/refused.toml
+# RUN: not mdir run %t/refused.toml 2>&1 | FileCheck %s --check-prefix=REFUSE-2
+# REFUSE-2: is for kernel
+# RUN: sed 's/^#PME$/kernel = "PROLATE"\ncontinuity = 4/' %t/base.toml > %t/refused.toml
+# RUN: not mdir run %t/refused.toml 2>&1 | FileCheck %s --check-prefix=REFUSE-3
+# REFUSE-3: 0 through 3
+# RUN: sed 's/^#PME$/kernel = "PROLATE"\ncontinuity = -1/' %t/base.toml > %t/refused.toml
+# RUN: not mdir run %t/refused.toml 2>&1 | FileCheck %s --check-prefix=REFUSE-4
+# REFUSE-4: at least 0
+# RUN: sed 's/^#PME$/kernel = "PROLATE"\ncontinuity = 2\nbasis_terms = 3/' %t/base.toml > %t/refused.toml
+# RUN: not mdir run %t/refused.toml 2>&1 | FileCheck %s --check-prefix=REFUSE-5
+# REFUSE-5: continuity + 2
+# RUN: sed 's/^#PME$/kernel = "PROLATE"\ncontinuity = 2\nbasis_terms = 41/' %t/base.toml > %t/refused.toml
+# RUN: not mdir run %t/refused.toml 2>&1 | FileCheck %s --check-prefix=REFUSE-6
+# REFUSE-6: at most 40
+# RUN: sed 's/^#PME$/kernel = "PROLATE"\ncontinuity = 2\nwindow = "CUBIC"/' %t/base.toml > %t/refused.toml
+# RUN: not mdir run %t/refused.toml 2>&1 | FileCheck %s --check-prefix=REFUSE-7
+# REFUSE-7: BSPLINE or PROLATE
+# RUN: sed 's/^#PME$/kernel = "PROLATE"\ncontinuity = 2\nwindow_bandwidth = 9.0/' %t/base.toml > %t/refused.toml
+# RUN: not mdir run %t/refused.toml 2>&1 | FileCheck %s --check-prefix=REFUSE-8
+# REFUSE-8: only to a PROLATE window
+# RUN: sed 's/^#PME$/kernel = "PROLATE"\ncontinuity = 2\norder = 5/' %t/base.toml > %t/refused.toml
+# RUN: not mdir run %t/refused.toml 2>&1 | FileCheck %s --check-prefix=REFUSE-9
+# REFUSE-9: not yet supported
+# RUN: sed 's/^#PME$/kernel = "PROLATE"\ncontinuity = 2\ninfluence = "SPME"/' %t/base.toml > %t/refused.toml
+# RUN: not mdir run %t/refused.toml 2>&1 | FileCheck %s --check-prefix=REFUSE-10
+# REFUSE-10: 'influence' is for kernel
+# RUN: sed 's/^#PME$/kernel = "PROLATE"\ncontinuity = 2\nbeta = 0.1/' %t/base.toml > %t/refused.toml
+# RUN: not mdir run %t/refused.toml 2>&1 | FileCheck %s --check-prefix=REFUSE-11
+# REFUSE-11: 'beta' is for kernel
+
 #--- run.toml
 [input]
 topology   = "opc.prmtop"

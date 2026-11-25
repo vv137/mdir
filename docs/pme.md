@@ -644,18 +644,21 @@ systems remains tracked by #520.
 | Keyword | Meaning | Default |
 |---|---|---|
 | `electrostatics = "PME"` in `[energy]` | Particle mesh Ewald, with the cutoff `cutoff` for the direct sum | |
-| `coulomb_modifier` in `[energy]` | `"POTENTIAL_SHIFT"` shifts the direct sum to 0 at the cutoff, as GROMACS does by default; `"NONE"` does not, as sander. **At a tolerance looser than the default, take `POTENTIAL_SHIFT` for a run at constant energy or one whose conserved energy is watched** (#346): unshifted, each pair that crosses the cutoff changes the energy by $fq_iq_j\,\mathrm{erfc}(\beta r_c)/r_c$, and the total energy of JAC (NVE, mixed precision, 2 fs, 2 ns) drifts by 281 kcal/mol/ns at `tolerance = 1e-3` (the slopes of the two halves 247 and 288) and 2.9 at `1e-4` (1.7 and 6.0); at the default $10^{-5}$ it is −0.01 (0.13 and 0.86), within the scatter of a slope. The shift changes the energy the log reports, not the forces. `NONE` stays the default, as in Amber, so that energies compare with sander's and pmemd's. The prolate kernel (`kernel = "PROLATE"`) needs no shift: its direct term $1 - \Phi(r/r_c)$ is 0 at the cutoff, and the modifier changes nothing there. | `"NONE"` |
-| `kernel` in `[pme]` | `"GAUSSIAN"`: the Gaussian splitting with B-splines; `"PROLATE"`: the prolate spheroidal wave function for both, Ewald summation with prolates (Section 7, D266) | `"GAUSSIAN"` |
+| `coulomb_modifier` in `[energy]` | `"POTENTIAL_SHIFT"` shifts the direct sum to 0 at the cutoff, as GROMACS does by default; `"NONE"` does not, as sander. **At a tolerance looser than the default, take `POTENTIAL_SHIFT` for a run at constant energy or one whose conserved energy is watched** (#346): unshifted, each pair that crosses the cutoff changes the energy by $fq_iq_j\,\mathrm{erfc}(\beta r_c)/r_c$, and the total energy of JAC (NVE, mixed precision, 2 fs, 2 ns) drifts by 281 kcal/mol/ns at `tolerance = 1e-3` (the slopes of the two halves 247 and 288) and 2.9 at `1e-4` (1.7 and 6.0); at the default $10^{-5}$ it is −0.01 (0.13 and 0.86), within the scatter of a slope. The shift changes the energy the log reports, not the forces. `NONE` stays the default, as in Amber, so that energies compare with sander's and pmemd's. The prolate kernel (`kernel = "PROLATE"`) needs no shift: $\phi(r_c)=0$ for every continuity, so the modifier leaves the prolate potential unchanged. | `"NONE"` |
+| `kernel` in `[pme]` | `"GAUSSIAN"`: the Gaussian splitting with B-splines; `"PROLATE"`: Ewald summation with prolates (Section 7, D266), with optional [cutoff continuity and window selection](#cutoff-continuity-of-the-prolate-splitting) | `"GAUSSIAN"` |
 | `beta` in `[pme]` | $\beta$, in Å⁻¹; refused with `kernel = "PROLATE"`. `mdir check` warns (`pme_cutoff_jump`) when the force of a pair of charges jumps by more than 1 kJ/mol/nm at the cutoff, as a $\beta$ of a longer cutoff makes it ([driver.md](driver.md), D395) | From `tolerance` |
 | `tolerance` in `[pme]` | The size of the tail of the splitting kernel at the cutoff. Gaussian: $\beta$ such that $\mathrm{erfc}(\beta r_c) = \texttt{tolerance}$, by bisection, as both engines find it. Prolate: the bandwidth $c$ such that $\psi_0^c(1) = \texttt{tolerance}$. **The same number gives very different force errors with the two kernels**: the Gaussian default of 10⁻⁵ gives a relative force error $\Delta = 1.4\times10^{-3}$ (JAC and Cellulose, with its default grid; $\Delta$ over the Coulomb forces of the topology, Section 7), the prolate 10⁻⁵ gives 1.0 to 1.2 × 10⁻⁵, in double precision; mixed precision adds about 10⁻⁴ with either kernel. The Gaussian's tolerance truncates the direct sum alone, as pmemd's `dsum_tol` and GROMACS's `ewald-rtol` do (both 10⁻⁵ by default), and the mesh sets $\Delta$: order 4 at about 1 Å (pmemd, MDIR) or 1.2 Å (GROMACS) gives $\Delta \approx 10^{-3}$ at the standard settings of all three. The prolate tolerance, with its grid rule, sets $\Delta$ itself: its default is about a hundred times the force accuracy of the standard settings. Looser than the default, the Gaussian's unshifted direct sum makes the energy of a run drift (JAC: 281 kcal/mol/ns at 10⁻³, 2.9 at 10⁻⁴): take `coulomb_modifier = "POTENTIAL_SHIFT"` for a run at constant energy (#346). Less than 1 | 10⁻⁵ |
+| `continuity` in `[pme]` | Continuous derivatives at the direct cutoff of the prolate split, 0 through 3 | 0 |
+| `basis_terms` in `[pme]` | Number of even Legendre terms for the prolate density, from `continuity + 2` to 40 | Original spheroidal function at zero continuity, eight terms otherwise |
+| `window` in `[pme]` | Assignment with the prolate split, `"PROLATE"` or `"BSPLINE"` | Prolate at zero continuity, B-spline otherwise |
 | `bandwidth` in `[pme]` | Prolate only: $c$, instead of the tolerance | From `tolerance` |
-| `window_bandwidth` in `[pme]` | Prolate only: $c_1$ of the window of the spreading | $c(\texttt{tolerance}/2)$ |
+| `window_bandwidth` in `[pme]` | Prolate window only: $c_1$ of the window of the spreading | $c(\texttt{tolerance}/2)$ |
 | `grid` in `[pme]` | The numbers of points of the grid along the three edges, `[nx, ny, nz]`, each 8 or more | From `max_spacing` |
 | `max_spacing` in `[pme]` | The largest spacing of the grid, in Å; each number of points is the smallest even product of 2, 3, 5, and 7 that gives no wider spacing in the cell of the file of coordinates. The grid stays as a barostat changes the cell, finer as it shrinks and coarser as it grows, and a run that continues from a checkpoint has the grid it began with | 1.2 |
-| `order` in `[pme]` | The order of the B-splines: 4, 6, or 8; prolate: the points $P$ of the window, 5 to 8 | 4; prolate 6 |
+| `order` in `[pme]` | Gaussian B-spline order 4, 6, or 8. With the prolate split, four points for B-splines or 5–8 points for the prolate window | 4 for B-splines, 6 for the prolate window |
 | `influence` in `[pme]` | `"SPME"`, `"OPTIMAL"`, or `"P3M"` (Section 1.1); refused with `kernel = "PROLATE"`; `"P3M"` refused in a triclinic cell (#475) | `"SPME"` |
 
-With `kernel = "PROLATE"` and neither `grid` nor `max_spacing` given, the
+With the default prolate density and window and neither `grid` nor `max_spacing` given, the
 grid has the modes of eq. 15 of [[Liang2026]](references.md#liang2026),
 $n_f = \lceil c L / (\pi r_c)\rceil$ along each edge, raised until the aliasing
 estimate of its eq. 10, relative to the sum it perturbs, is at most the
@@ -1368,3 +1371,62 @@ The automatic rule keeps cuFFT on all three.
 ## The axes of the grid
 
 Planned, from the roadmap (#603). TODO: the longest edge as the contiguous axis of the grid, along which the real-to-complex transform runs: cuFFT on an RTX 3090 takes 277 µs for the pair of transforms of 126 × 126 × 270 against 292 for 270 × 126 × 126 (Cellulose; 255 against 275 for 128 × 128 × 256). The spreading, the weights, the tables of D104, the products, and the gathering then take the axes permuted; nothing for a cubic cell (STMV)
+
+## Cutoff continuity of the prolate splitting
+
+With `kernel = "PROLATE"`, `continuity` sets the number of continuous
+derivatives at the cutoff (0 through 3). At zero, omitting `basis_terms`
+uses the existing prolate spheroidal function. An explicit basis has
+between $k+2$ and 40 even Legendre terms. Positive continuity defaults
+to eight terms. The assignment `window` defaults to `"PROLATE"` at
+zero and `"BSPLINE"` otherwise. The prolate window takes orders 5–8
+(default 6) and accepts `window_bandwidth`. The B-spline window takes
+order 4. On the GPU, positive continuity with this window uses the Gaussian
+order-4 charge assignment and force gathering kernels. The radial influence
+uses the cosine transform of the constrained density and the inverse squared
+B-spline transform on each axis. The split bandwidth comes from `bandwidth` or the usual
+`tolerance` rule. The initial automatic grid spacing is $\pi r_c/c$.
+The original aliasing refinement applies to the original density and
+prolate window. Gaussian inputs reject all three new keys. Prolate inputs
+reject explicit `beta` and `influence`.
+
+**Construction.** The density is $\chi(x)=\sum_{j=0}^{N-1}a_jP_{2j}(x)$ on $x=r/r_c\in[0,1]$, the split is $\phi(r)=(1-\Phi(r/r_c))/r$ with $\Phi(x)=\int_0^x\chi$ and $\Phi(1)=1$. The coefficients maximize the band concentration $a^{\mathsf T}Aa/a^{\mathsf T}Ga$ (sinc kernel of bandwidth $c$) subject to $\chi^{(m)}(1)=0$ for $m<k$. Then $\phi$ is $C^k$ at $r_c$, and the first nonzero jump is $\Delta\phi^{(k+1)}(r_c)=-\chi^{(k)}(1)/r_c^{k+2}$, from $r\phi^{(k)}+k\phi^{(k-1)}=-\chi^{(k-1)}/r_c^k$. With $k=0$ the maximizer is the prolate function of the current kernel; $\phi(r_c)=0$ holds for every $k$, so `coulomb_modifier` changes nothing for this kernel.
+
+**Why N is a key.** With many terms the constrained maximizer stays close to the unconstrained prolate function and meets the endpoint constraints in a thin layer next to $x=1$. For a degree-$n$ polynomial on $[-1,1]$, Markov's inequality gives $\lVert p'\rVert_\infty\le n^2\lVert p\rVert_\infty$. Applying the bound twice allows curvature of order $n^4$. This permits a thin endpoint layer. The concentration solve determines whether it occurs. The computed values are consistent with Markov-type endpoint scaling: for $k=2$, doubling N from 20 to 40 multiplies $\chi''(1)$ by 14.8, near $2^4$. At the leakage of the 40-term C³ prototype (N = 40, $c=9.5392$, 8 Å):
+
+| | N = 40 | N = 8 | bandwidth for equal leakage |
+|---|---:|---:|---:|
+| $k=2$: $\phi'''$ jump (Å⁻⁴) | −0.397 | −1.0e−3 | 9.539 → 9.759 |
+| $k=3$: $\phi''''$ jump (Å⁻⁵) | +16.06 | +2.2e−3 | 9.539 → 10.066 |
+
+Below N = 8 the bandwidth must rise by 21–24% for the same leakage.
+
+The primitive of the even density, divided by $x$, is a polynomial $H(u)$ of degree $N-1$ in $u=1-x^2$. With eight terms, the pair builder converts the Chebyshev coefficients to powers of $u$ in binary64. Since $1-\Phi(x)$ vanishes to order $k+1$ at one, the first $k+1$ Taylor coefficients of $H(u)$ equal those of $(1-u)^{-1/2}$. The builder subtracts these terms analytically and evaluates the remaining coefficients by Horner's rule. Taking $(1-x)^{k+1}$ outside the difference preserves the endpoint zeros during force differentiation. MATRIX, GROUPS and TOWERS share the pair region. Its arithmetic uses the pair precision. Other explicit basis sizes use Clenshaw recurrence. The reciprocal multiplier and its derivative use the cosine transform of the same normalized density.
+
+At $N=8$, $r_c=8$ Å and $c=9.5392$, the table gives maximum absolute errors per unit Coulomb prefactor against the binary64 Legendre primitive and density. The scalar comparison used separate binary32 multiplies and adds at all 2,097,153 binary32 distances from 7 through 8 Å, taking the interior limit at the endpoint.
+
+| $k$ | Clenshaw energy (Å⁻¹) | Horner with endpoint factor (Å⁻¹) | Clenshaw radial force (Å⁻²) | Differentiated Horner (Å⁻²) | Same energy, force from $\chi=u^k Q(u)$ (Å⁻²) |
+|---:|---:|---:|---:|---:|---:|
+| 0 | 3.53e−8 | 4.07e−9 | 8.60e−9 | 4.36e−9 | 5.61e−10 |
+| 1 | 3.79e−8 | 6.62e−10 | 1.07e−8 | 1.41e−9 | 2.48e−10 |
+| 2 | 3.29e−8 | 1.51e−10 | 1.24e−8 | 4.66e−10 | 2.26e−10 |
+| 3 | 3.41e−8 | 3.03e−11 | 9.93e−9 | 1.22e−10 | 1.73e−10 |
+
+Storing a separate factored density improves the radial force for $k=0,1,2$. The implementation differentiates the endpoint-factored energy, which also gives the smaller force error for $k=3$. For $k=2$, plain Horner without the endpoint factor gave energy and force errors of 1.87e−8 Å⁻¹ and 3.79e−9 Å⁻². In the moving force-only Cellulose kernel on RTX 4090, the D430 common path took 186 SASS instructions per candidate with Clenshaw, 155 with plain Horner, and 180 with the endpoint factor. The corresponding static loop sizes were 226, 195 and 220 instructions. Gaussian used 106 on the D430 common path.
+
+### Prototype measurements
+
+Cellulose, 2 fs NVE, 2 ns, mixed precision, RTX 4090. Excess is the slope minus the same-seed slope of a Gaussian control at matched force error (relative RMS force error near 6e−4), in kcal/mol/ns.
+
+These runs used the automatic traversal, which resolves to GROUPS on this system. In mixed precision GROUPS translated its retained images with a binary32 box length while particles were wrapped with the binary64 one, which made its forces non-conservative and cooled the trajectory (#966). The cooling depends on the kernel: on the integrated build with TOWERS, which does not retain images, k = 2, N = 8 minus Gaussian is −1.75 ± 4.36 kcal/mol/ns over eight seeds, and both slopes are near +55. The excesses below are therefore differences between two runs with that artifact, not properties of the splittings alone; they are kept as recorded until they are repeated with a consistent cell.
+
+| Split | Mesh | Force error | Seeds | Excess | One-sided 95% bound |
+|---|---|---:|---:|---:|---:|
+| Prolate, k = 0, tolerance 1e−3 | 168 × 84 × 84 | — | 4 | +135.2 ± 8.4 | — |
+| k = 2, N = 40 | 168 × 84 × 84 | 6.14e−4 | 4 | +39.7 ± 6.2 | — |
+| k = 3, N = 40 | 168 × 84 × 84 | 6.20e−4 | 8 | +16.2 ± 3.9 | — |
+| k = 2, N = 8 | 168 × 84 × 84 | 6.72e−4 | 8 | +3.4 ± 2.6 | < 8.3 |
+| k = 2, N = 8 | 180 × 90 × 90 | 5.66e−4 | 8 | +1.0 ± 3.9 | < 8.3 |
+| k = 3, N = 8 | 180 × 90 × 90 | 5.74e−4 | 8 | −2.1 ± 5.3 | < 7.9 |
+
+On the same mesh and seeds, k = 2 with N = 40 drifts 36.8 ± 4.4 kcal/mol/ns more than N = 8 (95% interval 22.8 to 50.9). This comparison also changes the bandwidth by 2.3% and the force error from 6.14e−4 to 6.72e−4, so it does not by itself attribute the reduction to N alone. The same N = 8 kernel on the two meshes differs by −2.4 ± 3.5 (interval −10.8 to +6.0). For N = 40 the excess was +39.7 at 2 fs and +3.1 at 1 fs; the observed time-step dependence is consistent with second-order integration error, but two time steps do not establish a scaling law. Reciprocal time on RTX 4090 at 160 × 80 × 80: 130.2 µs for k = 3, N = 40, and 132.0 µs for k = 2, N = 8.

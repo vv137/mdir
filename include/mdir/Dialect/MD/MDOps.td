@@ -921,6 +921,7 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     F64Attr:$coulomb,
     UnitAttr:$dispersion,
     UnitAttr:$prolate,
+    UnitAttr:$spline_assignment,
     UnitAttr:$p3m,
     UnitAttr:$gather_all
   );
@@ -936,6 +937,7 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     `grid` `(` $grid `)` `order` `(` $order `)` `beta` `(` $beta `)`
     `coulomb` `(` $coulomb `)` (`dispersion` $dispersion^)?
     (`prolate` $prolate^)?
+    (`spline_assignment` $spline_assignment^)?
     (`p3m` $p3m^)?
     (`gather_all` $gather_all^)?
     attr-dict `:` qualified(type($positions)) `,` qualified(type($charges))

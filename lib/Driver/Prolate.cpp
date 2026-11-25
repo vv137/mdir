@@ -16,6 +16,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "mdir/Driver/Prolate.h"
+#include "mdir/Driver/ProlateSpectrum.h"
+#include <array>
+#include <numeric>
 
 #include <algorithm>
 #include <cmath>
@@ -65,64 +68,189 @@ void gaussLegendre(int n, std::vector<double> &x, std::vector<double> &w) {
   }
 }
 
+// Project the band-concentration operator onto the null space of the first
+// k endpoint constraints in the orthonormal even Legendre basis on [0,1].
+using Basis = std::array<double, SpectrumBasis>;
+using Matrix = std::array<Basis, SpectrumBasis>;
+double dot(const Basis &a, const Basis &b) {
+  return std::inner_product(a.begin(), a.end(), b.begin(), 0.0);
+}
+
+std::vector<double> constrainedKernel(double bandwidth, int continuity, int terms) {
+  Matrix basis{}, concentration{}, eigenvectors{};
+  for (int i = 0; i < terms; ++i) {
+    int degree = 2 * i;
+    double endpoint = std::sqrt(4 * i + 1);
+    for (int m = 0; m < continuity; ++m) {
+      basis[m][i] = endpoint;
+      endpoint *= double((degree - m) * (degree + m + 1)) / (2 * (m + 1));
+    }
+    if (i >= continuity)
+      basis[i][i - continuity] = 1;
+    eigenvectors[i][i] = 1;
+  }
+  for (int i = 0; i < terms; ++i) {
+    for (int pass = 0; pass < 2; ++pass)
+      for (int j = 0; j < i; ++j) {
+        double projection = dot(basis[i], basis[j]);
+        for (int k = 0; k < terms; ++k)
+          basis[i][k] -= projection * basis[j][k];
+      }
+    double norm = std::sqrt(dot(basis[i], basis[i]));
+    for (double &v : basis[i])
+      v /= norm;
+  }
+
+  std::vector<double> nodes, weights;
+  gaussLegendre(std::max(128, static_cast<int>(bandwidth) + 64), nodes,
+                weights);
+  std::vector<Basis> values(nodes.size());
+  for (size_t i = 0; i < nodes.size(); ++i) {
+    double x = (1 + nodes[i]) / 2, prev = 1, cur = x;
+    values[i][0] = weights[i] / 2;
+    for (int k = 2; k <= 2 * (terms - 1); ++k) {
+      double next = ((2 * k - 1) * x * cur - (k - 1) * prev) / k;
+      if (k % 2 == 0)
+        values[i][k / 2] = std::sqrt(2 * k + 1) * next * weights[i] / 2;
+      prev = cur;
+      cur = next;
+    }
+  }
+  for (size_t f = 0; f < nodes.size(); ++f) {
+    double frequency = bandwidth * (1 + nodes[f]) / 2;
+    Basis spectrum{}, projected{};
+    for (size_t i = 0; i < nodes.size(); ++i) {
+      double cosine = std::cos(frequency * (1 + nodes[i]) / 2);
+      for (int k = 0; k < terms; ++k)
+        spectrum[k] += cosine * values[i][k];
+    }
+    for (int i = continuity; i < terms; ++i)
+      projected[i] = dot(basis[i], spectrum);
+    for (int i = continuity; i < terms; ++i)
+      for (int j = continuity; j < terms; ++j)
+        concentration[i][j] += weights[f] * projected[i] * projected[j];
+  }
+  // Symmetric Jacobi diagonalization in the constrained subspace.
+  for (int sweep = 0; sweep < 100; ++sweep) {
+    double off = 0;
+    for (int i = continuity; i < terms; ++i)
+      for (int j = i + 1; j < terms; ++j) {
+        double cross = concentration[i][j];
+        off = std::max(off, std::fabs(cross));
+        if (std::fabs(cross) < 1e-19)
+          continue;
+        double tau = (concentration[j][j] - concentration[i][i]) / (2 * cross);
+        double t =
+            std::copysign(1 / (std::fabs(tau) + std::hypot(1.0, tau)), tau);
+        double c = 1 / std::hypot(1.0, t), s = t * c;
+        concentration[i][i] -= t * cross;
+        concentration[j][j] += t * cross;
+        concentration[i][j] = concentration[j][i] = 0;
+        for (int k = continuity; k < terms; ++k) {
+          if (k != i && k != j) {
+            double x = concentration[k][i], y = concentration[k][j];
+            concentration[i][k] = concentration[k][i] = c * x - s * y;
+            concentration[j][k] = concentration[k][j] = s * x + c * y;
+          }
+          double x = eigenvectors[k][i], y = eigenvectors[k][j];
+          eigenvectors[k][i] = c * x - s * y;
+          eigenvectors[k][j] = s * x + c * y;
+        }
+      }
+    if (off < 2e-18)
+      break;
+  }
+  int best = continuity;
+  for (int i = continuity + 1; i < terms; ++i)
+    if (concentration[i][i] > concentration[best][best])
+      best = i;
+  std::vector<double> coefficients(2 * terms);
+  for (int k = 0; k < terms; ++k)
+    for (int i = continuity; i < terms; ++i)
+      coefficients[2 * k] +=
+          std::sqrt(4 * k + 1) * basis[i][k] * eigenvectors[i][best];
+  return coefficients;
+}
+
 } // namespace
 
-Function::Function(double bandwidth) : c(bandwidth) {
-  // Enough terms that the last coefficients are below the rounding: the
-  // coefficients decay superexponentially beyond k ≈ c.
-  int n = static_cast<int>(std::ceil(c)) + 40;
-  std::vector<double> d(n), e(n - 1);
-  double c2 = c * c;
-  for (int i = 0; i != n; ++i) {
-    double k = 2.0 * i;
-    d[i] = k * (k + 1) + c2 * (2 * k * (k + 1) - 1) / ((2 * k + 3) * (2 * k - 1));
-    if (i + 1 != n)
-      e[i] = c2 * (k + 2) * (k + 1) /
-             ((2 * k + 3) * std::sqrt((2 * k + 1) * (2 * k + 5)));
-  }
-  // The smallest eigenvalue by bisection between Gershgorin bounds.
-  double low = d[0], high = d[0];
-  for (int i = 0; i != n; ++i) {
-    double radius = (i ? std::fabs(e[i - 1]) : 0.0) +
-                    (i + 1 != n ? std::fabs(e[i]) : 0.0);
-    low = std::min(low, d[i] - radius);
-    high = std::max(high, d[i] + radius);
-  }
-  for (int iteration = 0; iteration != 200; ++iteration) {
-    double middle = 0.5 * (low + high);
-    if (middle == low || middle == high)
-      break;
-    if (countBelow(d, e, middle) >= 1)
-      high = middle;
-    else
-      low = middle;
-  }
-  // Inverse iteration with a shift just below it: (T − μ) is positive
-  // definite, so its LDLᵀ is stable without pivoting.
-  double mu = low - 1e-9 * std::max(1.0, std::fabs(low));
-  std::vector<double> v(n, 1.0), diag(n), sub(n);
-  for (int iteration = 0; iteration != 4; ++iteration) {
-    diag[0] = d[0] - mu;
-    for (int i = 1; i != n; ++i) {
-      sub[i] = e[i - 1] / diag[i - 1];
-      diag[i] = d[i] - mu - sub[i] * e[i - 1];
+const char *mdir::prolate::resolveSettings(int64_t continuity, int64_t &terms,
+                                          bool termsGiven, std::string &window,
+                                          bool windowGiven) {
+  if (continuity < 0 || continuity > 3)
+    return "supported cutoff continuity is 0 through 3";
+  if (termsGiven && (terms < continuity + 2 || terms > 40))
+    return "basis_terms must be at least continuity + 2 and at most 40";
+  if (!termsGiven)
+    terms = continuity ? 8 : 0;
+  if (!windowGiven)
+    window = continuity ? "BSPLINE" : "PROLATE";
+  if (window != "BSPLINE" && window != "PROLATE")
+    return "window must be BSPLINE or PROLATE";
+  return nullptr;
+}
+
+Function::Function(double bandwidth, int continuity, int terms) : c(bandwidth) {
+  if (terms) {
+    coefficients = constrainedKernel(c, continuity, terms);
+  } else {
+    // Enough terms that the last coefficients are below the rounding: the
+    // coefficients decay superexponentially beyond k ≈ c.
+    int n = static_cast<int>(std::ceil(c)) + 40;
+    std::vector<double> d(n), e(n - 1);
+    double c2 = c * c;
+    for (int i = 0; i != n; ++i) {
+      double k = 2.0 * i;
+      d[i] = k * (k + 1) +
+             c2 * (2 * k * (k + 1) - 1) / ((2 * k + 3) * (2 * k - 1));
+      if (i + 1 != n)
+        e[i] = c2 * (k + 2) * (k + 1) /
+               ((2 * k + 3) * std::sqrt((2 * k + 1) * (2 * k + 5)));
     }
-    for (int i = 1; i != n; ++i)
-      v[i] -= sub[i] * v[i - 1];
-    v[n - 1] /= diag[n - 1];
-    for (int i = n - 2; i >= 0; --i)
-      v[i] = (v[i] - e[i] * v[i + 1]) / diag[i];
-    double norm = 0.0;
-    for (double a : v)
-      norm += a * a;
-    norm = std::sqrt(norm);
-    for (double &a : v)
-      a /= norm;
+    // The smallest eigenvalue by bisection between Gershgorin bounds.
+    double low = d[0], high = d[0];
+    for (int i = 0; i != n; ++i) {
+      double radius = (i ? std::fabs(e[i - 1]) : 0.0) +
+                      (i + 1 != n ? std::fabs(e[i]) : 0.0);
+      low = std::min(low, d[i] - radius);
+      high = std::max(high, d[i] + radius);
+    }
+    for (int iteration = 0; iteration != 200; ++iteration) {
+      double middle = 0.5 * (low + high);
+      if (middle == low || middle == high)
+        break;
+      if (countBelow(d, e, middle) >= 1)
+        high = middle;
+      else
+        low = middle;
+    }
+    // Inverse iteration with a shift just below it: (T − μ) is positive
+    // definite, so its LDLᵀ is stable without pivoting.
+    double mu = low - 1e-9 * std::max(1.0, std::fabs(low));
+    std::vector<double> v(n, 1.0), diag(n), sub(n);
+    for (int iteration = 0; iteration != 4; ++iteration) {
+      diag[0] = d[0] - mu;
+      for (int i = 1; i != n; ++i) {
+        sub[i] = e[i - 1] / diag[i - 1];
+        diag[i] = d[i] - mu - sub[i] * e[i - 1];
+      }
+      for (int i = 1; i != n; ++i)
+        v[i] -= sub[i] * v[i - 1];
+      v[n - 1] /= diag[n - 1];
+      for (int i = n - 2; i >= 0; --i)
+        v[i] = (v[i] - e[i] * v[i + 1]) / diag[i];
+      double norm = 0.0;
+      for (double a : v)
+        norm += a * a;
+      norm = std::sqrt(norm);
+      for (double &a : v)
+        a /= norm;
+    }
+    // Σ β_k² = 1 is ∫ψ² = 1; plain Legendre coefficients a_k = β_k √(k + ½).
+    coefficients.assign(2 * n, 0.0);
+    for (int i = 0; i != n; ++i)
+      coefficients[2 * i] = v[i] * std::sqrt(2.0 * i + 0.5);
   }
-  // Σ β_k² = 1 is ∫ψ² = 1; plain Legendre coefficients a_k = β_k √(k + ½).
-  coefficients.assign(2 * n, 0.0);
-  for (int i = 0; i != n; ++i)
-    coefficients[2 * i] = v[i] * std::sqrt(2.0 * i + 0.5);
   if (value(0.0) < 0.0)
     for (double &a : coefficients)
       a = -a;
@@ -130,6 +258,8 @@ Function::Function(double bandwidth) : c(bandwidth) {
   lambda = 2.0 * coefficients[0] / value(0.0);
   c0 = integral(1.0);
   int points = std::max(200, static_cast<int>(4 * c) + 100);
+  if (terms)
+    points = std::max(points, 384);
   gaussLegendre(points, nodes, weights);
   values.resize(points);
   for (int i = 0; i != points; ++i)
@@ -437,4 +567,99 @@ std::vector<double> mdir::prolate::getSplittingTable(const Function &psi,
     }
   }
   return table;
+}
+
+double Function::endpointDerivative(int derivative) const {
+  long double result = 0.0L;
+  for (int k = derivative; k < static_cast<int>(coefficients.size()); ++k) {
+    long double factor = 1;
+    for (int j = 1; j <= derivative; ++j)
+      factor *= static_cast<long double>((k + j) * (k - j + 1)) / (2 * j);
+    result += coefficients[k] * factor;
+  }
+  return static_cast<double>(result);
+}
+
+Influence mdir::prolate::getPolynomialInfluence(const Function &psi) {
+  Influence influence;
+  influence.terms = SpectrumTerms;
+  influence.value.resize(SpectrumTerms);
+  influence.slope.resize(SpectrumTerms);
+  double norm = 2 * psi.halfIntegral();
+  for (int i = 0; i < SpectrumKnots; ++i) {
+    double k = static_cast<double>(i) / SpectrumSamplesPerUnit;
+    influence.value[i] = psi.transform(k) / norm;
+    influence.slope[i] = psi.transformDerivative(k) / (norm * SpectrumSamplesPerUnit);
+  }
+  // Integration by parts terminates at the degree of the polynomial.
+  // Values multiply sin(k)/k, slopes multiply cos(k)/k².
+  for (int i = 0; i < SpectrumBasis; ++i) {
+    double scale = (i % 2 ? -1 : 1) /
+                   (psi.halfIntegral() * std::pow(double(SpectrumTransition), 2 * i));
+    influence.value[SpectrumKnots + i] = scale * psi.endpointDerivative(2 * i);
+    influence.slope[SpectrumKnots + i] = scale * psi.endpointDerivative(2 * i + 1);
+  }
+  return influence;
+}
+
+Window mdir::prolate::getCubicWindow() {
+  Window window;
+  window.points = window.degree = window.degreeSingle = 4;
+  for (int j = 0; j < 4; ++j) {
+    auto polynomial = [j](double t, bool slope) {
+      double u = 0.5 * (t + 1), v = 1 - u;
+      switch (j) {
+      case 0:
+        return slope ? -v * v / 2 : v * v * v / 6;
+      case 1:
+        return slope ? (3 * u * u - 4 * u) / 2
+                     : (4 - 6 * u * u + 3 * u * u * u) / 6;
+      case 2:
+        return slope ? (4 * v - 3 * v * v) / 2
+                     : (4 - 6 * v * v + 3 * v * v * v) / 6;
+      default:
+        return slope ? u * u / 2 : u * u * u / 6;
+      }
+    };
+    for (bool slope : {false, true}) {
+      auto coeff =
+          getChebyshevSeries([&](double t) { return polynomial(t, slope); }, 0);
+      coeff.resize(4);
+      auto &out = slope ? window.slopes : window.values;
+      out.insert(out.end(), coeff.begin(), coeff.begin() + 4);
+    }
+  }
+  return window;
+}
+
+// Integrate the even Legendre series in its own basis, then convert the odd
+// primitive to Chebyshev form. The Legendre generating function at cos(theta)
+// factors into (1-z exp(i theta))^-1/2 and its conjugate, giving the cosine
+// coefficients below. This avoids amplifying sampling noise in derivatives.
+std::vector<double> Function::squaredDistanceSeries() const {
+  int terms = coefficients.size() / 2;
+  std::vector<double> primitive(2 * terms), binomial(2 * terms);
+  primitive[1] = coefficients[0];
+  for (int n = 2; n < 2 * terms; n += 2) {
+    double term = coefficients[n] / (2 * n + 1);
+    primitive[n + 1] += term;
+    primitive[n - 1] -= term;
+  }
+  binomial[0] = 1;
+  for (int k = 1; k < 2 * terms; ++k)
+    binomial[k] = binomial[k - 1] * (1 - 0.5 / k);
+  std::vector<double> series(terms);
+  double next = 0;
+  for (int j = terms - 1; j >= 0; --j) {
+    int m = 2 * j + 1;
+    double cosine = 0;
+    for (int n = m; n < 2 * terms; n += 2)
+      cosine += 2 * primitive[n] * binomial[(n - m) / 2] *
+                binomial[(n + m) / 2];
+    // Divide by x using 2x T_k = T_(k+1) + T_(k-1).
+    next = 2 * cosine / c0 - next;
+    series[j] = j ? next : next / 2;
+  }
+  // T_(2j)(x) = T_j(2x²-1).
+  return series;
 }

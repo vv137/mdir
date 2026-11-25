@@ -312,6 +312,7 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     UnitAttr:$dispersion,
     UnitAttr:$potential,
     UnitAttr:$prolate,
+    UnitAttr:$spline_assignment,
     UnitAttr:$p3m,
     UnitAttr:$gather_all,
     OptionalAttr<MDExec_ScatterAttr>:$scatter
@@ -329,6 +330,7 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     `coulomb` `(` $coulomb `)` (`dispersion` $dispersion^)?
     (`potential` $potential^)?
     (`prolate` $prolate^)?
+    (`spline_assignment` $spline_assignment^)?
     (`p3m` $p3m^)?
     (`listed` `(` $listed^ `:` qualified(type($listed)) `)`)?
     (`gather_all` $gather_all^)?

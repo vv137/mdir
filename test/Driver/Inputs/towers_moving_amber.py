@@ -4,11 +4,13 @@ import re
 import subprocess
 import sys
 
-inputs, work = map(Path, sys.argv[2:])
+inputs, work = map(Path, sys.argv[2:4])
+prolate = sys.argv[4:] == ["prolate"]
 
 
 def run(structure):
     control = work / (structure + ".toml")
+    split = 'kernel = "PROLATE"\ncontinuity = 2' if prolate else ""
     control.write_text(f'''[input]
 format = "AMBER"
 topology = "{inputs}/dipeptide.prmtop"
@@ -20,6 +22,7 @@ cutoff = 8.0
 electrostatics = "PME"
 [pme]
 grid = [32,32,32]
+{split}
 [dynamics]
 integrator = "VELOCITY_VERLET"
 time_step = 0.001
@@ -49,6 +52,11 @@ neighbor_structure = "{structure}"
     return terms
 
 
-matrix, towers = map(run, ("MATRIX", "TOWERS"))
-for term in matrix:
-    assert abs(matrix[term] - towers[term]) <= 0.05, (term, matrix[term], towers[term])
+matrix = run("MATRIX")
+for structure in (("GROUPS", "TOWERS") if prolate else ("TOWERS",)):
+    terms = run(structure)
+    for term, reference in matrix.items():
+        difference = abs(reference - terms[term])
+        if prolate:
+            print(structure, term, "matrix", reference, "difference", difference, "tolerance", 0.05)
+        assert difference <= 0.05, (structure, term, reference, terms[term])

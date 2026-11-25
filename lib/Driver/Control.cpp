@@ -3,6 +3,7 @@
 #include "mdir/Driver/Control.h"
 #include "mdir/Driver/Expression.h"
 #include "mdir/Driver/System.h"
+#include "mdir/Driver/Prolate.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -2433,8 +2434,8 @@ Error Reader::readMesh(const toml::table &table, double &beta,
 Error Reader::readPME(const toml::table &table) {
   if (Error error = checkKeywords(table, "pme",
                                   {"kernel", "tolerance", "beta",
-                                   "bandwidth", "window_bandwidth",
-                                   "max_spacing", "grid", "order",
+                                   "bandwidth", "window_bandwidth", "continuity",
+                                   "basis_terms", "window", "max_spacing", "grid", "order",
                                    "influence"},
                                   {}))
     return error;
@@ -2453,19 +2454,34 @@ Error Reader::readPME(const toml::table &table) {
                            "prolate kernel takes 'bandwidth' and "
                            "'window_bandwidth'");
   if (!prolate)
-    for (StringRef key : {"bandwidth", "window_bandwidth"})
+    for (StringRef key : {"bandwidth", "window_bandwidth", "continuity", "basis_terms", "window"})
       if (const toml::node *node = table.get(std::string_view(key)))
         return fail(*node, "'" + key + "' is for kernel = \"PROLATE\"");
   // The prolate kernel takes 6 points by default, and the spacing of the
   // grid from its bandwidth.
   if (prolate) {
-    control.pmeOrder = 6;
+    if (Error error = readCount(table, "continuity", control.pmeContinuity, 0))
+      return error;
+    if (Error error = readCount(table, "basis_terms", control.pmeBasisTerms, 0))
+      return error;
+    if (Error error = readString(table, "window", control.pmeWindow))
+      return error;
+    if (auto reason = mdir::prolate::resolveSettings(
+            control.pmeContinuity, control.pmeBasisTerms, table.contains("basis_terms"),
+            control.pmeWindow, table.contains("window")))
+      return fail(table, reason);
+    bool spline = control.pmeWindow == "BSPLINE";
+    if (spline && table.contains("window_bandwidth"))
+      return fail(table, "window_bandwidth applies only to a PROLATE window");
+    if (spline && table.contains("order") && table["order"].value<int64_t>() != 4)
+      return fail(table, "B-spline orders other than 4 with the prolate split are not yet supported");
+    control.pmeOrder = spline ? 4 : 6;
     control.pmeMaxSpacing = 0.0;
   }
   if (Error error = readMesh(table, control.pmeAlpha,
                              control.pmeAlphaTolerance, control.pmeGrid,
                              control.pmeMaxSpacing, control.pmeOrder,
-                             prolate))
+                             prolate && control.pmeWindow == "PROLATE"))
     return error;
   if (Error error = readPositive(table, "bandwidth", control.pmeBandwidth))
     return error;

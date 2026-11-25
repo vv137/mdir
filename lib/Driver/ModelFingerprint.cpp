@@ -198,6 +198,12 @@ Fingerprint mdir::model::getFingerprint(const System &s,
         "[" + getFingerprintInteger(s.pmeGrid[0]) + "," +
             getFingerprintInteger(s.pmeGrid[1]) + "," +
             getFingerprintInteger(s.pmeGrid[2]) + "]");
+  if (has(given.system, "pme_continuity"))
+    add("physics", "[pme] continuity", getFingerprintInteger(s.pmeContinuity));
+  if (has(given.system, "pme_basis_terms"))
+    add("physics", "[pme] basis_terms", getFingerprintInteger(s.pmeBasisTerms));
+  if (has(given.system, "pme_window"))
+    add("physics", "[pme] window", getFingerprintString(s.pmeWindow));
   if (has(given.system, "pme_order"))
     add("physics", "[pme] order", getFingerprintInteger(s.pmeOrder));
   if (has(given.system, "pme_influence"))

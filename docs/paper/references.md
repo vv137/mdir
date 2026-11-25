@@ -585,6 +585,13 @@ R. Piessens, E. de Doncker-Kapenga, C. W. Überhuber, D. K. Kahaner,
 in Computational Mathematics **1** (Springer, Berlin, 1983).
 [doi:10.1007/978-3-642-61786-7](https://doi.org/10.1007/978-3-642-61786-7)
 
+### Predescu2020
+
+C. Predescu, A. K. Lerer, R. A. Lippert, et al., “The u-series: A separable
+decomposition for electrostatics computation with improved accuracy,”
+*J. Chem. Phys.* **152**, 084113 (2020).
+[doi:10.1063/1.5129393](https://doi.org/10.1063/1.5129393)
+
 ### Press2007
 
 W. H. Press, S. A. Teukolsky, W. T. Vetterling, B. P. Flannery,

@@ -1067,3 +1067,39 @@ Gaussian kernel stays the default. The tiles serve both kernels: with them
 the prolate default took 0.83 to 0.87 times the step without tiles on
 Factor IX, Cellulose, and STMV (RTX 4090), its spreading 72, 209, and
 540 µs a step against 137, 585, and 1640.
+
+**Selectable continuity at the direct cutoff (D[prolate-continuity]).**
+For a compact splitting density write $\chi(x)=\sum_{j=0}^{N_b-1}a_jP_{2j}(x)$
+on $[-1,1]$. Parseval's identity expresses the fraction of Fourier power
+inside $[-c,c]$ as $a^T A a/(a^T G a)$. Integrating the Fourier phase over
+this band gives
+$A_{ij}=\int_{-1}^1\int_{-1}^1 P_{2i}(x)\sin(c(x-y))P_{2j}(y)/(\pi(x-y))\,dx\,dy$,
+with diagonal kernel limit $c/\pi$. Orthogonality gives
+$G_{ij}=2\delta_{ij}/(4i+1)$. The value, slope and curvature of
+$P_\ell$ at one give column $j$ of the constraint matrix for $k=3$,
+$(1,\ell(\ell+1)/2,(\ell-1)\ell(\ell+1)(\ell+2)/8)^T$, where
+$\ell=2j$. Take the first $k$ rows. For a basis $Z$ of the resulting $(N_b-k)$-dimensional null space, the leading
+generalized eigenvector of $(Z^TAZ,Z^TGZ)$ maximizes concentration in
+that space. Lift it by $Z$ and normalize its integral on $[0,1]$ to one.
+
+Inside the cutoff, $r\phi(r)=1-\Phi(r/r_c)$. Differentiating $k$ times
+gives $r\phi^{(k)}+k\phi^{(k-1)}=-\chi^{(k-1)}(r/r_c)/r_c^k$.
+Normalization sets $\phi(r_c^-)=0$. Applying the identity successively
+up to the requested order shows that the endpoint constraints match the
+corresponding derivatives to the exterior zero. Since the density is even
+of degree $2N_b-2$, $\Phi(x)/x$ is exactly a degree-$(N_b-1)$ polynomial in $2x^2-1$.
+For eight terms the pair region evaluates the polynomial by Horner's rule
+in $1-x^2$ with the factor $(1-x)^{k+1}$ extracted from the direct
+potential. Differentiation then preserves the cutoff zeros. Other basis
+sizes use the Chebyshev recurrence. The reciprocal calculation uses the cosine transform
+of this density. The default assignment for positive continuity is a four-point B-spline.
+Its deconvolution corrects the spline assignment while the radial factor
+retains the cosine transform of the constrained density. On the GPU,
+cuFFT transforms the charge grid and the radial product is applied before
+the inverse transform. The Gaussian product in the inverse-load callback
+(D433) and in the five-pass axis transform (D435) would change the
+reciprocal force for this split. Both prolate windows therefore use the
+separate radial product, including under automatic FFT selection.
+
+The u-series gives a different smooth decomposition using Gaussians
+[[Predescu2020]](references.md#predescu2020).

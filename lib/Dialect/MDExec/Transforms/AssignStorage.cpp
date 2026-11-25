@@ -11,6 +11,7 @@
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/Algebra.h"
+#include "mdir/Driver/ProlateSpectrum.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDExec/StorageSet.h"
 #include "mdir/Dialect/MDExec/Transfers.h"
@@ -1481,12 +1482,11 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
         }));
     // The factors of the influence function along the edges, three for
     // each point of each edge (D104), five with `p3m` (D304).
-    // The prolate kernel keeps its coefficients after them: at most
-    // 3 + 2 * 64 + 2 * 8 * 64 (D266).
+    // The prolate kernel stores its transform and window coefficients after them.
     scratch.push_back(
         allocate(gridType, (op.getP3m() ? 5 : 3) *
                                    (grid[0] + grid[1] + grid[2]) +
-                               (op.getProlate() ? 1280 : 0)));
+                               (op.getProlate() ? prolate::SpectrumDeviceTableWords : 0)));
     // Bricks are used only by the non-tiled f32 spreading of order 4, or
     // by the non-tiled prolate spreading. The tiled and fixed-order paths
     // never read them (D108, D282, D301).
@@ -1555,7 +1555,8 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       /*forces=*/Type(), positions, charges, mapping.lookup(op.getCell()),
       moduli, out, scratch, listed, op.getGridAttr(), op.getOrderAttr(),
       op.getBetaAttr(), op.getCoulombAttr(), op.getDispersionAttr(),
-      op.getPotentialAttr(), op.getProlateAttr(), op.getP3mAttr(),
+      op.getPotentialAttr(), op.getProlateAttr(), op.getSplineAssignmentAttr(),
+      op.getP3mAttr(),
       op.getGatherAllAttr(), onDevice ? op.getScatterAttr() : ScatterAttr());
   if (axisFFT != "off" && onDevice)
     created->setAttr("md_exec.fft_requested",

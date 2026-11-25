@@ -18,14 +18,21 @@
 #include <cstdint>
 #include <functional>
 #include <vector>
+#include <string>
 
 namespace mdir {
 namespace prolate {
 
+/// Resolve omitted basis/window settings for the control and Python front ends.
+const char *resolveSettings(int64_t continuity, int64_t &terms, bool termsGiven,
+                            std::string &window, bool windowGiven);
+
 class Function {
 public:
   /// ψ₀ᶜ of bandwidth `c` > 0.
-  explicit Function(double c);
+  explicit Function(double c, int continuity = 0, int terms = 0);
+  double endpointDerivative(int derivative) const;
+  std::vector<double> squaredDistanceSeries() const;
 
   double bandwidth() const { return c; }
   /// ψ(x), for |x| ≤ 1.
@@ -93,6 +100,7 @@ struct Window {
   std::vector<double> transformNodes, transformWeights;
 };
 Window getWindow(double c1, int64_t points);
+Window getCubicWindow();
 
 /// The spectral factor of the splitting, χ̂(k) = λ₀ ψ₀ᶜ(k/c) / (2C₀) for
 /// k ≤ c and 0 beyond, with χ̂(0) = 1 [Liang2026, eq. 5], and k χ̂'(k),
@@ -102,6 +110,7 @@ struct Influence {
   std::vector<double> value, slope;
 };
 Influence getInfluence(const Function &psi);
+Influence getPolynomialInfluence(const Function &psi);
 
 /// The parts of the splitting that the pair terms take, as functions of
 /// x = r / r_c on [0, 1] (1 beyond): `Far`, 1 − Φ(x), which multiplies
