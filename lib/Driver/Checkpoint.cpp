@@ -155,6 +155,8 @@ std::string hashState(const Checkpoint &state) {
   text(state.trajectory);
   number(state.frames);
   number(state.bath);
+  if (!state.masterCell.empty())
+    numbers(state.masterCell);
   numbers(state.barostatState);
   numbers(state.thermostatState);
   for (const char *group : fingerprintGroups)
@@ -607,6 +609,9 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
                             {checkpoint.freeEnergyLambda.size()},
                             checkpoint.freeEnergyLambda.data());
       }
+      if (!checkpoint.masterCell.empty())
+        writer.writeDataset(mdir, "master_cell", H5T_NATIVE_DOUBLE, {6},
+                            checkpoint.masterCell.data(), "nm");
       if (!checkpoint.barostatState.empty())
         writer.writeDataset(mdir, "barostat_state", H5T_NATIVE_DOUBLE,
                             {checkpoint.barostatState.size()},
@@ -802,6 +807,9 @@ mdir::driver::readCheckpoint(const std::string &path) {
                        checkpoint.bath);
   // The state of the last scaling of a barostat that scales every step
   // (D92, D119): nine numbers.
+  if (reader.has("/parameters/mdir/master_cell"))
+    reader.readDataset("/parameters/mdir/master_cell", H5T_NATIVE_DOUBLE,
+                       6, checkpoint.masterCell);
   if (reader.has("/parameters/mdir/barostat_state"))
     reader.readDataset("/parameters/mdir/barostat_state", H5T_NATIVE_DOUBLE,
                        9, checkpoint.barostatState);

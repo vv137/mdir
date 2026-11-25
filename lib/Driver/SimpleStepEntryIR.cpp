@@ -349,9 +349,11 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
         storeInitialPressure(at, point, state, evaluated.physical, true);
       }
     }
-    auto call = [&](OpBuilder &body, mdir::dyn::ProgramOp callee, const EntryFieldsIR &point, Value mu = {}) {
+    auto call = [&](OpBuilder &body, mdir::dyn::ProgramOp callee, const EntryFieldsIR &point, Value mu = {}, Value shear = {}, Value previousCell = {}) {
       SmallVector<Value> inputs{point.positions, point.velocities, point.forces, point.masses, cell, arguments.interval};
       if (mu) inputs.push_back(mu);
+      if (shear) inputs.push_back(shear);
+      if (previousCell) inputs.push_back(previousCell);
       if (scale) inputs.push_back(scale);
       llvm::append_range(inputs, buildEntryPotentialFields(point));
       if (needsCounter) {
@@ -410,7 +412,8 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           auto parameters = buildEntryPotentialFields(point);
           auto groups = buildEntryGroups(parameters, config.constraints);
           auto centers = buildGroupKinetic(inside,
-              {next.getResult(0), full, next.getResult(2), cell, point.masses,
+              {next.getResult(0), full, next.getResult(2),
+               config.binary32Cell && outputCell ? outputCell : cell, point.masses,
                arguments.interval, pressureMass, groups});
           pressureKinetic = buildSum3(inside, centers.half);
         }
@@ -505,7 +508,8 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
       cell = nextCell;
       scale = nextScale;
       auto next = call(inside, energy ? config.scaledEnergyStep : couplingProgram,
-          nextPoint, strain.scale);
+          nextPoint, strain.scale, strain.shear,
+          config.binary32Cell && !config.constraints.empty() ? outsideCell : Value{});
       bool virial = energy || config.countsAfterScaling;
       unsigned halfSlot = 3 + unsigned(energy) + 2 * unsigned(virial) + unsigned(config.leapfrog);
       return {next, completed, nextCell, work, volume, next.getResult(halfSlot),
@@ -540,7 +544,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           auto parameters = buildEntryPotentialFields(current);
           auto rigid = buildEntryGroups(parameters, config.constraints);
           centers = buildGroupKinetic(inside,
-              {current.positions, current.velocities, current.forces, cell, current.masses,
+              {current.positions, current.velocities, current.forces, config.binary32Cell ? trotter->cell : cell, current.masses,
                arguments.interval, pressureMass, rigid});
         }
         if (config.rescales) buildScaleKinetic(inside, squared, axes);
@@ -585,13 +589,13 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
         Value change = buildKineticScaleChange(inside, strain.inverse, barostat.unitVector, after);
         if (!config.exactBarostat) bath = buildBathAfterWork(inside, work, change, bath);
         result.positions = buildGroupScaling(inside,
-            {current.positions, strain.scale, oneMinus, cell, current.masses, rigid});
+            {current.positions, strain.scale, oneMinus, cell, current.masses, rigid, strain.shear});
         if (config.exactBarostat) {
           Value newCell = buildCell(inside, strain.edges);
           Value newScale;
           if (reference) newScale = buildReferenceScale(inside, strain.edges, reference);
-          // Preserve the base's site cell for EXACT trial placement/spreading (#722).
-          Value trialSiteCell = entryCell;
+          // Rounded-cell trials place and spread sites in the trial geometry.
+          Value trialSiteCell = config.binary32Cell ? newCell : entryCell;
           result.positions = buildEntrySites(inside, {result.positions, trialSiteCell, parameters, {}}, config.sites);
           Value time;
           if (config.timed) {

@@ -628,6 +628,7 @@ void _mlir_ciface_mdrtWriteMinimization(int64_t step, double energy,
 /// two i64 on the host.
 void _mlir_ciface_mdrtCheckMinimization(void *state);
 /// The cell after a barostat has changed it: its edges in nm.
+double _mlir_ciface_mdrtScaleMasterEdge(int64_t index, double scale);
 void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz);
 /// The tilts b_x, c_x, c_y of a triclinic cell that a barostat has scaled,
 /// after mdrtSetBox (docs/triclinic.md).

@@ -96,6 +96,7 @@ void mdir::driver::builder::emitRuntimeDeclarations(mlir::OpBuilder &builder,
     declare("mdrtBarostatStrainArea", signature(2, 8), {f64});
     declare("mdrtBarostatStrainHeight", signature(2, 6), {f64});
     declare("mdrtBarostatStrainAxis", signature(3, 6), {f64});
+    declare("mdrtScaleMasterEdge", {i64, f64}, {f64}, true);
     declare("mdrtSetBox", signature(0, 3), {}, true);
     declare("mdrtSetTilt", signature(0, 3), {}, true);
   }

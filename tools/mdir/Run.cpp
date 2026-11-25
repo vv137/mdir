@@ -323,6 +323,8 @@ static llvm::Expected<CompiledRun> compileEntry(mlir::ModuleOp module,
         (void *)&_mlir_ciface_mdrtWriteFreeEnergy);
     add("_mlir_ciface_mdrtWriteObservables",
         (void *)&_mlir_ciface_mdrtWriteObservables);
+    add("_mlir_ciface_mdrtScaleMasterEdge",
+        (void *)&_mlir_ciface_mdrtScaleMasterEdge);
     add("_mlir_ciface_mdrtSetBox", (void *)&_mlir_ciface_mdrtSetBox);
     add("_mlir_ciface_mdrtSetTilt", (void *)&_mlir_ciface_mdrtSetTilt);
     add("_mlir_ciface_mdrtSetBarostatState",
@@ -1556,6 +1558,12 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // the run does not count (D135): its log has no conserved energy.
   output.couples = control->getCouplingPeriod() > 0 && !control->isLangevin();
   output.changesCell = control->barostat;
+  if (control->barostat && control->precision != Precision::Double) {
+    output.checkpoint.masterCell.assign(system->inputMasterCell.begin(),
+                                        system->inputMasterCell.end());
+    if (checkpoint && !checkpoint->masterCell.empty())
+      output.checkpoint.masterCell = checkpoint->masterCell;
+  }
   output.overdamped = control->isBrownian();
   output.halfTemperature = control->isLangevin();
   output.bathKinetic = 0.5 * system->getDegreesOfFreedom() *

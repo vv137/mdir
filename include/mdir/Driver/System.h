@@ -151,6 +151,7 @@ struct System {
   double tilt[3] = {0.0, 0.0, 0.0};
   /// Applied minus supplied, in nm, in diagonal then tilt order.
   std::array<double, 6> boxRounding{};
+  std::array<double, 6> inputMasterCell{};
   void setInitialCell(const Control &control, const double edges[3],
                       const double tilts[3]);
   /// Those of the file of coordinates, where a run that continues with a

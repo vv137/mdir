@@ -22,6 +22,7 @@ struct MolecularDiagonalInputs {
 struct GroupScalingInputs {
   mlir::Value positions, scale, oneMinusScale, cell, masses;
   llvm::ArrayRef<RigidGroupIR> groups;
+  mlir::Value shear;
 };
 // totalMass is the existing vector broadcast, absent when COM is retained.
 struct GroupKineticInputs {

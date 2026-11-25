@@ -101,6 +101,8 @@ struct Checkpoint {
   /// the center of mass of the state, which the next scaling takes its
   /// pressure from, in kJ/mol; empty otherwise.
   std::vector<double> barostatState;
+  /// Binary64 master components (ax, by, cz, bx, cx, cy) for rounded cells.
+  std::vector<double> masterCell;
   /// With a Nose-Hoover chain (D163a): the positions of its thermostats,
   /// then their velocities, in the units of the run; empty otherwise.
   std::vector<double> thermostatState;

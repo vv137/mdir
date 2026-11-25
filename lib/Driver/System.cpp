@@ -201,6 +201,8 @@ void mdir::driver::applyCharmmCell(Topology &topology, const Cell &cell) {
 void System::setInitialCell(const Control &control, const double edges[3],
                             const double tilts[3]) {
   for (unsigned k = 0; k != 3; ++k) {
+    inputMasterCell[k] = edges[k];
+    inputMasterCell[k + 3] = tilts[k];
     box[k] = periodicComponent(control, edges[k]);
     tilt[k] = periodicComponent(control, tilts[k]);
     boxRounding[k] = box[k] - edges[k];

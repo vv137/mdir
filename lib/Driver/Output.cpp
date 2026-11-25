@@ -1216,6 +1216,12 @@ void _mlir_ciface_mdrtSetBarostatState(double w0, double w1, double w2,
   current->checkpoint.barostatState = {w0, w1, w2, g0, g1, g2, k0, k1, k2};
 }
 
+double _mlir_ciface_mdrtScaleMasterEdge(int64_t index, double scale) {
+  double &edge = current->checkpoint.masterCell.at(index);
+  edge *= scale;
+  return edge;
+}
+
 void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz) {
   Output &output = *current;
   double before[3] = {output.box[0], output.box[1], output.box[2]};
