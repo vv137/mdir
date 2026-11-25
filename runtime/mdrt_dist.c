@@ -89,6 +89,57 @@ struct Halo {
   int64_t *sourceDomain, *sourceRow, *ids, *image;
 };
 
+/* Word conversion is defined even for a singular pair or huge finite input. */
+int64_t mdrtDistWord(double x, double scale) {
+  double w = round(x * scale);
+  if (!(w >= -0x1p63 && w < 0x1p63))
+    fail("deterministic fixed-point term outside signed 64-bit range");
+  return (int64_t)w;
+}
+
+int64_t mdrtDistAddWords(int64_t a, int64_t b) {
+  int64_t result;
+  if (__builtin_add_overflow(a, b, &result))
+    fail("deterministic fixed-point sum exceeds signed 64-bit range");
+  return result;
+}
+
+void _mlir_ciface_mdrtDistImageShifts(int64_t handle, struct Memref3D *shifts) {
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  for (int64_t d = 0; d < h->layout->domains; ++d)
+    for (int64_t g = 0; g < h->rows[d]; ++g)
+      for (int c = 0; c < 3; ++c)
+        *at3(shifts, d, g, c) =
+            (double)h->image[3 * (d * h->capacity + g) + c] * h->layout->edges[c];
+}
+
+struct Memref3I {
+  int64_t *allocated, *aligned;
+  int64_t offset, sizes[3], strides[3];
+};
+
+static int64_t *wordAt(struct Memref3I *m, int64_t d, int64_t r, int64_t c) {
+  return m->aligned + m->offset + d*m->strides[0] + r*m->strides[1] + c*m->strides[2];
+}
+
+void _mlir_ciface_mdrtDistHaloSumWords(int64_t handle, struct Memref3I *owned,
+    struct Memref3I *ghosts, struct Memref3D *out) {
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  int64_t components = owned->sizes[2];
+  for (int64_t d = 0; d < h->layout->domains; ++d)
+    for (int64_t g = 0; g < h->rows[d]; ++g) {
+      int64_t slot = d * h->capacity + g;
+      for (int64_t c = 0; c < components; ++c) {
+        int64_t *to = wordAt(owned, h->sourceDomain[slot], h->sourceRow[slot], c);
+        *to = mdrtDistAddWords(*to, *wordAt(ghosts, d, g, c));
+      }
+    }
+  for (int64_t d = 0; d < h->layout->domains; ++d)
+    for (int64_t r = 0; r < h->layout->rows[d]; ++r)
+      for (int64_t c = 0; c < components; ++c)
+        *at3(out, d, r, c) = (double)*wordAt(owned, d, r, c) * 0x1p-40;
+}
+
 /* The cell of the grid that fractional coordinate `u` along an axis of `g`
    divisions falls in. */
 static int64_t division(double u, int64_t g) {

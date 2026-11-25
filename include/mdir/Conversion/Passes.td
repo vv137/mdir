@@ -793,6 +793,8 @@ def ConvertMDDistToLoops
                            "::mlir::scf::SCFDialect",
                            "::mlir::vector::VectorDialect"];
   let options = [
+    Option<"fixedPoint", "fixed-point", "bool", "false",
+           "use checked, decomposition-independent integer reductions">,
     Option<"haloEvents", "halo-events", "bool", /*default=*/"false",
            "emit start and immediate wait for each halo transfer; "
            "lower with --lower-mdrt-halo-events">
