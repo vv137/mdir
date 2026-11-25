@@ -149,6 +149,7 @@ private:
                                     TypeRange results, ValueRange outs,
                                     ValueRange reduce, DenseF64ArrayAttr weights,
                                     bool atomic, double scale);
+  llvm::DenseMap<Value, Value> trajectoryCaches;
   LogicalResult lowerPartition(PartitionOp op);
   LogicalResult lowerMigrate(MigrateOp op);
   LogicalResult lowerDistribute(DistributeOp op);
@@ -574,19 +575,51 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
                               b.getF64Type());
   Value cast = memref::CastOp::create(b, loc, wide, positions);
   ArrayRef<int64_t> grid = decomposition.getGrid();
-  Type i64 = b.getI64Type(), f64 = b.getF64Type();
-  func::FuncOp partition = declare(
-      mpi ? "mdrtDistMPIPartition" : "mdrtDistPartition",
-      b.getFunctionType({wide, i64, i64, i64, f64, f64, f64}, {i64}), true);
-  Value handle =
-      func::CallOp::create(
-          b, loc, partition,
-          ValueRange{cast,
-                     arith::ConstantOp::create(b, loc, b.getI64IntegerAttr(grid[0])),
-                     arith::ConstantOp::create(b, loc, b.getI64IntegerAttr(grid[1])),
-                     arith::ConstantOp::create(b, loc, b.getI64IntegerAttr(grid[2])),
-                     edges[0], edges[1], edges[2]})
-          .getResult(0);
+  Type i64 = b.getI64Type();
+  // The native constrained integrator materializes global coordinates. Keep
+  // its pair epoch across iterations with the same particle numbering.
+  // Relation operands after a spatial permutation bound the cache lifetime.
+  Value cache;
+  if (matrixPairs && matrixSkin > 0 && module->hasAttr("md_dist.driver")) {
+    HaloOp pairHalo;
+    for (Operation *user : op.getLayout().getUsers())
+      if (auto h = dyn_cast<HaloOp>(user))
+        if (llvm::any_of(h.getResult().getUsers(), [](Operation *use) {
+              return isa<NeighborhoodOp>(use);
+            }))
+          pairHalo = h;
+    if (pairHalo) {
+      scf::ForOp scope;
+      for (auto loop = op->getParentOfType<scf::ForOp>(); loop;
+           loop = loop->getParentOfType<scf::ForOp>()) {
+        if (!loop.isDefinedOutsideOfLoop(op.getCell()) ||
+            !llvm::all_of(op.getGroups(), [&](Value g) { return loop.isDefinedOutsideOfLoop(g); }))
+          break;
+        scope = loop;
+      }
+      if (scope) {
+        OpBuilder init(scope);
+        cache = func::CallOp::create(init, loc,
+            declare("mdrtDistEpochCreate", b.getFunctionType({}, {i64}), false)).getResult(0);
+        OpBuilder after(scope->getBlock(), std::next(scope->getIterator()));
+        func::CallOp::create(after, loc,
+            declare("mdrtDistEpochDestroy", b.getFunctionType({i64}, {}), false), ValueRange{cache});
+        trajectoryCaches[pairHalo.getResult()] = cache;
+        trajectoryCaches[pairHalo.getPositions()] = cache;
+      }
+    }
+  }
+  SmallVector<Value> args{cast};
+  for (int64_t n : grid)
+    args.push_back(arith::ConstantIntOp::create(b, loc, n, 64));
+  llvm::append_range(args, edges);
+  StringRef name = mpi ? "mdrtDistMPIPartition" : "mdrtDistPartition";
+  if (cache) {
+    name = "mdrtDistEpochPartition";
+    args.append({cache, real(b, matrixSkin), arith::ConstantIntOp::create(b, loc, mpi, 64)});
+  }
+  Value handle = func::CallOp::create(b, loc,
+      declare(name, b.getFunctionType(ValueRange(args).getTypes(), {i64}), true), args).getResult(0);
   for (Value group : op.getGroups()) {
     auto type = mdrt::getMembersType(mlir::cast<md::RelationType>(group.getType()));
     Value members = mdrt::ToBufferOp::create(b, loc, type, group);
@@ -701,6 +734,11 @@ LogicalResult Lowering::lowerDistribute(DistributeOp op) {
             });
         scf::YieldOp::create(bd, loc);
       });
+  if (Value cache = trajectoryCaches.lookup(op.getResult())) {
+    SmallVector<Value> args{cache, layout.handle, owned};
+    func::CallOp::create(b, loc, declare("mdrtDistEpochImages",
+        b.getFunctionType(ValueRange(args).getTypes(), {}), true), args);
+  }
   storage[op.getResult()].buffer = owned;
   return success();
 }
@@ -795,15 +833,14 @@ LogicalResult Lowering::lowerHalo(HaloOp op) {
   OpBuilder b(op);
   Storage &layout = storage[op.getLayout()];
   Value positions = storage[op.getPositions()].buffer;
-  Type i64 = b.getI64Type(), f64 = b.getF64Type();
-  auto bufferType = cast<MemRefType>(positions.getType());
-  func::FuncOp build = declare(
-      "mdrtDistHalo", b.getFunctionType({i64, bufferType, f64}, {i64}), true);
+  Type i64 = b.getI64Type();
   double reach = op.getResult().getType().getReach().convertToDouble();
-  Value handle = func::CallOp::create(
-                     b, loc, build,
-                     ValueRange{layout.handle, positions, real(b, reach)})
-                     .getResult(0);
+  SmallVector<Value> args{layout.handle, positions, real(b, reach)};
+  Value cache = trajectoryCaches.lookup(op.getResult());
+  if (cache) args.push_back(cache);
+  Value handle = func::CallOp::create(b, loc,
+      declare(cache ? "mdrtDistEpochHalo" : "mdrtDistHalo",
+              b.getFunctionType(ValueRange(args).getTypes(), {i64}), true), args).getResult(0);
   Value capacity = toIndex(
       b, func::CallOp::create(
              b, loc,
@@ -2921,6 +2958,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
   storage.clear();
   grouped.clear();
   relations.clear();
+  trajectoryCaches.clear();
   ownedEpochs.clear();
   localEpochs.clear();
   decomposition = nullptr;

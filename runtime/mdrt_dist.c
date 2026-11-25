@@ -87,6 +87,7 @@ struct Layout {
     int size;
   } *groups;
   size_t groupCount;
+  int groupsFrozen;
   int32_t *groupCenters; /* center + 1; zero for a free atom */
   int64_t *owner; /* [count]: the domain that owns each particle */
   int64_t *row;   /* [count]: its owned row there */
@@ -570,7 +571,7 @@ void _mlir_ciface_mdrtDistGroupOwners(int64_t handle, struct Memref2D *positions
   struct Layout *l = (struct Layout *)(intptr_t)handle;
   size_t count = members->sizes[0];
   int64_t size = members->sizes[1];
-  if (!count) return;
+  if (!count || l->groupsFrozen) return;
   if (size < 2 || size > 4 || count > (size_t)l->count ||
       count > SIZE_MAX / sizeof *l->groups - l->groupCount)
     fail("invalid constraint group dimensions");
@@ -1504,6 +1505,99 @@ void mdrtDistReleaseHalo(int64_t handle) {
   free(h->ids);
   free(h->image);
   free(h);
+}
+
+/* A native integrator passes replicated particle coordinates at each force
+   evaluation. Keep the layout and explicit images for the Verlet epoch.
+   The caller scopes this object to one loop with invariant group relations. */
+struct TrajectoryEpoch {
+  struct Halo *halo;
+  double *reference;
+};
+
+int64_t mdrtDistEpochCreate(void) {
+  struct TrajectoryEpoch *e = calloc(1, sizeof *e);
+  if (!e) fail("out of memory creating a trajectory epoch");
+  return (int64_t)(intptr_t)e;
+}
+
+void mdrtDistEpochDestroy(int64_t cache) {
+  struct TrajectoryEpoch *e = (struct TrajectoryEpoch *)(intptr_t)cache;
+  if (e->halo) mdrtDistReleaseHalo((int64_t)(intptr_t)e->halo);
+  free(e->reference);
+  free(e);
+}
+
+int64_t _mlir_ciface_mdrtDistEpochPartition(struct Memref2D *x, int64_t gx,
+    int64_t gy, int64_t gz, double lx, double ly, double lz,
+    int64_t cache, double skin, int64_t mpi) {
+  struct TrajectoryEpoch *e = (struct TrajectoryEpoch *)(intptr_t)cache;
+  double box[] = {lx, ly, lz};
+  int64_t n = x->sizes[0];
+  if (e->halo) {
+    struct Layout *l = e->halo->layout;
+    int valid = l->count == n && l->edges[0] == lx && l->edges[1] == ly && l->edges[2] == lz;
+    for (int64_t j = 0; valid && j < n; ++j) {
+      double r2 = 0;
+      for (int c = 0; c < 3; ++c) {
+        double dx = *at2(x,j,c) - e->reference[3*j+c];
+        dx -= box[c]*floor(dx/box[c] + 0.5);
+        r2 += dx*dx;
+      }
+      valid = r2 <= 0.25*skin*skin;
+    }
+    if (valid) {
+      mdrtDistRetainLayout((int64_t)(intptr_t)l);
+      return (int64_t)(intptr_t)l;
+    }
+    mdrtDistReleaseHalo((int64_t)(intptr_t)e->halo);
+    e->halo = NULL;
+  }
+  e->reference = realloc(e->reference, (n ? n : 1)*3*sizeof(double));
+  if (!e->reference) fail("out of memory recording trajectory positions");
+  for (int64_t j = 0; j < n; ++j)
+    for (int c = 0; c < 3; ++c)
+      e->reference[3*j+c] = *at2(x,j,c);
+#ifdef MDIR_ENABLE_MPI
+  if (mpi) return _mlir_ciface_mdrtDistMPIPartition(x,gx,gy,gz,lx,ly,lz);
+#endif
+  return _mlir_ciface_mdrtDistPartition(x,gx,gy,gz,lx,ly,lz);
+}
+
+void _mlir_ciface_mdrtDistEpochImages(int64_t cache, int64_t layout,
+                                      struct Memref3D *x) {
+  struct TrajectoryEpoch *e = (struct TrajectoryEpoch *)(intptr_t)cache;
+  if (!e->halo) return;
+  struct Layout *l = (struct Layout *)(intptr_t)layout;
+  int64_t first = 0, past = l->domains;
+#ifdef MDIR_ENABLE_MPI
+  if (l->mpi) {
+    first = mdrtMPIDomainBound(l->domains, 0);
+    past = mdrtMPIDomainBound(l->domains, 1);
+  }
+#endif
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < l->rows[d]; ++r) {
+      int64_t j = l->ids[d*l->count+r];
+      for (int c = 0; c < 3; ++c) {
+        double len = l->edges[c], ref = e->reference[3*j+c];
+        ref -= len*floor(ref/len);
+        double *v = at3(x,d,r,c);
+        *v -= len*floor((*v-ref)/len + 0.5);
+      }
+    }
+}
+
+int64_t _mlir_ciface_mdrtDistEpochHalo(int64_t layout, struct Memref3D *x,
+                                       double reach, int64_t cache) {
+  struct TrajectoryEpoch *e = (struct TrajectoryEpoch *)(intptr_t)cache;
+  if (!e->halo) {
+    e->halo = (struct Halo *)(intptr_t)_mlir_ciface_mdrtDistHalo(layout,x,reach);
+    e->halo->layout->groupsFrozen = 1;
+  }
+  int64_t handle = (int64_t)(intptr_t)e->halo;
+  mdrtDistRetainHalo(handle);
+  return handle;
 }
 
 /* The precondition under which the relation of md_dist is that of
