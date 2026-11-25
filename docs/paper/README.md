@@ -1,6 +1,6 @@
 # MDIR: A Compiler for Molecular Dynamics
 
-*Minsoo Kim — white paper of the first milestone, October 2026*
+*Minsoo Kim — white paper, revised November 2026*
 
 ## Abstract
 
@@ -8,25 +8,29 @@ MDIR compiles a run of molecular dynamics before it runs. The potential,
 the integrator, the constraints, and the couplings of a run are written
 in intermediate representations on MLIR: semantic dialects for what is
 computed and how the state advances, an execution dialect of loops over
-particles, pairs, and tuples, and a runtime dialect. Passes derive the
-forces and the virial by differentiation, with exchange contracts that
-make it legal to compute each pair once; carry neighbor structures across
-steps under a test of validity that is exact under the scaling of a
-barostat; fuse loops; assign a floating-point type to each value by its
-role; and lower the result to OpenMP or to NVIDIA GPUs, specialized to
-the topology and the parameters at hand. On one RTX 4090 in mixed
-precision, MDIR runs the systems of the Amber GPU benchmark suite, from
-23,558 to 1,067,095 atoms, at constant energy and at constant pressure,
-with the steps and the output of the suite's own inputs: from 1277 ns/day
-on JAC (23,558 atoms, 2 fs; 2406 ns/day at 4 fs) to 83 ns/day on STMV
-(1,067,095 atoms, 4 fs). [Section 10](10-performance.md) measures it
-against the target of the first milestone (D114), the rate of pmemd.cuda
-26, with both programs under one protocol on the same device, and against
-GROMACS 2026.3 on ubiquitin in OPC. The paper derives the methods as
-they are implemented, among them groups of 16 particles that share a
-list, a dual list pruned by its own exact test, and an analysis of a
-drift of the energy that showed that a closed-form solver of rigid water
-loses in single precision what an iterative one keeps.
+particles, pairs, and tuples, a target-neutral dialect of collection
+algorithms (sorts, scans, and traversals of pairs over groups), and a
+runtime dialect. Passes derive the forces and the virial by
+differentiation, with exchange contracts that make it legal to compute
+each pair once; choose and fuse the loops; assign a floating-point type
+to each value by its role; and lower the result to OpenMP or to NVIDIA
+GPUs, specialized to the topology and the parameters at hand. Three
+neighbor structures share one pair body: a matrix of neighbors; groups
+of 16 particles with a dual list pruned by its own exact test; and
+TOWERS, which keeps no list, rebuilds its cells every step, and assigns
+each pair to one GPU block by the Neutral Territory decomposition, with
+a distance screen on tensor cores and integer force sums that give the
+same force words for every launch shape. The reciprocal sum is particle
+mesh Ewald with a Gaussian or a prolate spheroidal splitting. On one RTX
+4090 in mixed precision at 2 fs, MDIR runs the systems of the Amber GPU
+benchmark suite at constant energy and at constant pressure, from 1277
+ns/day on JAC (23,558 atoms) to 145 ns/day on Cellulose (408,609 atoms);
+[Section 10](10-performance.md) compares it with pmemd.cuda 26 under one
+protocol on the same device, and with GROMACS 2026.3 on ubiquitin in
+OPC. The paper derives the methods as they are implemented, among them
+the exactness of the TOWERS screen and of its fixed-point forces, and an
+analysis of a drift of the energy that showed that a closed-form solver
+of rigid water loses in single precision what an iterative one keeps.
 
 ## Contents
 
