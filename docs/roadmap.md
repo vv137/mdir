@@ -60,7 +60,7 @@ remaining Python consumers and the duplicate-definition check follow in part 2.
 | The conserved energy of the Trotter count under a fast compression | Closed 2026-10-02, not a defect (D92); a run that changes its volume fast is checked with `work = "EXACT"` |
 | A build of the driver and runtime under AddressSanitizer and UndefinedBehaviorSanitizer | Done (`scripts/build-sanitized.sh`) |
 | The declared external-input set boundary (#607, #625) | The unit marker on `memref.cast` has a named writer and reader; the dialect checks its placement, value, and set provenance (D345). Other semantic attribute families remain in #607. |
-| Bonded work units | Experimental in mixed GPU dynamics. Q18 forces and Q32 energies have [scoped, checked int64 sums](decisions/bonded-word-atomics.md). Separate and [fused exclusion kernels](decisions/bonded-exclusion-fusion.md) reached whole-step parity on JAC and Cellulose in paired measurements. [Decision](decisions/bonded-workunits.md) |
+| Bonded work units | Experimental in mixed GPU dynamics. Q18 forces and Q32 energies have [scoped, checked int64 sums](decisions/D437.md). Separate and [fused exclusion kernels](decisions/D438.md) reached whole-step parity on JAC and Cellulose in paired measurements. [Decision](decisions/D436.md) |
 
 ## 2. The rest of the first milestone
 

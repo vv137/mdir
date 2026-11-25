@@ -1318,7 +1318,7 @@ for #951 combines the three window corrections with the radial cosine
 transform of the continuity-two, eight-term density. Its value scales the
 coefficient and weights the energy. Its radial slope also enters the virial.
 The integration and validation criteria are in the
-[decision record](decisions/pme-axis-fft.md#trp-cage-and-the-prolate-split).
+[decision record](decisions/D435.md#trp-cage-and-the-prolate-split).
 
 The real mesh is compact. For even Z, each complex row contains Z/2 + 1
 valid frequencies and occupies a multiple of four complex slots. X, Y and
