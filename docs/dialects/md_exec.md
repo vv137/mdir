@@ -1227,6 +1227,7 @@ operation ::= `md_exec.reciprocal` $positions `,` $charges `,` $cell `,` $moduli
               `coulomb` `(` $coulomb `)` (`dispersion` $dispersion^)?
               (`potential` $potential^)?
               (`prolate` $prolate^)?
+              (`spline_assignment` $spline_assignment^)?
               (`p3m` $p3m^)?
               (`listed` `(` $listed^ `:` qualified(type($listed)) `)`)?
               (`gather_all` $gather_all^)?
@@ -1320,6 +1321,7 @@ Interfaces: `MemoryEffectOpInterface`
 <tr><td><code>dispersion</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
 <tr><td><code>potential</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
 <tr><td><code>prolate</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
+<tr><td><code>spline_assignment</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
 <tr><td><code>p3m</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
 <tr><td><code>gather_all</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
 <tr><td><code>scatter</code></td><td>::mdir::md_exec::ScatterAttr</td><td>The strategy of a scatter-accumulate</td></tr>
