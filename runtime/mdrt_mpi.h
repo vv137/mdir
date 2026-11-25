@@ -17,6 +17,7 @@ void mdrtMPIExchange(double *send, int *sendCounts, int *sendOffsets,
                      double *recv, int *recvCounts, int *recvOffsets);
 int mdrtMPIAllTrue(int predicate);
 int mdrtMPIActive(void);
+void mdrtMPIGatherTimes(const double *send, double *recv, int count);
 int mdrtMPIMax(int value);
 void mdrtMPIAbort(const char *reason);
 

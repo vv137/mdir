@@ -1,4 +1,5 @@
 #include "mdrt_mpi.h"
+#include "mdrt_dist_stats.h"
 #include <limits.h>
 #include <mpi.h>
 #include <stdio.h>
@@ -19,8 +20,25 @@ static void finish(void) {
 
 int mdrtMPIActive(void) { return comm != MPI_COMM_NULL; }
 
+extern int mdrtDistObserving(void);
+extern void mdrtDistPhase(int64_t phase);
+
+// Time arrival at the payload collective with a rendezvous on the same
+// communicator. The measurement includes the latency of the barrier.
+static void arrival(void) {
+  if (size > 1 && mdrtDistObserving()) {
+    mdrtDistPhase(DistWait);
+    MPI_Barrier(comm);
+    mdrtDistPhase(-DistWait);
+  }
+}
+void mdrtMPIGatherTimes(const double *send, double *recv, int count) {
+  MPI_Gather(send, count, MPI_DOUBLE, recv, count, MPI_DOUBLE, 0, comm);
+}
+
 int mdrtMPIMax(int value) {
   int result;
+  arrival();
   MPI_Allreduce(&value, &result, 1, MPI_INT, MPI_MAX, comm);
   return result;
 }
@@ -75,6 +93,7 @@ int mdrtMPIOwner(int64_t domains, int64_t d) {
 void mdrtMPIBroadcast(double *values, int64_t count, int root) {
   while (count > 0) {
     int n = count > INT_MAX ? INT_MAX : (int)count;
+    arrival();
     MPI_Bcast(values, n, MPI_DOUBLE, root, comm);
     values += n;
     count -= n;
@@ -83,12 +102,14 @@ void mdrtMPIBroadcast(double *values, int64_t count, int root) {
 
 int mdrtMPIAllTrue(int predicate) {
   int result;
+  arrival();
   MPI_Allreduce(&predicate, &result, 1, MPI_INT, MPI_LAND, comm);
   return result;
 }
 
 void mdrtMPIExchange(double *send, int *sendCounts, int *sendOffsets,
                      double *recv, int *recvCounts, int *recvOffsets) {
+  arrival();
   MPI_Alltoallv(send, sendCounts, sendOffsets, MPI_DOUBLE,
                 recv, recvCounts, recvOffsets, MPI_DOUBLE, comm);
 }

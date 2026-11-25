@@ -30,6 +30,7 @@ class DistributionLog {
   bool setup = true;
   bool enteredStep = false;
   double reach;
+  int enclosing = 0;
   FILE *trace = nullptr;
   std::vector<int64_t> owned, ghosts;
   llvm::json::Array boxes;
@@ -174,8 +175,15 @@ class DistributionLog {
         interval = Sample(domains);
       }
       began = Clock::now();
-    } else if (code > 0) starts[code] = now;
-    else current.seconds[-code] += std::chrono::duration<double>(now-starts[-code]).count();
+    } else if (code > 0) {
+      starts[code] = now;
+      if (code != DistWait) enclosing = code;
+    } else {
+      double duration = std::chrono::duration<double>(now-starts[-code]).count();
+      current.seconds[-code] += duration;
+      if (code == -DistWait && enclosing) current.seconds[enclosing] -= duration;
+      if (code != -DistWait) enclosing = 0;
+    }
   }
 public:
   std::string error;
