@@ -852,8 +852,19 @@ LogicalResult Lowering::lowerRedistribute(RedistributeOp op) {
   Storage &next = storage[op.getNewLayout()];
   Value source = storage[op.getField()].buffer;
   int64_t components = op.getField().getType().getNumComponents();
-  Value destination = allocate(b, next.capacity, components);
   Type i64 = b.getI64Type();
+  if (sharedState() && !op.getImage() && !isMigrationPosition(op)) {
+    auto migrate = declare("mdrtDistRedistributeDevice",
+        b.getFunctionType({i64, i64, source.getType()}, {source.getType()}), true);
+    Value field = func::CallOp::create(b, loc, migrate,
+        ValueRange{old.handle, next.handle, source}).getResult(0);
+    OpBuilder cleanup(end);
+    releaseField(cleanup, field);
+    storage[op.getResult()].buffer = field;
+    return success();
+  }
+  hostRows(b, source);
+  Value destination = allocate(b, next.capacity, components);
   if (mpi && isMigrationPosition(op)) {
     auto fn = declare("mdrtDistMigratedPositions",
         b.getFunctionType({i64,destination.getType()}, {}), true);
@@ -1010,7 +1021,7 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
   }
   // A pair-only halo can scatter directly behind the owned positions.
   // The caller owns the complete device field across outlined pair groups.
-  if (gpuPairs && op.getImage() && !op.getResult().use_empty() &&
+  if (sharedState() && op.getImage() && !op.getResult().use_empty() &&
       llvm::all_of(op.getResult().getUses(), [&](OpOperand &use) {
         Operation *user = use.getOwner();
         auto n = dyn_cast<NeighborhoodOp>(user);
@@ -2885,7 +2896,7 @@ LogicalResult Lowering::lower(Operation *op) {
   // Native host consumers materialize the local slice on first read.
   // Packing, coverage and integration can pass the device version on.
   if (sharedState() && !isa<PackOp, UnpackOp, CoveredOp, MapParticlesOp,
-                             HaloCopyOp, NeighborhoodOp>(op)) {
+                             HaloCopyOp, NeighborhoodOp, RedistributeOp>(op)) {
     OpBuilder b(op);
     for (Value operand : op->getOperands())
       if (isa<FieldType>(operand.getType())) hostRows(b, storage[operand].buffer);

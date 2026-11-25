@@ -15,6 +15,11 @@ void mdrtNCCLFreePlan(struct NCCLPlan *p);
 void mdrtNCCLHalo(const struct NCCLPlan *p, double *owned, int64_t nOwned,
     double *ghosts, int k, int image, int reverse);
 double *mdrtNCCLPackedRows(const struct NCCLPlan *plan, double *owned, int64_t rows, int k, int image);
+int *mdrtNCCLUploadIndices(const int *rows, int64_t n);
+void mdrtNCCLDownloadRows(const double *source, const int *indices, int64_t rows,
+                          int width, double *host);
+void mdrtNCCLReorder(const double *owned, const double *incoming, int64_t received,
+                     const int *map, double *result, int64_t rows, int width);
 void mdrtNCCLNarrow(const double *, void *, long long);
 void mdrtNCCLFreePositions(double *positions);
 double *mdrtNCCLAllocate(size_t bytes);

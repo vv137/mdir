@@ -22,6 +22,14 @@ extern "C" __global__ void unpack(const double *wire, const int *row,
   if (transpose) atomicAdd(field + dest, wire[i]);
   else field[dest] = wire[i] + (shift ? shift[(i/k)*3+i%k] : 0.);
 }
+extern "C" __global__ void reorder(const double *owned, const double *incoming,
+    const int *map, double *result, long long rows, int width) {
+  long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= rows*width) return;
+  int row = map[i/width];
+  result[i] = row >= 0 ? owned[(long long)row*width+i%width]
+                       : incoming[(-1LL-row)*width+i%width];
+}
 extern "C" __global__ void narrow(const double *source, int *target, long long n) {
   long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
   if (i < n) target[i] = (int)source[i];
@@ -46,7 +54,7 @@ extern "C" __global__ void coverage(const double *x, const double *ref,
   if (!(r2 < limit)) atomicMax(flag,1);
 })";
 CUmodule module;
-CUfunction pack, unpack, advance, coverage, narrow;
+CUfunction pack, unpack, advance, coverage, narrow, reorder;
 
 void check(CUresult status) {
   if (status == CUDA_SUCCESS) return;
@@ -83,6 +91,7 @@ void compile() {
   check(cuModuleLoadData(&module, ptx.data()));
   check(cuModuleGetFunction(&pack, module, "pack"));
   check(cuModuleGetFunction(&unpack, module, "unpack"));
+  check(cuModuleGetFunction(&reorder, module, "reorder"));
   check(cuModuleGetFunction(&narrow, module, "narrow"));
   check(cuModuleGetFunction(&advance, module, "advance"));
   check(cuModuleGetFunction(&coverage, module, "coverage"));
@@ -128,4 +137,12 @@ extern "C" void mdrtNCCLNarrow(const double *source, void *target, long long row
   void *args[] = {&source,&target,&rows};
   check(cuLaunchKernel(narrow,(rows+255)/256,1,1,256,1,1,0,nullptr,args,nullptr));
   check(cuStreamSynchronize(nullptr));
+}
+
+extern "C" void mdrtNCCLReorderKernel(const double *owned, const double *incoming,
+    const int *map, double *result, long long rows, int width) {
+  if (!rows) return;
+  if (!module) compile();
+  void *args[] = {&owned, &incoming, &map, &result, &rows, &width};
+  check(cuLaunchKernel(reorder,(rows*width+255)/256,1,1,256,1,1,0,nullptr,args,nullptr));
 }

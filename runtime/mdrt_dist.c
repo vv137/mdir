@@ -101,6 +101,10 @@ struct Layout {
 #ifdef MDIR_ENABLE_MPI
   int64_t *migrantOffsets, *migrantIds; /* Old rank, then particle identity. */
 #endif
+#ifdef MDIR_ENABLE_NCCL
+  int *deviceMigrationMap;
+  int64_t incomingRows;
+#endif
   int64_t *owner; /* [count]: the domain that owns each particle */
   int64_t *row;   /* [count]: its owned row there */
   int64_t *rows;  /* [domains]: the number of owned rows */
@@ -943,6 +947,9 @@ void mdrtDistReleaseLayout(int64_t handle) {
   free(l->migrantOffsets);
   free(l->migrantIds);
 #endif
+#ifdef MDIR_ENABLE_NCCL
+  if (l->deviceMigrationMap) mdrtNCCLFreePositions((double *)l->deviceMigrationMap);
+#endif
   free(l->migratedPositions);
   free(l->groups);
   free(l->groupCenters);
@@ -1209,6 +1216,77 @@ void _mlir_ciface_mdrtDistRedistribute(int64_t oldHandle, int64_t newHandle,
       }
     }
 }
+
+#ifdef MDIR_ENABLE_NCCL
+/* Each rank owns one domain. Local survivors are gathered on device. A
+   negative map entry selects an arriving row in sender/identity order. */
+static void mapDeviceMigrants(struct Layout *old, struct Layout *next, int64_t d) {
+  if (next->deviceMigrationMap) return;
+  int64_t n = next->rows[d];
+  if (n > INT_MAX || old->rows[d] > INT_MAX) fail("device migration exceeds row index range");
+  int *map = malloc((n ? n : 1)*sizeof *map);
+  if (!map) fail("out of memory mapping device migration");
+  for (int64_t r = 0; r < n; ++r) {
+    int64_t j = next->ids[d*next->stride+r];
+    if (old->owner[j] == d) map[r] = (int)old->row[j];
+  }
+  for (int64_t i = 0; i < next->migrantOffsets[mdrtMPISize()]; ++i) {
+    int64_t j = next->migrantIds[i];
+    if (next->owner[j] == d) map[next->row[j]] = -1-(int)next->incomingRows++;
+  }
+  next->deviceMigrationMap = mdrtNCCLUploadIndices(map,n);
+  free(map);
+}
+
+void _mlir_ciface_mdrtDistRedistributeDevice(struct Memref3D *result,
+    int64_t oldHandle, int64_t nextHandle, struct Memref3D *source) {
+  struct Layout *old = (void *)(intptr_t)oldHandle;
+  struct Layout *next = (void *)(intptr_t)nextHandle;
+  int peers = mdrtMPISize(), rank = mdrtMPIRank();
+  int64_t d = mdrtMPIDomainBound(old->domains,0);
+  int64_t *offsets = next->migrantOffsets;
+  if (!offsets || old->domains != peers || next->domains != peers)
+    fail("device redistribution requires one domain per rank");
+  if (!offsets[peers]) {
+    // Both layouts order each domain's particles by global identity.
+    *result = *source;
+    _mlir_ciface_mdrtDistRetainField(result);
+    return;
+  }
+  int64_t width = source->sizes[2];
+  mapDeviceMigrants(old,next,d);
+  double *owned = deviceRows(source,d,old->rows[d],0);
+  double *incoming = malloc((1+(size_t)next->incomingRows)*width*sizeof(double));
+  if (!incoming) fail("out of memory receiving device migrants");
+  int64_t received = 0;
+  for (int p = 0; p < peers; ++p) {
+    int64_t count = offsets[p+1]-offsets[p];
+    if (!count) continue;
+    double *wire = malloc((size_t)count*width*sizeof(double));
+    if (!wire) fail("out of memory sharing device migrants");
+    if (p == rank) {
+      int *rows = malloc(count*sizeof *rows);
+      if (!rows) fail("out of memory mapping outgoing migrants");
+      for (int64_t r = 0; r < count; ++r)
+        rows[r] = old->row[next->migrantIds[offsets[p]+r]];
+      mdrtNCCLDownloadRows(owned,rows,count,width,wire);
+      free(rows);
+    }
+    mdrtMPIBroadcast(wire,count*width,p);
+    for (int64_t r = 0; r < count; ++r) {
+      int64_t j = next->migrantIds[offsets[p]+r];
+      if (next->owner[j] == d)
+        memcpy(incoming+(received++)*width,wire+r*width,width*sizeof(double));
+    }
+    free(wire);
+  }
+  if (received != next->incomingRows) fail("inconsistent migration row map");
+  _mlir_ciface_mdrtDistCreateField(result,next->domains,next->stride,width);
+  mdrtNCCLReorder(owned, incoming, received, next->deviceMigrationMap,
+      deviceRows(result,d,next->rows[d],1),next->rows[d],width);
+  free(incoming);
+}
+#endif
 
 /* The box of domain `d`: its region of the grid, widened to hold its owned
    positions, so that every owned particle lies in it whatever the rounding

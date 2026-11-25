@@ -260,6 +260,33 @@ void mdrtNCCLImport(double *dest, const double *device, size_t bytes) {
   checkCuda(cudaStreamSynchronize(0));
 }
 
+int *mdrtNCCLUploadIndices(const int *rows, int64_t n) {
+  int *device = (int *)mdrtNCCLAllocate(n*sizeof(int));
+  if (n) checkCuda(cudaMemcpy(device,rows,n*sizeof(int),cudaMemcpyHostToDevice));
+  return device;
+}
+
+void mdrtNCCLDownloadRows(const double *source, const int *indices, int64_t rows,
+                          int width, double *host) {
+  int *map = mdrtNCCLUploadIndices(indices,rows);
+  size_t bytes = (size_t)rows*width*sizeof(double);
+  double *wire = mdrtNCCLAllocate(bytes);
+  mdrtNCCLRows(1,source,map,wire,rows*width,width,NULL,0,NULL);
+  mdrtNCCLDownload(host,wire,bytes);
+  checkCuda(cudaFree(map));
+  checkCuda(cudaFree(wire));
+}
+
+extern void mdrtNCCLReorderKernel(const double *, const double *, const int *,
+                                  double *, long long, int);
+
+void mdrtNCCLReorder(const double *owned, const double *incoming, int64_t received,
+                     const int *map, double *result, int64_t rows, int width) {
+  double *arrivals = upload(incoming,(size_t)received*width*sizeof(double));
+  mdrtNCCLReorderKernel(owned,arrivals,map,result,rows,width);
+  checkCuda(cudaFree(arrivals));
+}
+
 void mdrtNCCLFinish(void) {
   if (!peers) return;
   checkNCCL(ncclCommDestroy(peers));
