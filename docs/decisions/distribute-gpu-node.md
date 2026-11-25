@@ -36,3 +36,36 @@ Mixed MATRIX gathers the imaged search coordinates and their translations in
 full precision. Restore the original coordinates before narrowing and subtracting
 them, then apply the image translation in kernel precision, as in the host
 MATRIX traversal. This preserves cutoff membership across periodic faces.
+
+### Stage 2
+
+The rank's packed Verlet state retains immutable field allocations. Packing or
+unpacking a state changes ownership of references. Migration constructs new
+fields in the new row order. Each field can hold a device copy of the local
+domain's rows. A kick or drift reads the device fields, writes a new device
+field and leaves its host copy unmaterialized. A coverage kernel checks the
+owned displacements and MPI combines the flags. Device force slices feed
+force combination, subsequent kicks and owned particle reductions. A host
+consumer materializes the rank's local slice on demand.
+
+For a neighborhood whose only position consumers are pair traversals, NCCL
+packs from device storage and unpacks translated ghosts directly after the
+owned positions. The pair kernel borrows the resulting field. For scalar
+pair parameters, each halo retains the combined owned and ghost rows by
+copy site and immutable input identity. All ranks agree on reuse before
+skipping the exchange. Integer particle kinds are converted on the device.
+The halo releases the stored parameters with its row maps.
+
+An exclusion-free packed Verlet epoch may reuse its device MATRIX counts,
+order and entries. Relative to the reference positions that define the halo,
+an individual row moves by at most half the halo margin. Between two force
+evaluations in that epoch each of two rows can therefore move by a full
+margin. Building candidates at the cutoff plus twice the margin covers this
+relative displacement. The pair traversal applies its original cutoff.
+Destroying the halo invalidates the cached device matrix.
+
+The host still plans ownership, migrates rows, constructs halo maps and runs
+the topology tuple and constraint paths. A host tuple or output consumer can
+require a local field slice. The constrained native integrator can also
+materialize global fields. Forward peer exchanges complete before the pair
+evaluation starts.
