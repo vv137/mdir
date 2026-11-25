@@ -69,6 +69,7 @@ struct Neighbors {
   /// them too narrow (getMatrixEntries).
   Value counts;
   Value handle;
+  Value domainMatrix, halo, imagePositions;
   /// The number of neighbors that a row holds at first.
   Value width;
   /// The configuration and the cell that the structure was built at.
@@ -376,6 +377,16 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
   Value inverse = createInverse(builder, loc, box);
 
+  Value imageShifts, imagePositions;
+  if (structure.domainMatrix && md_exec::hostpairs::getComputedType(op).isF32()) {
+    imagePositions = structure.imagePositions;
+    auto type = MemRefType::get({ShapedType::kDynamic, 3}, builder.getF64Type());
+    auto shifts = getOrDeclare("mdrtDistMatrixImages", builder.getFunctionType(
+        {builder.getI64Type(), builder.getI64Type()}, {type}));
+    shifts->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+    imageShifts = func::CallOp::create(builder, loc, shifts,
+                      ValueRange{structure.halo, structure.domainMatrix}).getResult(0);
+  }
   Value entries = getMatrixEntries(builder, loc, structure.handle);
   Value zero = createIndex(builder, loc, 0);
   Value one = createIndex(builder, loc, 1);
@@ -385,10 +396,10 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
         auto emitRow = [&](OpBuilder &at) {
           if (hostLanes)
             return emitPairRowLanes(at, op, structure.counts, entries, box,
-                                    inverse, ivs[0], *hostLanes);
+                                    inverse, ivs[0], *hostLanes, imageShifts, imagePositions);
           IRMapping local;
           return emitPairKernel(at, op, structure.counts, entries, box,
-                                inverse, ivs[0], local);
+                                inverse, ivs[0], local, nullptr, nullptr, nullptr, nullptr, imageShifts, imagePositions);
         };
         SmallVector<Value> contributions;
         if (Value selected = op.getCenterSet()) {
@@ -890,6 +901,9 @@ LogicalResult Lowering::lowerDomainMatrix(mdrt::DomainMatrixOp op) {
       {op.getHalo(), wide(op.getDomain()), wide(op.getCenters()), wide(list.size),
        createReal(b, loc, b.getF64Type(), cutoff), createReal(b, loc, b.getF64Type(), skin),
        word(op.getWidth())});
+  list.imagePositions = x;
+  list.domainMatrix = matrix;
+  list.halo = op.getHalo();
   auto countsType = MemRefType::get({ShapedType::kDynamic}, b.getI32Type());
   auto view = [&](Value selected) {
     list.handle = call("mdrtDistMatrixHandle", i64, {matrix, selected});

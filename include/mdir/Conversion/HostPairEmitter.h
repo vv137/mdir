@@ -35,7 +35,8 @@ namespace kernels {
 llvm::SmallVector<mlir::Value>
 emitPairRowLanes(mlir::OpBuilder &builder, md_exec::PairForOp op,
                  mlir::Value counts, mlir::Value index, mlir::Value box,
-                 mlir::Value inverse, mlir::Value central, int64_t lanes);
+                 mlir::Value inverse, mlir::Value central, int64_t lanes,
+                 mlir::Value imageShifts = {}, mlir::Value imagePositions = {});
 
 } // namespace kernels
 } // namespace mdir
