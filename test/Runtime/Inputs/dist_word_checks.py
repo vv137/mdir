@@ -1,9 +1,11 @@
-"""Exercise the checked add and an incomplete deterministic image payload."""
+"""Exercise an incomplete deterministic image payload."""
 import ctypes as c
 import sys
 
 lib = c.CDLL(sys.argv[1])
 word = c.c_int64
+
+
 def descriptor(shape, data):
     rank = len(shape)
     indices = word * rank

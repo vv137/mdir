@@ -1754,4 +1754,9 @@ another grid uses the same pair words and physical state as an uninterrupted
 run on the same build. Use an explicit one-domain grid for this comparison.
 Omitting the distribution table selects the ordinary driver and its existing
 floating-point reduction. A fixed-point range diagnostic identifies a term
-or partial sum that cannot be represented.
+or completed quantity that cannot be represented. Intermediate signed
+128-bit subtotals retain cancellation. Deterministic HDF5 output omits
+dataset creation timestamps. Matching invocation histories yield identical
+checkpoint files. A continuation records its part number in the checkpoint
+and includes that history in its checksum. The stored physical arrays and
+the H5MD trajectory reproduce the uninterrupted run.

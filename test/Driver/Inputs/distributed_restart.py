@@ -87,7 +87,7 @@ def run(name, domains, ranks, *, stop=False, resume=False, trace=False):
 def compare(a, b):
     assert (a / "traj.h5").read_bytes() == (b / "traj.h5").read_bytes()
     # Continuations increment the checkpoint part even for an identical physical state.
-    if not (b / "resume.log").exists():
+    if (a / "resume.log").exists() == (b / "resume.log").exists():
         assert (a / "state.h5").read_bytes() == (b / "state.h5").read_bytes()
     assert (a / "energy.dat").read_bytes() == (b / "energy.dat").read_bytes()
     for filename in ["state.h5", "traj.h5"]:
@@ -124,10 +124,13 @@ for domains, count in [(2, 1 if mpi else 0), (1, 1 if mpi else 0), (8, 2 if mpi 
     shutil.copytree(seed, root / name)
     resumed = run(name, domains, count, resume=True)
     compare(reference, resumed)
+    compare(root / "continued-2", resumed)
     if domains != 2:
         target = run(f"whole-{domains}", domains, count)
         compare(target, resumed)
 seed8 = run("stop-8", 8, ranks, stop=True)
 shutil.copytree(seed8, root / "from-8")
-compare(reference, run("from-8", 2, ranks, resume=True))
+from_eight = run("from-8", 2, ranks, resume=True)
+compare(reference, from_eight)
+compare(root / "continued-2", from_eight)
 print("all checkpoint and trajectory datasets agree bitwise across restarts")

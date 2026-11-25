@@ -28,3 +28,6 @@ Initial draws are indexed by particle ID at step zero. Deterministic drifts wrap
 checkpoint rows and evaluate each displacement from untranslated coordinates
 with an explicit image shift. The ordinary CPU path retains its numerical
 contract. An explicit one-domain grid selects the distributed contract.
+
+Disable wall-clock dataset timestamps for deterministic distributed HDF5
+output. Preserve checkpoint part history and integrity checks on continuation.
