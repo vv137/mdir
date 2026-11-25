@@ -1,0 +1,3 @@
+# REQUIRES: mpi, hdf5, h5py
+# RUN: rm -rf %t
+# RUN: %h5md_python %S/Inputs/distributed_restart.py %t %S/../../examples/argon %mpiexec
