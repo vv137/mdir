@@ -1302,8 +1302,9 @@ LogicalResult Lowering::lowerTupleRows(TupleRowsOp op) {
   if (parallelDomains && name == "mdrtDistLocalTupleRows") {
     Value halo = storage[op.getHalo()].handle;
     Type i64 = b.getI64Type();
-    auto prepare = declare("mdrtDistIndexTupleImages", b.getFunctionType({i64}, {}), false);
-    func::CallOp::create(b, loc, prepare, halo);
+    auto prepare = declare("mdrtDistIndexTupleImages", b.getFunctionType({i64, i64}, {}), false);
+    func::CallOp::create(b, loc, prepare, ValueRange{halo,
+        arith::IndexCastOp::create(b, loc, i64, count)});
     Value begin = arith::IndexCastOp::create(b, loc, i64, domainBound(b, false));
     Value end = arith::IndexCastOp::create(b, loc, i64, domainBound(b, true));
     Value chunk = index(b, 256);

@@ -1420,7 +1420,8 @@ void _mlir_ciface_mdrtDistConstraintRows(int64_t handle, struct Memref3D *positi
 
 /* Index the imported images by identity. An atom may have several images
    on one domain, including periodic images of a locally owned atom. */
-void mdrtDistIndexTupleImages(int64_t handle) {
+void mdrtDistIndexTupleImages(int64_t handle, int64_t count) {
+  if (!count) return;
   struct Halo *h = (struct Halo *)(intptr_t)handle;
   struct Layout *l = h->layout;
   if (!h->firstGhost) {
@@ -1504,7 +1505,7 @@ static void tupleRows(int64_t handle, struct Memref3D *positions,
 void _mlir_ciface_mdrtDistTupleRows(int64_t handle, struct Memref3D *positions,
                                     struct Members *members, struct Memref2I *out) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
-  if (members->sizes[0]) mdrtDistIndexTupleImages(handle);
+  mdrtDistIndexTupleImages(handle, members->sizes[0]);
   tupleRows(handle,positions,members,out,0,h->layout->domains,0,members->sizes[0]);
 }
 
@@ -1519,7 +1520,7 @@ void _mlir_ciface_mdrtDistLocalTupleRows(int64_t handle, struct Memref3D *positi
                                          struct Members *members, struct Memref2I *out) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
   int64_t domains = h->layout->domains;
-  if (members->sizes[0]) mdrtDistIndexTupleImages(handle);
+  mdrtDistIndexTupleImages(handle, members->sizes[0]);
   tupleRows(handle,positions,members,out,mdrtMPIDomainBound(domains,0),
             mdrtMPIDomainBound(domains,1),0,members->sizes[0]);
 }
