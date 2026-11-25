@@ -1729,3 +1729,8 @@ $V_d=\prod_i(L_i/g_i)$. A boundary normal to axis $i$ has area
 $V_d g_i/L_i$. Thus at fixed domain count the minimum-area factorization
 minimizes $\sum_i g_i/L_i$. D[distribute-driver] uses the same geometric
 criterion for an integer domain count as the potential rewrite.
+
+D[distribute-driver] stores the physical state in the original particle
+order at a step boundary. Restart reconstructs the partition and ghost
+images. A floating-point reduction grouped by domain can round differently
+after this reconstruction on another grid.

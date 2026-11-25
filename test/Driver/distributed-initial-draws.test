@@ -1,0 +1,3 @@
+# The original serial stream and permuted counter access agree word for word.
+# RUN: c++ -std=c++17 -O2 -I%S/../../lib/Driver %S/Inputs/initial_velocity_draws.cpp -o %t
+# RUN: %t

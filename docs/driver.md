@@ -1720,3 +1720,32 @@ uses a positive skin. Reciprocal space needs a distributed mesh, bonded
 terms and exclusions need cross-domain partners, and constraints need a
 distributed constraint solve. Analytic EAM has an IR oracle in ML2
 Section 15.
+
+The setup log and the manifest start event give the requested domain count,
+factor grids and their scores in inverse nm, the source of each choice, and
+the real-space cutoff and skin in Ang. The first halo adds a
+`domain_setup` manifest event. Each entry gives the domain, rank, lower
+and upper Cartesian bounds in Ang, owned and ghost row counts, and the
+position import in bytes (three doubles per ghost image). A rejected
+distributed control with fresh log and manifest paths records the reason
+in both. Existing diagnostics are protected and the reason goes to stderr.
+
+At each energy interval, `DIST:` rows give the latest occupancy,
+migrations since the last interval, and logical bytes per directed domain
+edge. Self-image copies count toward logical bytes. Only edges between
+different ranks count toward network payload. Rank shares divide by the sum
+over ranks for that counter. Phase times in seconds cover pair loops, other
+particle terms, halo copy and sum, ordered reduction, migration, and
+collective wait. The wall clock also includes unclassified work. The end
+table includes setup and the last partial interval. For strong-scaling
+efficiency divide a measured one-rank time by the rank count times the
+critical (maximum) wall time for the same system, grid, and step count.
+
+Set `MDIR_DIST_STEP_TRACE` to a file prefix to write per-step rows to
+`<prefix>.rank<R>.log`. Each invocation requires fresh trace paths.
+Restart uses `[output] checkpoint` and `--continue` as usual. The
+checkpoint carries the physical state in input particle order, including
+the boundary forces. It carries the seed and the absolute step. A new
+partition rebuilds ownership and halo membership before integration.
+Cross-grid floating-point sums can differ, including when reading exactly
+the same checkpoint.

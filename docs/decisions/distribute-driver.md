@@ -15,3 +15,11 @@ double output storage. The reference executor computes its domain kernels
 in double. Fixed-grid repeatability and agreement with a different grid
 are separate comparisons because each grid determines a floating-point
 sum order.
+
+Log every candidate grid score, selected geometry, import size and source
+of the traversal and transport. Sample occupancy, migrations, directed halo
+bytes and phase times at the energy cadence. Record optional rank traces
+under the prefix in `MDIR_DIST_STEP_TRACE`. Checkpoints keep their physical
+format and atomic commit. Domain and ghost records belong to the manifest.
+Initial draws are indexed by particle ID at step zero. Bitwise continuation
+across grids remains open because pair and partial sum orders vary.
