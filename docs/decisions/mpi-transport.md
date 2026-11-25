@@ -1,5 +1,7 @@
 # D[mpi-transport]
 
+Recorded at its merge.
+
 CPU ranks use MPI for the D310 halo operations. Configure with
 `-DMDIR_ENABLE_MPI=ON` and request `transport = "mpi"` inside
 `[distribute]`. The default build and the default transport use the
