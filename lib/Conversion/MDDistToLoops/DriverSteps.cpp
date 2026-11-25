@@ -49,6 +49,7 @@ Value Segment::advance(OpBuilder &b, Value field, Value slope, Value dt, Value m
   SmallVector<Value> inputs{field, slope};
   if (mass) inputs.push_back(mass);
   auto map = dd::MapParticlesOp::create(b, loc, field.getType(), inputs);
+  map->setAttr("md_dist.integration", b.getUnitAttr());
   Block *body = new Block;
   map.getKernel().push_back(body);
   for (Value input : inputs)

@@ -4,7 +4,8 @@
 
 // The compiled step and its host runtime share these event codes.
 enum DistPhase { DistPairs = 1, DistOther, DistCopy, DistSum, DistReduce,
-                 DistMigration, DistWait, DistPhaseCount, DistStep };
+                 DistMigration, DistWait, DistList, DistPack, DistIntra, DistInter,
+                 DistIntegrate, DistOutput, DistState, DistHaloBuild, DistPhaseCount, DistStep };
 struct DistObserver {
   void *context;
   void (*domain)(void *, int64_t, int64_t, int64_t, const double *, const double *);

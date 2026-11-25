@@ -103,11 +103,23 @@ struct DomainMatrix {
   int valid;
 };
 
+#ifdef MDIR_ENABLE_MPI
+struct TransferRow { int64_t domain, ghost; int peer; };
+struct TransferPlan {
+  int *counts;
+  struct TransferRow *send, *receive, *local;
+  size_t sends, receives, locals;
+};
+#endif
+
 struct Halo {
   int64_t references;
   struct Layout *layout;
   double reach;
   struct DomainMatrix *matrices;
+#ifdef MDIR_ENABLE_MPI
+  struct TransferPlan plans[2];
+#endif
   int64_t capacity; /* the most ghosts of one domain */
   int64_t *rows;    /* [domains] */
   /* [domains * capacity] each: the source's owner, its owned row, its
@@ -1217,30 +1229,67 @@ static int64_t movedRows(struct Halo *h) {
 /* Pack and consume a peer's stream in the same (domain, ghost, component)
    order on both sides. For the transpose, interleave local and remote
    contributions in that order too, preserving the oracle's sum. */
+static struct TransferPlan *transferPlan(struct Halo *h, int transpose) {
+  struct TransferPlan *plan = &h->plans[transpose];
+  if (plan->counts) return plan;
+  int peers = mdrtMPISize(), rank = mdrtMPIRank();
+  int64_t domains = h->layout->domains;
+  plan->counts = calloc((size_t)peers * 2, sizeof(int));
+  int *owners = malloc(domains * sizeof *owners);
+  if (!owners || !plan->counts) mdrtMPIAbort("out of memory planning halo");
+  for (int64_t d = 0; d < domains; ++d) owners[d] = mdrtMPIOwner(domains, d);
+  for (int pass = 0; pass < 2; ++pass) {
+    size_t ns = 0, nr = 0, nl = 0;
+    for (int64_t d = 0; d < domains; ++d)
+      for (int64_t g = 0; g < h->rows[d]; ++g) {
+        int owner = owners[h->sourceDomain[d*h->capacity+g]];
+        int from = transpose ? owners[d] : owner, to = transpose ? owner : owners[d];
+        if (from == rank && to != rank) {
+          if (pass) plan->send[ns] = (struct TransferRow){d, g, to};
+          else if (plan->counts[to] == INT_MAX) mdrtMPIAbort("halo count exceeds MPI int");
+          else ++plan->counts[to];
+          ++ns;
+        }
+        if (to != rank) continue;
+        if (!transpose && from == rank) {
+          if (pass) plan->local[nl] = (struct TransferRow){d, g, from};
+          ++nl;
+        } else {
+          if (pass) plan->receive[nr] = (struct TransferRow){d, g, from};
+          else if (from != rank) {
+            if (plan->counts[peers+from] == INT_MAX) mdrtMPIAbort("halo count exceeds MPI int");
+            ++plan->counts[peers+from];
+          }
+          ++nr;
+        }
+      }
+    if (!pass) {
+      plan->sends = ns; plan->receives = nr; plan->locals = nl;
+      plan->send = malloc(ns * sizeof *plan->send);
+      plan->receive = malloc(nr * sizeof *plan->receive);
+      plan->local = malloc(nl * sizeof *plan->local);
+      if ((ns && !plan->send) || (nr && !plan->receive) || (nl && !plan->local))
+        mdrtMPIAbort("out of memory storing halo schedule");
+    }
+  }
+  free(owners);
+  return plan;
+}
+
 static void exchangeHalo(struct Halo *h, struct Memref3D *owned,
                          struct Memref3D *ghosts, int image, int transpose,
                          struct Memref3W *ownedWords, struct Memref3W *ghostWords) {
   const int peers = mdrtMPISize(), rank = mdrtMPIRank();
+  struct TransferPlan *plan = transferPlan(h, transpose);
   int *counts = calloc((size_t)peers * 6, sizeof(int));
   if (!counts) mdrtMPIAbort("out of memory packing halo counts");
   int *ns = counts, *nr = ns + peers, *os = nr + peers, *or = os + peers;
   int *ws = or + peers, *wr = ws + peers;
-  const int64_t domains = h->layout->domains, components = ownedWords ? ownedWords->sizes[2] : owned->sizes[2];
-  for (int64_t d = 0; d < domains; ++d) {
-    int dst = mdrtMPIOwner(domains, d);
-    for (int64_t g = 0; g < h->rows[d]; ++g) {
-      int src = mdrtMPIOwner(domains, h->sourceDomain[d * h->capacity + g]);
-      if (src == dst) continue;
-      int sender = transpose ? dst : src, receiver = transpose ? src : dst;
-      if (sender == rank) {
-        if (ns[receiver] > INT_MAX - components) mdrtMPIAbort("halo count exceeds MPI int");
-        ns[receiver] += components;
-      }
-      if (receiver == rank) {
-        if (nr[sender] > INT_MAX - components) mdrtMPIAbort("halo count exceeds MPI int");
-        nr[sender] += components;
-      }
-    }
+  int64_t components = ownedWords ? ownedWords->sizes[2] : owned->sizes[2];
+  for (int p = 0; p < 2*peers; ++p) {
+    if (components && plan->counts[p] > INT_MAX / components)
+      mdrtMPIAbort("halo count exceeds MPI int");
+    counts[p] = plan->counts[p] * components;
   }
   int sendSize = 0, recvSize = 0;
   for (int p = 0; p < peers; ++p) {
@@ -1255,41 +1304,45 @@ static void exchangeHalo(struct Halo *h, struct Memref3D *owned,
   void *send = malloc((size_t)(sendSize ? sendSize : 1) * bytes);
   void *recv = malloc((size_t)(recvSize ? recvSize : 1) * bytes);
   if (!send || !recv) mdrtMPIAbort("out of memory packing halo rows");
-  for (int pass = 0; pass < 2; ++pass) {
-    if (pass) mdrtMPIExchange(send, ns, os, recv, nr, or, ownedWords != NULL);
-    for (int64_t d = 0; d < domains; ++d) {
-      int dst = mdrtMPIOwner(domains, d);
-      for (int64_t g = 0; g < h->rows[d]; ++g) {
-        int64_t i = d * h->capacity + g;
-        int64_t dom = h->sourceDomain[i], row = h->sourceRow[i];
-        int src = mdrtMPIOwner(domains, dom);
-        int sender = transpose ? dst : src, receiver = transpose ? src : dst;
-        if ((!pass && (sender != rank || receiver == rank)) ||
-            (pass && receiver != rank)) continue;
-        for (int64_t c = 0; c < components; ++c) {
-          if (ownedWords) {
-            DistWide *from = wordAt(ghostWords, d, g, c);
-            if (!pass) ((DistWide *)send)[ws[receiver]++] = *from;
-            else {
-              DistWide term = sender == rank ? *from : ((DistWide *)recv)[wr[sender]++];
-              DistWide *to = wordAt(ownedWords, dom, row, c);
-              *to = mdrtDistAddWide(*to, term);
-            }
-            continue;
-          }
-          double *a = at3(owned, dom, row, c), *b = at3(ghosts, d, g, c);
-          if (!pass) ((double *)send)[ws[receiver]++] = transpose ? *b : *a;
+  for (int pass = 0; pass < 3; ++pass) {
+    if (pass == 1 && peers > 1) {
+      if (!transpose) mdrtDistPhase(DistInter);
+      mdrtMPIExchange(send, ns, os, recv, nr, or, ownedWords != NULL);
+      if (!transpose) mdrtDistPhase(-DistInter);
+    }
+    size_t length = pass == 0 ? plan->sends : pass == 1 ? plan->receives : plan->locals;
+    if (!length) continue;
+    struct TransferRow *rows = pass == 0 ? plan->send : pass == 1 ? plan->receive : plan->local;
+    int phase = pass == 0 ? DistPack : pass == 1 ? DistInter : DistIntra;
+    if (!transpose) mdrtDistPhase(phase);
+    for (size_t k = 0; k < length; ++k) {
+      int64_t d = rows[k].domain, g = rows[k].ghost, i = d*h->capacity+g;
+      int64_t dom = h->sourceDomain[i], row = h->sourceRow[i];
+      int peer = rows[k].peer;
+      for (int64_t c = 0; c < components; ++c) {
+        if (ownedWords) {
+          DistWide *from = wordAt(ghostWords, d, g, c);
+          if (!pass) ((DistWide *)send)[ws[peer]++] = *from;
           else {
-            double v = sender == rank ? (transpose ? *b : *a) : ((double *)recv)[wr[sender]++];
-            if (transpose) *a += v;
-            else {
-              if (image) v += (double)h->image[3*i+c] * h->layout->edges[c];
-              *b = v;
-            }
+            DistWide term = peer == rank ? *from : ((DistWide *)recv)[wr[peer]++];
+            DistWide *to = wordAt(ownedWords, dom, row, c);
+            *to = mdrtDistAddWide(*to, term);
+          }
+          continue;
+        }
+        double *a = at3(owned, dom, row, c), *b = at3(ghosts, d, g, c);
+        if (!pass) ((double *)send)[ws[peer]++] = transpose ? *b : *a;
+        else {
+          double v = peer == rank ? (transpose ? *b : *a) : ((double *)recv)[wr[peer]++];
+          if (transpose) *a += v;
+          else {
+            if (image) v += (double)h->image[3*i+c] * h->layout->edges[c];
+            *b = v;
           }
         }
       }
     }
+    if (!transpose) mdrtDistPhase(-phase);
   }
   free(send); free(recv); free(counts);
 }
@@ -1438,6 +1491,14 @@ void mdrtDistReleaseHalo(int64_t handle) {
   }
   free(h->rows);
   free(h->edges);
+#ifdef MDIR_ENABLE_MPI
+  for (int i = 0; i < 2; ++i) {
+    free(h->plans[i].counts);
+    free(h->plans[i].send);
+    free(h->plans[i].receive);
+    free(h->plans[i].local);
+  }
+#endif
   free(h->sourceDomain);
   free(h->sourceRow);
   free(h->ids);
