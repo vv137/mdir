@@ -933,6 +933,26 @@ LogicalResult NeighborhoodOp::verify() {
   return proveCovers(*this, getHalo(), getPositions(), radius);
 }
 
+LogicalResult TupleRowsOp::verify() {
+  auto relation = cast<md::RelationType>(getTuples().getType());
+  auto decomposition = SymbolTable::lookupNearestSymbolFrom<DecompositionOp>(
+      *this, getHalo().getType().getDecomposition());
+  auto rows = getRows().getType();
+  if (!relation.getTupleSet() || !decomposition ||
+      relation.getParticleSet() != decomposition.getParticleSetAttr() ||
+      relation.getArity() < 2)
+    return emitOpError("expected a topology tuple set on the halo's particle set");
+  if (rows.getRank() != 2 || !rows.isDynamicDim(0) ||
+      rows.getDimSize(1) != int64_t(1 + relation.getArity()) ||
+      !rows.getLayout().isIdentity() || rows.getMemorySpace())
+    return emitOpError("expected a host row containing the owner followed by every member");
+  if (getPositions().getType().getNumComponents() != 3 ||
+      !getPositions().getType().getElementType().isF64() ||
+      failed(verifyOwnedComplete(*this, "tuple positions", getPositions())))
+    return emitOpError("tuple ownership requires complete f64 positions");
+  return verifySameLayout(*this, "tuple positions", getPositions(), layoutOf(getHalo()));
+}
+
 LogicalResult PartitionCentersOp::verify() {
   return succeeded(proveCenterPartition(*this)) ? success() : failure();
 }

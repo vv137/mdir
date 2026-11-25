@@ -454,6 +454,24 @@ def MDDist_NeighborhoodOp : MDDist_Op<"neighborhood", [Pure]> {
   let hasVerifier = 1;
 }
 
+def MDDist_TupleRowsOp : MDDist_Op<"tuple_rows", [Pure]> {
+  let summary = "Locate every topology tuple at its periodic midpoint owner";
+  let description = [{
+    One row per input tuple in input order. Column zero names its unique
+    domain. Each subsequent column names the corresponding local member
+    (owned rows, then ghost rows). A missing member is a coverage error.
+    The executor resolves the integer images again at current positions.
+  }];
+  let arguments = (ins MD_RelationType:$tuples, MDDist_FieldType:$positions,
+                       MDDist_HaloType:$halo);
+  let results = (outs I64MemRef:$rows);
+  let assemblyFormat = [{
+    $tuples `,` $positions `,` $halo attr-dict `:` type($tuples) `,`
+    qualified(type($positions)) `,` qualified(type($halo)) `->` type($rows)
+  }];
+  let hasVerifier = 1;
+}
+
 def MDDist_PartitionCentersOp : MDDist_Op<"partition_centers", [Pure]> {
   let summary = "Partition owned centers by ghost membership in one relation";
   let description = [{
