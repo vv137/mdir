@@ -192,6 +192,8 @@ LogicalResult Segment::run(scf::ForOp root) {
 }
 
 class DriverSteps : public impl::MDistributeDriverStepsBase<DriverSteps> {
+public:
+  using MDistributeDriverStepsBase::MDistributeDriverStepsBase;
   void runOnOperation() final {
     SmallVector<scf::ForOp> roots;
     getOperation().walk([&](scf::ForOp op) {
