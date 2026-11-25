@@ -2,9 +2,14 @@
 #pragma once
 
 #include "mdir/Driver/Builder.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/ValueRange.h"
 
 namespace mdir::tool {
+/// Resolve the dimensions used by storage assignment for a pair table.
+mlir::MemRefType getTowersTableType(const driver::Program &program,
+                                    mlir::Value table);
+
 struct TowersBuffers {
   std::vector<std::vector<char>> values;
   size_t fields = 0;
