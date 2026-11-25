@@ -87,10 +87,10 @@ public:
   /// (D290): a structure holds `width` neighbors of a row at first,
   /// in cells of 1/`cellsPerReach` of its reach.
   Lowering(ModuleOp module, bool throughExec = false, int64_t width = 64,
-           int64_t cellsPerReach = 3, bool haloEvents = false, bool mpi = false)
+           int64_t cellsPerReach = 3, bool haloEvents = false, bool mpi = false, bool parallelDomains = false)
       : module(module), loc(UnknownLoc::get(module.getContext())),
         throughExec(throughExec), width(width), cellsPerReach(cellsPerReach),
-        haloEvents(haloEvents), mpi(mpi) {}
+        haloEvents(haloEvents), mpi(mpi), parallelDomains(parallelDomains) {}
 
   bool fixedPoint = false;
   LogicalResult run(func::FuncOp function);
@@ -255,7 +255,7 @@ private:
 
   bool throughExec;
   int64_t width, cellsPerReach;
-  bool haloEvents, mpi;
+  bool haloEvents, mpi, parallelDomains;
   Value domainBound(OpBuilder &b, bool end) {
     if (!mpi)
       return index(b, end ? domains : 0);
@@ -1047,7 +1047,7 @@ struct PairSide {
 /// accumulator of each center, `finishDomain` the sum over its centers.
 template <typename OpTy>
 static void emitPairs(
-    OpTy op, Location loc, Value first, Value past,
+    OpTy op, Location loc, Value first, Value past, bool parallel,
     llvm::DenseMap<Value, Storage> &storage, Type accumulator,
     function_ref<Value(OpBuilder &, Type)> zero,
     function_ref<Value(OpBuilder &, Value, Value, Value, Type)> load,
@@ -1087,17 +1087,7 @@ static void emitPairs(
   Type f64 = b.getF64Type();
   auto vec3 = VectorType::get({3}, f64);
   Type i64 = b.getI64Type();
-  auto indices = MemRefType::get({ShapedType::kDynamic}, i64);
-  auto buildCells = declare(
-      "mdrtDistPairCells",
-      b.getFunctionType({b.getIndexType(), b.getIndexType(), b.getIndexType(),
-                         f64, xo.getType(), xg.getType(), xg.getType(), i64,
-                         indices, indices},
-                        {}),
-      true);
-  scf::ForOp::create(
-      b, loc, first, past, c(b, 1), ValueRange(),
-      [&](OpBuilder &bd, Location, Value d, ValueRange) {
+  auto visitDomain = [&](OpBuilder &bd, Value d) {
         Value owned = arith::IndexCastOp::create(
             bd, loc, bd.getIndexType(),
             memref::LoadOp::create(bd, loc, layout.rows, ValueRange{d}));
@@ -1270,8 +1260,21 @@ static void emitPairs(
         memref::DeallocOp::create(bd, loc, spans);
         memref::DeallocOp::create(bd, loc, order);
         finishDomain(bd, centers.getResult(0), d);
-        scf::YieldOp::create(bd, loc);
-      });
+  };
+  Value one = c(b, 1);
+  if (parallel) {
+    scf::ParallelOp::create(b, loc, ValueRange{first}, ValueRange{past}, ValueRange{one},
+        [&](OpBuilder &bd, Location, ValueRange indices) {
+          visitDomain(bd, indices.front());
+          scf::ReduceOp::create(bd, loc);
+        });
+  } else {
+    scf::ForOp::create(b, loc, first, past, one, ValueRange(),
+        [&](OpBuilder &bd, Location, Value d, ValueRange) {
+          visitDomain(bd, d);
+          scf::YieldOp::create(bd, loc);
+        });
+  }
 }
 
 LogicalResult Lowering::lowerSumPairs(SumPairsOp op) {
@@ -1288,7 +1291,7 @@ LogicalResult Lowering::lowerSumPairs(SumPairsOp op) {
   // Over a directed relation every pair is visited at both of its owners.
   double weight = directed ? 0.5 : 1.0;
   emitPairs(
-      op, loc, domainBound(b, false), domainBound(b, true), storage, type,
+      op, loc, domainBound(b, false), domainBound(b, true), parallelDomains, storage, type,
       [&](OpBuilder &at, Type t) { return zero(at, t); },
       [&](OpBuilder &at, Value buffer, Value d, Value row, Type t) {
         return loadValue(at, buffer, d, row, t);
@@ -1367,7 +1370,7 @@ LogicalResult Lowering::lowerGatherPairs(GatherPairsOp op) {
     return arith::MulFOp::create(at, loc, value, s);
   };
   emitPairs(
-      op, loc, domainBound(b, false), domainBound(b, true), storage, type,
+      op, loc, domainBound(b, false), domainBound(b, true), parallelDomains, storage, type,
       [&](OpBuilder &at, Type t) { return zero(at, t); },
       [&](OpBuilder &at, Value buffer, Value d, Value row, Type t) {
         return loadValue(at, buffer, d, row, t);
@@ -2550,7 +2553,7 @@ public:
   using ConvertMDDistToLoopsBase::ConvertMDDistToLoopsBase;
   void runOnOperation() final {
     ModuleOp module = getOperation();
-    Lowering lowering(module, false, 64, 3, haloEvents || mpi, mpi);
+    Lowering lowering(module, false, 64, 3, haloEvents || mpi, mpi, parallelDomains);
     SmallVector<func::FuncOp> functions(module.getOps<func::FuncOp>());
     for (func::FuncOp function : functions)
       if (failed(lowering.run(function)))
