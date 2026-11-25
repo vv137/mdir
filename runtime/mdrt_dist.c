@@ -16,6 +16,7 @@
 #ifdef MDIR_ENABLE_MPI
 #include "mdrt_mpi.h"
 #endif
+#include <limits.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -775,6 +776,76 @@ static int64_t movedRows(struct Halo *h) {
   return moved;
 }
 
+#ifdef MDIR_ENABLE_MPI
+/* Pack and consume a peer's stream in the same (domain, ghost, component)
+   order on both sides. For the transpose, interleave local and remote
+   contributions in that order too, preserving the oracle's sum. */
+static void exchangeHalo(struct Halo *h, struct Memref3D *owned,
+                         struct Memref3D *ghosts, int image, int transpose) {
+  const int peers = mdrtMPISize(), rank = mdrtMPIRank();
+  int *counts = calloc((size_t)peers * 6, sizeof(int));
+  if (!counts) mdrtMPIAbort("out of memory packing halo counts");
+  int *ns = counts, *nr = ns + peers, *os = nr + peers, *or = os + peers;
+  int *ws = or + peers, *wr = ws + peers;
+  const int64_t domains = h->layout->domains, components = owned->sizes[2];
+  for (int64_t d = 0; d < domains; ++d) {
+    int dst = mdrtMPIOwner(domains, d);
+    for (int64_t g = 0; g < h->rows[d]; ++g) {
+      int src = mdrtMPIOwner(domains, h->sourceDomain[d * h->capacity + g]);
+      if (src == dst) continue;
+      int sender = transpose ? dst : src, receiver = transpose ? src : dst;
+      if (sender == rank) {
+        if (ns[receiver] > INT_MAX - components) mdrtMPIAbort("halo count exceeds MPI int");
+        ns[receiver] += components;
+      }
+      if (receiver == rank) {
+        if (nr[sender] > INT_MAX - components) mdrtMPIAbort("halo count exceeds MPI int");
+        nr[sender] += components;
+      }
+    }
+  }
+  int sendSize = 0, recvSize = 0;
+  for (int p = 0; p < peers; ++p) {
+    os[p] = ws[p] = sendSize;
+    or[p] = wr[p] = recvSize;
+    if (ns[p] > INT_MAX - sendSize || nr[p] > INT_MAX - recvSize)
+      mdrtMPIAbort("halo displacement exceeds MPI int");
+    sendSize += ns[p];
+    recvSize += nr[p];
+  }
+  double *send = malloc((size_t)(sendSize ? sendSize : 1) * sizeof(double));
+  double *recv = malloc((size_t)(recvSize ? recvSize : 1) * sizeof(double));
+  if (!send || !recv) mdrtMPIAbort("out of memory packing halo rows");
+  for (int pass = 0; pass < 2; ++pass) {
+    if (pass) mdrtMPIExchange(send, ns, os, recv, nr, or);
+    for (int64_t d = 0; d < domains; ++d) {
+      int dst = mdrtMPIOwner(domains, d);
+      for (int64_t g = 0; g < h->rows[d]; ++g) {
+        int64_t i = d * h->capacity + g;
+        int64_t dom = h->sourceDomain[i], row = h->sourceRow[i];
+        int src = mdrtMPIOwner(domains, dom);
+        int sender = transpose ? dst : src, receiver = transpose ? src : dst;
+        if ((!pass && (sender != rank || receiver == rank)) ||
+            (pass && receiver != rank)) continue;
+        for (int64_t c = 0; c < components; ++c) {
+          double *a = at3(owned, dom, row, c), *b = at3(ghosts, d, g, c);
+          if (!pass) send[ws[receiver]++] = transpose ? *b : *a;
+          else {
+            double v = sender == rank ? (transpose ? *b : *a) : recv[wr[sender]++];
+            if (transpose) *a += v;
+            else {
+              if (image) v += (double)h->image[3*i+c] * h->layout->edges[c];
+              *b = v;
+            }
+          }
+        }
+      }
+    }
+  }
+  free(send); free(recv); free(counts);
+}
+#endif
+
 /* G: (G a)_g = a_{s(g)}, with `image` x_{s(g)} + n_g L. */
 void _mlir_ciface_mdrtDistHaloCopy(int64_t handle, struct Memref3D *owned,
                                    struct Memref3D *ghosts, int64_t image) {
@@ -785,7 +856,12 @@ void _mlir_ciface_mdrtDistHaloCopy(int64_t handle, struct Memref3D *owned,
       observer->transfer(observer->context, edge.from, edge.to,
                          edge.rows * owned->sizes[2] * (int64_t)sizeof(double));
     }
-  shareRows(h->layout, h->layout->rows, owned);
+#ifdef MDIR_ENABLE_MPI
+  if (h->layout->mpi) {
+    exchangeHalo(h, owned, ghosts, image, 0);
+    return;
+  }
+#endif
   int64_t k = owned->sizes[2];
   for (int64_t d = 0; d < h->layout->domains; ++d)
     for (int64_t g = 0; g < h->rows[d]; ++g) {
@@ -815,7 +891,12 @@ void _mlir_ciface_mdrtDistHaloSum(int64_t handle, struct Memref3D *ghosts,
       observer->transfer(observer->context, edge.to, edge.from,
                          edge.rows * owned->sizes[2] * (int64_t)sizeof(double));
     }
-  shareRows(h->layout, h->rows, ghosts);
+#ifdef MDIR_ENABLE_MPI
+  if (h->layout->mpi) {
+    exchangeHalo(h, owned, ghosts, 0, 1);
+    return;
+  }
+#endif
   int64_t k = owned->sizes[2];
   for (int64_t d = 0; d < h->layout->domains; ++d)
     for (int64_t g = 0; g < h->rows[d]; ++g) {
