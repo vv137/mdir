@@ -724,6 +724,37 @@ static void shareRows(struct Layout *l, const int64_t *rows, struct Memref3D *fi
                        mdrtMPIOwner(l->domains, d));
 }
 
+/* Packed GPU-driver states share immutable owned rows. Operations that
+   change field values produce new storage. MPI can populate a remote
+   domain's scratch rows without changing this rank's owned values. */
+struct StateField {
+  size_t refs;
+  double data[];
+};
+
+void _mlir_ciface_mdrtDistCreateField(struct Memref3D *out, int64_t domains,
+                                      int64_t rows, int64_t width) {
+  size_t limit = (SIZE_MAX-sizeof(struct StateField))/sizeof(double);
+  if (domains < 1 || rows < 0 || width < 1 || (uint64_t)width > limit ||
+      (uint64_t)rows > limit/width/domains)
+    fail("invalid distributed field size");
+  size_t count = (size_t)domains*rows*width;
+  struct StateField *field = malloc(sizeof *field + count*sizeof(double));
+  if (!field) fail("out of memory allocating distributed field");
+  field->refs = 1;
+  *out = (struct Memref3D){(double *)field, field->data, 0,
+                           {domains,rows,width}, {rows*width,width,1}};
+}
+
+void _mlir_ciface_mdrtDistRetainField(struct Memref3D *m) {
+  ++((struct StateField *)m->allocated)->refs;
+}
+
+void _mlir_ciface_mdrtDistReleaseField(struct Memref3D *m) {
+  struct StateField *field = (struct StateField *)m->allocated;
+  if (!--field->refs) free(field);
+}
+
 void _mlir_ciface_mdrtMPICopyState(struct Memref3D *source, struct Memref3D *dest) {
   int64_t domains = source->sizes[0];
   int64_t first = mdrtMPIDomainBound(domains, 0), end = mdrtMPIDomainBound(domains, 1);

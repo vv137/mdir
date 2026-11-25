@@ -193,6 +193,8 @@ void emitPairs(
   Value ownedCapacity(OpBuilder &b, Value handle);
   llvm::SmallPtrSet<Operation *, 8> constraintKernels;
   Value copyForState(OpBuilder &b, Value buffer);
+  bool sharedState() const { return gpuPairs && mpi; }
+  void releaseField(OpBuilder &b, Value field);
 
   /// The decomposition of a type of md_dist, and its number of domains.
   DecompositionOp getDecomposition(Operation *op, FlatSymbolRefAttr name);
@@ -422,9 +424,22 @@ Value Lowering::zero(OpBuilder &b, Type type) {
   return real(b, 0.0);
 }
 
+void Lowering::releaseField(OpBuilder &b, Value field) {
+  auto fn = declare("mdrtDistReleaseField", b.getFunctionType({field.getType()}, {}), true);
+  func::CallOp::create(b, loc, fn, ValueRange{field});
+}
+
 Value Lowering::allocate(OpBuilder &b, MemRefType type, ValueRange sizes) {
-  Value buffer = memref::AllocOp::create(b, loc, type, sizes);
   OpBuilder atEnd(end);
+  if (sharedState() && type.getRank() == 3 && type.getNumDynamicDims() == 3 &&
+      type.getElementType().isF64()) {
+    Type idx = b.getIndexType();
+    auto fn = declare("mdrtDistCreateField", b.getFunctionType({idx, idx, idx}, {type}), true);
+    Value field = func::CallOp::create(b, loc, fn, sizes).getResult(0);
+    releaseField(atEnd, field);
+    return field;
+  }
+  Value buffer = memref::AllocOp::create(b, loc, type, sizes);
   memref::DeallocOp::create(atEnd, loc, buffer);
   return buffer;
 }
@@ -988,7 +1003,10 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
   if (gpuPairs && op.getImage() && !op.getResult().use_empty() &&
       llvm::all_of(op.getResult().getUsers(), [&](Operation *user) {
         auto n = dyn_cast<NeighborhoodOp>(user);
-        return n && n.getPositions() == op.getField() && n.getGhosts() == op.getResult();
+        return n && n.getPositions() == op.getField() && n.getGhosts() == op.getResult() &&
+               llvm::all_of(n.getResult().getUsers(), [](Operation *use) {
+                 return isa<GatherPairsOp, SumPairsOp>(use);
+               });
       })) {
     auto type = MemRefType::get({ShapedType::kDynamic, 3}, b.getF64Type(),
                                 MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
@@ -1004,7 +1022,7 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
     return success();
   }
   Value ghosts = allocate(b, halo.capacity, k);
-  if (haloEvents) {
+  if (haloEvents && !sharedState()) {
     auto start = mdrt::HaloCopyStartOp::create(
         b, loc, mdrt::EventType::get(module.getContext()), halo.handle, owned,
         ghosts, image);
@@ -1057,7 +1075,7 @@ LogicalResult Lowering::lowerHaloSum(HaloSumOp op) {
     return success();
   }
   memref::CopyOp::create(b, loc, owned, result);
-  if (haloEvents) {
+  if (haloEvents && !sharedState()) {
     auto start = mdrt::HaloSumStartOp::create(
         b, loc, mdrt::EventType::get(module.getContext()), halo.handle, ghosts,
         result);
@@ -2024,6 +2042,11 @@ SmallVector<Value> Lowering::stateOf(Value state) {
 }
 
 Value Lowering::copyForState(OpBuilder &b, Value buffer) {
+  if (sharedState()) {
+    auto fn = declare("mdrtDistRetainField", b.getFunctionType({buffer.getType()}, {}), true);
+    func::CallOp::create(b, loc, fn, ValueRange{buffer});
+    return buffer;
+  }
   auto type = cast<MemRefType>(buffer.getType());
   SmallVector<Value> sizes;
   for (int64_t i = 0; i < type.getRank(); ++i)
@@ -2143,7 +2166,10 @@ LogicalResult Lowering::lowerUnpack(UnpackOp op) {
   for (auto [result, buffer] :
        llvm::zip(results, ArrayRef<Value>(tuple).drop_front(2))) {
     // A transfer event requires a direct allocation for its alias proof.
-    if (haloEvents && llvm::any_of(result.getUsers(), [](Operation *use) {
+    if (sharedState()) {
+      storage[result].buffer = buffer;
+      releaseField(atEnd, buffer);
+    } else if (haloEvents && llvm::any_of(result.getUsers(), [](Operation *use) {
           return isa<HaloCopyOp, HaloSumOp>(use);
         })) {
       Value copy = copyForState(b, buffer);
