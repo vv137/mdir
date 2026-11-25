@@ -527,7 +527,7 @@
                   "type": "object",
                   "properties": {
                     "force_only_product_rule": {
-                      "enum": ["inverse_load", "separate"]
+                      "enum": ["inverse_load", "separate", "axis_x"]
                     },
                     "beta_inverse_angstrom": {
                       "type": "number",

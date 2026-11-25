@@ -1,4 +1,5 @@
 add_mlir_conversion_library(MDIRMDExecKernels
+  AxisFFTEmitter.cpp
   CompactionEmitter.cpp
   GatherEmitter.cpp
   GroupsBuild.cpp

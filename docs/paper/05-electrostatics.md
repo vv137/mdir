@@ -415,6 +415,60 @@ zero, has no set, and its kernels are those of before.
 difference of $6\times10^{-8}$ (D104). Section 9 compares the terms with
 sander and with a direct Ewald sum.
 
+### Five-pass Gaussian convolution (D[pme-axis-fft])
+
+At fixed fractional coordinates the Gaussian mesh energy of Section 5.2
+is quadratic in $Q$. Its first variation at fixed cell is
+$\delta E_\text{rec}=\langle\delta Q,\mathcal F^\dagger D\mathcal FQ\rangle$.
+The gather contracts this grid potential with the position derivatives of
+the assignment weights. Because $D$ acts on each frequency independently,
+one block can complete the last forward axis of a line, consume each
+coefficient, and invert that axis before the line leaves the block.
+[[Tolmachev2023]](references.md#tolmachev2023) [[CuFFTDxExamples]](references.md#cufftdxexamples)
+
+For even $K_3$, pack each adjacent pair of charges as
+$u_j=Q_{2j}+iQ_{2j+1}$ and transform the $M_z=K_3/2$ complex values.
+For $r=\hat u_k$ and $s=\overline{\hat u_{(-k)\bmod M_z}}$, the transforms
+of the even and odd subsequences are $(r+s)/2$ and $(r-s)/(2i)$.
+Consequently the forward Z pass writes $[r+s-iW_{K_3}^k(r-s)]/2$,
+with $\Re\hat u_0-\Im\hat u_0$ in the Nyquist slot. The last inverse pass
+recombines the two subsequences with the conjugate phase and omits the
+half in their reconstruction. For a tilted cell, the radial factor can differ
+between transverse conjugate partners on a Nyquist plane. After inverse X
+and Y, the real inverse uses the real parts of the Z endpoints at zero and
+Nyquist when reconstructing the packed zero frequency. Its unnormalized $M_z$-point inverse then
+has the required gain $K_3$. The logical half-spectrum has $H_z=M_z+1$
+columns. Row $(x,y)$ starts at complex slot $(xK_2+y)P_z$, where
+$P_z=4\lceil H_z/4\rceil$. Padding never enters a transform or a sum.
+[[Govindaraju2008]](references.md#govindaraju2008)
+
+The middle passes are Y forward, fused X, and Y inverse. To transform a
+line of length $A_0 B_0$, write its spatial index as $b+B_0a$ and its
+frequency as $p+A_0q$. Expanding their product in the Fourier exponent
+leaves three factors, $W_{A_0}^{ap}$, $W_{A_0 B_0}^{bp}$, and
+$W_{B_0}^{bq}$. A register transform at fixed $b$ gives $p$, a
+shared-memory exchange applies the middle phase and groups common $p$,
+and the second register transform gives $q$. Register stages resolve one
+radix digit at a time in Stockham order. Adjacent lanes own neighboring
+Z slots in the strided passes. Global memory transfers use a pair of f32
+values at each complex index. This groups the real and imaginary components
+in one vector access while preserving the butterfly evaluation order. In X, the inverse follows the same
+factorization in reverse order after the in-register diagonal product.
+[[Govindaraju2008]](references.md#govindaraju2008) [[Tolmachev2023]](references.md#tolmachev2023)
+
+On an observed step, let $E_{\mathbf m}$ denote the mode energy including
+its Hermitian weight. Holding fractional coordinates fixed under homogeneous
+strain keeps the assignment and the integer-index spline correction fixed.
+Differentiating the volume prefactor contributes
+$E_{\mathbf m}\delta_{ab}$ to the virial. Differentiating
+$\exp(-\pi^2m^2/\beta^2)/m^2$ through the inverse cell gives, in total,
+$\mathsf W_{ab}(\mathbf m)=E_{\mathbf m}[\delta_{ab}
+-2m_am_b(m^{-2}+\pi^2/\beta^2)]$ for $m>0$. The zero mode contributes
+zero. The X pass takes the squared modulus before multiplication, with
+weight one on the two end planes and two in the interior. Each warp
+reduces the energy and six tensor components. The block writes seven
+partials, and one final block sums them in f64.
+
 ## 5.4 The long-range correction of dispersion
 
 Beyond the cutoff the attraction of Lennard–Jones is not zero. With the

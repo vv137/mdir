@@ -1,0 +1,31 @@
+# REQUIRES: python-api
+# RUN: rm -f %t
+# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --grid 15 7 10 > %t
+# RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=on" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --implicit-check-not=mdrtCudaFFT
+# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --force-only --listed --grid 15 7 10 > %t
+# RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=on" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=FORCE
+# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --grid 13 7 10 > %t
+# RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=on" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=FALLBACK --implicit-check-not=fft_stage
+# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --grid 40 40 40 > %t
+# RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=AUTO
+# RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=off" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=FALLBACK --implicit-check-not=fft_stage
+# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --tilted --grid 22 24 24 > %t
+# RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=FOLDING
+# FOLDING: call @mdrt_gpu_pme_axis_fft_22x24x24
+# AUTO: call @mdrt_gpu_pme_axis_fft_40x40x40_observed
+# CHECK: call @mdrt_gpu_pme_axis_fft_15x7x10_observed
+# CHECK-LABEL: func.func private @mdrt_gpu_pme_axis_fft_15x7x10_observed
+# CHECK: gpu.barrier
+# CHECK: mdir.fft_stage = "z_r2c"
+# CHECK: mdir.fft_stage = "y_forward"
+# CHECK: gpu.shuffle xor
+# CHECK: mdir.fft_layout = array<i64: 3, 5, 8, 8>, mdir.fft_stage = "x_convolve"
+# CHECK: mdir.fft_stage = "y_inverse"
+# CHECK: mdir.fft_stage = "z_c2r"
+# CHECK: gpu.all_reduce
+# FORCE: call @mdrt_gpu_pme_axis_fft_15x7x10(
+# FORCE-LABEL: func.func private @mdrt_gpu_pme_axis_fft_15x7x10(
+# FORCE-NOT: gpu.shuffle
+# FORCE: mdir.fft_stage = "x_convolve"
+# FALLBACK: call @mdrtCudaFFTForward3DF32
+# FALLBACK: call @mdrtCudaFFTBackward3DF32

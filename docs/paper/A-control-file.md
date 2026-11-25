@@ -1,5 +1,9 @@
 # Appendix A. The control file
 
+D[pme-axis-fft] uses the Gaussian mesh selected by `[pme]`. The device
+convolution choice and its validation override are described in
+[the PME reference](../pme.md#five-pass-gaussian-convolution-on-a-device).
+
 D380 reserves internal configuration for the separate
 frame product program. No control-file key sets it, and no default, file
 format, checkpoint or overwrite behavior changes.

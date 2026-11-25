@@ -393,8 +393,10 @@ in a 32-bit unsigned offset. Other grids and builds use the separate pass.
 cuFFT loads NVRTC and nvJitLink when it creates the callback plan.
 See the [cuFFT callback requirements](https://docs.nvidia.com/cuda/archive/13.2.0/cufft/index.html#cufft-callback-routines).
 The setup log and the manifest field `effective.pme.force_only_product_rule`
-record `inverse_load` when the compiled program contains the callback,
-or `separate` otherwise. There is no control key.
+record `inverse_load` when the compiled program contains the D433 callback.
+Otherwise, `axis_x` identifies a force-only axis plan that multiplies the
+spectrum between the forward and inverse X transforms. The remaining
+programs report `separate`. There is no control key.
 
 The device lowering unrolls the loops over the order and promotes the
 B-spline arrays to values
@@ -1298,6 +1300,70 @@ call), ms a step:
 - **The compile time** of the prolate kernel grows by 0.5 s on JAC
   (4.54 to 5.04 s) and on TIP3P 103k (2.45 to 2.91 s), the search for two
   tables, and by less than 0.1 s on the others.
+
+## Five-pass Gaussian convolution on a device
+
+D[pme-axis-fft] generates five kernels for a mixed-precision
+Gaussian mesh. Z packs adjacent real points into complex pairs. Y transforms
+adjacent half-spectrum slots in a tile. The X pass transforms the remaining
+axis, calls the pointwise operation supplied by the PME lowering,
+and immediately inverts X. Inverse Y and Z produce the real potential for
+the existing force gather. An energy or virial request adds a block reduction
+in X and a final f64 reduction. Charge derivatives use cuFFT.
+
+For Gaussian PME, the orthorhombic hook combines the three prepared
+axis factors. The triclinic hook evaluates the Gaussian at the squared
+length of the Cartesian wave vector. The planned prolate MATRIX hook
+for #951 combines the three window corrections with the radial cosine
+transform of the continuity-two, eight-term density. Its value scales the
+coefficient and weights the energy. Its radial slope also enters the virial.
+The integration and validation criteria are in the
+[decision record](decisions/pme-axis-fft.md#trp-cage-and-the-prolate-split).
+
+The real mesh is compact. For even Z, each complex row contains Z/2 + 1
+valid frequencies and occupies a multiple of four complex slots. X, Y and
+Z/2 must each factor into two register transforms of at most 32 points.
+The accepted prime radices are 2, 3, 5, 7, and 11. Register stages embed roots
+rounded from double precision. The exchange and real-fold phases use f32
+device sine and cosine. Unoccupied lanes skip the loads and products but
+reach every block barrier.
+
+On the `sm_89` target, non-deterministic mixed TOWERS runs select the
+emitter for orthorhombic order-four Gaussian meshes of 40³, 64³, and 144 × 84 × 80.
+These three grids passed the independent full-chain reference and improved
+whole-step throughput in both RTX 4090 runs. The same AUTO rule admits the Gaussian folding grids
+28 × 28 × 30, 18 × 20 × 20, 32³, and 22 × 24 × 24, including tilted cells.
+Their full-frame errors and paired MATRIX timings are recorded in the decision.
+Other meshes default to cuFFT.
+Use `MDIR_PME_AXIS_FFT=off` to pin cuFFT or `on` to measure the emitter on
+other supported order-four meshes. Unsupported paths still use cuFFT.
+
+The setup log and the manifest's `effective.pme.fft_plans` report the
+backend and reason for each requested evaluation. Each stage of a generated
+plan records its two factors, lines per block, and physical complex pitch
+in that order. Floating-point evaluation order differs between cuFFT and the
+generated transform. The derivation and method references are in
+[Section 5.3](paper/05-electrostatics.md#five-pass-gaussian-convolution-dpme-axis-fft).
+
+On the RTX 4090, the two whole-step runs gave the following results for
+Gaussian TOWERS. Entries give µs/step / ns/day over the final 1,000 of
+2,000 steps at 2 fs, with observables every 100 steps. Run A took cuFFT
+first. Run B reversed both system and backend order. Positive savings
+mean that the generated path took fewer microseconds per step.
+
+| Input | A cuFFT | A axis | A saving (µs) | B cuFFT | B axis | B saving (µs) |
+| --- | --- | --- | --- | --- | --- | --- |
+| T10 | 99 / 1742.9 | 88 / 1968.6 | +11 | 100 / 1734.1 | 89 / 1936.3 | +11 |
+| T20 | 125 / 1383.4 | 112 / 1541.6 | +13 | 117 / 1479.5 | 118 / 1459.6 | -1 |
+| JAC | 129 / 1339.4 | 127 / 1358.2 | +2 | 121 / 1422.8 | 121 / 1432.4 | +0 |
+| Factor IX | 277 / 623.9 | 275 / 628.1 | +2 | 279 / 619.3 | 278 / 622.2 | +1 |
+| Cellulose | 1055 / 163.7 | 1062 / 162.7 | -7 | 1055 / 163.8 | 1064 / 162.4 | -9 |
+| STMV | 3057 / 56.5 | 3014 / 57.3 | +43 | 3060 / 56.5 | 3013 / 57.4 | +47 |
+
+The T20 whole-step difference changed sign. Cellulose slowed down in both
+orders. Both mixed backends exceeded the $3\times10^{-5}$ relative force
+tolerance against an independent double reference on Cellulose and STMV.
+The automatic rule keeps cuFFT on all three.
 
 ## The axes of the grid
 

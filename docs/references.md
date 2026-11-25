@@ -352,6 +352,13 @@ persisting lines), last updated 2026-09-10. No paper;
 Used for: the L2 access policy window measured and not adopted in #434
 ([device-primitives.md](device-primitives.md), Section 3).
 
+### CuFFTDxExamples
+
+NVIDIA, *cuFFTDx Examples*, "3D Convolution Examples," entry
+`convolution_3d_r2c`. [NVIDIA documentation](https://docs.nvidia.com/cuda/cufftdx/examples.html)
+
+Used for: the axis order of a real three-dimensional convolution.
+
 ### CurtisPowellReid1974
 
 A. R. Curtis, M. J. D. Powell, J. K. Reid, "On the estimation of sparse
@@ -599,6 +606,17 @@ Mata, "Performance modeling of atomic additions on GPU scratchpad memory,"
 Used for: the cost of privatized sums in block memory, the model behind
 the privatized scatter-accumulate (D285,
 [device-primitives.md](device-primitives.md)).
+
+### Govindaraju2008
+
+N. K. Govindaraju, B. Lloyd, Y. Dotsenko, B. Smith, J. Manferdelli,
+"High Performance Discrete Fourier Transforms on Graphics Processors,"
+*SC 2008, International Conference for High Performance Computing,
+Networking, Storage and Analysis*, 1–12 (2008).
+[doi:10.1109/SC.2008.5213922](https://doi.org/10.1109/SC.2008.5213922)
+
+Used for: hierarchical Stockham transforms, shared exchanges, coalesced
+strided axes, and real packing (Sections III.B, IV.B–D, and IV.G).
 
 ### Graefe1993
 
@@ -1821,6 +1839,15 @@ Phys.* **102**, 5451–5459 (1995).
 
 Used for: the reaction field with its potential shifted to zero at the
 cutoff, `electrostatics = "REACTION_FIELD"` (D140).
+
+### Tolmachev2023
+
+D. Tolmachev, "VkFFT-A Performant, Cross-Platform and Open-Source GPU
+FFT Library," *IEEE Access* **11**, 12039–12058 (2023).
+[doi:10.1109/ACCESS.2023.3242240](https://doi.org/10.1109/ACCESS.2023.3242240)
+
+Used for: register radix stages, line tiling, and convolution fusion
+(Sections II.B, V.A–B, and V.E).
 
 ### Tuckerman1992
 

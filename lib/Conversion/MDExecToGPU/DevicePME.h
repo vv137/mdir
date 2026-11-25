@@ -26,8 +26,10 @@ public:
   template <bool tilted>
   void emitSplineStages(bool potential, bool listed, int64_t tiles);
   void emitProlate(bool listed, int64_t tiles);
+  func::FuncOp emitAxisFFT(StringRef name, ArrayRef<int64_t> grid, int64_t pitch, bool observed, bool tilted);
 
 private:
+  void finishConvolution(Value rows, Value blocks);
   template <Window window> void emitTiles(int64_t tiles, bool listed);
   template <Window window, bool tilted> static StringRef blockSymbol() {
     if constexpr (window == Window::Prolate)

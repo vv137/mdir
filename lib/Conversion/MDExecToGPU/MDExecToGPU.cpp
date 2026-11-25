@@ -6,6 +6,7 @@
 #include "TowersDispatch.h"
 #include "mdir/Conversion/Passes.h"
 #include "DevicePME.h"
+#include "mdir/Conversion/AxisFFTEmitter.h"
 #include "mdir/Runtime/GroupsABI.h"
 
 #include "mdir/Conversion/MDExecKernels.h"
@@ -5571,6 +5572,46 @@ LogicalResult Lowering::lowerLinearTransform(md_exec::LinearTransformOp op) {
   return success();
 }
 
+// Record each distinct resolved plan once. Both the log and the manifest
+// consume this record after lowering, including paths that kept cuFFT.
+static void recordFFTPlan(ModuleOp module, md_exec::ReciprocalOp op,
+                          StringRef reason, func::FuncOp generated = {}) {
+  auto requested = op->getAttrOfType<StringAttr>("md_exec.fft_requested");
+  if (!requested)
+    return;
+  Builder b(module.getContext());
+  NamedAttrList fields;
+  auto text = [&](StringRef key, StringRef value) {
+    fields.set(key, b.getStringAttr(value));
+  };
+  text("category", "rule");
+  text("requested", requested.getValue());
+  text("backend", generated ? "axis" : "cufft");
+  text("reason", reason);
+  text("evaluation", op.getEnergy().use_empty() && op.getVirial().use_empty()
+                         ? "forces"
+                         : "observed");
+  fields.set("grid", b.getDenseI64ArrayAttr(op.getGrid()));
+  if (generated) {
+    text("twiddles", "f64-rounded butterfly constants, f32 SFU cross phases");
+    text("influence", isTriclinic(op.getCellMutable().get())
+                          ? "axis tables and triclinic Gaussian"
+                          : "prepared axis tables");
+    generated.walk([&](gpu::LaunchOp launch) {
+      if (auto stage = launch->getAttrOfType<StringAttr>("mdir.fft_stage"))
+        fields.set(stage.getValue(), launch->getAttr("mdir.fft_layout"));
+    });
+  }
+  SmallVector<Attribute> plans;
+  if (auto existing = module->getAttrOfType<ArrayAttr>(kAxisFFTPlans))
+    llvm::append_range(plans, existing);
+  Attribute entry = fields.getDictionary(b.getContext());
+  if (!llvm::is_contained(plans, entry)) {
+    plans.push_back(entry);
+    module->setAttr(kAxisFFTPlans, b.getArrayAttr(plans));
+  }
+}
+
 LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   if (!op.isStorageForm() || !isDeviceType(op.getPositions().getType()))
     return op->emitOpError()
@@ -5673,6 +5714,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
         ValueRange());
   // The prolate kernel has kernels of its own (D266).
   if (op.getProlate()) {
+    recordFFTPlan(module,op,"prolate window");
     if (failed(addProlateKernels(position, charge, force, op.getOrder(),
                                    static_cast<bool>(listed), tiles)))
       return failure();
@@ -5771,25 +5813,6 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                          ValueRange{positions, charges, box, real, k1, k2, k3,
                                     order});
   }
-  Type wide = builder.getI64Type();
-  SmallVector<Value> sizes;
-  for (int64_t points : grid)
-    sizes.push_back(arith::ConstantOp::create(
-        builder, loc, wide, builder.getI64IntegerAttr(points)));
-  Type buffer = real.getType();
-  FunctionType transform =
-      builder.getFunctionType({buffer, buffer, wide, wide, wide}, {});
-  // The transforms of cuFFT in the type of the grid.
-  bool narrow = cast<MemRefType>(buffer).getElementType().isF32();
-  func::FuncOp forward = getOrDeclare(
-      narrow ? "mdrtCudaFFTForward3DF32" : "mdrtCudaFFTForward3D", transform);
-  func::FuncOp backward = getOrDeclare(
-      narrow ? "mdrtCudaFFTBackward3DF32" : "mdrtCudaFFTBackward3D",
-      transform);
-  for (func::FuncOp function : {forward, backward})
-    function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
-  func::CallOp::create(builder, loc, forward,
-                       ValueRange{real, complex, sizes[0], sizes[1], sizes[2]});
   // Without its energy and virial, a step only scales the transform, and
   // the host need not wait for the sums of the rows.
   // The factors of the influence function along the edges first (D104).
@@ -5803,52 +5826,125 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // Influence "P3M" (D304) takes tables and a product with the
   // virial of its own; its tables give `scale` eq. 2.28 as they are.
   std::string tabled = op.getP3m() ? "_p3m" : kind;
-  func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_tables" + tabled),
-                       ValueRange{op.getModuli(), tables, box, beta, coulomb,
-                                  k1, k2, k3});
   func::CallOp convolve;
-  bool scaleOnly = op.getEnergy().use_empty() && op.getVirial().use_empty();
-  bool fuse = false;
-#ifdef MDIR_PME_CALLBACK
-  // The callback indexes three table rows per axis with unsigned offsets.
-  // cuFFT requires every prime factor of each dimension to be < 127.
-  auto supportsCallback = [](int64_t n) {
-    if (n > UINT32_MAX / 3)
-      return false;
-    for (int factor = 2; factor < 127 && n > 1; ++factor)
-      while (n % factor == 0)
-        n /= factor;
-    return n == 1;
-  };
-  // A charge derivative can have a separate potential sum at these positions.
-  fuse = scaleOnly && narrow && position.isF64() && !tilted &&
-         !op.getDispersion() && llvm::all_of(grid, supportsCallback) &&
-         grid[0] <= UINT32_MAX / grid[1] / (grid[2] / 2 + 1) &&
-         llvm::none_of(op->getBlock()->getOps<md_exec::ReciprocalOp>(),
-                       [&](auto sum) {
-                         return sum.getPotential() &&
-                                sum.getPositions() == positions;
-                       });
-#endif
-  if (fuse) {
-    auto inverse = getOrDeclare(
-        "mdrtCudaFFTGaussianBackwardF32",
-        builder.getFunctionType({buffer, buffer, buffer, wide, wide, wide}, {}));
-    inverse->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  auto pitch = op->getAttrOfType<IntegerAttr>("md_exec.fft_pitch");
+  bool forceOnly = op.getEnergy().use_empty() && op.getVirial().use_empty();
+  StringRef fallback;
+  if (!narrowGrid || !position.isF64())
+    fallback = "requires mixed precision";
+  else if (op.getOrder() != 4)
+    fallback = "unqualified spline order";
+  else if (op.getDispersion() || op.getP3m())
+    fallback = "requires Gaussian influence";
+  else if (tilted && !isFoldingFFTMesh(grid) &&
+           op->getAttrOfType<StringAttr>("md_exec.fft_requested") !=
+                         builder.getStringAttr("on"))
+    fallback = "unqualified triclinic mesh";
+  else if (op.getPotential())
+    fallback = "charge derivative";
+  else if (fixedPoint)
+    fallback = "fixed-order evaluation";
+  else if (!supportsAxisFFT(grid))
+    fallback = "unsupported axis length";
+  else if (!pitch || pitch.getInt() != axisFFTPitch(grid[2]))
+    fallback = "no pitched plan for this mesh";
+  else if (!forceOnly && (grid[2] / 2 + 8) / 8 > grid[0])
+    fallback = "insufficient block partial storage";
+  if (fallback.empty()) {
     func::CallOp::create(
-        builder, loc, inverse,
-        ValueRange{complex, real, tables, sizes[0], sizes[1], sizes[2]});
+        builder, loc, instance("mdrt_gpu_pme_tables" + tabled),
+        ValueRange{op.getModuli(), tables, box, beta, coulomb, k1, k2, k3});
+    std::string name = "mdrt_gpu_pme_axis_fft_" + std::to_string(grid[0]) +
+                       "x" + std::to_string(grid[1]) + "x" +
+                       std::to_string(grid[2]);
+    if (tilted)
+      name += "_triclinic";
+    if (!forceOnly)
+      name += "_observed";
+    auto fn = module.lookupSymbol<func::FuncOp>(name);
+    if (!fn) {
+      OpBuilder stages(module.getContext());
+      DevicePME emitter(stages, module, position, charge, force, op.getOrder(),
+                        32);
+      fn = emitter.emitAxisFFT(name, grid, pitch.getInt(), !forceOnly, tilted);
+    }
+    recordFFTPlan(module, op, "supported mixed-radix mesh", fn);
+    SmallVector<Value> args{real, complex, tables};
+    if (!forceOnly)
+      args.push_back(rows);
+    if (!forceOnly || tilted)
+      args.push_back(beta);
+    if (tilted)
+      args.push_back(box);
+    auto call = func::CallOp::create(builder, loc, fn, args);
+    if (!forceOnly)
+      convolve = call;
   } else {
-    if (scaleOnly)
-      func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_scale" + kind),
-                           ValueRange{complex, tables, box, beta, coulomb, k1,
-                                      k2, k3});
-    else
-      convolve = func::CallOp::create(
-          builder, loc, instance("mdrt_gpu_pme_convolve" + tabled),
-          ValueRange{complex, tables, rows, box, beta, coulomb, k1, k2, k3});
-    func::CallOp::create(builder, loc, backward,
-                         ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});
+    recordFFTPlan(module, op, fallback);
+    Type wide = builder.getI64Type();
+    SmallVector<Value> sizes;
+    for (int64_t points : grid)
+      sizes.push_back(arith::ConstantOp::create(
+          builder, loc, wide, builder.getI64IntegerAttr(points)));
+    Type buffer = real.getType();
+    FunctionType transform =
+        builder.getFunctionType({buffer, buffer, wide, wide, wide}, {});
+    // The transforms of cuFFT in the type of the grid.
+    bool narrow = cast<MemRefType>(buffer).getElementType().isF32();
+    func::FuncOp forward = getOrDeclare(
+        narrow ? "mdrtCudaFFTForward3DF32" : "mdrtCudaFFTForward3D", transform);
+    func::FuncOp backward = getOrDeclare(
+        narrow ? "mdrtCudaFFTBackward3DF32" : "mdrtCudaFFTBackward3D",
+        transform);
+    for (func::FuncOp function : {forward, backward})
+      function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+    func::CallOp::create(builder, loc, forward,
+                         ValueRange{real, complex, sizes[0], sizes[1], sizes[2]});
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_tables" + tabled),
+                         ValueRange{op.getModuli(), tables, box, beta, coulomb,
+                                    k1, k2, k3});
+    bool fuse = false;
+#ifdef MDIR_PME_CALLBACK
+    // The callback indexes three table rows per axis with unsigned offsets.
+    // cuFFT requires every prime factor of each dimension to be < 127.
+    auto supportsCallback = [](int64_t n) {
+      if (n > UINT32_MAX / 3)
+        return false;
+      for (int factor = 2; factor < 127 && n > 1; ++factor)
+        while (n % factor == 0)
+          n /= factor;
+      return n == 1;
+    };
+    // A charge derivative can have a separate potential sum at these positions.
+    fuse = forceOnly && narrow && position.isF64() && !tilted &&
+           !op.getDispersion() && llvm::all_of(grid, supportsCallback) &&
+           grid[0] <= UINT32_MAX / grid[1] / (grid[2] / 2 + 1) &&
+           llvm::none_of(op->getBlock()->getOps<md_exec::ReciprocalOp>(),
+                         [&](auto sum) {
+                           return sum.getPotential() &&
+                                  sum.getPositions() == positions;
+                         });
+#endif
+    if (fuse) {
+      auto inverse = getOrDeclare(
+          "mdrtCudaFFTGaussianBackwardF32",
+          builder.getFunctionType({buffer, buffer, buffer, wide, wide, wide}, {}));
+      inverse->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+      func::CallOp::create(
+          builder, loc, inverse,
+          ValueRange{complex, real, tables, sizes[0], sizes[1], sizes[2]});
+    } else {
+      if (forceOnly)
+        func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_scale" + kind),
+                             ValueRange{complex, tables, box, beta, coulomb, k1,
+                                        k2, k3});
+      else
+        convolve = func::CallOp::create(
+            builder, loc, instance("mdrt_gpu_pme_convolve" + tabled),
+            ValueRange{complex, tables, rows, box, beta, coulomb, k1, k2, k3});
+      func::CallOp::create(builder, loc, backward,
+                           ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});
+    }
   }
   // The gathering takes the places of the particles from the weights
   // where it has them (D102). With a list, it takes the listed particles,

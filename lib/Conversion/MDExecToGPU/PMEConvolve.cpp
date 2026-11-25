@@ -462,6 +462,15 @@ void DevicePME::emitConvolve(StringRef symbol) {
     }
     gpu::TerminatorOp::create(b, loc);
   }
+  finishConvolution(rows, blocks);
+}
+
+void DevicePME::finishConvolution(Value rows, Value blocks) {
+  Value c0 = arith::ConstantIndexOp::create(b, loc, 0);
+  Value c1 = arith::ConstantIndexOp::create(b, loc, 1);
+  Value c2 = arith::ConstantIndexOp::create(b, loc, 2);
+  Value c10 = arith::ConstantIndexOp::create(b, loc, 10);
+  Value c128 = arith::ConstantIndexOp::create(b, loc, 128);
   {
     auto launch = gpu::LaunchOp::create(b, loc, c1, c1, c1, c128, c1, c1);
     OpBuilder::InsertionGuard guard(b);
