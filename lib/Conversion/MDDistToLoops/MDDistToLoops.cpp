@@ -692,6 +692,11 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
   return success();
 }
 
+static bool isMigrationPosition(RedistributeOp field) {
+  auto move = field.getNewLayout().getDefiningOp<MigrateOp>();
+  return field.getImage() && move && move.getPositions() == field.getField();
+}
+
 LogicalResult Lowering::lowerMigrate(MigrateOp op) {
   OpBuilder b(op);
   if (!op.getPositions().getType().getElementType().isF64())
@@ -702,8 +707,12 @@ LogicalResult Lowering::lowerMigrate(MigrateOp op) {
   Storage &old = storage[op.getOldLayout()];
   Value positions = storage[op.getPositions()].buffer;
   Type i64 = b.getI64Type(), f64 = b.getF64Type();
+  bool keepPositions = mpi && llvm::any_of(op.getLayout().getUsers(), [&](Operation *use) {
+    auto field = dyn_cast<RedistributeOp>(use);
+    return field && field.getNewLayout() == op.getLayout() && isMigrationPosition(field);
+  });
   func::FuncOp migrate = declare(
-      "mdrtDistMigrate",
+      keepPositions ? "mdrtDistMigratePositions" : "mdrtDistMigrate",
       b.getFunctionType({i64, positions.getType(), f64, f64, f64}, {i64}),
       true);
   Value handle = func::CallOp::create(
@@ -861,6 +870,13 @@ LogicalResult Lowering::lowerRedistribute(RedistributeOp op) {
   int64_t components = op.getField().getType().getNumComponents();
   Value destination = allocate(b, next.capacity, components);
   Type i64 = b.getI64Type();
+  if (mpi && isMigrationPosition(op)) {
+    auto fn = declare("mdrtDistMigratedPositions",
+        b.getFunctionType({i64,destination.getType()}, {}), true);
+    func::CallOp::create(b, loc, fn, ValueRange{next.handle,destination});
+    storage[op.getResult()].buffer = destination;
+    return success();
+  }
   Value image = arith::ConstantOp::create(
       b, loc, b.getI64IntegerAttr(op.getImage() ? 1 : 0));
   func::CallOp::create(
@@ -910,6 +926,9 @@ LogicalResult Lowering::lowerHalo(HaloOp op) {
   Value handle;
   if (parallelDomains && !cache && domains > 1) {
     args.push_back(arith::ConstantIntOp::create(b, loc, midpoint, 64));
+    auto field = op.getPositions().getDefiningOp<RedistributeOp>();
+    bool migrated = mpi && field && isMigrationPosition(field);
+    args.push_back(arith::ConstantIntOp::create(b, loc, migrated, 64));
     Value build = func::CallOp::create(b, loc, declare("mdrtDistBeginHalo",
         b.getFunctionType(ValueRange(args).getTypes(), {i64}), true), args).getResult(0);
     auto visit = declare("mdrtDistVisitHalo", b.getFunctionType({i64,i64,positions.getType()}, {}), true);

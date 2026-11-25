@@ -89,6 +89,7 @@ struct Layout {
   } *groups;
   size_t groupCount;
   int groupsFrozen;
+  double (*migratedPositions)[3];
   int32_t *groupCenters; /* center + 1; zero for a free atom */
 #ifdef MDIR_ENABLE_MPI
   int64_t *migrantOffsets, *migrantIds; /* Old rank, then particle identity. */
@@ -812,6 +813,7 @@ void mdrtDistReleaseLayout(int64_t handle) {
   free(l->migrantOffsets);
   free(l->migrantIds);
 #endif
+  free(l->migratedPositions);
   free(l->groups);
   free(l->groupCenters);
   free(l->owner);
@@ -931,9 +933,8 @@ static void shareMigrants(struct Layout *old, struct Layout *next, struct Memref
 }
 #endif
 
-int64_t _mlir_ciface_mdrtDistMigrate(int64_t oldHandle,
-                                     struct Memref3D *positions, double lx,
-                                     double ly, double lz) {
+static int64_t migrate(int64_t oldHandle, struct Memref3D *positions,
+                       double lx, double ly, double lz, int keepPositions) {
   struct Layout *old = (struct Layout *)(intptr_t)oldHandle;
   if (!old || !positions || positions->sizes[0] != old->domains ||
       positions->sizes[1] < ownedCapacity(old) || positions->sizes[2] != 3)
@@ -961,6 +962,10 @@ int64_t _mlir_ciface_mdrtDistMigrate(int64_t oldHandle,
   next->rows = calloc(next->domains, sizeof(int64_t));
   if (!next->owner || !next->row || !next->rows)
     fail("out of memory");
+  if (keepPositions) {
+    next->migratedPositions = malloc(cap*sizeof *next->migratedPositions);
+    if (!next->migratedPositions) fail("out of memory retaining migrated positions");
+  }
   for (int64_t j = 0; j < n; ++j) {
     int64_t cell[3];
     for (int k = 0; k < 3; ++k) {
@@ -970,7 +975,9 @@ int64_t _mlir_ciface_mdrtDistMigrate(int64_t oldHandle,
       double u = coordinate / edges[k];
       if (!isfinite(u))
         fail("migration coordinate exceeds cell range");
-      cell[k] = division(u - floor(u), next->grid[k]);
+      double image = floor(u);
+      cell[k] = division(u - image, next->grid[k]);
+      if (keepPositions) next->migratedPositions[j][k] = coordinate - edges[k]*image;
     }
     int64_t d = cell[0] + next->grid[0] *
                             (cell[1] + next->grid[1] * cell[2]);
@@ -1007,6 +1014,28 @@ int64_t _mlir_ciface_mdrtDistMigrate(int64_t oldHandle,
     traceMigration(old, next);
   return (int64_t)(intptr_t)next;
 }
+
+int64_t _mlir_ciface_mdrtDistMigrate(int64_t old, struct Memref3D *x, double lx,
+                                     double ly, double lz) {
+  return migrate(old,x,lx,ly,lz,0);
+}
+
+int64_t _mlir_ciface_mdrtDistMigratePositions(int64_t old, struct Memref3D *x, double lx,
+                                              double ly, double lz) {
+  return migrate(old,x,lx,ly,lz,1);
+}
+
+#ifdef MDIR_ENABLE_MPI
+void _mlir_ciface_mdrtDistMigratedPositions(int64_t handle, struct Memref3D *dest) {
+  struct Layout *l = (struct Layout *)(intptr_t)handle;
+  int64_t first = mdrtMPIDomainBound(l->domains,0), past = mdrtMPIDomainBound(l->domains,1);
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < l->rows[d]; ++r) {
+      int64_t j = l->ids[d*l->stride+r];
+      for (int c = 0; c < 3; ++c) *at3(dest,d,r,c) = l->migratedPositions[j][c];
+    }
+}
+#endif
 
 void _mlir_ciface_mdrtDistRedistribute(int64_t oldHandle, int64_t newHandle,
                                        struct Memref3D *source,
@@ -1054,7 +1083,7 @@ void _mlir_ciface_mdrtDistRedistribute(int64_t oldHandle, int64_t newHandle,
 /* The box of domain `d`: its region of the grid, widened to hold its owned
    positions, so that every owned particle lies in it whatever the rounding
    of its division (the coverage argument of Section 4.3 needs x_i in it). */
-static void domainBox(struct Layout *l, struct Memref3D *x, int64_t d,
+static void domainBox(struct Layout *l, const double (*points)[3], int64_t d,
                       double lo[3], double hi[3], int midpoint) {
   int64_t cell[3] = {d % l->grid[0], (d / l->grid[0]) % l->grid[1],
                      d / (l->grid[0] * l->grid[1])};
@@ -1068,7 +1097,7 @@ static void domainBox(struct Layout *l, struct Memref3D *x, int64_t d,
   if (midpoint) return;
   for (int64_t r = 0; r < l->rows[d]; ++r)
     for (int k = 0; k < 3; ++k) {
-      double v = *at3(x, d, r, k);
+      double v = points[l->ids[d*l->stride+r]][k];
       if (v < lo[k])
         lo[k] = v;
       if (v > hi[k])
@@ -1085,7 +1114,7 @@ static double outsideBox(double y, double lo, double hi) {
 enum { GhostBinSize = 32 };
 struct GhostBin { double lo[3], hi[3]; };
 struct GhostRow { int64_t id, image[3]; };
-struct GhostList { struct GhostRow *data; size_t size, capacity; };
+struct GhostList { struct GhostRow *data; size_t size, capacity; double lo[3], hi[3]; };
 
 static void visitGhosts(struct Halo *h, const double (*points)[3],
                         const struct GhostBin *bins, int64_t d,
@@ -1148,7 +1177,7 @@ struct HaloBuild {
 };
 
 int64_t _mlir_ciface_mdrtDistBeginHalo(int64_t layout, struct Memref3D *x,
-                                       double reach, int64_t midpoint) {
+                                       double reach, int64_t midpoint, int64_t migrated) {
   struct Halo *h = calloc(1, sizeof *h);
   if (!h)
     fail("out of memory");
@@ -1156,22 +1185,22 @@ int64_t _mlir_ciface_mdrtDistBeginHalo(int64_t layout, struct Memref3D *x,
   h->layout = (struct Layout *)(intptr_t)layout;
   mdrtDistRetainLayout(layout);
   h->reach = reach;
-  shareRows(h->layout, h->layout->rows, x);
+  if (!migrated) shareRows(h->layout, h->layout->rows, x);
   int64_t domains = h->layout->domains;
   h->rows = calloc(domains, sizeof(int64_t));
   if (!h->rows)
     fail("out of memory");
   struct Layout *l = h->layout;
   size_t length = l->count ? l->count : 1;
-  double (*points)[3] = malloc(length*sizeof *points);
+  double (*points)[3] = migrated ? l->migratedPositions : malloc(length*sizeof *points);
   struct GhostBin *bins = malloc(((length+GhostBinSize-1)/GhostBinSize)*sizeof *bins);
   struct GhostList *lists = calloc(domains,sizeof *lists);
   if (!points || !bins || !lists) fail("out of memory binning halo positions");
   for (int64_t j = 0; j < l->count; ++j) {
     struct GhostBin *bin = &bins[j/GhostBinSize];
     for (int c = 0; c < 3; ++c) {
-      double v = *at3(x,l->owner[j],l->row[j],c);
-      points[j][c] = v;
+      if (!migrated) points[j][c] = *at3(x,l->owner[j],l->row[j],c);
+      double v = points[j][c];
       if (j%GhostBinSize == 0 || v < bin->lo[c]) bin->lo[c] = v;
       if (j%GhostBinSize == 0 || v > bin->hi[c]) bin->hi[c] = v;
     }
@@ -1187,8 +1216,8 @@ int64_t _mlir_ciface_mdrtDistBeginHalo(int64_t layout, struct Memref3D *x,
 void _mlir_ciface_mdrtDistVisitHalo(int64_t handle, int64_t domain, struct Memref3D *x) {
   struct HaloBuild *build = (struct HaloBuild *)(intptr_t)handle;
   struct Halo *h = build->halo;
-  double lo[3], hi[3];
-  domainBox(h->layout,x,domain,lo,hi,build->midpoint);
+  double *lo = build->lists[domain].lo, *hi = build->lists[domain].hi;
+  domainBox(h->layout,build->points,domain,lo,hi,build->midpoint);
   visitGhosts(h,build->points,build->bins,domain,lo,hi,&build->lists[domain]);
   h->rows[domain] = build->lists[domain].size;
 }
@@ -1199,8 +1228,7 @@ int64_t _mlir_ciface_mdrtDistFinishHalo(int64_t handle, struct Memref3D *x) {
   struct Layout *l = h->layout;
   struct GhostList *lists = build->lists;
   int64_t domains = l->domains;
-  int midpoint = build->midpoint;
-  free(build->points);
+  if (build->points != l->migratedPositions) free(build->points);
   free(build->bins);
   free(build);
   for (int64_t d = 0; d < domains; ++d)
@@ -1224,7 +1252,6 @@ int64_t _mlir_ciface_mdrtDistFinishHalo(int64_t handle, struct Memref3D *x) {
     }
     free(lists[d].data);
   }
-  free(lists);
   if (observer) {
     // Count neighbor multiplicities once per halo, including periodic
     // self-images. Later transfers scale these counts by their field width.
@@ -1232,8 +1259,7 @@ int64_t _mlir_ciface_mdrtDistFinishHalo(int64_t handle, struct Memref3D *x) {
     if (!counts)
       fail("out of memory counting halo imports");
     for (int64_t d = 0; d < domains; ++d) {
-      double lo[3], hi[3];
-      domainBox(h->layout, x, d, lo, hi, midpoint);
+      const double *lo = lists[d].lo, *hi = lists[d].hi;
       observer->domain(observer->context, d, h->layout->rows[d], h->rows[d], lo, hi);
       for (int64_t g = 0; g < h->rows[d]; ++g)
         ++counts[h->sourceDomain[d * cap + g]];
@@ -1253,18 +1279,19 @@ int64_t _mlir_ciface_mdrtDistFinishHalo(int64_t handle, struct Memref3D *x) {
         }
     }
   }
+  free(lists);
   if (tracing())
     for (int64_t d = 0; d < domains; ++d)
       fprintf(stderr,
               "mdrt_dist: halo reach %g: domain %lld owns %lld rows, "
               "holds %lld ghosts\n",
-              reach, (long long)d, (long long)h->layout->rows[d],
+              h->reach, (long long)d, (long long)h->layout->rows[d],
               (long long)h->rows[d]);
   return (int64_t)(intptr_t)h;
 }
 
 static int64_t buildHalo(int64_t layout, struct Memref3D *x, double reach, int midpoint) {
-  int64_t build = _mlir_ciface_mdrtDistBeginHalo(layout,x,reach,midpoint);
+  int64_t build = _mlir_ciface_mdrtDistBeginHalo(layout,x,reach,midpoint,0);
   const struct Layout *l = (struct Layout *)(intptr_t)layout;
   for (int64_t d = 0; d < l->domains; ++d)
     _mlir_ciface_mdrtDistVisitHalo(build,d,x);
