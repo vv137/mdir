@@ -1,8 +1,16 @@
 # D[box-f32-exact] Use one representable periodic cell per step
 
-In mixed and single precision, round each independent component of the reduced
-cell in nm to binary32 at input, checkpoint restore, frame replacement, and
-barostat scaling. Widen those values exactly for the state and all binary64
-consumers. This removes a difference of periods between particle wrapping and
-the translations of retained pair images (#966). Double precision keeps the
-supplied cell. The setup log and manifest report the six signed changes.
+In mixed and single precision, wrapping, image offsets, neighbor construction,
+PME, exclusions, and virial evaluation all use the same step cell. Round each
+independent reduced-cell component in nm to binary32 and widen it exactly for
+binary64 consumers. The setup log and manifest record the six signed changes.
+
+The barostat applies strain to a binary64 master initialized from the supplied
+cell. Each coupling derives the next step cell from that master. Particles and
+rigid-group centers move by the deformation between the two step cells,
+including the shear from rounding independent tilts. A checkpoint stores the
+step cell as the H5MD box and the six binary64 master components in
+`/parameters/mdir/master_cell` for mixed and single NPT. On continuation the
+barostat resumes that accumulator. For older checkpoints its initial value
+comes from the stored box. At fixed volume the step cell is rounded once.
+Double precision uses its binary64 cell throughout (#966).

@@ -304,13 +304,25 @@ cutoff at one endpoint the jump there vanishes, while at the interacting
 endpoint it generally survives. Thus different periods admit nonzero work
 around a physically closed path even before counting arithmetic roundoff.
 
-Rounding each independent component once, in nm, makes $\Delta H=0$.
+Using the same rounded component in both operations makes $\Delta H=0$.
 The change is at most half a binary32 spacing at the supplied component.
 Ordinary pair arithmetic still rounds. For an orthorhombic unit shift, one
 binary32 addition of a placed binary32 coordinate and the signed rounded edge
 agrees with rounding their binary64 sum for coordinates on the scale of the
 cell. For a tilted cell, the sum of several shifted components can itself
 round before the addition to the position.
+
+At constant volume one rounding at setup suffices. Under stochastic cell
+rescaling [Bernetti2020], the pressure difference can produce a deterministic
+strain smaller than half a binary32 spacing. Feeding a rounded edge back into
+the next update can discard that drift at every coupling. The barostat
+therefore applies each strain to its binary64 master. The six components
+rounded from that master give the step cell for all periodic geometry,
+including the volume in the next pressure calculation. With the row-vector
+convention of Section 2, a center at fixed fractional coordinates moves as
+$\mathbf x' = \mathbf x H_{32}^{-1} H'_{32}$. This includes any shear from
+rounding the tilt components independently. Checkpoints retain the master
+alongside the physical step cell so a continuation preserves sub-ulp strain.
 
 ## 7.3 A drift of the energy, and its removal
 
