@@ -29,6 +29,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Transforms/Patterns.h"
+#include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
@@ -1285,11 +1286,21 @@ void Lowering::emitPairs(
   };
   Value one = c(b, 1);
   if (parallel) {
-    scf::ParallelOp::create(b, loc, ValueRange{first}, ValueRange{past}, ValueRange{one},
+    auto loop = scf::ParallelOp::create(b, loc, ValueRange{first}, ValueRange{past}, ValueRange{one},
         [&](OpBuilder &bd, Location, ValueRange indices) {
           visitDomain(bd, indices.front());
           scf::ReduceOp::create(bd, loc);
         });
+    // Give each domain's cell construction and loops a function scope.
+    // SCF-to-OpenMP otherwise retains an alloca_scope around the call to
+    // the cell builder, which cannot contain the lowered loop backedges.
+    IRRewriter rewriter(b.getContext());
+    unsigned suffix = 0;
+    auto name = SymbolTable::generateSymbolName<32>("mdir_dist_pairs",
+        [&](StringRef s) { return SymbolTable::lookupSymbolIn(module, s); }, suffix);
+    auto domain = outlineSingleBlockRegion(rewriter, loc, loop.getRegion(), name);
+    assert(succeeded(domain) && "the parallel domain region has one block");
+    (*domain).setPrivate();
   } else {
     scf::ForOp::create(b, loc, first, past, one, ValueRange(),
         [&](OpBuilder &bd, Location, Value d, ValueRange) {
