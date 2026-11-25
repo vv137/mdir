@@ -29,6 +29,46 @@ Discardable attributes of the dialect (`MDRTOps.h`):
 
 ## Operations
 
+### `mdrt.domain_matrix` (::mdir::mdrt::DomainMatrixOp)
+
+_Acquire the host MATRIX candidate rows of a halo epoch_
+
+Rebuild the ordinary CPU matrix at cutoff plus skin when the local
+rows have moved beyond half the skin. The halo owns its storage and
+fixes row identities and periodic images. Selection applies exclusions
+and the directed (0), unique (1), or midpoint (2) computation rule.
+Midpoint selection uses current coordinates on every visit.
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>width</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+<tr><td><code>rule</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `halo` | 64-bit signless integer |
+| `domain` | index |
+| `centers` | index |
+| `positions` | memref of 64-bit float values |
+| `exclusions` | 64-bit signless integer |
+| `ownedPositions` | memref of 64-bit float values |
+| `ghostPositions` | memref of 64-bit float values |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | A physical neighbor structure |
+
+
+
 ### `mdrt.from_buffer` (::mdir::mdrt::FromBufferOp)
 
 _The field or the tuples that a buffer holds_

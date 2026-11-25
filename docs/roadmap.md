@@ -310,3 +310,6 @@ The first runtime-interface slice of #558 stage 2 is #623: a shared, versioned n
 D[distribute-midpoint] extends the CPU reference executor with midpoint
 pair ownership, bonded topology schedules, and whole-group migration.
 Distributed reciprocal space remains a separate milestone.
+
+D[distribute-pair-lowering] connects default distributed CPU pairs to the
+ordinary MATRIX list, host lane chooser, and threaded center traversal.

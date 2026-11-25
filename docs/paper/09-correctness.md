@@ -791,3 +791,26 @@ all sites to the domain containing this center. Each constraint projection
 then reads all its coordinates on one owner. Disjoint groups have no
 shared output rows, so moving the group between domains preserves the
 order of floating-point operations within its projection.
+
+### Domain candidate lists (D[distribute-pair-lowering])
+
+For a fixed halo, assume that every explicit endpoint image has moved
+by at most $s/2$ from its list reference. By the triangle inequality the
+distance at the reference is at most the current distance plus $s$.
+Consequently a pair within $r_c$ today was within $r_c+s$ at the build.
+A change of halo invalidates this argument because an index may then
+denote a different image. Within a halo the periodic CPU builder can
+search an enclosing box whose edge on each axis exceeds the local span
+by $2(r_c+s)$. Any displacement that wraps around this box has at least
+one component larger than the build reach before or after wrapping.
+No wrapped copy of a distant pair can enter the list.
+
+For a pair potential, summing the interaction energy over unordered pairs
+gives the same Hamiltonian as half the sum over both directed visits.
+Differentiation gives the owner force in a directed row. An unordered
+visit supplies both endpoint derivatives, equal and opposite for a
+potential of their displacement. Unique identity and midpoint assignment
+partition these visits as above. Selection must use the current midpoint
+because the displacement bound permits a midpoint to cross a domain
+face. SIMD groups consecutive candidates of the resulting rows. The
+deterministic implementation retains the integer reduction of ruling B.
