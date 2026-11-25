@@ -42,6 +42,7 @@ struct Api {
   ENTRY(cuLaunchKernel)
   ENTRY(cuMemAlloc)
   ENTRY(cuMemFree)
+  ENTRY(cuMemcpy2DUnaligned)
   ENTRY(cuMemcpyDtoH)
   ENTRY(cuMemcpyHtoD)
   ENTRY(cuMemsetD8)
@@ -63,7 +64,7 @@ struct Api {
            cuEventRecordWithFlags && cuEventSynchronize && cuFuncSetAttribute &&
            cuGetErrorName && cuGraphDestroy && cuGraphExecDestroy &&
            cuGraphInstantiateWithFlags && cuGraphLaunch && cuLaunchKernel &&
-           cuMemAlloc && cuMemFree && cuMemcpyDtoH && cuMemcpyHtoD &&
+           cuMemAlloc && cuMemFree && cuMemcpy2DUnaligned && cuMemcpyDtoH && cuMemcpyHtoD &&
            cuMemsetD8 && cuMemsetD8Async && cuModuleGetFunction &&
            cuModuleLoadData && cuModuleUnload && cuStreamBeginCapture &&
            cuStreamCreate && cuStreamDestroy && cuStreamEndCapture &&
@@ -157,7 +158,7 @@ struct TowersTrial {
         !allocate(raw, 24 * n) ||
         !allocate(box, cell.triclinic ? 72 : 24,
                   cell.triclinic ? cell.lattice.data() : system.box) ||
-        !allocate(map, 4 * entries) || !allocate(counts, 4 * (2 * c + 3)) ||
+        !allocate(map, 4 * entries) || !allocate(counts, 4 * (2 * c + 1)) ||
         !allocate(rebuildStatus, 4) ||
         !allocate(geometry, 24 * (cell.triclinic ? 13 : 3)) ||
         !allocate(charge, 4 * n) || !allocate(types, 4 * n) ||
@@ -194,7 +195,6 @@ struct Sample {
     Inputs,
     Insert,
     Pack,
-    PackWide,
     Force,
     Finish,
     CountRetries,
@@ -237,14 +237,10 @@ struct Sample {
                  {&f.raw, &f.charge, &f.geometry, &f.counts, &f.keys, &f.local,
                   &forward})))
       return false;
-    std::vector<void *> packArgs{&f.counts,      &f.keys,         &f.local,
-                                 &f.types,       &f.map,          &f.packed,
-                                 &f.packedTypes, &f.ids,          &f.inverse,
-                                 &f.spans,       &f.rebuildStatus};
-    return (f.atoms > 128LL * f.cells ||
-            launch(Pack, (f.cells + 3) / 4, 128, packArgs)) &&
-           (f.atoms <= 128 ||
-            launch(PackWide, (f.cells + 3) / 4, 128, packArgs));
+    return launch(Pack, (f.cells + 3) / 4, 128,
+                  {&f.counts, &f.keys, &f.local, &f.types, &f.map, &f.packed,
+                   &f.packedTypes, &f.ids, &f.inverse, &f.spans,
+                   &f.rebuildStatus});
   }
   bool pair(bool count = false) {
     float scale = 262144;
@@ -287,22 +283,22 @@ struct Sample {
                                                    f.stream, args.data()),
                    "launch towers_finish");
   }
-  bool measure(const void *image, bool canRetry, TowersTiming &timing) {
-    const char *names[] = {
-        "towers_setup",     "towers_trial_inputs",
-        "towers_insert",    "towers_pack",
-        "towers_pack_wide", pressure ? "towers_force_virial" : "towers_force",
-        "towers_finish",    "towers_count_stripe_retries"};
+  bool prepare(const void *image, Kernel end) {
+    const char *names[] = {"towers_setup",
+                           "towers_trial_inputs",
+                           "towers_insert",
+                           "towers_pack",
+                           pressure ? "towers_force_virial" : "towers_force",
+                           "towers_finish",
+                           "towers_count_stripe_retries"};
     if (!f.check(api().cuModuleLoadData(&module, image),
                  "load trial specialization"))
       return false;
-    for (int k = 0; k < (canRetry ? Size : CountRetries); ++k)
-      if (!(k == Pack && f.atoms > 128LL * f.cells) &&
-          !(k == PackWide && f.atoms <= 128) &&
-          !f.check(api().cuModuleGetFunction(&fn[k], module, names[k]),
+    for (int k = 0; k < end; ++k)
+      if (!f.check(api().cuModuleGetFunction(&fn[k], module, names[k]),
                    names[k]))
         return false;
-    for (int k = Force; k < (canRetry ? Size : CountRetries); ++k)
+    for (int k = Force; k < end; ++k)
       if (!f.check(api().cuFuncSetAttribute(
                        fn[k], CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
                        shared),
@@ -322,6 +318,11 @@ struct Sample {
           "trial cell capacity must be at least " + std::to_string(overflow);
       return false;
     }
+    return true;
+  }
+  bool measure(const void *image, bool canRetry, TowersTiming &timing) {
+    if (!prepare(image, canRetry ? Size : CountRetries))
+      return false;
     if (!f.check(api().cuStreamBeginCapture(
                      f.stream, CU_STREAM_CAPTURE_MODE_THREAD_LOCAL),
                  "begin trial graph"))
@@ -404,6 +405,39 @@ llvm::Expected<TrialFrame> createTowersTrial(int device,
   if (!f->setup(system, buffers))
     return llvm::createStringError("towers_shape: %s", f->error.c_str());
   return f;
+}
+
+llvm::Expected<TowersPopulation> readTowersPopulation(TowersTrial &f,
+                                                      const std::string &image) {
+  if (!f.check(api().cuCtxPushCurrent(f.context), "enter trial context"))
+    return llvm::createStringError("towers_shape: %s", f.error.c_str());
+  auto restore = llvm::scope_exit([] {
+    CUcontext old;
+    api().cuCtxPopCurrent(&old);
+  });
+  Sample sample{f};
+  if (!sample.prepare(image.data(), Sample::Force))
+    return llvm::createStringError("towers_shape: %s", f.error.c_str());
+  // Field zero is the owner's own cell. Packing clears the insertion counts
+  // and publishes the full population in the second word of each span.
+  std::vector<int> counts(f.cells);
+  CUDA_MEMCPY2D copy{};
+  copy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+  copy.srcDevice = f.spans + sizeof(int);
+  copy.srcPitch = 2 * sizeof(int) * (5 + 2 * f.reach);
+  copy.dstMemoryType = CU_MEMORYTYPE_HOST;
+  copy.dstHost = counts.data();
+  copy.dstPitch = copy.WidthInBytes = sizeof(int);
+  copy.Height = f.cells;
+  if (!f.check(api().cuMemcpy2DUnaligned(&copy), "read setup cell populations"))
+    return llvm::createStringError("towers_shape: %s", f.error.c_str());
+  int64_t total = 0;
+  for (int count : counts)
+    total += count;
+  if (total != f.atoms)
+    return llvm::createStringError("towers_shape: incomplete setup population");
+  return TowersPopulation{*std::max_element(counts.begin(), counts.end()),
+                          double(total) / f.cells};
 }
 
 llvm::Expected<TowersTiming>

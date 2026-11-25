@@ -156,7 +156,7 @@ llvm::Expected<Object> checkRegisters(int device, const TowersShape &shape,
 using Cell = std::array<int, 3>;
 struct FrameSpans {
   int64_t column = 1, plate = 1;
-  int capacity = 32, cells = 1;
+  int capacity = 32, cells = 1, peak = 0;
 };
 
 llvm::Expected<FrameSpans> measureSpans(const System &system, double cutoff,
@@ -184,7 +184,7 @@ llvm::Expected<FrameSpans> measureSpans(const System &system, double cutoff,
         x += length;
       cell[a] = std::min(dims[a] - 1, int(x / (length / dims[a])));
     }
-    maximum.capacity = std::max(maximum.capacity, ++counts[cell]);
+    maximum.peak = std::max(maximum.peak, ++counts[cell]);
   }
   for (const auto &[cell, count] : counts) {
     auto add = [&](int x, int y, int z, int plane) {
@@ -203,7 +203,7 @@ llvm::Expected<FrameSpans> measureSpans(const System &system, double cutoff,
     maximum.column = std::max(maximum.column, entry.second[0]);
     maximum.plate = std::max(maximum.plate, entry.second[1]);
   }
-  maximum.capacity = llvm::alignTo(maximum.capacity, 8);
+  maximum.capacity = llvm::alignTo(std::max(maximum.capacity, maximum.peak), 8);
   // Slot offsets, including the growth pool, are signed 32-bit indices.
   int64_t limit =
       (INT32_MAX - int64_t(system.getNumParticles())) / maximum.capacity;
@@ -336,22 +336,50 @@ Object fields(const TowersShape &s, bool provenance) {
     result[key] = provenance ? Value(field ? "control" : "AUTO")
                   : field    ? Value(field)
                              : Value("AUTO");
+  result["pack"] = provenance ? Value(s.pack.empty() ? "AUTO" : "control")
+                              : Value(s.pack.empty() ? "AUTO" : s.pack);
   result["cell_height"] =
       provenance ? Value(s.cellHeight.empty() ? "AUTO" : "control")
                  : Value(s.cellHeight.empty() ? "AUTO" : s.cellHeight);
   return result;
 }
 #if MDIR_HAS_CUDA
+std::string resolvePack(const TowersShape &given, mdir::tool::TowersPopulation pop,
+                        Object &report, llvm::StringRef source) {
+  report["population_source"] = source;
+  report["maximum_population"] = pop.maximum;
+  report["mean_population"] = pop.mean;
+  report["pack_rule"] = "AUTO selects WIDE when maximum_population > 128";
+  return given.pack.empty() ? (pop.maximum > 128 ? "WIDE" : "COMPACT") : given.pack;
+}
 llvm::Expected<TowersShape>
 timeCandidates(const Control &control, const System &system,
                const Limits &limits, const FrameSpans &spans,
                const mdir::tool::TowersEmitter &emit,
-               const std::vector<TowersShape> &candidates, Object &report) {
+               std::vector<TowersShape> &candidates, Object &report) {
   using namespace mdir;
   using namespace mdir::tool;
   auto start = std::chrono::steady_clock::now();
   if (candidates.empty())
     return refusal("no launch satisfies the supplied pins and device limits");
+  const auto &first = candidates.front();
+  TowersBuffers parameters;
+  auto firstImage = emit(first, &parameters);
+  if (!firstImage)
+    return firstImage.takeError();
+  double cutoff = control.cutoffDistance * units::length;
+  int reach = first.cellHeight == "HALF" ? 2 : 1;
+  auto frame = createTowersTrial(limits.device, system, spans.cells, reach,
+                                 spans.capacity, parameters);
+  if (!frame)
+    return frame.takeError();
+  auto population = readTowersPopulation(**frame, *firstImage);
+  if (!population)
+    return population.takeError();
+  auto pack = resolvePack(control.towersShape, *population, report, "device spans");
+  bool recompile = (first.pack == "WIDE") != (pack == "WIDE");
+  for (auto &candidate : candidates)
+    candidate.pack = pack;
   if (candidates.size() == 1) {
     report["selection"] = "single candidate";
     report["winner"] = fields(candidates.front(), false);
@@ -362,13 +390,11 @@ timeCandidates(const Control &control, const System &system,
     report["trial_cost_ms"] = 0.0;
     return candidates.front();
   }
-  const auto &first = candidates.front();
-  TowersBuffers parameters;
-  auto firstImage = emit(first, &parameters);
-  if (!firstImage)
-    return firstImage.takeError();
-  double cutoff = control.cutoffDistance * units::length;
-  int reach = first.cellHeight == "HALF" ? 2 : 1;
+  if (recompile) {
+    firstImage = emit(first, nullptr);
+    if (!firstImage)
+      return firstImage.takeError();
+  }
   // Include the compiled pair body, the device identity, the box and the
   // feasible proposals. Frames on the same grid can reuse the winning launch.
   std::string key = compiler::getCacheSalt();
@@ -419,10 +445,6 @@ timeCandidates(const Control &control, const System &system,
   };
   std::vector<Candidate> trials;
   std::string firstRefusal;
-  auto frame = createTowersTrial(limits.device, system, spans.cells, reach,
-                                 spans.capacity, parameters);
-  if (!frame)
-    return frame.takeError();
   auto measure = [&](const Candidate &c, TowersTiming &us) -> llvm::Error {
     auto result = measureTowersTrial(**frame, c.image, candidates[c.index],
                                      control.barostat);
@@ -637,6 +659,8 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
   if (!emit)
     return emit.takeError();
   if (!*emit) {
+    shape->pack = resolvePack(given, {maximum->peak, double(system.getNumParticles()) /
+                                                  maximum->cells}, result, "input coordinates");
     result["selection"] = "derived shape (no force-only region)";
     result["register_check"] = "no force-only region";
   } else {

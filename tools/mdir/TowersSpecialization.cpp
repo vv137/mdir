@@ -299,6 +299,7 @@ mdir::tool::prepareTowersSpecialization(const Control &control,
         if (!layout.triclinic && layout.cells() <= layout.atoms)
           launch.cartesianPositions = MemRefType::get(
               {layout.atoms, 3}, Float64Type::get(&state->context));
+        layout.widePack = shape.pack == "WIDE";
         if (failed(kernels::emitTowersBuild(*image, layout)))
           return llvm::createStringError(
               "towers_shape: could not compile rebuild: %s",

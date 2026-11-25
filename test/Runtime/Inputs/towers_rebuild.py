@@ -164,7 +164,7 @@ class Rebuild:
         slots = capacity * self.cells + (n if grow else 0)
         alloc = entries.array
         self.map = alloc(I, self.cells * self.fields)
-        self.count = alloc(I, (2 * self.cells + 1 if grow else self.cells) + (2 if entries.gpu else 0))
+        self.count = alloc(I, 2 * self.cells + 1 if grow else self.cells)
         self.status = alloc(I, 1)
         self.raw, self.box = alloc(D, 3 * n), alloc(D, 3)
         self.charge, self.types = alloc(F, n), alloc(I, n)
@@ -201,25 +201,21 @@ class Rebuild:
             self.local,
             I(reverse),
         )
-        packs = ["pack"]
-        if self.entries.gpu and self.n > 128:
-            packs = ([] if self.n > 128 * self.cells else packs) + ["pack_wide"]
-        for pack in packs:
-            run(
-                pack,
-                self.cells * 32,
-                self.count,
-                self.keys,
-                self.local,
-                self.types,
-                self.map,
-                self.packed,
-                self.packed_types,
-                self.ids,
-                self.inverse,
-                self.spans,
-                self.status,
-            )
+        run(
+            "pack",
+            self.cells * 32,
+            self.count,
+            self.keys,
+            self.local,
+            self.types,
+            self.map,
+            self.packed,
+            self.packed_types,
+            self.ids,
+            self.inverse,
+            self.spans,
+            self.status,
+        )
 
 
 def check(directory, gpu, reach, compact):
@@ -268,8 +264,6 @@ def check(directory, gpu, reach, compact):
                 cell = (ix * dims[1] + iy) * dims[2] + iz
                 bins[cell].append((tuple(q % 4 for q in quarters), i))
             required = max(map(len, bins))
-            if gpu:
-                assert r.count[-1] == required
             if capacity < required:
                 assert attempt == 0 and r.status[0] == required
                 capacity = r.status[0]

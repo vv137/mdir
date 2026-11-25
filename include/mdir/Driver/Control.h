@@ -221,6 +221,7 @@ struct TowersShape {
   int64_t threads = 0, blocksPerSM = 0, stripe = 0, panel = 0, records = 0,
           split = 0;
   std::string cellHeight;
+  std::string pack;
 };
 
 /// Resolved once on the device, before compiling the simulation.

@@ -325,13 +325,9 @@ LogicalResult Dispatch::run(Value positions) {
       if (g.cells() > g.atoms)
         launch("towers_insert", n, 128,
                {raw, charge, geometry, counts, keys, local, forward});
-      SmallVector<Value> packArgs{counts,  keys,   local,       types,
-                                  map,     packed, packedTypes, ids,
-                                  inverse, spans,  status};
-      if (!g.alwaysWidePack())
-        launch("towers_pack", 32LL * g.cells(), 128, packArgs);
-      if (g.mayNeedWidePack())
-        launch("towers_pack_wide", 32LL * g.cells(), 128, packArgs);
+      launch("towers_pack", 32LL * g.cells(), 128,
+             {counts, keys, local, types, map, packed, packedTypes, ids,
+              inverse, spans, status});
     }
     if (!force || i != 0) {
       fill(state, narrow);
@@ -505,7 +501,7 @@ LogicalResult mdir::kernels::lowerTowersPair(md_exec::PairForOp pair,
       int(grid[0]), int(grid[1]), int(grid[2]),
       int(grid[3]), int(grid[4]), int(grid[5]),
       false,        true,         isTriclinic(pair.getCellMutable().get()),
-      true};
+      true, module->hasAttr("mdir.towers_wide_pack")};
   TowersForceShape shape{int(launch[2]),
                          int(launch[3]),
                          int(launch[0]),

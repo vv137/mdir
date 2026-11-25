@@ -11,16 +11,12 @@ struct TowersLayout {
   // The moving layout allocates dense cells from a pool of at most one
   // additional slot per atom. Inverse entries also carry the owning cell.
   bool growCells = false;
+  bool widePack = false;
   int64_t slots() const {
     return int64_t(cells()) * capacity + (growCells ? atoms : 0);
   }
   int64_t keyWords() const { return slots() + (growCells ? atoms : 0); }
-  int64_t populationSlot() const {
-    return growCells ? 2LL * cells() + 1 : cells();
-  }
-  int64_t countWords() const { return populationSlot() + (host ? 0 : 2); }
-  bool alwaysWidePack() const { return atoms > 128LL * cells(); }
-  bool mayNeedWidePack() const { return atoms > 128; }
+  int64_t countWords() const { return growCells ? 2LL * cells() + 1 : cells(); }
   int inverseWords() const { return growCells ? 2 * atoms : atoms; }
   // Triclinic entries take fractional coordinates and the row-major lattice.
   // Setup stores fractional bin geometry, the lattice, Cartesian bin vectors,

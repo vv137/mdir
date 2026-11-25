@@ -31,6 +31,8 @@ llvm::Error Builder::build() {
           "TOWERS launch shape must be resolved on the selected GPU");
     auto module = termIR.getModule();
     mlir::Builder b(module.getContext());
+    if (setup.launch.pack == "WIDE")
+      module->setAttr("mdir.towers_wide_pack", b.getUnitAttr());
     if (system.topology)
       module->setAttr("mdir.towers_type_count",
                       b.getI64IntegerAttr(system.topology->getNumTypes()));

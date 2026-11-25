@@ -12,6 +12,12 @@ llvm::Expected<TrialFrame> createTowersTrial(int device,
                                              const driver::System &system,
                                              int cells, int reach, int capacity,
                                              const TowersBuffers &parameters);
+struct TowersPopulation {
+  int maximum;
+  double mean;
+};
+llvm::Expected<TowersPopulation> readTowersPopulation(TowersTrial &frame,
+                                                      const std::string &image);
 struct TowersTiming {
   float pairUs = 0, rebuildUs = 0;
   int64_t stripeRetries = 0;

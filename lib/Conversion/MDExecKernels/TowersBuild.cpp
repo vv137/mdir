@@ -161,7 +161,7 @@ Values TowersBuild::locate(Value x, Value length, Value width, Value reciprocal,
 void TowersBuild::sortWarp(Value keys, Value base, Value lane, Value count,
                            int batches,
                            function_ref<void(Value, Value)> place) {
-  // A bitonic network sorts one to eight registers per lane. The
+  // A bitonic network sorts one, two, four or eight registers per lane. The
   // sentinel compares after every legal compound key.
   SmallVector<Value> values(batches);
   for (int j = 0; j < batches; ++j) {
@@ -242,9 +242,6 @@ void TowersBuild::geometry(Value box, Value status, Value info) {
 
 void TowersBuild::initializeCell(Value cell, Value map, Value counts) {
   store(ci(0), counts, {cell});
-  if (!g.host)
-    ifThen(cmpi(CmpIPredicate::eq, cell, cx(0)),
-           [&] { store(ci(0), counts, {cx(g.populationSlot())}); });
   if (g.growCells)
     store(ci(-1), counts, {addi(cx(g.cells()), cell)});
   for (auto [field, delta] : llvm::enumerate(offsets)) {
@@ -305,17 +302,7 @@ void TowersBuild::insert(Value item, Value atom, ValueRange xyzq,
           Value ptr =
               pointerTo(baseAddress(counts), muli(indexCast(i64, cell), cl(4)));
           Value members = math::CtPopOp::create(b, loc, group);
-          Value firstSlot = atomic(LLVM::AtomicBinOp::add, ptr, members);
-          Value end = addi(firstSlot, members);
-          Value peak =
-              pointerTo(baseAddress(counts), cl(4 * g.populationSlot()));
-          // A stale lower bound can only cause a redundant atomic maximum.
-          Value previous = LLVM::LoadOp::create(
-              b, loc, i32, peak, 4, false, false, false, false,
-              LLVM::AtomicOrdering::monotonic, "device");
-          ifThen(cmpi(CmpIPredicate::ugt, end, previous),
-                 [&] { atomic(LLVM::AtomicBinOp::umax, peak, end); });
-          return Values{firstSlot};
+          return Values{atomic(LLVM::AtomicBinOp::add, ptr, members)};
         },
         [&] { return Values{ci(0)}; })[0];
     base = NVVM::ShflOp::create(b, loc, i32, group, base, first, ci(31),
@@ -391,156 +378,128 @@ void TowersBuild::emit(bool audit) {
   // One warp consumes each cell on the device. Each key has a unique
   // rank, so even a dense cell can be packed without a shared sort buffer.
   int lanes = g.host ? 1 : 32;
-  auto packCell = [&](Value item, ValueRange a, int maxBatches) {
-    Value cell = divui(item, cx(lanes)), lane = remui(item, cx(lanes));
-    Value size = load(a[0], {cell});
-    Value count = indexCast(index, minui(size, ci(g.capacity)));
-    Value base = muli(cell, cx(g.capacity));
-    if (g.growCells) {
-      // Only a dense cell takes space from the pool. The cells are
-      // disjoint, so their total request cannot exceed the atom count.
-      base = ifElse(
-          {index}, cmpi(CmpIPredicate::ugt, size, ci(g.capacity)),
-          [&] {
-            Value first = ifElse(
-                {i32}, cmpi(CmpIPredicate::eq, lane, cx(0)),
-                [&] {
-                  Value slot = memref::AtomicRMWOp::create(
-                      b, loc, arith::AtomicRMWKind::addi, size, a[0],
-                      ValueRange{cx(2LL * cells)});
-                  Value head = load(a[0], {addi(cx(cells), cell)});
-                  forLoop(
-                      cx(g.capacity), indexCast(index, size), cx(1),
-                      ValueRange{head}, [&](Value i, ValueRange chain) {
-                        Value key = chain[0];
-                        Value atom = indexCast(index, andi(key, ci(0x3ffffff)));
-                        store(key, a[1], {addi(indexCast(index, slot), i)});
-                        return Values{load(a[1], {addi(cx(g.slots()), atom)})};
-                      });
-                  return Values{slot};
-                },
-                [&] { return Values{ci(0)}; })[0];
-            if (!g.host)
-              first =
-                  shuffle(gpu::ShuffleMode::IDX, first, ci(0), ci(32)).first;
-            Value grown = indexCast(index, first);
-            forLoop(
-                lane, cx(g.capacity), cx(lanes), {}, [&](Value i, ValueRange) {
-                  store(load(a[1], {addi(base, i)}), a[1], {addi(grown, i)});
-                  return Values{};
-                });
-            if (!g.host)
-              warpSync(ci(-1));
-            return Values{grown};
-          },
-          [&] { return Values{base}; })[0];
-      count = indexCast(index, size);
-    }
-    auto place = [&](Value key, Value rank) {
-      Value atom = indexCast(index, andi(key, ci(0x3ffffff)));
-      Value dest = addi(base, rank);
-      store(load(a[2], {atom}), a[5], {dest});
-      store(load(a[3], {atom}), a[6], {dest});
-      store(indexCast(i32, atom), a[7], {dest});
-      store(indexCast(i32, dest), a[8], {atom});
-      if (g.growCells)
-        store(indexCast(i32, cell), a[8], {addi(cx(n), atom)});
-    };
-    auto rankSort = [&] {
-      forLoop(lane, count, cx(lanes), {}, [&](Value j, ValueRange) {
-        Value key = load(a[1], {addi(base, j)});
-        Value rank = forLoop(
-            cx(0), count, cx(1), ValueRange{cx(0)},
-            [&](Value k, ValueRange acc) {
-              Value earlier =
-                  cmpi(CmpIPredicate::ult, load(a[1], {addi(base, k)}), key);
-              return Values{addi(acc[0], select(earlier, cx(1), cx(0)))};
-            })[0];
-        place(key, rank);
-        return Values{};
-      });
-    };
-    if (g.host)
-      rankSort();
-    else {
-      auto sort = [&](int batches) {
-        sortWarp(a[1], base, lane, count, batches, place);
-      };
-      auto selectNetwork = [&](auto &&self, int batches) -> void {
-        ifThenElse(
-            cmpi(CmpIPredicate::ule, count, cx(32 * batches)),
-            [&] { sort(batches); },
-            [&] {
-              if (batches < maxBatches)
-                self(self, 2 * batches);
-              else
-                rankSort();
-            });
-      };
-      selectNetwork(selectNetwork, 1);
-    }
-    forLoop(lane, cx(fields), cx(lanes), {}, [&](Value field, ValueRange) {
-      Value owner = indexCast(index, load(a[4], {cell, field}));
-      store(indexCast(i32, base), a[9], {owner, field, cx(0)});
-      store(indexCast(i32, count), a[9], {owner, field, cx(1)});
-      return Values{};
-    });
-    if (!g.host && g.compact)
-      warpSync(ci(-1));
-    ifThen(cmpi(CmpIPredicate::eq, lane, cx(0)), [&] {
-      if (g.compact)
-        store(ci(0), a[0], {cell});
-      if (g.growCells) {
-        if (g.compact)
-          store(ci(-1), a[0], {addi(cx(cells), cell)});
-        return;
-      }
-      ifThen(cmpi(CmpIPredicate::ugt, size, ci(g.capacity)), [&] {
-        memref::AtomicRMWOp::create(b, loc, arith::AtomicRMWKind::maxu, size,
-                                    a[10], ValueRange{cx(0)});
-      });
-    });
-  };
-  auto emitPack = [&](StringRef name, bool wide) {
-    phase(name,
-          {counts, keys, local, types, inverse, packed, slotIds, slotIds,
-           atomInverse, spans, status},
-          int64_t(cells) * lanes, [&](Value item, ValueRange a) {
-            if (g.host) {
-              packCell(item, a, 4);
-              return;
-            }
-            bool paired = g.mayNeedWidePack() && !g.alwaysWidePack();
-
-            Value current = cx(g.populationSlot()),
-                  saved = cx(g.populationSlot() + 1);
-            auto pack = [&] { packCell(item, a, wide ? 8 : 4); };
-            if (!paired) {
-              ifThen(cmpi(CmpIPredicate::eq, item, cx(0)), [&] {
-                store(load(a[0], {current}), a[0], {saved});
-                store(ci(0), a[0], {current});
-              });
-              pack();
-              return;
-            }
-            // The narrow launch snapshots the maximum before the wide launch
-            // clears the accumulator for the following insertion.
-            Value peak = load(a[0], {wide ? saved : current});
-            ifThen(cmpi(CmpIPredicate::eq, item, cx(0)), [&] {
-              if (!wide)
-                store(peak, a[0], {saved});
-              else
-                store(ci(0), a[0], {current});
-            });
-            ifThen(cmpi(wide ? CmpIPredicate::ugt : CmpIPredicate::ule, peak,
-                        ci(128)),
-                   pack);
+  phase(
+      "towers_pack",
+      {counts, keys, local, types, inverse, packed, slotIds, slotIds,
+       atomInverse, spans, status},
+      int64_t(cells) * lanes, [&](Value item, ValueRange a) {
+        Value cell = divui(item, cx(lanes)), lane = remui(item, cx(lanes));
+        Value size = load(a[0], {cell});
+        Value count = indexCast(index, minui(size, ci(g.capacity)));
+        Value base = muli(cell, cx(g.capacity));
+        if (g.growCells) {
+          // Only a dense cell takes space from the pool. The cells are
+          // disjoint, so their total request cannot exceed the atom count.
+          base = ifElse(
+              {index}, cmpi(CmpIPredicate::ugt, size, ci(g.capacity)),
+              [&] {
+                Value first = ifElse(
+                    {i32}, cmpi(CmpIPredicate::eq, lane, cx(0)),
+                    [&] {
+                      Value slot = memref::AtomicRMWOp::create(
+                          b, loc, arith::AtomicRMWKind::addi, size, a[0],
+                          ValueRange{cx(2LL * cells)});
+                      Value head = load(a[0], {addi(cx(cells), cell)});
+                      forLoop(cx(g.capacity), indexCast(index, size), cx(1),
+                              ValueRange{head}, [&](Value i, ValueRange chain) {
+                                Value key = chain[0];
+                                Value atom =
+                                    indexCast(index, andi(key, ci(0x3ffffff)));
+                                store(key, a[1],
+                                      {addi(indexCast(index, slot), i)});
+                                return Values{
+                                    load(a[1], {addi(cx(g.slots()), atom)})};
+                              });
+                      return Values{slot};
+                    },
+                    [&] { return Values{ci(0)}; })[0];
+                if (!g.host)
+                  first = shuffle(gpu::ShuffleMode::IDX, first, ci(0), ci(32))
+                              .first;
+                Value grown = indexCast(index, first);
+                forLoop(lane, cx(g.capacity), cx(lanes), {},
+                        [&](Value i, ValueRange) {
+                          store(load(a[1], {addi(base, i)}), a[1],
+                                {addi(grown, i)});
+                          return Values{};
+                        });
+                if (!g.host)
+                  warpSync(ci(-1));
+                return Values{grown};
+              },
+              [&] { return Values{base}; })[0];
+          count = indexCast(index, size);
+        }
+        auto place = [&](Value key, Value rank) {
+          Value atom = indexCast(index, andi(key, ci(0x3ffffff)));
+          Value dest = addi(base, rank);
+          store(load(a[2], {atom}), a[5], {dest});
+          store(load(a[3], {atom}), a[6], {dest});
+          store(indexCast(i32, atom), a[7], {dest});
+          store(indexCast(i32, dest), a[8], {atom});
+          if (g.growCells)
+            store(indexCast(i32, cell), a[8], {addi(cx(n), atom)});
+        };
+        auto rankSort = [&] {
+          forLoop(lane, count, cx(lanes), {}, [&](Value j, ValueRange) {
+            Value key = load(a[1], {addi(base, j)});
+            Value rank = forLoop(
+                cx(0), count, cx(1), ValueRange{cx(0)},
+                [&](Value k, ValueRange acc) {
+                  Value earlier = cmpi(CmpIPredicate::ult,
+                                       load(a[1], {addi(base, k)}), key);
+                  return Values{addi(acc[0], select(earlier, cx(1), cx(0)))};
+                })[0];
+            place(key, rank);
+            return Values{};
           });
-  };
-  if (g.host || !g.alwaysWidePack())
-    emitPack("towers_pack", false);
-  if (!g.host && g.mayNeedWidePack())
-    emitPack("towers_pack_wide", true);
+        };
+        if (g.host)
+          rankSort();
+        else {
+          auto sort = [&](int batches) {
+            sortWarp(a[1], base, lane, count, batches, place);
+          };
+          ifThenElse(
+              cmpi(CmpIPredicate::ule, count, cx(32)), [&] { sort(1); },
+              [&] {
+                ifThenElse(
+                    cmpi(CmpIPredicate::ule, count, cx(64)), [&] { sort(2); },
+                    [&] {
+                      ifThenElse(
+                          cmpi(CmpIPredicate::ule, count, cx(128)),
+                          [&] { sort(4); }, [&] {
+                            if (g.widePack)
+                              ifThenElse(cmpi(CmpIPredicate::ule, count, cx(256)),
+                                         [&] { sort(8); }, rankSort);
+                            else
+                              rankSort();
+                          });
+                    });
+              });
+        }
+        forLoop(lane, cx(fields), cx(lanes), {}, [&](Value field, ValueRange) {
+          Value owner = indexCast(index, load(a[4], {cell, field}));
+          store(indexCast(i32, base), a[9], {owner, field, cx(0)});
+          store(indexCast(i32, count), a[9], {owner, field, cx(1)});
+          return Values{};
+        });
+        if (!g.host && g.compact)
+          warpSync(ci(-1));
+        ifThen(cmpi(CmpIPredicate::eq, lane, cx(0)), [&] {
+          if (g.compact)
+            store(ci(0), a[0], {cell});
+          if (g.growCells) {
+            if (g.compact)
+              store(ci(-1), a[0], {addi(cx(cells), cell)});
+            return;
+          }
+          ifThen(cmpi(CmpIPredicate::ugt, size, ci(g.capacity)), [&] {
+            memref::AtomicRMWOp::create(b, loc, arith::AtomicRMWKind::maxu,
+                                        size, a[10], ValueRange{cx(0)});
+          });
+        });
+      });
   if (audit)
     emitOwnership(spans, slotIds);
 }
@@ -756,7 +715,7 @@ void mdir::kernels::emitOwnedTowersSpans(
 LogicalResult mdir::kernels::emitTowersBuild(ModuleOp module, TowersLayout g,
                                              bool audit) {
   auto [atoms, nx, ny, nz, reach, capacity, host, compact, triclinic,
-        growCells] = g;
+        growCells, widePack] = g;
   if (atoms < 1 || atoms >= (1 << 26) || (reach != 1 && reach != 2) || nx < 3 ||
       ny < 3 || nz < 2 * reach + 1 || capacity < 1 || nx > INT_MAX / 4 ||
       ny > INT_MAX / 4 || nz > INT_MAX / 4 ||
