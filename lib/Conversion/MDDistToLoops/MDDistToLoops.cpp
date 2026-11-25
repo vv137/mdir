@@ -850,9 +850,21 @@ LogicalResult Lowering::lowerHalo(HaloOp op) {
   SmallVector<Value> args{layout.handle, positions, real(b, reach)};
   Value cache = trajectoryCaches.lookup(op.getResult());
   if (cache) args.push_back(cache);
+  bool midpoint = matrixPairs && module->hasAttr("md_dist.driver") &&
+      llvm::any_of(op.getResult().getUsers(), [](Operation *user) {
+        auto n = dyn_cast<NeighborhoodOp>(user);
+        return n && n.getResult().getType().getTraversal() == Traversal::Midpoint;
+      }) && llvm::all_of(op.getResult().getUsers(), [](Operation *user) {
+        auto n = dyn_cast<NeighborhoodOp>(user);
+        return !n || n.getResult().getType().getTraversal() == Traversal::Midpoint;
+      });
+  StringRef name = midpoint ? "mdrtDistMidpointHalo" : "mdrtDistHalo";
+  if (cache) {
+    name = "mdrtDistEpochHalo";
+    args.push_back(arith::ConstantIntOp::create(b, loc, midpoint, 64));
+  }
   Value handle = func::CallOp::create(b, loc,
-      declare(cache ? "mdrtDistEpochHalo" : "mdrtDistHalo",
-              b.getFunctionType(ValueRange(args).getTypes(), {i64}), true), args).getResult(0);
+      declare(name, b.getFunctionType(ValueRange(args).getTypes(), {i64}), true), args).getResult(0);
   Value capacity = toIndex(
       b, func::CallOp::create(
              b, loc,
