@@ -1329,7 +1329,10 @@ reach every block barrier.
 On the `sm_89` target, non-deterministic mixed TOWERS runs select the
 emitter for orthorhombic order-four Gaussian meshes of 40³, 64³, and 144 × 84 × 80.
 These three grids passed the independent full-chain reference and improved
-whole-step throughput in both RTX 4090 runs. Other meshes default to cuFFT.
+whole-step throughput in both RTX 4090 runs. The same AUTO rule admits the Gaussian folding grids
+28 × 28 × 30, 18 × 20 × 20, 32³, and 22 × 24 × 24, including tilted cells.
+Their full-frame errors and paired MATRIX timings are recorded in the decision.
+Other meshes default to cuFFT.
 Use `MDIR_PME_AXIS_FFT=off` to pin cuFFT or `on` to measure the emitter on
 other supported order-four meshes. Unsupported paths still use cuFFT.
 

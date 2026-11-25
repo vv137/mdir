@@ -43,7 +43,10 @@ the complete step in both orders against cuFFT on the same device.
 The initial automatic rule on `sm_89` covers order-four mixed TOWERS
 orthorhombic Gaussian meshes of 40³, 64³, and 144 × 84 × 80. The RTX 4090 runs
 qualify those shapes against an independent double reference and paired
-whole-step measurements. Other geometries default to cuFFT. A compilation
+whole-step measurements. The same AUTO rule admits the Gaussian folding grids
+28 × 28 × 30, 18 × 20 × 20, 32³, and 22 × 24 × 24, including tilted cells.
+Their full-frame errors and paired MATRIX timings are recorded in the decision.
+Other geometries default to cuFFT. A compilation
 override can pin cuFFT or request an experimental supported plan.
 
 ### Trp-cage and the prolate split

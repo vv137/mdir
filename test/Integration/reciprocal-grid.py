@@ -205,6 +205,7 @@ if __name__ == '__main__':
     parser.add_argument('command', choices=['emit', 'check'])
     parser.add_argument('--evaluator', action='store_true',
                         help='check the non-unit-weighted potential evaluator')
+    parser.add_argument('--tilted', action='store_true')
     parser.add_argument('--mixed', action='store_true')
     parser.add_argument('--listed', action='store_true')
     parser.add_argument('--force-only', action='store_true')
@@ -212,4 +213,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.grid:
         GRID = reference.GRID = tuple(args.grid)
-    emit(args.evaluator, args.mixed, args.force_only, args.listed) if args.command == 'emit' else check(args.evaluator)
+    emit(args.evaluator, args.mixed, args.force_only, args.listed, args.tilted) if args.command == 'emit' else check(args.evaluator)

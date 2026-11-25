@@ -9,6 +9,9 @@
 # RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --grid 40 40 40 > %t
 # RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=AUTO
 # RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=off" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=FALLBACK --implicit-check-not=fft_stage
+# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --tilted --grid 22 24 24 > %t
+# RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=FOLDING
+# FOLDING: call @mdrt_gpu_pme_axis_fft_22x24x24
 # AUTO: call @mdrt_gpu_pme_axis_fft_40x40x40_observed
 # CHECK: call @mdrt_gpu_pme_axis_fft_15x7x10_observed
 # CHECK-LABEL: func.func private @mdrt_gpu_pme_axis_fft_15x7x10_observed
