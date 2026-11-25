@@ -3402,7 +3402,7 @@ Error Reader::read(const toml::table &root) {
          control.thermostatMethod == ThermostatMethod::VRescale);
     if (control.minimize || !supportedBath ||
         control.integrator != Integrator::VelocityVerlet)
-      return fail(*table, "distributed dynamics requires NVE velocity Verlet");
+      return fail(*table, "distributed dynamics requires NVE velocity Verlet or, for a topology with unique or midpoint traversal, V-rescale NVT");
   }
 
   // Execution choices of the "same accuracy" class (#790). The rigid
