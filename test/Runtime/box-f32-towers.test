@@ -1,0 +1,2 @@
+# RUN: rm -rf %t
+# RUN: %python %S/Inputs/box_f32_towers.py %t mdir-opt

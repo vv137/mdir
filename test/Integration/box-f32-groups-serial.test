@@ -1,0 +1,12 @@
+# RUN: %python %S/Inputs/box_f32_groups.py orthorhombic rounded | mdir-opt --convert-md-alg-to-scf \
+# RUN: | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils | FileCheck %s --check-prefix=EXACT
+# RUN: %python %S/Inputs/box_f32_groups.py orthorhombic original | mdir-opt --convert-md-alg-to-scf \
+# RUN: | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils | FileCheck %s --check-prefix=OLD
+# RUN: %python %S/Inputs/box_f32_groups.py triclinic rounded | mdir-opt --convert-md-alg-to-scf \
+# RUN: | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils | FileCheck %s --check-prefix=EXACT
+# RUN: %python %S/Inputs/box_f32_groups.py triclinic original | mdir-opt --convert-md-alg-to-scf \
+# RUN: | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils | FileCheck %s --check-prefix=OLD
+# EXACT: 0.0625
+# EXACT-NEXT: {{^0$}}
+# OLD: 0.0625
+# OLD-NEXT: {{^-[0-9.]+e-07$}}

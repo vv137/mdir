@@ -206,6 +206,8 @@ def compare(what, state, reference):
     for field in ("diagonal", "tilt"):
         mine, theirs = getattr(state.cell, field), getattr(reference.cell, field)
         assert np.array_equal(mine, theirs), (what, field, mine, theirs)
+        if precision != "Double":
+            assert np.array_equal(mine, np.asarray(mine, dtype=np.float32)), (what, field, mine)
 
 
 def lower(record):
@@ -246,7 +248,9 @@ def axes(first, last, coupling):
     coupling: equal, x and y equal and z another, or all three apart."""
     strain = np.log(np.asarray(last.diagonal) / np.asarray(first.diagonal))
     assert np.abs(strain).max() > 1e-5, strain
-    near = 1e-12
+    # Each of the four scalings and the initial conversion round each
+    # diagonal independently, by at most half a binary32 spacing.
+    near = 1e-12 if precision == "Double" else (1 + STEPS // PERIOD) * 2**-23
     xy, xz, yz = (abs(strain[0] - strain[1]), abs(strain[0] - strain[2]),
                   abs(strain[1] - strain[2]))
     if coupling == "ISOTROPIC":
