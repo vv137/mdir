@@ -98,7 +98,7 @@ struct DomainMatrix {
   struct DomainMatrix *next;
   int64_t domain, centers, rows, raw, selected;
   double cutoff, skin, box[3];
-  double *reference;
+  double *reference, *shifts;
   int32_t *counts, *selectedCounts;
   int valid;
 };
@@ -406,6 +406,24 @@ int64_t _mlir_ciface_mdrtDistMatrixRebuild(int64_t matrix, struct Memref2D *x) {
     m->box[c] = (m->rows ? hi[c]-lo[c] : 0.0) + 2*(m->cutoff + m->skin);
   m->valid = 1;
   return 1;
+}
+
+void _mlir_ciface_mdrtDistMatrixImages(struct Memref2D *r, int64_t handle, int64_t matrix) {
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  struct DomainMatrix *m = (struct DomainMatrix *)(intptr_t)matrix;
+  if (!m->shifts) {
+    m->shifts = calloc(m->rows ? m->rows : 1, 3 * sizeof *m->shifts);
+    if (!m->shifts) fail("out of memory allocating local image translations");
+    int64_t d = m->domain, n = h->layout->rows[d];
+    for (int64_t g = 0; g < h->rows[d]; ++g)
+      for (int c = 0; c < 3; ++c)
+        m->shifts[3*(n+g)+c] = h->image[3*(d*h->capacity+g)+c]*h->layout->edges[c];
+  }
+  r->allocated = r->aligned = m->shifts;
+  r->offset = 0;
+  r->sizes[0] = m->rows;
+  r->sizes[1] = r->strides[0] = 3;
+  r->strides[1] = 1;
 }
 
 double mdrtDistMatrixEdge(int64_t matrix, int64_t axis) {
@@ -1395,6 +1413,7 @@ void mdrtDistReleaseHalo(int64_t handle) {
     free(m->counts);
     free(m->selectedCounts);
     free(m->reference);
+    free(m->shifts);
     free(m);
   }
   free(h->rows);

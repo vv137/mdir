@@ -266,7 +266,7 @@ SmallVector<Value> kernels::emitPairRowLanes(OpBuilder &builder,
                                              md_exec::PairForOp op,
                                              Value counts, Value index,
                                              Value box, Value inverse,
-                                             Value central, int64_t width) {
+                                             Value central, int64_t width, Value imageShifts, Value imagePositions) {
   Location loc = op.getLoc();
   Value positions = op.getPositions();
   SmallVector<Value> insBuffers(op.getIns().begin(), op.getIns().end());
@@ -303,7 +303,13 @@ SmallVector<Value> kernels::emitPairRowLanes(OpBuilder &builder,
   Value cutoff2Lanes = setup.splat(cutoff2);
   Value centralLanes = setup.splat(central);
   Value centralPosition = loadElement(builder, loc, positions, central);
+  Type storedPosition = getElementTypeOrSelf(centralPosition);
+  if (imagePositions)
+    centralPosition = loadElement(builder, loc, imagePositions, central);
   SmallVector<Value> centralParts = splatComponents(centralPosition);
+  SmallVector<Value> centralImages;
+  if (imageShifts)
+    centralImages = splatComponents(loadElement(builder, loc, imageShifts, central));
   SmallVector<Value> centralValues;
   for (Value buffer : insBuffers)
     centralValues.push_back(loadElement(builder, loc, buffer, central));
@@ -360,13 +366,14 @@ SmallVector<Value> kernels::emitPairRowLanes(OpBuilder &builder,
     // length, (d_x^2 + d_y^2) + d_z^2: the scalar row's `vector.reduction`
     // adds in this order from +0, and +0 + d_x^2 is d_x^2 (a square is not
     // -0).
-    SmallVector<Value> otherPosition = gather(positions);
-    SmallVector<Value> d;
+    SmallVector<Value> otherPosition = gather(imagePositions ? imagePositions : positions);
+    SmallVector<Value> otherImages, d;
+    if (imageShifts)
+      otherImages = gather(imageShifts);
     for (int64_t k = 0; k != 3; ++k)
-      d.push_back(convertReal(
-          b, loc,
-          arith::SubFOp::create(b, loc, centralParts[k], otherPosition[k]),
-          computed));
+      d.push_back(pairDifference(b, loc, centralParts[k], otherPosition[k], computed, storedPosition,
+                                 imageShifts ? centralImages[k] : Value(),
+                                 imageShifts ? otherImages[k] : Value()));
     if (op.getImages() != md_exec::Images::Explicit)
       emitLaneMinimumImage(b, loc, d, boxParts, inverseParts);
     Value r2;
