@@ -8,21 +8,49 @@ import subprocess
 import sys
 
 import h5py
-import numpy as np
 
 root = Path(sys.argv[1]).resolve()
 example = Path(sys.argv[2]).resolve()
 mpi = sys.argv[3:]
 root.mkdir(parents=True, exist_ok=True)
-base = (example / "argon.toml").read_text().replace("argon.pdb", str(example / "argon.pdb"))
+if example.is_dir():
+    control_file = example / "argon.toml"
+    coordinates = example / "argon.pdb"
+    skin_edge = 8.65
+else:
+    control_file = example
+    coordinates = example.parent / "Inputs" / "mixture.pdb"
+    skin_edge = 9.01
+
+base = control_file.read_text()
+base = re.sub(r"(?ms)^\[execution\].*", "", base)
+base = re.sub(r"(?ms)^\[\[energy.pair_override\]\].*?(?=^\[\[energy.type\]\])", "", base)
+base = re.sub(r"(?m)^dispersion_correction.*\n", "", base)
+base = re.sub(r"(?m)^coordinates\s*=.*$", f'coordinates = "{coordinates}"', base)
 base = re.sub(r"(?m)^steps\s*=.*$", "steps = 10", base)
-base = base.replace("= 100", "= 5").replace("= 16", "= 1").replace("= 9.5", "= 8.65")
-base = base.replace('trajectory          = "argon.dcd"', '''trajectory = "traj.h5"
+base = re.sub(r"(?m)^pairlist_distance\s*=.*$", f"pairlist_distance = {skin_edge}", base)
+if not re.search(r"(?m)^seed\s*=", base):
+    base = base.replace("[dynamics]", "[dynamics]\nseed = 314159")
+particles = sum(line.startswith(("HETATM", "ATOM  ")) for line in coordinates.read_text().splitlines())
+output = """[output]
+trajectory = "traj.h5"
 trajectory_format = "H5MD"
+trajectory_interval = 5
+energy = "energy.dat"
+energy_interval = 5
 checkpoint = "state.h5"
 checkpoint_interval = 5
-manifest = "manifest.json"''')
-base += "\ndeterministic = true\n[distribute]\n"
+manifest = "manifest.json"
+"""
+base = re.sub(r"(?ms)^\[output\].*?(?=^\[energy\])", output, base)
+base += """
+[execution]
+target = "CPU"
+threads = 1
+precision = "DOUBLE"
+deterministic = true
+[distribute]
+"""
 
 
 def run(name, domains, ranks, *, stop=False, resume=False, trace=False):
@@ -50,13 +78,14 @@ def run(name, domains, ranks, *, stop=False, resume=False, trace=False):
             assert list(map(int, steps)) == list(range(1, 11)), steps
     events = [json.loads(line) for line in (path / "manifest.json").read_text().splitlines()]
     setup = [event["domains"] for event in events if event["event"] == "domain_setup"][-1]
-    assert len(setup) == domains and sum(d["owned"] for d in setup) == 864
+    assert len(setup) == domains and sum(d["owned"] for d in setup) == particles
     assert all(d["import_volume_angstrom3"] > 0 for d in setup)
     assert all(d["position_import_bytes"] == 24*d["ghosts"] for d in setup)
     return path
 
 
 def compare(a, b):
+    assert (a / "energy.dat").read_bytes() == (b / "energy.dat").read_bytes()
     for filename in ["state.h5", "traj.h5"]:
         with h5py.File(a / filename) as ref, h5py.File(b / filename) as current:
             datasets = []
@@ -84,6 +113,7 @@ ranks = 2 if mpi else 0
 reference = run("whole", 2, ranks)
 traced = run("traced", 2, ranks, trace=True)
 compare(reference, traced)
+compare(reference, run("whole-16", 16, ranks))
 seed = run("stop", 2, ranks, stop=True)
 for domains, count in [(2, 1 if mpi else 0), (1, 1 if mpi else 0), (8, 2 if mpi else 0)]:
     name = f"continued-{domains}"
