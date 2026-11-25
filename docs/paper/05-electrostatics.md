@@ -1101,8 +1101,5 @@ the inverse transform. The Gaussian product in the inverse-load callback
 reciprocal force for this split. Both prolate windows therefore use the
 separate radial product, including under automatic FFT selection.
 
-The public cuPotential theory documentation describes a compact C² prolate
-split whose long-range kernel matches Coulomb through two derivatives at
-the cutoff. The u-series gives a different smooth decomposition using
-Gaussians. [[CuPotential]](references.md#cupotential)
-[[Predescu2020]](references.md#predescu2020)
+The u-series gives a different smooth decomposition using Gaussians
+[[Predescu2020]](references.md#predescu2020).

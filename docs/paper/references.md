@@ -143,11 +143,6 @@ against the headers of CUDA 13.2).
 NVIDIA, *cuFFTDx Examples*, "3D Convolution Examples," entry
 `convolution_3d_r2c`. [NVIDIA documentation](https://docs.nvidia.com/cuda/cufftdx/examples.html)
 
-### CuPotential
-
-NVIDIA, “Splitting the interaction,” *cuPotential Theory*, accessed
-2026-11-24. [Theory documentation](https://docs.nvidia.com/cuda/cupotential/theory)
-
 ### CurtisPowellReid1974
 
 A. R. Curtis, M. J. D. Powell, J. K. Reid, "On the estimation of sparse

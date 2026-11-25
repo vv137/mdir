@@ -342,11 +342,6 @@ block scans, and the scans of counting sorts of the shared emitters
 (D296, [device-primitives.md](device-primitives.md),
 Section 4).
 
-### CuPotential
-
-NVIDIA, “Splitting the interaction,” *cuPotential Theory*, accessed
-2026-11-24. [Theory documentation](https://docs.nvidia.com/cuda/cupotential/theory)
-
 ### MerrillGarland2016
 
 D. Merrill and M. Garland, *Single-pass Parallel Prefix Scan with Decoupled
