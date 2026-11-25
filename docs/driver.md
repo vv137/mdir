@@ -1801,5 +1801,7 @@ request fails at setup.
 Node placement groups neighboring domains by periodic face area. At each
 report the intra-node and inter-node byte totals count directed logical
 payloads crossing ranks. Self-images stay local. Device kernels pack local rows, translate ghost images, and sum reverse
-contributions. The current step state uploads owned fields and reads back
-the result of each exchange. Migration and the reduced observables use the MPI path.
+contributions. The unconstrained Verlet path retains owned state on the
+device between kicks. A pair-only position halo feeds device MATRIX
+directly. Ownership planning, topology, and output can require host fields.
+MPI exchanges migrating rows and reduces scalar observables.

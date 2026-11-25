@@ -317,5 +317,7 @@ ordinary MATRIX list, host lane chooser, and threaded center traversal.
 D[distribute-steady] adds exclusive CPU phase clocks and epoch-local transport schedules.
 
 D[distribute-gpu-node] introduces node placement, rank-local MATRIX pairs,
-and NCCL peer exchange for finite-range dynamics. Device-resident integration, midpoint GPU traversal, and reproducible integer GPU
-reductions remain further work.
+and NCCL peer exchange for finite-range dynamics. The unconstrained Verlet
+path keeps integration and force combination on the device. Host ownership
+planning, constrained integration, overlap of the halo with pair work,
+midpoint GPU traversal, and reproducible integer GPU sums remain open.

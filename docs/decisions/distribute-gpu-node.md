@@ -24,7 +24,7 @@ NCCL bootstrap ID with MPI. Pack device rows by peer, group matching sends
 and receives, and order them with the pair kernel on CUDA streams. NCCL
 selects the link between peers. Host migration can rebuild ownership and
 the halo plan. Log directed face bytes per step by node locality, counting
-each send once. The host step state supplies the local field before each
+each send once. In stage 1 the host step state supplies the local field before each
 pack and consumes its result after each device unpack. Each rank runs the
 MATRIX pair terms on its GPU. Bonded tuple evaluation, migration and the
 outer step still use host state. MPI reduces the scalar observables.
@@ -41,7 +41,10 @@ MATRIX traversal. This preserves cutoff membership across periodic faces.
 
 The rank's packed Verlet state retains immutable field allocations. Packing or
 unpacking a state changes ownership of references. Migration constructs new
-fields in the new row order. Each field can hold a device copy of the local
+fields in the new row order. For an unshifted field an unchanged ownership
+map retains the original field. On a crossing, a device gather exports
+the outgoing rows, MPI exchanges them, and a device kernel merges the
+arrivals with the local survivors in global identity order. Each field can hold a device copy of the local
 domain's rows. A kick or drift reads the device fields, writes a new device
 field and leaves its host copy unmaterialized. A coverage kernel checks the
 owned displacements and MPI combines the flags. Device force slices feed
