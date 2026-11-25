@@ -953,6 +953,10 @@ static void domainBox(struct Layout *l, struct Memref3D *x, int64_t d,
     }
 }
 
+static double outsideBox(double y, double lo, double hi) {
+  return y < lo ? lo-y : (y > hi ? y-hi : 0.0);
+}
+
 /* Visits the ghosts of domain `d`: each image y = x_j + n L of each particle
    j, in the order of the set and then of n, other than the domain's own
    particles at n = 0, within `reach` of the box. With `out`, stores them;
@@ -969,20 +973,23 @@ static int64_t visitGhosts(struct Halo *h, struct Memref3D *x, int64_t d,
   double reach2 = h->reach * h->reach;
   for (int64_t j = 0; j < l->count; ++j) {
     int64_t e = l->owner[j], r = l->row[j];
-    for (int64_t na = -span[0]; na <= span[0]; ++na)
-      for (int64_t nb = -span[1]; nb <= span[1]; ++nb)
+    // Reject an entire slab or column once its partial squared distance
+    // reaches the cutoff. Surviving images retain the original visit order.
+    double position[3];
+    for (int k = 0; k < 3; ++k) position[k] = *at3(x, e, r, k);
+    for (int64_t na = -span[0]; na <= span[0]; ++na) {
+      double dx = outsideBox(position[0] + na*l->edges[0], lo[0], hi[0]);
+      double dx2 = dx*dx;
+      if (!(dx2 < reach2)) continue;
+      for (int64_t nb = -span[1]; nb <= span[1]; ++nb) {
+        double dy = outsideBox(position[1] + nb*l->edges[1], lo[1], hi[1]);
+        double dxy2 = dx2 + dy*dy;
+        if (!(dxy2 < reach2)) continue;
         for (int64_t nc = -span[2]; nc <= span[2]; ++nc) {
-          if (e == d && na == 0 && nb == 0 && nc == 0)
-            continue;
+          if (e == d && na == 0 && nb == 0 && nc == 0) continue;
+          double dz = outsideBox(position[2] + nc*l->edges[2], lo[2], hi[2]);
+          if (!(dxy2 + dz*dz < reach2)) continue;
           int64_t n[3] = {na, nb, nc};
-          double dist2 = 0.0;
-          for (int k = 0; k < 3; ++k) {
-            double y = *at3(x, e, r, k) + (double)n[k] * l->edges[k];
-            double out = y < lo[k] ? lo[k] - y : (y > hi[k] ? y - hi[k] : 0.0);
-            dist2 += out * out;
-          }
-          if (!(dist2 < reach2))
-            continue;
           if (store) {
             int64_t g = d * h->capacity + count;
             h->sourceDomain[g] = e;
@@ -993,6 +1000,8 @@ static int64_t visitGhosts(struct Halo *h, struct Memref3D *x, int64_t d,
           }
           ++count;
         }
+      }
+    }
   }
   return count;
 }
