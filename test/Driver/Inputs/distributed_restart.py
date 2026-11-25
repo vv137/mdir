@@ -56,7 +56,7 @@ def run(name, domains, ranks, *, stop=False, resume=False, trace=False):
     return path
 
 
-def compare(a, b, *, exact):
+def compare(a, b):
     for filename in ["state.h5", "traj.h5"]:
         with h5py.File(a / filename) as ref, h5py.File(b / filename) as current:
             datasets = []
@@ -76,27 +76,24 @@ def compare(a, b, *, exact):
             assert other_datasets == datasets
             for name in datasets:
                 x, y = ref[name][()], current[name][()]
-                same = x.tobytes() == y.tobytes()
-                if exact or x.dtype.kind != "f":
-                    assert same, (filename, name)
-                else:
-                    err = float(np.max(np.abs(x-y), initial=0))
-                    print(b.name, filename, name, "unequal", np.count_nonzero(x != y),
-                          "max_abs", err)
-                    assert err < 1e-9, (filename, name, err)
+                assert x.dtype == y.dtype and x.shape == y.shape
+                assert x.tobytes() == y.tobytes(), (a.name, b.name, filename, name)
 
 
 ranks = 2 if mpi else 0
 reference = run("whole", 2, ranks)
 traced = run("traced", 2, ranks, trace=True)
-compare(reference, traced, exact=True)
+compare(reference, traced)
 seed = run("stop", 2, ranks, stop=True)
 for domains, count in [(2, 1 if mpi else 0), (1, 1 if mpi else 0), (8, 2 if mpi else 0)]:
     name = f"continued-{domains}"
     shutil.copytree(seed, root / name)
     resumed = run(name, domains, count, resume=True)
-    compare(reference, resumed, exact=(domains == 2))
+    compare(reference, resumed)
     if domains != 2:
         target = run(f"whole-{domains}", domains, count)
-        compare(target, resumed, exact=False)
-print("trace and fixed-grid restart exact; changed-grid errors below 1e-9")
+        compare(target, resumed)
+seed8 = run("stop-8", 8, ranks, stop=True)
+shutil.copytree(seed8, root / "from-8")
+compare(reference, run("from-8", 2, ranks, resume=True))
+print("all checkpoint and trajectory datasets agree bitwise across restarts")
