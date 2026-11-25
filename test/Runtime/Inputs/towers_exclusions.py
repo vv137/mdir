@@ -79,7 +79,7 @@ def evaluate(directory, gpu, workers, shape=None, reach=1, capacity=8, grow=Fals
         e.run("publish", n, state, words, lo, output)
         e.sync()
         if grow and capacity == 1:
-            assert r.count[-1] > r.cells * capacity and r.status[0] == 0
+            assert r.count[2 * r.cells] > r.cells * capacity and r.status[0] == 0
         expected = [0] * (3 * n)
         bad = 0
         for i, j in itertools.combinations(range(n), 2):

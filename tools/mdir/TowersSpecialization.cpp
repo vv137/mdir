@@ -38,7 +38,7 @@ void emitTrialInputs(ModuleOp module, kernels::TowersLayout g,
                      md_exec::PairForOp term) {
   auto device = module.lookupSymbol<gpu::GPUModuleOp>("towers");
   OpBuilder b = OpBuilder::atBlockEnd(device.getBody());
-  auto loc = term.getLoc();
+  auto loc = term ? term.getLoc() : module.getLoc();
   auto narrow = b.getI32Type(), wide = b.getI64Type();
   auto dbl = b.getF64Type(), real = b.getF32Type();
   auto mem = [](ArrayRef<int64_t> dims, Type t) {
@@ -61,7 +61,8 @@ void emitTrialInputs(ModuleOp module, kernels::TowersLayout g,
                          mem({2}, narrow),
                          mem({1}, wide),
                          mem({1}, narrow)};
-  llvm::append_range(args, term.getIns().getTypes());
+  if (term)
+    llvm::append_range(args, term.getIns().getTypes());
   kernels::emitTowersEntry(
       b, loc, false, "towers_trial_inputs", args, g.atoms,
       [&](Value i, ValueRange a) {
@@ -75,12 +76,25 @@ void emitTrialInputs(ModuleOp module, kernels::TowersLayout g,
                  a.drop_front(15));
       });
 }
+llvm::Expected<std::string> compileTrialImage(ModuleOp image,
+                                              const std::string &options,
+                                              const std::string &diagnostic) {
+  if (!lower(image, "canonicalize,cse,mdir-gpu-lower-to-nvvm{" + options +
+                        " kernel-bare-ptr-calling-convention=true}"))
+    return llvm::createStringError("towers_shape: could not compile trial: %s",
+                                   diagnostic.c_str());
+  auto binary = image.lookupSymbol<gpu::BinaryOp>("towers");
+  if (!binary || binary.getObjects().empty())
+    return llvm::createStringError("towers_shape: missing compiled tower entry");
+  return cast<gpu::ObjectAttr>(binary.getObjects()[0]).getObject().str();
+}
 } // namespace
 
 llvm::Expected<mdir::tool::TowersEmitter>
 mdir::tool::prepareTowersSpecialization(const Control &control,
                                         const System &system, int reach,
-                                        int capacity, int device) {
+                                        int capacity, int device,
+                                        std::string *rebuildOnly) {
   // Construct the direct term through the normal force-field front end.
   // Its traversal is replaced after precision specialization.
   Control source = control;
@@ -132,7 +146,7 @@ mdir::tool::prepareTowersSpecialization(const Control &control,
     }
     return WalkResult::advance();
   });
-  if (!term)
+  if (!term && !rebuildOnly)
     return TowersEmitter{};
   compiler::useCudaToolkit();
   auto options = compiler::getGpuOptions(source, device);
@@ -151,6 +165,17 @@ mdir::tool::prepareTowersSpecialization(const Control &control,
       true,
       geometry.triclinic,
       true};
+  if (!term) {
+    OwningOpRef<ModuleOp> image(ModuleOp::create(module->getLoc()));
+    if (failed(kernels::emitTowersBuild(*image, layout)))
+      return fail("could not emit setup rebuild");
+    emitTrialInputs(*image, layout, {});
+    auto binary = compileTrialImage(*image, *options, diagnostic);
+    if (!binary)
+      return binary.takeError();
+    *rebuildOnly = std::move(*binary);
+    return TowersEmitter{};
+  }
   OpBuilder builder(term);
   int exclusions = system.topology ? system.topology->exclusions.size() : 0;
   // Bare-pointer kernel arguments need the static particle extent.
@@ -299,23 +324,17 @@ mdir::tool::prepareTowersSpecialization(const Control &control,
         if (!layout.triclinic && layout.cells() <= layout.atoms)
           launch.cartesianPositions = MemRefType::get(
               {layout.atoms, 3}, Float64Type::get(&state->context));
+        layout.widePack = shape.pack == "WIDE";
         if (failed(kernels::emitTowersBuild(*image, layout)))
           return llvm::createStringError(
               "towers_shape: could not compile rebuild: %s",
               diagnostic.c_str());
         emitTrialInputs(*image, layout, term);
         if (failed(kernels::emitTowersForce(*image, layout, term, launch, false,
-                                            correction)) ||
-            !lower(*image, "canonicalize,cse,mdir-gpu-lower-to-nvvm{" +
-                               options +
-                               " kernel-bare-ptr-calling-convention=true}"))
+                                            correction)))
           return llvm::createStringError(
               "towers_shape: could not compile direct pair specialization: %s",
               diagnostic.c_str());
-        auto binary = image->lookupSymbol<gpu::BinaryOp>("towers");
-        if (!binary || binary.getObjects().empty())
-          return llvm::createStringError(
-              "towers_shape: missing compiled tower entry");
-        return cast<gpu::ObjectAttr>(binary.getObjects()[0]).getObject().str();
+        return compileTrialImage(*image, options, diagnostic);
       });
 }

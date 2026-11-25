@@ -11,6 +11,7 @@ struct TowersLayout {
   // The moving layout allocates dense cells from a pool of at most one
   // additional slot per atom. Inverse entries also carry the owning cell.
   bool growCells = false;
+  bool widePack = false;
   int64_t slots() const {
     return int64_t(cells()) * capacity + (growCells ? atoms : 0);
   }

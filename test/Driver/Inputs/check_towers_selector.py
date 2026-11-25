@@ -19,9 +19,11 @@ environment = {**os.environ, "MDIR_COMPILE_CACHE_DIR": str(work / "cache"),
 pins = "threads=128, blocks_per_sm=1, panel=32, stripe=32, split=1"
 
 
-def run(height=None, text=template):
+def run(height=None, text=template, pack=None):
     control = work / "run.toml"
     settings = pins + f', cell_height="{height}"' if height else pins.replace(", split=1", "")
+    if pack:
+        settings += f', pack="{pack}"'
     control.write_text(text.replace("[output]", '[output]\nmanifest = "run.jsonl"') +
                        f'\ntowers_shape = {{{settings}}}\n')
     output = subprocess.check_output(
@@ -34,6 +36,10 @@ def run(height=None, text=template):
     manifest = next(json.loads(line) for line in (work / "run.jsonl").read_text().splitlines()
                     if json.loads(line)["event"] == "start")
     assert manifest["effective"]["towers_shape"] == record
+    assert record["population_source"] == "device spans"
+    assert 0 < record["mean_population"] <= record["maximum_population"]
+    expected = pack or ("WIDE" if record["maximum_population"] > 128 else "COMPACT")
+    assert record["effective"]["pack"] == expected
     return record
 
 
@@ -76,6 +82,6 @@ method = "C-RESCALE"
 time_constant = 2.0
 [execution]
 """)
-pressure_record = run("FULL", pressure)
+pressure_record = run("FULL", pressure, pack="WIDE")
 assert pressure_record["force_kernel"] == "towers_force_virial"
 assert pressure_record["cells"][0]["median_us"] > 0

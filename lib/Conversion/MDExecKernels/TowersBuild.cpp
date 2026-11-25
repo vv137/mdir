@@ -161,7 +161,7 @@ Values TowersBuild::locate(Value x, Value length, Value width, Value reciprocal,
 void TowersBuild::sortWarp(Value keys, Value base, Value lane, Value count,
                            int batches,
                            function_ref<void(Value, Value)> place) {
-  // A bitonic network sorts one, two or four registers per lane. The
+  // A bitonic network sorts one, two, four or eight registers per lane. The
   // sentinel compares after every legal compound key.
   SmallVector<Value> values(batches);
   for (int j = 0; j < batches; ++j) {
@@ -468,7 +468,13 @@ void TowersBuild::emit(bool audit) {
                     [&] {
                       ifThenElse(
                           cmpi(CmpIPredicate::ule, count, cx(128)),
-                          [&] { sort(4); }, rankSort);
+                          [&] { sort(4); }, [&] {
+                            if (g.widePack)
+                              ifThenElse(cmpi(CmpIPredicate::ule, count, cx(256)),
+                                         [&] { sort(8); }, rankSort);
+                            else
+                              rankSort();
+                          });
                     });
               });
         }
@@ -709,7 +715,7 @@ void mdir::kernels::emitOwnedTowersSpans(
 LogicalResult mdir::kernels::emitTowersBuild(ModuleOp module, TowersLayout g,
                                              bool audit) {
   auto [atoms, nx, ny, nz, reach, capacity, host, compact, triclinic,
-        growCells] = g;
+        growCells, widePack] = g;
   if (atoms < 1 || atoms >= (1 << 26) || (reach != 1 && reach != 2) || nx < 3 ||
       ny < 3 || nz < 2 * reach + 1 || capacity < 1 || nx > INT_MAX / 4 ||
       ny > INT_MAX / 4 || nz > INT_MAX / 4 ||

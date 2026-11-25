@@ -336,22 +336,52 @@ Object fields(const TowersShape &s, bool provenance) {
     result[key] = provenance ? Value(field ? "control" : "AUTO")
                   : field    ? Value(field)
                              : Value("AUTO");
+  result["pack"] = provenance ? Value(s.pack.empty() ? "AUTO" : "control")
+                              : Value(s.pack.empty() ? "AUTO" : s.pack);
   result["cell_height"] =
       provenance ? Value(s.cellHeight.empty() ? "AUTO" : "control")
                  : Value(s.cellHeight.empty() ? "AUTO" : s.cellHeight);
   return result;
 }
 #if MDIR_HAS_CUDA
+std::string resolvePack(const TowersShape &given, mdir::tool::TowersPopulation pop,
+                        Object &report) {
+  report["population_source"] = "device spans";
+  report["maximum_population"] = pop.maximum;
+  report["mean_population"] = pop.mean;
+  report["pack_rule"] = "AUTO selects WIDE when maximum_population > 128";
+  if (!given.pack.empty())
+    return given.pack;
+  return pop.maximum > 128 ? "WIDE" : "COMPACT";
+}
 llvm::Expected<TowersShape>
 timeCandidates(const Control &control, const System &system,
                const Limits &limits, const FrameSpans &spans,
                const mdir::tool::TowersEmitter &emit,
-               const std::vector<TowersShape> &candidates, Object &report) {
+               std::vector<TowersShape> &candidates, Object &report) {
   using namespace mdir;
   using namespace mdir::tool;
   auto start = std::chrono::steady_clock::now();
   if (candidates.empty())
     return refusal("no launch satisfies the supplied pins and device limits");
+  const auto &first = candidates.front();
+  TowersBuffers parameters;
+  auto firstImage = emit(first, &parameters);
+  if (!firstImage)
+    return firstImage.takeError();
+  double cutoff = control.cutoffDistance * units::length;
+  int reach = first.cellHeight == "HALF" ? 2 : 1;
+  auto frame = createTowersTrial(limits.device, system, spans.cells, reach,
+                                 spans.capacity, parameters);
+  if (!frame)
+    return frame.takeError();
+  auto population = readTowersPopulation(**frame, *firstImage);
+  if (!population)
+    return population.takeError();
+  auto pack = resolvePack(control.towersShape, *population, report);
+  bool recompile = (first.pack == "WIDE") != (pack == "WIDE");
+  for (auto &candidate : candidates)
+    candidate.pack = pack;
   if (candidates.size() == 1) {
     report["selection"] = "single candidate";
     report["winner"] = fields(candidates.front(), false);
@@ -362,13 +392,11 @@ timeCandidates(const Control &control, const System &system,
     report["trial_cost_ms"] = 0.0;
     return candidates.front();
   }
-  const auto &first = candidates.front();
-  TowersBuffers parameters;
-  auto firstImage = emit(first, &parameters);
-  if (!firstImage)
-    return firstImage.takeError();
-  double cutoff = control.cutoffDistance * units::length;
-  int reach = first.cellHeight == "HALF" ? 2 : 1;
+  if (recompile) {
+    firstImage = emit(first, nullptr);
+    if (!firstImage)
+      return firstImage.takeError();
+  }
   // Include the compiled pair body, the device identity, the box and the
   // feasible proposals. Frames on the same grid can reuse the winning launch.
   std::string key = compiler::getCacheSalt();
@@ -419,10 +447,6 @@ timeCandidates(const Control &control, const System &system,
   };
   std::vector<Candidate> trials;
   std::string firstRefusal;
-  auto frame = createTowersTrial(limits.device, system, spans.cells, reach,
-                                 spans.capacity, parameters);
-  if (!frame)
-    return frame.takeError();
   auto measure = [&](const Candidate &c, TowersTiming &us) -> llvm::Error {
     auto result = measureTowersTrial(**frame, c.image, candidates[c.index],
                                      control.barostat);
@@ -632,11 +656,23 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
     result["register_check"] = "register check runs at setup";
     return result;
   }
+  std::string rebuildOnly;
   auto emit = prepareTowersSpecialization(control, system, reach,
-                                          maximum->capacity, (*limits)->device);
+                                          maximum->capacity, (*limits)->device,
+                                          setup ? &rebuildOnly : nullptr);
   if (!emit)
     return emit.takeError();
   if (!*emit) {
+    if (setup) {
+      auto frame = createTowersTrial((*limits)->device, system, maximum->cells,
+                                     reach, maximum->capacity, {});
+      if (!frame)
+        return frame.takeError();
+      auto population = readTowersPopulation(**frame, rebuildOnly);
+      if (!population)
+        return population.takeError();
+      shape->pack = resolvePack(given, *population, result);
+    }
     result["selection"] = "derived shape (no force-only region)";
     result["register_check"] = "no force-only region";
   } else {

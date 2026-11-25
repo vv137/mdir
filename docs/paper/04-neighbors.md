@@ -1329,6 +1329,30 @@ exact recovery. Blind evaluation and exact cancellation handle exclusions.
 The triclinic extension uses perpendicular face heights. Setup chooses the cell height from the geometry and atom count, then
 times candidate launches at that height when a force-only region is available.
 
+The rebuild orders atoms within each cell by the three two-bit quarter-cell
+coordinates and then by stable atom ID. The six spatial bits occupy the high
+end of an unsigned 32-bit key. Insertion reserves slots for atoms with the
+same cell in a warp using one atomic addition per group. The resulting
+insertion order can vary. The pack orders the unique keys before gathering
+the cell-relative coordinates, charge and type and publishing the spans.
+
+For up to 256 atoms in a cell, one warp uses a bitonic network with one,
+two, four or eight keys per lane (D[towers-pack]). A compare across lanes
+uses an XOR shuffle. A compare across batches in the same lane uses two
+registers. Padding with the largest unsigned word places unused slots after
+all legal keys. At 256 slots the network has 36 dependent compare-exchange
+stages. For larger populations each key's rank is the number of strictly
+smaller keys. Both paths assign the same slots and thus the same ordered
+spans to the force traversal.
+
+At the chosen height, setup reads the home-span populations of the first
+rebuilt frame. If their maximum exceeds 128, AUTO specializes the moving
+pack for up to eight keys per lane. Otherwise it uses the four-key limit.
+The median sorting interval on two dense Trp-cage frames fell from 14,987
+to 4,373 and from 21,720 to 4,405 SM cycles with the eight-key limit.
+Each specialization uses rank counting above its network limit, so the
+same launch remains valid as atoms move between cells.
+
 The rectangular force entry realizes the screen in the owning box's image.
 It rounds the scaled positions to a lattice and rounds the encoded source
 squared norm downward. A padded distance threshold accounts for the endpoint

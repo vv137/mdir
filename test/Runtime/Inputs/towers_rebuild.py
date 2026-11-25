@@ -223,6 +223,7 @@ def check(directory, gpu, reach, compact):
     lengths = (2 * dims[0], 2 * dims[1], dims[2] * 2 / reach)
     # Many tied subcell keys exercise both warp sort and the dense-cell path.
     coords = [(0.25, 0.25, 0.25)] * 132 + [(3.5, 3.5, 1.0)] * 71
+    coords += [(4.25, 4.25, 0.25)] * 257
     coords += [(x, 2.0, 2.0) for x in (0.0, 6.0, -12.0, 2.0, math.nextafter(2.0, 0.0))]
     coords += [(2.0**70, -(2.0**70), 0.0), (2.0, 2.0, 0.0)]
     rng = random.Random(194)

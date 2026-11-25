@@ -501,7 +501,7 @@ LogicalResult mdir::kernels::lowerTowersPair(md_exec::PairForOp pair,
       int(grid[0]), int(grid[1]), int(grid[2]),
       int(grid[3]), int(grid[4]), int(grid[5]),
       false,        true,         isTriclinic(pair.getCellMutable().get()),
-      true};
+      true, module->hasAttr("mdir.towers_wide_pack")};
   TowersForceShape shape{int(launch[2]),
                          int(launch[3]),
                          int(launch[0]),
