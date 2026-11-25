@@ -61,6 +61,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <optional>
 #include <unistd.h>
 
@@ -455,21 +456,45 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // Read
   //===--------------------------------------------------------------------===//
 
-  // A rejected setup can precede path and overwrite checks. Create a fresh
-  // diagnostic file exclusively so an invalid input cannot damage prior output.
+  // A rejection may precede the normal path checks. Preserve existing
+  // diagnostic history and protect input, trajectory and checkpoint paths.
   auto refuse = [&](const Control &c, llvm::Error e) {
     std::string reason = llvm::toString(std::move(e));
-    if (emit == Emit::Run) {
-      if (!c.logFile.empty() && c.logFile != c.manifestFile) {
-        if (FILE *file = std::fopen(c.logFile.c_str(), "wx")) {
+    if (emit == Emit::Run && (!c.logFile.empty() || !c.manifestFile.empty())) {
+      auto inputs = getManifestInputs(controlFile, c, System{});
+      auto diagnosticPath = [&](const std::string &path, const std::string &other) {
+        if (path.empty()) return false;
+        std::vector<std::string> reserved{other, c.energyFile, c.trajectoryFile,
+            c.observablesFile, c.pullFile, c.freeEnergyFile, c.profileMapFile, c.restartOutput};
+        if (!c.restartOutput.empty()) {
+          reserved.push_back(getPreviousCheckpointPath(c.restartOutput));
+          reserved.push_back(c.restartOutput + ".partial");
+        }
+        if (auto error = checkManifestPath(path, inputs, reserved)) {
+          warn(llvm::toString(std::move(error)));
+          return false;
+        }
+        return true;
+      };
+      if (diagnosticPath(c.logFile, c.manifestFile)) {
+        // A rejected control may point at an unrelated file. Only append
+        // to a recognizable MDIR log or create an unused path.
+        const char *mode = "wx";
+        if (llvm::sys::fs::exists(c.logFile)) {
+          std::ifstream previous(c.logFile);
+          char signature[5]{};
+          if (previous.read(signature, 4) && StringRef(signature) == "MDIR")
+            mode = "a";
+        }
+        if (FILE *file = std::fopen(c.logFile.c_str(), mode)) {
           std::fprintf(file, "MDIR: distributed setup refused: %s\n", reason.c_str());
           std::fclose(file);
         } else {
-          warn("cannot create refusal log '" + c.logFile + "': " + std::strerror(errno));
+          warn("cannot record refusal in log '" + c.logFile + "': " + std::strerror(errno));
         }
       }
       Manifest refusal;
-      if (!c.manifestFile.empty())
+      if (diagnosticPath(c.manifestFile, c.logFile))
         if (auto err = refusal.refuse(c.manifestFile, reason))
           warn(llvm::toString(std::move(err)));
     }

@@ -27,3 +27,6 @@
 # RUN: FileCheck %s --check-prefix=TRAVERSAL < %t/refused.log
 # REFUSED: "event":"refused"
 # REFUSED-SAME: expected one of directed, unique
+# RUN: cd %t && not mdir run refuse.toml 2>&1 | FileCheck %s --check-prefix=TRAVERSAL
+# RUN: FileCheck %s --check-prefix=SECOND < %t/refused.jsonl
+# SECOND: "invocation":2
