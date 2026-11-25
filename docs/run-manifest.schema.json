@@ -430,6 +430,22 @@
             "rigid_units_reason": {
               "type": "string"
             },
+            "distribute": {
+              "type": "object",
+              "properties": {
+                "grid": {
+                  "type": "array",
+                  "items": {"type": "integer", "minimum": 1},
+                  "minItems": 3,
+                  "maxItems": 3
+                },
+                "transport": {"const": "local"},
+                "traversal": {"enum": ["directed", "unique"]},
+                "reach_angstrom": {"type": "number", "exclusiveMinimum": 0}
+              },
+              "required": ["grid", "transport", "traversal", "reach_angstrom"],
+              "additionalProperties": false
+            },
             "rigid_units_route": {
               "type": "object",
               "required": [
