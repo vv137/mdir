@@ -1759,3 +1759,8 @@ for `sm_120`, `sm_121a`, `sm_89`, `sm_80`, and no architecture
 the pruning's groups and the option `arch`. It also checks the scatter
 entries and the fallback remark of the chooser. The corpus of D406 is
 identical to that of the base on `sm_89` and `sm_120` (PR #900).
+
+D[mpi-transport] implements the CPU halo copy and reverse sum with MPI
+peer exchanges, collective coverage with logical AND, and scalar
+reduction in domain order. See the CPU transport in
+[ML2](distributed-ml2.md).

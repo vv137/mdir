@@ -1749,14 +1749,11 @@ Restart uses `[output] checkpoint` and `--continue` as usual. The
 checkpoint carries the physical state in input particle order, including
 the boundary forces. It carries the seed and the absolute step. A new
 partition rebuilds ownership and halo membership before integration.
-With `[execution] deterministic = true`, a continued distributed run on
-another grid uses the same pair words and physical state as an uninterrupted
-run on the same build. Use an explicit one-domain grid for this comparison.
-Omitting the distribution table selects the ordinary driver and its existing
-floating-point reduction. A fixed-point range diagnostic identifies a term
-or completed quantity that cannot be represented. Intermediate signed
-128-bit subtotals retain cancellation. Deterministic HDF5 output omits
-dataset creation timestamps. Matching invocation histories yield identical
-checkpoint files. A continuation records its part number in the checkpoint
-and includes that history in its checksum. The stored physical arrays and
-the H5MD trajectory reproduce the uninterrupted run.
+Cross-grid floating-point sums can differ, including when reading exactly
+the same checkpoint.
+With an MPI-enabled build (`-DMDIR_ENABLE_MPI=ON`), set
+`transport = "mpi"` and launch the same control file on every rank with
+the MPI launcher. Give the grid at least one domain per rank. Each rank
+reads the input and rank zero writes the output files. Execution threads
+parallelize disjoint domains within a rank. MPI uses a duplicate of the
+world communicator and finalizes MPI only when the runtime initialized it.
