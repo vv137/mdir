@@ -799,6 +799,8 @@ def ConvertMDDistToLoops
            "parallelize independent CPU domain pair loops">,
     Option<"mpi", "mpi", "bool", /*default=*/"false",
            "run each CPU domain on its owning MPI rank">,
+    Option<"fixedPoint", "fixed-point", "bool", "false",
+           "use checked, decomposition-independent integer reductions">,
     Option<"haloEvents", "halo-events", "bool", /*default=*/"false",
            "emit start and immediate wait for each halo transfer; "
            "lower with --lower-mdrt-halo-events">

@@ -25,5 +25,8 @@ The reported wait includes the barrier latency and is subtracted from its
 enclosing operation. Trace and timing collectives are excluded from phase
 clocks. Checkpoint-private fields gather on rank zero. A field also needed
 by the next segment must be shared with its consumers. The restart format
-stores no rank metadata. The fixed-grid reduction preserves domain order
-when the rank count changes. Changing the grid can change the results.
+stores no rank metadata. In deterministic mode the wire representation for partial sums and reverse
+force updates is two unsigned 64-bit limbs for each signed 128-bit subtotal. The owner receives only its reverse contributions, checks the wide sum
+and decodes the complete result in the same units as the local executor.
+Changing rank counts, grid, or checkpoint owner preserves the physical
+fields across supported NVE decompositions.

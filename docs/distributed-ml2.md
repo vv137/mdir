@@ -1563,8 +1563,8 @@ access to the seeded xoshiro transition preserves the previous serial draws.
 NVE takes no subsequent random draws. V-rescale in the ordinary driver uses
 Philox with the seed, absolute step, entity zero and stream zero. Supporting
 a distributed bath would also require identical kinetic-energy input to
-that draw. Fixed-grid deterministic replay is tested independently from
-cross-grid numerical agreement.
+that draw. Deterministic NVE tests compare the numerical dataset bytes across
+decompositions, including a change of decomposition at restart.
 ### CPU MPI transport (D[mpi-transport], Section 9)
 
 A rank owns a consecutive interval of domains, with excess domains
