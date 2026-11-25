@@ -118,6 +118,7 @@ struct Halo {
   int64_t references;
   struct Layout *layout;
   double reach;
+  int64_t *firstGhost, *nextGhost;
   struct DomainMatrix *matrices;
 #ifdef MDIR_ENABLE_MPI
   struct TransferPlan plans[2];
@@ -967,13 +968,17 @@ void _mlir_ciface_mdrtDistRedistribute(int64_t oldHandle, int64_t newHandle,
    positions, so that every owned particle lies in it whatever the rounding
    of its division (the coverage argument of Section 4.3 needs x_i in it). */
 static void domainBox(struct Layout *l, struct Memref3D *x, int64_t d,
-                      double lo[3], double hi[3]) {
+                      double lo[3], double hi[3], int midpoint) {
   int64_t cell[3] = {d % l->grid[0], (d / l->grid[0]) % l->grid[1],
                      d / (l->grid[0] * l->grid[1])};
   for (int k = 0; k < 3; ++k) {
     lo[k] = l->edges[k] * (double)cell[k] / (double)l->grid[k];
     hi[k] = l->edges[k] * (double)(cell[k] + 1) / (double)l->grid[k];
   }
+  /* At midpoint ownership the interaction center must lie in the grid
+     cell. The reach bounds every participating site from that center.
+     An owned site across a face of the periodic box cannot enlarge it. */
+  if (midpoint) return;
   for (int64_t r = 0; r < l->rows[d]; ++r)
     for (int k = 0; k < 3; ++k) {
       double v = *at3(x, d, r, k);
@@ -1047,8 +1052,7 @@ static void visitGhosts(struct Halo *h, const double (*points)[3],
   }
 }
 
-int64_t _mlir_ciface_mdrtDistHalo(int64_t layout, struct Memref3D *x,
-                                  double reach) {
+static int64_t buildHalo(int64_t layout, struct Memref3D *x, double reach, int midpoint) {
   struct Halo *h = calloc(1, sizeof *h);
   if (!h)
     fail("out of memory");
@@ -1078,7 +1082,7 @@ int64_t _mlir_ciface_mdrtDistHalo(int64_t layout, struct Memref3D *x,
   }
   for (int64_t d = 0; d < domains; ++d) {
     double lo[3], hi[3];
-    domainBox(l,x,d,lo,hi);
+    domainBox(l,x,d,lo,hi,midpoint);
     visitGhosts(h,points,bins,d,lo,hi,&lists[d]);
     h->rows[d] = lists[d].size;
     if (h->rows[d] > h->capacity) h->capacity = h->rows[d];
@@ -1113,9 +1117,8 @@ int64_t _mlir_ciface_mdrtDistHalo(int64_t layout, struct Memref3D *x,
       fail("out of memory counting halo imports");
     for (int64_t d = 0; d < domains; ++d) {
       double lo[3], hi[3];
-      domainBox(h->layout, x, d, lo, hi);
-      observer->domain(observer->context, d, h->layout->rows[d], h->rows[d], lo,
-                       hi);
+      domainBox(h->layout, x, d, lo, hi, midpoint);
+      observer->domain(observer->context, d, h->layout->rows[d], h->rows[d], lo, hi);
       for (int64_t g = 0; g < h->rows[d]; ++g)
         ++counts[h->sourceDomain[d * cap + g]];
       size_t neighbors = 0;
@@ -1142,6 +1145,14 @@ int64_t _mlir_ciface_mdrtDistHalo(int64_t layout, struct Memref3D *x,
               reach, (long long)d, (long long)h->layout->rows[d],
               (long long)h->rows[d]);
   return (int64_t)(intptr_t)h;
+}
+
+int64_t _mlir_ciface_mdrtDistHalo(int64_t layout, struct Memref3D *x, double reach) {
+  return buildHalo(layout,x,reach,0);
+}
+
+int64_t _mlir_ciface_mdrtDistMidpointHalo(int64_t layout, struct Memref3D *x, double reach) {
+  return buildHalo(layout,x,reach,1);
 }
 
 int64_t mdrtDistHaloCapacity(int64_t handle) {
@@ -1236,21 +1247,24 @@ void _mlir_ciface_mdrtDistTupleRows(int64_t handle, struct Memref3D *positions,
     fail("invalid tuple ownership schedule shape");
   if (count == 0) return;
   shareRows(l, l->rows, positions);
-  int64_t *first = malloc(l->domains * l->count * sizeof *first);
-  int64_t *next = malloc(l->domains * h->capacity * sizeof *next);
-  int64_t *ids = malloc(arity * sizeof *ids);
-  int64_t (*image)[3] = calloc(arity, sizeof *image);
-  if (!first || !next || !ids || !image) fail("out of memory locating tuples");
-  for (int64_t d = 0; d < l->domains; ++d) {
-    for (int64_t j = 0; j < l->count; ++j)
-      first[d*l->count + j] = -1;
-    for (int64_t r = 0; r < h->rows[d]; ++r) {
-      int64_t slot = d*h->capacity + r;
-      int64_t *head = &first[d*l->count + h->ids[slot]];
-      next[slot] = *head;
-      *head = r;
+  if (!h->firstGhost) {
+    h->firstGhost = malloc(l->domains*l->count*sizeof *h->firstGhost);
+    h->nextGhost = malloc(l->domains*h->capacity*sizeof *h->nextGhost);
+    if (!h->firstGhost || !h->nextGhost) fail("out of memory indexing tuple images");
+    for (int64_t d = 0; d < l->domains; ++d) {
+      int64_t *heads = &h->firstGhost[d*l->count];
+      for (int64_t j = 0; j < l->count; ++j) heads[j] = -1;
+      for (int64_t r = 0; r < h->rows[d]; ++r) {
+        int64_t slot = d*h->capacity+r;
+        int64_t *head = &heads[h->ids[slot]];
+        h->nextGhost[slot] = *head;
+        *head = r;
+      }
     }
   }
+  int64_t *ids = malloc(arity*sizeof *ids);
+  int64_t (*image)[3] = calloc(arity,sizeof *image);
+  if (!ids || !image) fail("out of memory locating tuple members");
   for (int64_t t = 0; t < count; ++t) {
     int64_t anchor = l->count;
     for (int64_t a = 0; a < arity; ++a) {
@@ -1281,7 +1295,7 @@ void _mlir_ciface_mdrtDistTupleRows(int64_t handle, struct Memref3D *positions,
       int64_t j = ids[a], row = -1;
       if (l->owner[j] == d && !image[a][0] && !image[a][1] && !image[a][2])
         row = l->row[j];
-      for (int64_t g = first[d*l->count+j]; row < 0 && g >= 0; g = next[d*h->capacity+g]) {
+      for (int64_t g = h->firstGhost[d*l->count+j]; row < 0 && g >= 0; g = h->nextGhost[d*h->capacity+g]) {
         int64_t *n = &h->image[3*(d*h->capacity + g)];
         if (n[0] == image[a][0] && n[1] == image[a][1] && n[2] == image[a][2])
           row = l->rows[d] + g;
@@ -1297,8 +1311,6 @@ void _mlir_ciface_mdrtDistTupleRows(int64_t handle, struct Memref3D *positions,
   }
   free(image);
   free(ids);
-  free(next);
-  free(first);
 }
 
 /* The ghost rows of each domain, and the particle each is an image of. */
@@ -1587,6 +1599,8 @@ void mdrtDistReleaseHalo(int64_t handle) {
   }
   free(h->rows);
   free(h->edges);
+  free(h->firstGhost);
+  free(h->nextGhost);
 #ifdef MDIR_ENABLE_MPI
   for (int i = 0; i < 2; ++i) {
     free(h->plans[i].counts);
@@ -1684,10 +1698,10 @@ void _mlir_ciface_mdrtDistEpochImages(int64_t cache, int64_t layout,
 }
 
 int64_t _mlir_ciface_mdrtDistEpochHalo(int64_t layout, struct Memref3D *x,
-                                       double reach, int64_t cache) {
+                                       double reach, int64_t cache, int64_t midpoint) {
   struct TrajectoryEpoch *e = (struct TrajectoryEpoch *)(intptr_t)cache;
   if (!e->halo) {
-    e->halo = (struct Halo *)(intptr_t)_mlir_ciface_mdrtDistHalo(layout,x,reach);
+    e->halo = (struct Halo *)(intptr_t)buildHalo(layout,x,reach,midpoint);
     e->halo->layout->groupsFrozen = 1;
   }
   int64_t handle = (int64_t)(intptr_t)e->halo;
