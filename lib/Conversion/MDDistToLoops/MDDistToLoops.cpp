@@ -150,6 +150,7 @@ private:
   LogicalResult lowerHaloCopy(HaloCopyOp op);
   LogicalResult lowerHaloSum(HaloSumOp op);
   LogicalResult lowerZeros(ZerosOp op);
+  LogicalResult lowerTupleRows(TupleRowsOp op);
   LogicalResult lowerNeighborhood(NeighborhoodOp op);
   LogicalResult lowerPartitionCenters(PartitionCentersOp op);
   template <typename OpTy>
@@ -948,6 +949,25 @@ LogicalResult Lowering::lowerZeros(ZerosOp op) {
       allocate(b, rows.capacity, op.getResult().getType().getNumComponents());
   fillZero(b, buffer);
   storage[op.getResult()].buffer = buffer;
+  return success();
+}
+
+LogicalResult Lowering::lowerTupleRows(TupleRowsOp op) {
+  OpBuilder b(op);
+  auto relation = cast<md::RelationType>(op.getTuples().getType());
+  Value members = mdrt::ToBufferOp::create(b, loc, mdrt::getMembersType(relation), op.getTuples());
+  auto dynamic = [&](Type type) {
+    return MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, type);
+  };
+  Value count = memref::DimOp::create(b, loc, members, 0);
+  Value rows = allocate(b, op.getRows().getType(), {count});
+  Value source = memref::CastOp::create(b, loc, dynamic(b.getI32Type()), members);
+  Value result = memref::CastOp::create(b, loc, dynamic(b.getI64Type()), rows);
+  Value positions = storage[op.getPositions()].buffer;
+  auto fill = declare("mdrtDistTupleRows",
+      b.getFunctionType({b.getI64Type(), positions.getType(), source.getType(), result.getType()}, {}), true);
+  func::CallOp::create(b, loc, fill, ValueRange{storage[op.getHalo()].handle, positions, source, result});
+  op.getRows().replaceAllUsesWith(rows);
   return success();
 }
 
@@ -2307,6 +2327,7 @@ LogicalResult Lowering::lower(Operation *op) {
       .Case([&](HaloSumOp o) { return lowerHaloSum(o); })
       .Case([&](ZerosOp o) { return lowerZeros(o); })
       .Case([&](NeighborhoodOp o) { return lowerNeighborhood(o); })
+      .Case([&](TupleRowsOp o) { return lowerTupleRows(o); })
       .Case([&](PartitionCentersOp o) { return lowerPartitionCenters(o); })
       .Case([&](SumPairsOp o) { return lowerSumPairs(o); })
       .Case([&](GatherPairsOp o) { return lowerGatherPairs(o); })

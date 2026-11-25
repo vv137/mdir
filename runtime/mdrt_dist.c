@@ -909,6 +909,82 @@ int64_t _mlir_ciface_mdrtDistCovered(int64_t handle,
   return 1;
 }
 
+/* Index the imported images by identity. An atom may have several images
+   on one domain, including periodic images of a locally owned atom. */
+void _mlir_ciface_mdrtDistTupleRows(int64_t handle, struct Memref3D *positions,
+                                    struct Members *members, struct Memref2I *out) {
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  struct Layout *l = h->layout;
+  int64_t count = members->sizes[0], arity = members->sizes[1];
+  if (arity < 2 || out->sizes[0] != count || out->sizes[1] != 1 + arity)
+    fail("invalid tuple ownership schedule shape");
+  if (count == 0) return;
+  shareRows(l, l->rows, positions);
+  int64_t *first = malloc(l->domains * l->count * sizeof *first);
+  int64_t *next = malloc(l->domains * h->capacity * sizeof *next);
+  int64_t *ids = malloc(arity * sizeof *ids);
+  int64_t (*image)[3] = calloc(arity, sizeof *image);
+  if (!first || !next || !ids || !image) fail("out of memory locating tuples");
+  for (int64_t d = 0; d < l->domains; ++d) {
+    for (int64_t j = 0; j < l->count; ++j)
+      first[d*l->count + j] = -1;
+    for (int64_t r = 0; r < h->rows[d]; ++r) {
+      int64_t slot = d*h->capacity + r;
+      int64_t *head = &first[d*l->count + h->ids[slot]];
+      next[slot] = *head;
+      *head = r;
+    }
+  }
+  for (int64_t t = 0; t < count; ++t) {
+    int64_t anchor = l->count;
+    for (int64_t a = 0; a < arity; ++a) {
+      ids[a] = members->aligned[members->offset + t*members->strides[0] + a*members->strides[1]];
+      if (ids[a] < 0 || ids[a] >= l->count) fail("tuple member outside particle set");
+      if (ids[a] < anchor) anchor = ids[a];
+    }
+    int64_t d = 0;
+    for (int k = 2; k >= 0; --k) {
+      double origin = *at3(positions, l->owner[anchor], l->row[anchor], k);
+      double lo = 0, hi = 0, length = l->edges[k];
+      for (int64_t a = 0; a < arity; ++a) {
+        double delta = *at3(positions, l->owner[ids[a]], l->row[ids[a]], k) - origin;
+        image[a][k] = -(int64_t)floor(delta / length + 0.5);
+        delta += (double)image[a][k] * length;
+        lo = fmin(lo, delta);
+        hi = fmax(hi, delta);
+      }
+      double u = (origin + 0.5*(lo + hi)) / length;
+      double translation = floor(u);
+      d = d*l->grid[k] + division(u - translation, l->grid[k]);
+      for (int64_t a = 0; a < arity; ++a)
+        image[a][k] -= (int64_t)translation;
+    }
+    int64_t *record = out->aligned + out->offset + t*out->strides[0];
+    record[0] = d;
+    for (int64_t a = 0; a < arity; ++a) {
+      int64_t j = ids[a], row = -1;
+      if (l->owner[j] == d && !image[a][0] && !image[a][1] && !image[a][2])
+        row = l->row[j];
+      for (int64_t g = first[d*l->count+j]; row < 0 && g >= 0; g = next[d*h->capacity+g]) {
+        int64_t *n = &h->image[3*(d*h->capacity + g)];
+        if (n[0] == image[a][0] && n[1] == image[a][1] && n[2] == image[a][2])
+          row = l->rows[d] + g;
+      }
+      if (row < 0) {
+        char message[192];
+        snprintf(message, sizeof message, "missing tuple owner coverage: tuple %lld domain %lld lacks atom %lld",
+                 (long long)t+1, (long long)d, (long long)j+1);
+        fail(message);
+      }
+      record[(a+1)*out->strides[1]] = row;
+    }
+  }
+  free(image);
+  free(ids);
+  free(next);
+  free(first);
+}
+
 /* The ghost rows of each domain, and the particle each is an image of. */
 void _mlir_ciface_mdrtDistHaloRows(int64_t handle, struct Memref1I *rows,
                                    struct Memref2I *ids) {
