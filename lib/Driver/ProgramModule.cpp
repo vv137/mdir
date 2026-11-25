@@ -103,6 +103,8 @@ void driver::printParsedModule(Program &program) {
 llvm::Error mdir::driver::builder::serializeNativeProgram(Program &program,
                                                        TermIRPlan &plan) {
   auto native = plan.getModule();
+  if (program.distributed)
+    native->setAttr("md_dist.driver", mlir::UnitAttr::get(native.getContext()));
   std::string printed;
   llvm::raw_string_ostream os(printed);
   mlir::OpPrintingFlags flags;
