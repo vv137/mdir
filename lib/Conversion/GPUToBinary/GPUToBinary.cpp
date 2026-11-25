@@ -38,6 +38,7 @@
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Target/LLVM/NVVM/Utils.h"
 #include "mlir/Transforms/Passes.h"
+#include "mlir/Transforms/WalkPatternRewriteDriver.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/Targets.h"
@@ -668,6 +669,15 @@ struct GpuLowerToNVVMOptions : public gpu::GPUToNVVMPipelineOptions {
       llvm::cl::init(true)};
 };
 
+struct ExpandSubgroupReductions
+    : PassWrapper<ExpandSubgroupReductions, OperationPass<gpu::GPUModuleOp>> {
+  void runOnOperation() override {
+    RewritePatternSet patterns(&getContext());
+    gpu::populateGpuLowerSubgroupReduceToShufflePatterns(patterns, 32);
+    walkAndApplyPatterns(getOperation(), std::move(patterns));
+  }
+};
+
 void buildGpuLowerToNVVM(OpPassManager &pm,
                          const GpuLowerToNVVMOptions &options) {
   pm.addPass(mdir::createTowersStepGraph());
@@ -696,6 +706,13 @@ void buildGpuLowerToNVVM(OpPassManager &pm,
 
   // The GPU modules.
   ConvertGpuOpsToNVVMOpsOptions nvvm;
+  StringRef chip(options.cubinChip.getValue());
+  unsigned capability = 0;
+  if (chip.consume_front("sm_"))
+    (void)chip.consumeInteger(10, capability);
+  nvvm.hasRedux = capability >= 80;
+  if (!nvvm.hasRedux)
+    pm.addNestedPass<gpu::GPUModuleOp>(std::make_unique<ExpandSubgroupReductions>());
   nvvm.useBarePtrCallConv = options.kernelUseBarePtrCallConv;
   nvvm.indexBitwidth = options.indexBitWidth;
   nvvm.allowPatternRollback = options.allowPatternRollback;

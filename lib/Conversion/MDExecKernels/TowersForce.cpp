@@ -2169,12 +2169,8 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
   if (certified && !recovering) {
     Value count = load(localVotes, {});
     if (shortVote()) {
-      Value sum =
-          LLVM::InlineAsmOp::create(
-              b, loc, TypeRange{i32}, ValueRange{count},
-              "redux.sync.add.s32 $0,$1,0xffffffff;", "=r,r", false, false,
-              LLVM::TailCallKind::None, LLVM::AsmDialectAttr(), ArrayAttr())
-              .getResult(0);
+      Value sum = gpu::SubgroupReduceOp::create(
+          b, loc, count, gpu::AllReduceOperation::ADD, true);
       count = arith::ExtSIOp::create(
           b, loc, i64,
           select(cmpi(CmpIPredicate::eq, lane, ci(0)), sum, ci(0)));
