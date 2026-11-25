@@ -4,6 +4,18 @@
   "oneOf": [
     {
       "type": "object",
+      "required": ["schema_version", "event", "invocation", "timestamp_utc", "reason"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "event": {"const": "refused"},
+        "invocation": {"type": "integer", "minimum": 1},
+        "timestamp_utc": {"type": "string"},
+        "reason": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
       "required": ["schema_version", "event", "invocation", "timestamp_utc", "domains"],
       "properties": {
         "schema_version": {"const": 1},

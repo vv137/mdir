@@ -3753,7 +3753,7 @@ llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {
   return Error::success();
 }
 
-llvm::Expected<Control> mdir::driver::readControl(StringRef path) {
+llvm::Expected<Control> mdir::driver::readControl(StringRef path, Control *refusedDistribution) {
   toml::parse_result result = toml::parse_file(std::string_view(path));
   if (!result) {
     const toml::parse_error &error = result.error();
@@ -3765,8 +3765,11 @@ llvm::Expected<Control> mdir::driver::readControl(StringRef path) {
 
   Control control;
   Reader reader(path, control);
-  if (Error error = reader.read(result.table()))
+  if (Error error = reader.read(result.table())) {
+    if (refusedDistribution && result.table().contains("distribute"))
+      *refusedDistribution = std::move(control);
     return std::move(error);
+  }
   return control;
 }
 

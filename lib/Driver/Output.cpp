@@ -2000,6 +2000,7 @@ static void writeState(int64_t step, void *positions, void *velocities,
     reason = "the wall time";
   if (!reason)
     return;
+  if (output.finishDistribution) output.finishDistribution();
   // The wait of a stop: for all three events of this checkpoint.
   waitForCheckpoint();
   waitForFrames(output);

@@ -46,7 +46,7 @@ def run(name, domains, ranks, *, stop=False, resume=False, trace=False):
     if trace:
         for rank in range(max(1, ranks)):
             detail = (path / f"trace.rank{rank}.log").read_text()
-            steps = re.findall(rf"^DIST: step (\d+) rank {rank} wall ", detail, re.M)
+            steps = re.findall(rf"^DIST: trace step (\d+) rank {rank} wall ", detail, re.M)
             assert list(map(int, steps)) == list(range(1, 11)), steps
     events = [json.loads(line) for line in (path / "manifest.json").read_text().splitlines()]
     setup = [event["domains"] for event in events if event["event"] == "domain_setup"][-1]

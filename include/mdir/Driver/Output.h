@@ -159,6 +159,7 @@ struct BlockMean {
 /// code calls write to it.
 struct Output {
   Log log;
+  std::function<void()> finishDistribution;
   /// Records a checkpoint stop before its direct process exit (D168).
   std::function<llvm::Error(int64_t, const char *)> recordStop;
   int64_t lastMinimizationStep = 0;

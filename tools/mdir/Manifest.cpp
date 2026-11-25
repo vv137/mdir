@@ -278,11 +278,12 @@ llvm::Error Manifest::start(const std::string &given, bool append, Object metada
       const Object *record = json ? json->getAsObject() : nullptr;
       int64_t number = record ? record->getInteger("invocation").value_or(0) : 0;
       auto event = record ? record->getString("event") : std::nullopt;
+      bool refused = event && *event == "refused" && record->getString("reason");
       bool start = event && *event == "start";
       bool end = event && *event == "end";
       bool valid = record && record->getInteger("schema_version") == 1 && number > 0 &&
           record->getString("timestamp_utc") &&
-          ((start && number == last + 1) ||
+          (((start || refused) && number == last + 1) ||
            (event && *event == "domain_setup" && last > 0 && number == last && !ended && record->getArray("domains")) ||
            (end && last > 0 && number == last && !ended));
       if (end && record) {
@@ -297,7 +298,7 @@ llvm::Error Manifest::start(const std::string &given, bool append, Object metada
             "manifest '%s' has malformed or unsupported history; use a new manifest path",
             path.c_str());
       last = number;
-      ended = end;
+      ended = end || refused;
     }
     if (previous.bad())
       return llvm::createStringError(llvm::inconvertibleErrorCode(),
@@ -311,6 +312,15 @@ llvm::Error Manifest::start(const std::string &given, bool append, Object metada
   began = std::chrono::steady_clock::now();
   metadata["event"] = "start";
   return write(std::move(metadata));
+}
+
+llvm::Error Manifest::refuse(const std::string &given, llvm::StringRef reason) {
+  path = given;
+  file = std::fopen(path.c_str(), "wx");
+  if (!file)
+    return llvm::createStringError(std::error_code(errno, std::generic_category()),
+                                   "cannot create refusal manifest '%s'", path.c_str());
+  return write(Object{{"event", "refused"}, {"reason", reason}});
 }
 
 llvm::Error Manifest::domainSetup(llvm::json::Array domains) {
