@@ -463,10 +463,10 @@ def MDDist_TupleRowsOp : MDDist_Op<"tuple_rows", [Pure]> {
     The executor resolves the integer images again at current positions.
   }];
   let arguments = (ins MD_RelationType:$tuples, MDDist_FieldType:$positions,
-                       MDDist_HaloType:$halo);
+                       MDDist_HaloType:$halo, UnitAttr:$group);
   let results = (outs I64MemRef:$rows);
   let assemblyFormat = [{
-    $tuples `,` $positions `,` $halo attr-dict `:` type($tuples) `,`
+     $tuples `,` $positions `,` $halo (`group` $group^)? attr-dict `:` type($tuples) `,`
     qualified(type($positions)) `,` qualified(type($halo)) `->` type($rows)
   }];
   let hasVerifier = 1;

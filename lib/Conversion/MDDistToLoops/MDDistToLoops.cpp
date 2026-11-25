@@ -361,8 +361,19 @@ Value Lowering::finish(OpBuilder &b, Value sum, int fractionalBits) {
 }
 
 Value Lowering::decodeObservable(OpBuilder &b, Value sum, int bits) {
-  Value value = finish(b, sum, bits);
-  if (fixedPoint) observableWords[value] = {sum, bits};
+  if (!fixedPoint) return sum;
+  // Extensive observables (including the sum of squared forces per mass)
+  // may exceed a single Q32 word even when every term fits. Round the
+  // checked wide sum directly, once, before restoring physical units.
+  Type type = b.getF64Type();
+  Value scale = real(b, std::ldexp(1.0, -bits));
+  if (auto vector = dyn_cast<VectorType>(sum.getType())) {
+    type = VectorType::get(vector.getShape(), type);
+    scale = vector::BroadcastOp::create(b, loc, type, scale);
+  }
+  Value value = arith::MulFOp::create(b, loc,
+      arith::SIToFPOp::create(b, loc, type, sum), scale);
+  observableWords[value] = {sum, bits};
   return value;
 }
 
@@ -935,13 +946,15 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
   Value edges = vector::FromElementsOp::create(b, loc, vec, ValueRange(edge));
   auto coordinates = md::getCoordinates(op.getCoordinateKinds(), op.getCoordinateMembers());
   int64_t arity = op.getRows().getType().getDimSize(1) - 1;
-  bool reduce = op.getNumResults() == 1;
+  bool reduce = isa<PartialType>(op.getResult(0).getType());
+  bool solve = !reduce && !cast<FieldType>(op.getResult(0).getType()).getPartial();
+  bool hasFlag = solve && op.getNumResults() == 2;
   Type resultType = reduce ? cast<PartialType>(op.getResult(0).getType()).getValueType() : vec;
   auto vector = dyn_cast<VectorType>(resultType);
   int64_t width = vector ? vector.getNumElements() : 1;
   Type scalar = sumType(b.getF64Type());
-  Storage &halo = storage[op.getHalo()];
-  Storage &layout = storage[layoutOf(op.getHalo())];
+  Storage halo = storage[op.getHalo()];
+  Storage layout = storage[layoutOf(op.getHalo())];
   auto buffer = [&](ArrayRef<int64_t> shape, ValueRange sizes) {
     Value value = allocate(b, MemRefType::get(shape, scalar), sizes);
     fillZero(b, value);
@@ -952,16 +965,25 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
   if (reduce) {
     partial = buffer({dyn, dyn}, {index(b, domains), index(b, width)});
     storage[op.getResult(0)].buffer = partial;
+  } else if (solve) {
+    ownedOut = allocate(b, layout.capacity, 3);
+    fillZero(b, ownedOut);
+    storage[op.getResult(0)].buffer = ownedOut;
   } else {
     ownedOut = buffer({dyn, dyn, dyn}, {index(b, domains), layout.capacity, index(b, 3)});
     ghostOut = buffer({dyn, dyn, dyn}, {index(b, domains), halo.capacity, index(b, 3)});
     storage[op.getResult(0)].buffer = ownedOut;
     storage[op.getResult(1)].buffer = ghostOut;
   }
+  Value failureFlag;
+  if (hasFlag) {
+    failureFlag = allocate(b, MemRefType::get({1}, b.getI32Type()), {});
+    fillZero(b, failureFlag);
+  }
   SmallVector<Value> parameters;
   for (Value field : op.getParameters()) {
     auto type = cast<md::FieldType>(field.getType());
-    parameters.push_back(mdrt::ToBufferOp::create(b, loc, mdrt::getBufferType(type), field));
+    parameters.push_back(inputSnapshot(b, type, field));
   }
   Value count = memref::DimOp::create(b, loc, op.getRows(), 0);
   Value first = domainBound(b, false), past = domainBound(b, true);
@@ -1036,6 +1058,15 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
               Value old = memref::LoadOp::create(k, loc, partial, place);
               memref::StoreOp::create(k, loc, add(k, old, component), partial, place);
             }
+          } else if (solve) {
+            for (int64_t a = 0; a < arity; ++a)
+              storeValue(k, map.lookupOrDefault(yielded[a]), ownedOut, d, localRows[a]);
+            if (hasFlag) {
+              Value zero = index(k, 0);
+              Value old = memref::LoadOp::create(k, loc, failureFlag, zero);
+              Value flagged = arith::ExtUIOp::create(k, loc, k.getI32Type(), map.lookupOrDefault(yielded.back()));
+              memref::StoreOp::create(k, loc, arith::OrIOp::create(k, loc, old, flagged), failureFlag, zero);
+            }
           } else {
             for (int64_t a = 0; a < arity; ++a) {
               Value word = quantize(k, map.lookupOrDefault(yielded[a]), 40);
@@ -1052,6 +1083,14 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
         });
         scf::YieldOp::create(at, loc);
       });
+  if (hasFlag) {
+    Value flag = memref::LoadOp::create(b, loc, failureFlag, index(b, 0));
+    if (mpi) {
+      auto maximum = declare("mdrtMPIMax", b.getFunctionType({b.getI32Type()}, {b.getI32Type()}), false);
+      flag = func::CallOp::create(b, loc, maximum, flag).getResult(0);
+    }
+    op.getResult(1).replaceAllUsesWith(arith::TruncIOp::create(b, loc, b.getI1Type(), flag));
+  }
   return success();
 }
 
@@ -1067,7 +1106,7 @@ LogicalResult Lowering::lowerTupleRows(TupleRowsOp op) {
   Value source = memref::CastOp::create(b, loc, dynamic(b.getI32Type()), members);
   Value result = memref::CastOp::create(b, loc, dynamic(b.getI64Type()), rows);
   Value positions = storage[op.getPositions()].buffer;
-  auto fill = declare("mdrtDistTupleRows",
+  auto fill = declare(op.getGroup() ? "mdrtDistConstraintRows" : "mdrtDistTupleRows",
       b.getFunctionType({b.getI64Type(), positions.getType(), source.getType(), result.getType()}, {}), true);
   func::CallOp::create(b, loc, fill, ValueRange{storage[op.getHalo()].handle, positions, source, result});
   op.getRows().replaceAllUsesWith(rows);
@@ -2659,13 +2698,14 @@ LogicalResult Lowering::run(func::FuncOp function) {
     int phase = 0;
     if (statistics) {
       if (isa<SumPairsOp, GatherPairsOp>(op)) phase = DistPairs;
-      if (isa<SumParticlesOp, MapParticlesOp>(op)) phase = DistOther;
+      if (isa<SumParticlesOp, MapParticlesOp, TupleRowsOp, TupleKernelOp>(op)) phase = DistOther;
       if (isa<HaloCopyOp>(op)) phase = DistCopy;
       if (isa<HaloSumOp>(op)) phase = DistSum;
       if (isa<AllReduceOp>(op)) phase = DistReduce;
       if (isa<MigrateOp, RedistributeOp>(op)) phase = DistMigration;
-      if (isa<CoveredOp>(op))
-        mark(&op->getParentOfType<scf::ForOp>().getBody()->front(), DistStep);
+      if (isa<CoveredOp>(op) || op->hasAttr("md_dist.step"))
+        if (auto step = op->getParentOfType<scf::ForOp>())
+          mark(&step.getBody()->front(), DistStep);
       if (phase) mark(op, phase);
     }
     if (failed(lower(op)))

@@ -1,3 +1,4 @@
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 // The md_dist dialect, its types, and its ops.
 //
 // See docs/distributed-ml2.md for the design (D275). The checks
@@ -943,6 +944,18 @@ LogicalResult TupleRowsOp::verify() {
   auto decomposition = SymbolTable::lookupNearestSymbolFrom<DecompositionOp>(
       *this, getHalo().getType().getDecomposition());
   auto rows = getRows().getType();
+  for (Operation *user : getRows().getUsers())
+    if (!getOperation()->getBlock()->findAncestorOpInBlock(*user) ||
+        !isa<TupleKernelOp, memref::LoadOp>(user))
+      return emitOpError("tuple rows require a read-only consumer in their defining scope");
+  if (getGroup()) {
+    Value layout = layoutOf(getHalo());
+    while (auto move = layout.getDefiningOp<MigrateOp>())
+      layout = move.getOldLayout();
+    auto partition = layout.getDefiningOp<PartitionOp>();
+    if (!partition || !llvm::is_contained(partition.getGroups(), getTuples()))
+      return emitOpError("constraint solver needs the group relation that established ownership");
+  }
   if (!relation.getTupleSet() || !decomposition ||
       relation.getParticleSet() != decomposition.getParticleSetAttr() ||
       relation.getArity() < 2)
@@ -975,6 +988,12 @@ LogicalResult TupleKernelOp::verify() {
   for (Value field : getParameters())
     if (cast<md::FieldType>(field.getType()).getParticleSet() != tuples.getTupleSet())
       return emitOpError("tuple parameters must belong to the scheduled tuple set");
+  if (schedule.getGroup() && getNumResults() && isa<FieldType>(getResult(0).getType())) {
+    if (getResult(0).getType() != getPositions().getType() || getNumResults() > 2 ||
+        (getNumResults() == 2 && !getResult(1).getType().isInteger(1)))
+      return emitOpError("expected an owned group update and optional failure flag");
+    return success();
+  }
   if (getNumResults() == 1 && isa<PartialType>(getResult(0).getType()))
     return success();
   auto pos = getPositions().getType();
@@ -1000,10 +1019,13 @@ LogicalResult TupleKernelOp::verifyRegions() {
   if (!yield || block.getArgumentTypes() != ArrayRef<Type>(types))
     return emitOpError("expected kernel arguments for coordinates, member fields and tuple parameters");
   types.clear();
-  if (getNumResults() == 1)
-    types.push_back(cast<PartialType>(getResult(0).getType()).getValueType());
-  else
+  if (auto partial = dyn_cast<PartialType>(getResult(0).getType()))
+    types.push_back(partial.getValueType());
+  else {
     types.append(arity, getPositions().getType().getKernelValueType());
+    if (getNumResults() == 2 && getResult(1).getType().isInteger(1))
+      types.push_back(IntegerType::get(getContext(), 1));
+  }
   if (yield.getOperandTypes() != ArrayRef<Type>(types))
     return emitOpError("expected one quantity to sum or one force per tuple member");
   return success();
