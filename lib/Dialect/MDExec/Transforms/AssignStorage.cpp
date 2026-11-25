@@ -2050,21 +2050,19 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
       return failure();
     Value buffer = mapping.lookup(from.getBuffer());
     if (from->hasAttr("mdrt.collect_buffer")) {
-      if (onDevice || !from.getBuffer().getDefiningOp<memref::AllocOp>() ||
-          !from.getBuffer().hasOneUse()) {
-        // The buffer also has the stores of the collect. Validate that every
-        // other user fills it before the handoff.
-        auto allocated = from.getBuffer().getDefiningOp<memref::AllocOp>();
-        if (onDevice || !allocated || llvm::any_of(from.getBuffer().getUsers(),
-            [&](Operation *user) {
-              if (user == op) return false;
-              auto store = dyn_cast<memref::StoreOp>(user);
-              if (!store || store.getMemRef() != from.getBuffer()) return true;
-              Operation *ancestor = op->getBlock()->findAncestorOpInBlock(*user);
-              return !ancestor || !ancestor->isBeforeInBlock(op);
-            }))
-          return op->emitOpError("collected field requires its own filled allocation");
-      }
+      // Each other use fills the buffer before this handoff.
+      auto allocated = from.getBuffer().getDefiningOp<memref::AllocOp>();
+      if (onDevice || !allocated || llvm::any_of(from.getBuffer().getUsers(),
+          [&](Operation *user) {
+            if (user == op)
+              return false;
+            auto store = dyn_cast<memref::StoreOp>(user);
+            if (!store || store.getMemRef() != from.getBuffer())
+              return true;
+            Operation *ancestor = op->getBlock()->findAncestorOpInBlock(*user);
+            return !ancestor || !ancestor->isBeforeInBlock(op);
+          }))
+        return op->emitOpError("collected field requires its own filled allocation");
       Type field = from.getResult().getType();
       Attribute set = getParticleSet(field);
       Value size = sizes.lookup(set);
