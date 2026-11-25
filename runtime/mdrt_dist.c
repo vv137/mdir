@@ -270,34 +270,6 @@ static DistWide *wordAt(struct Memref3W *m, int64_t d, int64_t r, int64_t c) {
          c * m->strides[2];
 }
 
-void _mlir_ciface_mdrtDistHaloSumWords(int64_t handle, struct Memref3W *owned,
-                                       struct Memref3W *ghosts,
-                                       struct Memref3D *out) {
-  struct Halo *h = (struct Halo *)(intptr_t)handle;
-  int64_t components = owned->sizes[2];
-  if (observer)
-    for (size_t i = 0; i < h->edgeCount; ++i) {
-      struct Edge edge = h->edges[i];
-      observer->transfer(observer->context, edge.to, edge.from,
-                         edge.rows * components * (int64_t)sizeof(DistWide));
-    }
-  for (int64_t d = 0; d < h->layout->domains; ++d)
-    for (int64_t g = 0; g < h->rows[d]; ++g) {
-      int64_t slot = d * h->capacity + g;
-      for (int64_t c = 0; c < components; ++c) {
-        DistWide *to =
-            wordAt(owned, h->sourceDomain[slot], h->sourceRow[slot], c);
-        *to = mdrtDistAddWide(*to, *wordAt(ghosts, d, g, c));
-      }
-    }
-  for (int64_t d = 0; d < h->layout->domains; ++d)
-    for (int64_t r = 0; r < h->layout->rows[d]; ++r)
-      for (int64_t c = 0; c < components; ++c)
-        *at3(out, d, r, c) =
-            (double)mdrtDistNarrowWord(*wordAt(owned, d, r, c), DistPairForce) *
-            0x1p-40;
-}
-
 /* The cell of the grid that fractional coordinate `u` along an axis of `g`
    divisions falls in. */
 static int64_t division(double u, int64_t g) {
@@ -795,13 +767,14 @@ static int64_t movedRows(struct Halo *h) {
    order on both sides. For the transpose, interleave local and remote
    contributions in that order too, preserving the oracle's sum. */
 static void exchangeHalo(struct Halo *h, struct Memref3D *owned,
-                         struct Memref3D *ghosts, int image, int transpose) {
+                         struct Memref3D *ghosts, int image, int transpose,
+                         struct Memref3I *ownedWords, struct Memref3I *ghostWords) {
   const int peers = mdrtMPISize(), rank = mdrtMPIRank();
   int *counts = calloc((size_t)peers * 6, sizeof(int));
   if (!counts) mdrtMPIAbort("out of memory packing halo counts");
   int *ns = counts, *nr = ns + peers, *os = nr + peers, *or = os + peers;
   int *ws = or + peers, *wr = ws + peers;
-  const int64_t domains = h->layout->domains, components = owned->sizes[2];
+  const int64_t domains = h->layout->domains, components = ownedWords ? ownedWords->sizes[2] : owned->sizes[2];
   for (int64_t d = 0; d < domains; ++d) {
     int dst = mdrtMPIOwner(domains, d);
     for (int64_t g = 0; g < h->rows[d]; ++g) {
@@ -827,11 +800,12 @@ static void exchangeHalo(struct Halo *h, struct Memref3D *owned,
     sendSize += ns[p];
     recvSize += nr[p];
   }
-  double *send = malloc((size_t)(sendSize ? sendSize : 1) * sizeof(double));
-  double *recv = malloc((size_t)(recvSize ? recvSize : 1) * sizeof(double));
+  union Payload { double real; int64_t word; };
+  union Payload *send = malloc((size_t)(sendSize ? sendSize : 1) * sizeof *send);
+  union Payload *recv = malloc((size_t)(recvSize ? recvSize : 1) * sizeof *recv);
   if (!send || !recv) mdrtMPIAbort("out of memory packing halo rows");
   for (int pass = 0; pass < 2; ++pass) {
-    if (pass) mdrtMPIExchange(send, ns, os, recv, nr, or);
+    if (pass) mdrtMPIExchange(send, ns, os, recv, nr, or, ownedWords != NULL);
     for (int64_t d = 0; d < domains; ++d) {
       int dst = mdrtMPIOwner(domains, d);
       for (int64_t g = 0; g < h->rows[d]; ++g) {
@@ -842,10 +816,20 @@ static void exchangeHalo(struct Halo *h, struct Memref3D *owned,
         if ((!pass && (sender != rank || receiver == rank)) ||
             (pass && receiver != rank)) continue;
         for (int64_t c = 0; c < components; ++c) {
+          if (ownedWords) {
+            int64_t *from = wordAt(ghostWords, d, g, c);
+            if (!pass) send[ws[receiver]++].word = *from;
+            else {
+              int64_t term = sender == rank ? *from : recv[wr[sender]++].word;
+              int64_t *to = wordAt(ownedWords, dom, row, c);
+              *to = mdrtDistAddWords(*to, term);
+            }
+            continue;
+          }
           double *a = at3(owned, dom, row, c), *b = at3(ghosts, d, g, c);
-          if (!pass) send[ws[receiver]++] = transpose ? *b : *a;
+          if (!pass) send[ws[receiver]++].real = transpose ? *b : *a;
           else {
-            double v = sender == rank ? (transpose ? *b : *a) : recv[wr[sender]++];
+            double v = sender == rank ? (transpose ? *b : *a) : recv[wr[sender]++].real;
             if (transpose) *a += v;
             else {
               if (image) v += (double)h->image[3*i+c] * h->layout->edges[c];
@@ -860,6 +844,42 @@ static void exchangeHalo(struct Halo *h, struct Memref3D *owned,
 }
 #endif
 
+void _mlir_ciface_mdrtDistHaloSumWords(int64_t handle, struct Memref3I *owned,
+    struct Memref3I *ghosts, struct Memref3D *out) {
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  int64_t components = owned->sizes[2];
+  if (observer)
+    for (size_t i = 0; i < h->edgeCount; ++i) {
+      struct Edge edge = h->edges[i];
+      observer->transfer(observer->context, edge.to, edge.from,
+                         edge.rows * components * (int64_t)sizeof(int64_t));
+    }
+#ifdef MDIR_ENABLE_MPI
+  if (h->layout->mpi)
+    exchangeHalo(h, NULL, NULL, 0, 1, owned, ghosts);
+  else
+#endif
+  for (int64_t d = 0; d < h->layout->domains; ++d)
+    for (int64_t g = 0; g < h->rows[d]; ++g) {
+      int64_t slot = d * h->capacity + g;
+      for (int64_t c = 0; c < components; ++c) {
+        int64_t *to = wordAt(owned, h->sourceDomain[slot], h->sourceRow[slot], c);
+        *to = mdrtDistAddWords(*to, *wordAt(ghosts, d, g, c));
+      }
+    }
+  int64_t first = 0, past = h->layout->domains;
+#ifdef MDIR_ENABLE_MPI
+  if (h->layout->mpi) {
+    first = mdrtMPIDomainBound(past, 0);
+    past = mdrtMPIDomainBound(past, 1);
+  }
+#endif
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < h->layout->rows[d]; ++r)
+      for (int64_t c = 0; c < components; ++c)
+        *at3(out, d, r, c) = (double)*wordAt(owned, d, r, c) * 0x1p-40;
+}
+
 /* G: (G a)_g = a_{s(g)}, with `image` x_{s(g)} + n_g L. */
 void _mlir_ciface_mdrtDistHaloCopy(int64_t handle, struct Memref3D *owned,
                                    struct Memref3D *ghosts, int64_t image) {
@@ -872,7 +892,7 @@ void _mlir_ciface_mdrtDistHaloCopy(int64_t handle, struct Memref3D *owned,
     }
 #ifdef MDIR_ENABLE_MPI
   if (h->layout->mpi) {
-    exchangeHalo(h, owned, ghosts, image, 0);
+    exchangeHalo(h, owned, ghosts, image, 0, NULL, NULL);
     return;
   }
 #endif
@@ -907,7 +927,7 @@ void _mlir_ciface_mdrtDistHaloSum(int64_t handle, struct Memref3D *ghosts,
     }
 #ifdef MDIR_ENABLE_MPI
   if (h->layout->mpi) {
-    exchangeHalo(h, owned, ghosts, 0, 1);
+    exchangeHalo(h, owned, ghosts, 0, 1, NULL, NULL);
     return;
   }
 #endif

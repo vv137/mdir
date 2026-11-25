@@ -14,8 +14,8 @@ int mdrtMPIRank(void);
 int mdrtMPISize(void);
 void mdrtMPIRowsToRoot(double *values, int64_t count, int owner);
 void mdrtMPIBroadcast(double *values, int64_t count, int root);
-void mdrtMPIExchange(double *send, int *sendCounts, int *sendOffsets,
-                     double *recv, int *recvCounts, int *recvOffsets);
+void mdrtMPIExchange(void *send, int *sendCounts, int *sendOffsets,
+                     void *recv, int *recvCounts, int *recvOffsets, int words);
 int mdrtMPIAllTrue(int predicate);
 int mdrtMPIActive(void);
 void mdrtMPIGatherTimes(const double *send, double *recv, int count);
