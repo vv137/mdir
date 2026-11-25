@@ -9,5 +9,6 @@ mlir::gpu::LaunchOp emitBondedUnits(mlir::OpBuilder &builder,
                                     mlir::Value instructions, mlir::Value place,
                                     mlir::Value box, mlir::Value inverse,
                                     mlir::Value forceWords,
-                                    mlir::ValueRange observerTerms, int mode);
+                                    mlir::ValueRange observerTerms, int mode,
+                                    mlir::Value arrivals, bool checkWords);
 }

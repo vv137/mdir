@@ -551,6 +551,13 @@ dihedrals, CMAP terms, and 1–4 pairs. JAC has only 20 nonempty intervals
 for these terms. Including the reciprocal-space exclusion correction
 increases this to 185. [[Cerutti2024]](references.md#cerutti2024)
 
+For a packed launch with four term families, the directory builder counts
+the intervals that contain instructions. If this count is smaller than
+the number of streaming multiprocessors, it starts another block after
+every 64 instructions within an interval. The 256-import limit applies
+to every block. The split changes the grouping of integer subtotals.
+Each instruction still publishes each owned slot exactly once.
+
 For a Cartesian component $v_k$ of $-\nabla_i U_t$, the work unit forms
 $z_k=\mathrm{roundEven}(S_F v_k)$ with $S_F=2^{18}$ words per
 kJ mol⁻¹ nm⁻¹. Since the integer endpoints are $-2^{63}$ and $2^{63}-1$,
@@ -590,8 +597,42 @@ The high bit of $(s\mathbin{\mathrm{xor}}a)\mathbin{\mathrm{and}}
 (s\mathbin{\mathrm{xor}}b)$ is one exactly when the two operand signs
 agree and the result sign differs. Thus a publisher can test its own
 update even if a different block has already modified the destination.
-The retry branch seen in shared accumulation belongs to a different
-phase from this global update.
+For a force-only addition into an independent destination, the directory
+identifies each owner interval that fits in a single block. Each of its atoms has
+one publisher. Its checked shared subtotal equals its entire word since
+the eliminated global addition would have had zero as predecessor.
+After the block barrier its owning lane decodes that word and adds it to
+the existing floating force. Other blocks read only independent inputs
+and write disjoint atoms. The integration kernel follows completion of
+the force kernel, including every conversion and overflow test.
+
+In a split interval, each block first publishes all its subtotals using
+device-scope checked integer atomics. A block barrier orders those
+writes before lane zero increments the interval's arrival count with a
+device-scope acquire-release atomic. Each increment reads its immediate
+predecessor. By transitivity the last increment acquires the global
+word writes of every arriving block. A second block barrier distributes
+this ordering to the publishing lanes. They use the inverse permutation
+to read, decode, and clear the 128 topology-order rows of their interval
+(or the shorter final interval). The last block resets the count. Each
+interval has its own counter, and the next invocation on the stream
+starts only after every reset completes. No block spins waiting for
+another block to be scheduled. The plane is also
+zeroed when allocated, so the invariant holds on its first use and after
+a change in particle permutation. The diagnostic reads the complete
+integer plane before reclamation.
+
+For a packed four-family force-only launch, a block first tries a shared
+int32 sum. It quantizes each component to the same checked int64 word.
+A sign-extension comparison detects a word lost on narrowing. The signed
+overflow predicate above, applied to the int32 atomic predecessor, detects
+a partial sum outside int32. Either event sets a sticky block flag. A block
+barrier completes the trial before any lane reads that flag. On success,
+induction over each component's atomic modification order proves that
+sign extension gives its exact int64 subtotal. On failure, all lanes
+discard the trial, zero the int64 scratch, synchronize, and repeat the
+instructions with the original checked int64 adds. The trial has no
+global effects. No energy or virial reduction is replayed.
 
 For $n$ contributions to one component, the triangle inequality gives
 $\lvert\sum_k z_k/S_F-\sum_k v_k\rvert\le n/(2S_F)$.
@@ -622,8 +663,8 @@ in one of the three runs.
 The work unit imports each distinct position once into block memory.
 Slots outside its interval participate in the coordinate arithmetic. Only
 owned slots add to the three shared integer components of their atoms.
-Each owned component is exported with one checked global integer addition
-per block. The slot-zero owner rounds $2^{32}U_t$ to the nearest signed
+Split owners combine each component with one checked global integer addition
+per block. A single owner can publish its complete subtotal directly. The slot-zero owner rounds $2^{32}U_t$ to the nearest signed
 int64, ties to even. Each energy output sums those words with the same
 overflow check and decodes its total once. Dividing the int64 endpoints
 by $2^{32}$ gives $[-2^{31},2^{31}-2^{-32}]$ kJ mol⁻¹. The absolute

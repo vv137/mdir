@@ -386,6 +386,15 @@ private:
              return v.getType().isInteger(1);
            });
   }
+  void clearBondedWords(OpBuilder &builder, Location loc, Value particles,
+                        Value words) {
+    launchOver(builder, loc, particles, [&](OpBuilder &body, Value atom) {
+      for (int c = 0; c < 3; ++c)
+        memref::StoreOp::create(body, loc,
+                                createZero(body, loc, body.getI64Type()), words,
+                                ValueRange{atom, createIndex(body, loc, c)});
+    });
+  }
   LogicalResult lowerBondedUnits(ArrayRef<md_exec::TupleForOp> loops);
   LogicalResult checkBondedUnits(ArrayRef<md_exec::TupleForOp> loops,
                                  OpBuilder &at, OpBuilder &setup, Value box,
@@ -4761,26 +4770,56 @@ LogicalResult Lowering::lowerBondedUnits(ArrayRef<md_exec::TupleForOp> loops) {
   Value inverse = createInverse(at, loc, box);
   TowerPublication tower = bondedTowerWords.lookup(op);
   Value words = tower.words ? tower.words : plan.words;
-  if (!tower.words)
-    launchOver(at, loc, size, [&](OpBuilder &body, Value atom) {
-      for (int c = 0; c < 3; ++c)
-        memref::StoreOp::create(body, loc,
-                                createZero(body, loc, body.getI64Type()), words,
-                                ValueRange{atom, createIndex(body, loc, c)});
+  // Early publication needs the destination to be independent of every
+  // value another block could still be reading.
+  md_exec::BufferAliases aliases;
+  auto readsDestination = [&](md_exec::TupleForOp loop) {
+    auto overlaps = [&](Value value) {
+      return isa<MemRefType>(value.getType()) && aliases.mayAlias(value, dest);
+    };
+    return overlaps(loop.getPositions()) ||
+           llvm::any_of(loop.getIns(), overlaps) ||
+           llvm::any_of(loop.getParameters(), overlaps) ||
+           loop.getKernel()
+               .walk([&](Operation *nested) {
+                 for (Value v : nested->getOperands())
+                   if (!loop.getKernel().isAncestor(v.getParentRegion()) &&
+                       overlaps(v))
+                     return WalkResult::interrupt();
+                 return WalkResult::advance();
+               })
+               .wasInterrupted();
+  };
+  Value arrivals;
+  if (mode == 1 && !tower.words && !op.overwrites(0) && observerTerms.empty() &&
+      llvm::none_of(loops, readsDestination)) {
+    Value groups = createGroups(setup, loc, createSize(setup, loc, words), 128);
+    arrivals = createDeviceBuffer(
+        setup, loc, getDeviceType({ShapedType::kDynamic}, setup.getI32Type()),
+        {groups});
+    freeDeviceAtEndOfBlock(plan.setup, arrivals);
+    launchOver(setup, loc, groups, [&](OpBuilder &body, Value group) {
+      memref::StoreOp::create(
+          body, loc, createZero(body, loc, body.getI32Type()), arrivals, group);
     });
-  auto launch = emitBondedUnits(at, loops, blocks, directory, plan.place, box,
-                                inverse, words, observerTerms, mode);
+  }
+  auto launch =
+      emitBondedUnits(at, loops, blocks, directory, plan.place, box, inverse,
+                      words, observerTerms, mode, arrivals, bondedUnits == 4);
   bringIn(launch);
   if (bondedUnits == 4 &&
       failed(checkBondedUnits(loops, at, setup, box, inverse, size)))
     return failure();
-  // Publication follows the kernel that traps on failed conversion or addition.
-  if (!tower.words || tower.last)
-    launchOver(at, loc, size, [&](OpBuilder &body, Value atom) {
+  // Split owners publish after every contributing block completes.
+  auto publish = [&](OpBuilder &builder) {
+    launchOver(builder, loc, size, [&](OpBuilder &body, Value atom) {
       Type type = cast<MemRefType>(dest.getType()).getElementType();
       for (int c = 0; c < 3; ++c) {
         SmallVector<Value> idx{atom, createIndex(body, loc, c)};
         Value word = memref::LoadOp::create(body, loc, words, idx);
+        if (!tower.words)
+          memref::StoreOp::create(
+              body, loc, createZero(body, loc, body.getI64Type()), words, idx);
         Value force = arith::SIToFPOp::create(body, loc, type, word);
         force = arith::MulFOp::create(
             body, loc, force,
@@ -4791,6 +4830,13 @@ LogicalResult Lowering::lowerBondedUnits(ArrayRef<md_exec::TupleForOp> loops) {
         memref::StoreOp::create(body, loc, force, dest, idx);
       }
     });
+  };
+  if (arrivals) {
+    if (bondedUnits == 4)
+      clearBondedWords(at, loc, size, words);
+  } else if (!tower.words || tower.last) {
+    publish(at);
+  }
   if (observerTerms.empty())
     return success();
   Value rows = arith::MinUIOp::create(at, loc, size, terms);
@@ -5363,6 +5409,7 @@ void Lowering::buildOnDevice(md_exec::BuildIncidenceOp op,
           builder, loc,
           getDeviceType({ShapedType::kDynamic, 3}, builder.getI64Type()),
           {particles});
+      clearBondedWords(builder, loc, particles, words);
       freeDeviceAtEndOfBlock(op, words);
     }
     bondedPlans[result] = {tuples.handle, place, renumbered, words, op};

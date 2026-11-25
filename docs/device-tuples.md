@@ -611,8 +611,14 @@ The force quantum is $2^{-18}$ kJ mol⁻¹ nm⁻¹. A slot contributes at most
 $2^{-19}$ kJ mol⁻¹ nm⁻¹ of absolute rounding error per component. The
 signed range is $[-2^{45},2^{45}-2^{-18}]$ in these units. Conversion and
 both levels of addition are checked. Each shared add uses block scope.
-Global force and energy adds use device scope. All three use relaxed
-ordering because the block barriers and kernel boundaries order readers. On failure the GPU traps and the
+Global force and energy adds use relaxed device scope. A force-only
+publisher with all the words for its interval decodes them in the owning
+block. When an interval spans blocks, a separate acquire-release arrival
+count orders their checked subtotals before the last block decodes and
+clears the interval. An underfilled four-family packed grid admits at
+most 64 instructions per block. Its force-only kernel may first try
+int32 shared additions and repeat a block in int64 on narrowing or
+intermediate overflow. On failure the GPU traps and the
 simulation stops. On a successful evaluation, the integer sum is
 independent of thread order. Slot-zero owners add Q32 energy words
 directly to a checked int64 total for each bonded energy output. They

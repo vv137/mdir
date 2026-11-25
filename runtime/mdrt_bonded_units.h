@@ -38,7 +38,8 @@ static void freeBondedDirectories(struct MdrtTuples *e, int gone) {
   }
 }
 
-/* Directory offset -> number of imports, instruction count per set, imports
+/* Directory offset -> number of imports, owner interval, blocks in that
+   interval, instruction count per set, imports
    (file atom, complemented for a halo), then each set's instructions.
    Split pathological intervals at an instruction boundary before shared
    memory fills. Each such block still flushes only its owned components. */
@@ -64,15 +65,31 @@ static void buildBondedDirectory(struct BondedDirectory *plan) {
       }
     }
   }
+  /* Shorter lists expose more independent blocks when even one block per
+     occupied owner group would leave multiprocessors idle. */
+  size_t termLimit = SIZE_MAX;
+  if (plan->count == 4 && !plan->unpacked) {
+    size_t occupied = 0;
+    for (size_t g = 0; g < groups; ++g)
+      occupied += lists[g].size != 0;
+    CUdevice device;
+    int multiprocessors;
+    check(cuCtxGetDevice(&device), "cuCtxGetDevice");
+    check(cuDeviceGetAttribute(&multiprocessors,
+                               CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, device),
+          "cuDeviceGetAttribute");
+    if (occupied < (size_t)multiprocessors)
+      termLimit = 64;
+  }
   int32_t *local = mdrtTuplesAllocate(particles * sizeof(int32_t));
   memset(local, -1, particles * sizeof(int32_t));
   for (size_t g = 0; g < groups; ++g) {
     struct BondedWords list = lists[g];
-    size_t cursor = 0;
+    size_t cursor = 0, firstBlock = directory.size;
     while (cursor < list.size) {
       size_t start = cursor;
       int count = 0, atoms[256], lengths[5] = {0};
-      while (cursor < list.size) {
+      while (cursor < list.size && (cursor - start) / 2 < termLimit) {
         int s = list.data[cursor], t = list.data[cursor + 1];
         struct MdrtTuples *e = plan->sets[s];
         const int32_t *members = e->file + (size_t)t * e->arity;
@@ -93,6 +110,8 @@ static void buildBondedDirectory(struct BondedDirectory *plan) {
       }
       bondedWord(&directory, data.size);
       bondedWord(&data, count);
+      bondedWord(&data, g);
+      bondedWord(&data, 0);
       for (int s = 0; s < plan->count; ++s)
         bondedWord(&data, lengths[s]);
       for (int i = 0; i < count; ++i)
@@ -118,13 +137,18 @@ static void buildBondedDirectory(struct BondedDirectory *plan) {
       for (int i = 0; i < count; ++i)
         local[atoms[i]] = -1;
     }
+    for (size_t b = firstBlock; b < directory.size; ++b)
+      data.data[directory.data[b] + 2] = directory.size - firstBlock;
     free(list.data);
   }
   free(lists);
   free(local);
   if (!directory.size) {
     bondedWord(&directory, 0);
-    for (int i = 0; i <= plan->count; ++i)
+    bondedWord(&data, 0);
+    bondedWord(&data, 0);
+    bondedWord(&data, 1);
+    for (int i = 0; i < plan->count; ++i)
       bondedWord(&data, 0);
   }
   if (data.size + directory.size > INT32_MAX)

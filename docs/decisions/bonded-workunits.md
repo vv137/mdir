@@ -28,9 +28,14 @@ An interval takes only its members' forces. Select the experimental
 path with `MDIR_TUPLE_SUMS=workunits`. Two opposite-order timing runs of
 the original force kernel found longer steps on all four benchmark systems,
 so the existing direct/shared-hash selector remains the default.
-In the mixed force kernel measured on RTX 4090, all three global
+In the initial mixed force kernel measured on RTX 4090, all three global
 component updates compile to 64-bit integer adds that return the old
 word. The 33 static compare-and-swap sites update shared subtotals.
 Retry measurements for this kernel therefore distinguish shared
 updates from words published to global memory.
+For packed force-only additions to an independent destination, publish a
+complete interval in its owning or last arriving block. The latter consumes
+checked global words under an acquire-release arrival count. A four-family
+block can try native int32 shared adds and replay in checked int64 on
+narrowing or intermediate overflow before publishing.
 [Implementation and measurements](../device-tuples.md#12-topology-order-work-units)
