@@ -1418,6 +1418,8 @@ Storing a separate factored density improves the radial force for $k=0,1,2$. The
 
 Cellulose, 2 fs NVE, 2 ns, mixed precision, RTX 4090. Excess is the slope minus the same-seed slope of a Gaussian control at matched force error (relative RMS force error near 6e−4), in kcal/mol/ns.
 
+These runs used the automatic traversal, which resolves to GROUPS on this system. In mixed precision GROUPS translated its retained images with a binary32 box length while particles were wrapped with the binary64 one, which made its forces non-conservative and cooled the trajectory (#966). The cooling depends on the kernel: on the integrated build with TOWERS, which does not retain images, k = 2, N = 8 minus Gaussian is −1.75 ± 4.36 kcal/mol/ns over eight seeds, and both slopes are near +55. The excesses below are therefore differences between two runs with that artifact, not properties of the splittings alone; they are kept as recorded until they are repeated with a consistent cell.
+
 | Split | Mesh | Force error | Seeds | Excess | One-sided 95% bound |
 |---|---|---:|---:|---:|---:|
 | Prolate, k = 0, tolerance 1e−3 | 168 × 84 × 84 | — | 4 | +135.2 ± 8.4 | — |
