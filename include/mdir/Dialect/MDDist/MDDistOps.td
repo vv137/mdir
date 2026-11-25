@@ -439,11 +439,13 @@ def MDDist_NeighborhoodOp : MDDist_Op<"neighborhood", [Pure]> {
     MDDist_FieldType:$positions,
     MDDist_FieldType:$ghosts,
     MDDist_HaloType:$halo,
-    F64Attr:$cutoff
+    F64Attr:$cutoff,
+    Optional<MD_RelationType>:$excluded
   );
   let results = (outs MDDist_RelationType:$result);
   let assemblyFormat = [{
-    $positions `,` $ghosts `,` $halo `cutoff` `(` $cutoff `)` attr-dict
+    $positions `,` $ghosts `,` $halo `cutoff` `(` $cutoff `)`
+    (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)? attr-dict
     `:` qualified(type($positions)) `,` qualified(type($ghosts)) `,`
     qualified(type($halo)) `->` qualified(type($result))
   }];

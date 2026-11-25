@@ -200,7 +200,7 @@ void emitPairs(
   Value quantize(OpBuilder &b, Value value, int fractionalBits);
   Value finish(OpBuilder &b, Value sum, int fractionalBits);
   Value add(OpBuilder &b, Value lhs, Value rhs);
-  llvm::DenseMap<Value, Value> imageShifts, fieldWords;
+  llvm::DenseMap<Value, Value> imageShifts, fieldWords, excludedPairs;
   llvm::DenseMap<Value, std::pair<Value, int>> observableWords;
   Value decodeObservable(OpBuilder &b, Value sum, int bits);
   bool needsWords(Value field) {
@@ -891,6 +891,17 @@ LogicalResult Lowering::lowerNeighborhood(NeighborhoodOp op) {
     return failure();
   OpBuilder b(op);
   Type f64 = b.getF64Type();
+  if (Value excluded = op.getExcluded()) {
+    Type i64 = b.getI64Type();
+    auto type = mdrt::getMembersType(cast<md::RelationType>(excluded.getType()));
+    Value members = mdrt::ToBufferOp::create(b, loc, type, excluded);
+    auto build = declare("mdrtDistExclusions", b.getFunctionType({type}, {i64}), true);
+    Value handle = func::CallOp::create(b, loc, build, members).getResult(0);
+    excludedPairs[op.getResult()] = handle;
+    OpBuilder cleanup(end);
+    auto release = declare("mdrtDistFreeExclusions", b.getFunctionType({i64}, {}), false);
+    func::CallOp::create(cleanup, loc, release, handle);
+  }
   func::CallOp::create(
       b, loc,
       declare("mdrtDistCheckCutoff",
@@ -1055,6 +1066,10 @@ void Lowering::emitPairs(
       b.getFunctionType({b.getIndexType(), b.getIndexType(), b.getIndexType(),
                          f64, xo.getType(), xg.getType(), xg.getType(), i64,
                          indices, indices}, {}), true);
+  Value exclusions = excludedPairs.lookup(neighborhood.getResult());
+  func::FuncOp allowed;
+  if (exclusions)
+    allowed = declare("mdrtDistPairAllowed", b.getFunctionType({i64, i64, i64}, {i64}), false);
   func::FuncOp owns;
   if (midpoint)
     owns = declare("mdrtDistMidpointOwns",
@@ -1204,8 +1219,14 @@ void Lowering::emitPairs(
                               for (int axis = 0; axis < 3; ++axis)
                                 args.push_back(vector::ExtractOp::create(t, loc, vec, axis));
                             auto result = func::CallOp::create(t, loc, owns, args);
+                            Value include = result.getResult(0);
+                            if (exclusions) {
+                              auto eligible = func::CallOp::create(t, loc, allowed,
+                                  ValueRange{exclusions, idi, side.getResults().back()});
+                              include = arith::AndIOp::create(t, loc, include, eligible.getResult(0));
+                            }
                             scf::YieldOp::create(t, loc, arith::TruncIOp::create(
-                                t, loc, t.getI1Type(), result.getResult(0)).getResult());
+                                t, loc, t.getI1Type(), include).getResult());
                           }, [&](OpBuilder &e, Location) { scf::YieldOp::create(e, loc, take); });
                       take = owner.getResult(0);
                     }
@@ -2506,6 +2527,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
   }
   observableWords.clear();
   fieldWords.clear();
+  excludedPairs.clear();
   imageShifts.clear();
   storage.clear();
   relations.clear();

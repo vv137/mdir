@@ -910,6 +910,15 @@ LogicalResult NeighborhoodOp::verify() {
     return failure();
   if (getPositions().getType().getNumComponents() != 3)
     return emitOpError() << "expected positions with 3 components";
+  if (Value excluded = getExcluded()) {
+    auto type = cast<md::RelationType>(excluded.getType());
+    auto decomposition = SymbolTable::lookupNearestSymbolFrom<DecompositionOp>(
+        *this, halo.getDecomposition());
+    if (getResult().getType().getTraversal() != Traversal::Midpoint ||
+        !type.getTupleSet() || type.getArity() != 2 ||
+        !decomposition || type.getParticleSet() != decomposition.getParticleSetAttr())
+      return emitOpError("exclusions require pairs of a tuple set on the midpoint decomposition's particle set");
+  }
   if (failed(verifyCoverage(*this, *this)))
     return failure();
   double radius = getCutoff().convertToDouble();

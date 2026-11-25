@@ -100,6 +100,49 @@ struct Halo {
   int64_t *sourceDomain, *sourceRow, *ids, *image;
 };
 
+/* Input tuple members use particle-set indices even after a reorder. The
+   symmetric key removes both orientations from the cutoff relation. */
+struct Exclusions {
+  size_t count;
+  uint64_t pairs[];
+};
+
+struct Members {
+  int32_t *allocated, *aligned;
+  int64_t offset, sizes[2], strides[2];
+};
+
+static int compareKeys(const void *lhs, const void *rhs) {
+  uint64_t a = *(const uint64_t *)lhs, b = *(const uint64_t *)rhs;
+  return (a > b) - (a < b);
+}
+
+int64_t _mlir_ciface_mdrtDistExclusions(struct Members *members) {
+  size_t count = members->sizes[0];
+  if (count > (SIZE_MAX - sizeof(struct Exclusions)) / sizeof(uint64_t))
+    fail("exclusion table too large");
+  struct Exclusions *e = malloc(sizeof *e + count * sizeof *e->pairs);
+  if (!e) fail("out of memory building exclusions");
+  e->count = count;
+  for (size_t r = 0; r < count; ++r) {
+    const int32_t *row = members->aligned + members->offset + r * members->strides[0];
+    uint32_t i = row[0], j = row[members->strides[1]];
+    e->pairs[r] = i < j ? ((uint64_t)i << 32) | j : ((uint64_t)j << 32) | i;
+  }
+  qsort(e->pairs, count, sizeof *e->pairs, compareKeys);
+  return (int64_t)(intptr_t)e;
+}
+
+int64_t mdrtDistPairAllowed(int64_t handle, int64_t i, int64_t j) {
+  const struct Exclusions *e = (const struct Exclusions *)(intptr_t)handle;
+  uint64_t key = ((uint64_t)i << 32) | (uint32_t)j;
+  return !bsearch(&key, e->pairs, e->count, sizeof key, compareKeys);
+}
+
+void mdrtDistFreeExclusions(int64_t handle) {
+  free((void *)(intptr_t)handle);
+}
+
 /* Word conversion is defined even for a singular pair or huge finite input. */
 int64_t mdrtDistWord(double x, double scale) {
   double w = round(x * scale);

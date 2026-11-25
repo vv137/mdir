@@ -2151,6 +2151,11 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
   if (auto to = dyn_cast<mdrt::ToBufferOp>(op)) {
     auto resultType = cast<MemRefType>(to.getResult().getType());
     bool deviceResult = bool(resultType.getMemorySpace());
+    if (isa<md::RelationType>(to.getField().getType())) {
+      Value members = mapping.lookup(to.getField());
+      mapping.map(to.getResult(), eraseSetForHostCall(builder, op->getLoc(), members));
+      return success();
+    }
     if (isa<md::TableType>(to.getField().getType())) {
       if (deviceResult && !onDevice)
         return op->emitOpError()
@@ -2638,7 +2643,7 @@ static bool usesFields(func::FuncOp function) {
       found |= isa<md::TableType>(from.getResult().getType()) &&
                bool(cast<MemRefType>(from.getBuffer().getType()).getMemorySpace());
     if (auto to = dyn_cast<mdrt::ToBufferOp>(op))
-      found |= isa<md::TableType>(to.getField().getType());
+      found |= isa<md::TableType, md::RelationType>(to.getField().getType());
     found |= isa<BuildNeighborsOp>(op);
     if (auto empty = dyn_cast<EmptyNeighborsOp>(op))
       found |= !empty.isStorageForm();
