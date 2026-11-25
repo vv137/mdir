@@ -97,11 +97,24 @@ int64_t mdrtDistWord(double x, double scale) {
   return (int64_t)w;
 }
 
-int64_t mdrtDistAddWords(int64_t a, int64_t b) {
-  int64_t result;
+void mdrtDistCheckWordCount(int64_t count) {
+  if (count < 0 || count > INT64_C(4294967296))
+    fail("deterministic pair count exceeds the signed 128-bit accumulation bound");
+}
+
+typedef __int128 DistWide;
+
+DistWide mdrtDistAddWide(DistWide a, DistWide b) {
+  DistWide result;
   if (__builtin_add_overflow(a, b, &result))
-    fail("deterministic fixed-point sum exceeds signed 64-bit range");
+    fail("deterministic fixed-point sum exceeds signed 128-bit range");
   return result;
+}
+
+int64_t mdrtDistNarrowWord(DistWide value) {
+  if (value < INT64_MIN || value > INT64_MAX)
+    fail("deterministic fixed-point result exceeds signed 64-bit range");
+  return (int64_t)value;
 }
 
 void _mlir_ciface_mdrtDistImageShifts(int64_t handle, struct Memref3D *shifts) {
@@ -119,31 +132,37 @@ void _mlir_ciface_mdrtDistImageShifts(int64_t handle, struct Memref3D *shifts) {
             (double)h->image[3 * (d * h->capacity + g) + c] * h->layout->edges[c];
 }
 
-struct Memref3I {
-  int64_t *allocated, *aligned;
+struct Memref3W {
+  DistWide *allocated, *aligned;
   int64_t offset, sizes[3], strides[3];
 };
 
-static int64_t *wordAt(struct Memref3I *m, int64_t d, int64_t r, int64_t c) {
+static DistWide *wordAt(struct Memref3W *m, int64_t d, int64_t r, int64_t c) {
   return m->aligned + m->offset + d*m->strides[0] + r*m->strides[1] + c*m->strides[2];
 }
 
-void _mlir_ciface_mdrtDistHaloSumWords(int64_t handle, struct Memref3I *owned,
-    struct Memref3I *ghosts, struct Memref3D *out) {
+void _mlir_ciface_mdrtDistHaloSumWords(int64_t handle, struct Memref3W *owned,
+    struct Memref3W *ghosts, struct Memref3D *out) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
   int64_t components = owned->sizes[2];
+  if (observer)
+    for (size_t i = 0; i < h->edgeCount; ++i) {
+      struct Edge edge = h->edges[i];
+      observer->transfer(observer->context, edge.to, edge.from,
+                         edge.rows * components * (int64_t)sizeof(DistWide));
+    }
   for (int64_t d = 0; d < h->layout->domains; ++d)
     for (int64_t g = 0; g < h->rows[d]; ++g) {
       int64_t slot = d * h->capacity + g;
       for (int64_t c = 0; c < components; ++c) {
-        int64_t *to = wordAt(owned, h->sourceDomain[slot], h->sourceRow[slot], c);
-        *to = mdrtDistAddWords(*to, *wordAt(ghosts, d, g, c));
+        DistWide *to = wordAt(owned, h->sourceDomain[slot], h->sourceRow[slot], c);
+        *to = mdrtDistAddWide(*to, *wordAt(ghosts, d, g, c));
       }
     }
   for (int64_t d = 0; d < h->layout->domains; ++d)
     for (int64_t r = 0; r < h->layout->rows[d]; ++r)
       for (int64_t c = 0; c < components; ++c)
-        *at3(out, d, r, c) = (double)*wordAt(owned, d, r, c) * 0x1p-40;
+        *at3(out, d, r, c) = (double)mdrtDistNarrowWord(*wordAt(owned, d, r, c)) * 0x1p-40;
 }
 
 /* The cell of the grid that fractional coordinate `u` along an axis of `g`
