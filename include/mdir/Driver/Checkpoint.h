@@ -134,6 +134,8 @@ struct Checkpoint {
     return !frontEnd.empty() || !modelHash.empty() || !planHash.empty() ||
            !tunableDeclarations.empty() || !tunables.empty();
   }
+  /// Writer policy. Wall-clock metadata varies between equivalent runs.
+  bool omitObjectTimes = false;
 };
 
 /// Returns true if the driver was built with the library that checkpoints
