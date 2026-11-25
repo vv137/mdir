@@ -704,6 +704,17 @@ void mdrtDistRetainLayout(int64_t handle) {
   ++l->references;
 }
 
+static int64_t ownedCapacity(const struct Layout *l) {
+  int64_t capacity = 1;
+  for (int64_t d = 0; d < l->domains; ++d)
+    if (capacity < l->rows[d]) capacity = l->rows[d];
+  return capacity;
+}
+
+int64_t mdrtDistOwnedCapacity(int64_t handle) {
+  return ownedCapacity((struct Layout *)(intptr_t)handle);
+}
+
 int64_t mdrtDistLayoutCount(int64_t handle) {
   struct Layout *l = (struct Layout *)(intptr_t)handle;
   if (!l || l->references <= 0)
@@ -786,7 +797,7 @@ int64_t _mlir_ciface_mdrtDistMigrate(int64_t oldHandle,
                                      double ly, double lz) {
   struct Layout *old = (struct Layout *)(intptr_t)oldHandle;
   if (!old || !positions || positions->sizes[0] != old->domains ||
-      positions->sizes[1] < old->count || positions->sizes[2] != 3)
+      positions->sizes[1] < ownedCapacity(old) || positions->sizes[2] != 3)
     fail("migration positions do not cover the old layout");
   checkIdentities(old);
   shareRows(old, old->rows, positions);
@@ -868,8 +879,8 @@ void _mlir_ciface_mdrtDistRedistribute(int64_t oldHandle, int64_t newHandle,
       source->aligned == destination->aligned ||
       source->sizes[0] != old->domains ||
       destination->sizes[0] != next->domains ||
-      source->sizes[1] < old->count ||
-      destination->sizes[1] < next->count ||
+      source->sizes[1] < ownedCapacity(old) ||
+      destination->sizes[1] < ownedCapacity(next) ||
       source->sizes[2] != destination->sizes[2] ||
       (image && source->sizes[2] != 3))
     fail("redistribution requires matching, distinct field buffers");
@@ -1036,7 +1047,7 @@ int64_t _mlir_ciface_mdrtDistCovered(int64_t handle,
   struct Layout *l = h->layout;
   if (reference->sizes[0] != l->domains ||
       current->sizes[0] != l->domains ||
-      reference->sizes[1] < l->count || current->sizes[1] < l->count ||
+      reference->sizes[1] < ownedCapacity(l) || current->sizes[1] < ownedCapacity(l) ||
       reference->sizes[2] != 3 || current->sizes[2] != 3)
     fail("coverage positions do not span the halo layout");
   double halfSkin = (h->reach - cutoff) * 0.5;
