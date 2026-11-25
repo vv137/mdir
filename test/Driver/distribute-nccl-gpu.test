@@ -6,6 +6,9 @@
 # RUN: cd %t && mdir run run.toml | FileCheck %s
 # CHECK: domain grid 1 x 1 x 1, nccl transport, directed traversal
 # CHECK: intra-node halo bytes 0 inter-node halo bytes 0
+# RUN: sed 's/"DOUBLE"/"MIXED"/' %t/run.toml > %t/mixed.toml
+# RUN: cd %t && mdir run mixed.toml | FileCheck %s --check-prefix=MIXED
+# MIXED: the total energy changed by
 # RUN: sed '/^\[execution\]$/a deterministic = true' %t/run.toml > %t/det.toml
 # RUN: not mdir run %t/det.toml 2>&1 | FileCheck %s --check-prefix=DET
 # DET: distributed GPU pairs do not implement deterministic fixed-point sums

@@ -198,6 +198,8 @@ static void mergeOuts(PairForOp loop, unsigned into, unsigned from) {
       // Chosen later, for the loop as it is then (md-exec-choose-scatter).
       /*scatter=*/ScatterAttr(),
       /*hostLanes=*/IntegerAttr());
+  if (auto geometry = loop->getAttr("md_exec.image_geometry"))
+    merged->setAttr("md_exec.image_geometry", geometry);
   merged.getKernel().takeBody(loop.getKernel());
 
   auto yield = cast<YieldOp>(merged.getKernel().front().getTerminator());

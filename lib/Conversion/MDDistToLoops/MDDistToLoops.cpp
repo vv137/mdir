@@ -76,7 +76,7 @@ struct Storage {
 /// positions of its local rows, owned then ghost, as a field of md_exec,
 /// its neighbor structure, and its number of owned rows, the centers.
 struct DomainRelation {
-  Value positions, neighbors, owned, cell, centers;
+  Value positions, neighbors, owned, cell, centers, shifts;
 };
 
 class Lowering {
@@ -91,7 +91,7 @@ public:
         haloEvents(haloEvents), mpi(mpi), parallelDomains(parallelDomains) {}
 
   bool fixedPoint = false;
-  bool matrixPairs = false, gpuPairs = false;
+  bool matrixPairs = false, gpuPairs = false, gpuImageGeometry = false;
   double matrixSkin = 0;
   LogicalResult run(func::FuncOp function);
 
@@ -968,7 +968,7 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
     return success();
   Value ghosts = allocate(b, halo.capacity, k);
   Type i64 = b.getI64Type();
-  bool separateImage = fixedPoint || llvm::any_of(op.getResult().getUsers(),
+  bool separateImage = fixedPoint || gpuImageGeometry || llvm::any_of(op.getResult().getUsers(),
       [](Operation *user) {
         if (isa<TupleKernelOp>(user)) return true;
         auto relation = dyn_cast<NeighborhoodOp>(user);
@@ -2188,16 +2188,17 @@ Value Lowering::makeField(OpBuilder &b, FlatSymbolRefAttr set, int64_t k,
   Value buffer = memref::AllocOp::create(b, loc, type, ValueRange{total});
   Value offset = index(b, 0);
   for (auto [part, count] : llvm::zip(parts, counts)) {
-    auto partType = cast<MemRefType>(part.getType());
+    auto partType = part ? cast<MemRefType>(part.getType()) : MemRefType();
     scf::ForOp::create(
         b, loc, index(b, 0), count, index(b, 1), ValueRange(),
         [&](OpBuilder &br, Location, Value r, ValueRange) {
           Value row = arith::AddIOp::create(br, loc, offset, r);
           for (int64_t c = 0; c < k; ++c) {
             SmallVector<Value, 3> from = {d, r};
-            if (partType.getRank() == 3)
+            if (partType && partType.getRank() == 3)
               from.push_back(index(br, c));
-            Value v = memref::LoadOp::create(br, loc, part, from);
+            Value v = part ? Value(memref::LoadOp::create(br, loc, part, from))
+                           : zero(br, element);
             if (ghostShift && part == parts.back()) {
               Value shift = memref::LoadOp::create(br, loc, ghostShift, from);
               v = arith::AddFOp::create(br, loc, v, shift);
@@ -2328,7 +2329,13 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
       APFloat(cutoff),
       APFloat(skin), md_exec::NeighborKind::Matrix,
       static_cast<uint64_t>(width), md_exec::Images::Explicit);
-  return {positions, structure, nOwned, relation.cell, nOwned};
+  // Match the CPU MATRIX image arithmetic. Gather translations in the
+  // same order as the full-precision, imaged search positions.
+  Value shifts;
+  if (gpuImageGeometry)
+    shifts = makeField(b, set, 3, b.getF64Type(), d,
+        {Value(), imageShifts.lookup(op.getGhosts())}, {nOwned, nGhosts});
+  return {positions, structure, nOwned, relation.cell, nOwned, shifts};
 }
 
 void Lowering::addPairKernel(md_exec::PairForOp loop, Operation *op,
@@ -2350,8 +2357,9 @@ void Lowering::addPairKernel(md_exec::PairForOp loop, Operation *op,
   mapping.map(source.getArgument(0),
               math::SqrtOp::create(b, loc, block->getArgument(0)));
   mapping.map(source.getArgument(1), block->getArgument(1));
+  unsigned offset = loop->hasAttr("md_exec.image_geometry") ? 4 : 0;
   for (unsigned i = 2, e = source.getNumArguments(); i != e; ++i)
-    mapping.map(source.getArgument(i), block->getArgument(i));
+    mapping.map(source.getArgument(i), block->getArgument(i + offset));
   for (Operation &nested : source.without_terminator())
     b.clone(nested, mapping);
   Value value = mapping.lookupOrDefault(
@@ -2407,6 +2415,7 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, Value d, FlatSymbolRefAttr
                             ? cast<SumPairsOp>(op).getGathered()
                             : cast<GatherPairsOp>(op).getGathered();
   SmallVector<Value> ins;
+  if (relation.shifts) ins.append({relation.positions, relation.shifts});
   for (unsigned g = 0; g < gathered.size(); g += 2) {
     auto type = cast<FieldType>(gathered[g].getType());
     auto key = std::make_pair(gathered[g], gathered[g + 1]);
@@ -2443,6 +2452,7 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, Value d, FlatSymbolRefAttr
       md_exec::ImagesAttr::get(context, md_exec::Images::Explicit),
       /*scatter=*/md_exec::ScatterAttr(),
       /*hostLanes=*/IntegerAttr());
+  if (relation.shifts) loop->setAttr("md_exec.image_geometry", b.getUnitAttr());
   addPairKernel(loop, op, unique, scale);
   if (matrixPairs) lastPair = loop;
   return loop;
@@ -3112,6 +3122,7 @@ public:
       return signalPassFailure();
     }
     lowering.gpuPairs = gpuPairs;
+    lowering.gpuImageGeometry = gpuPairs && gpuImageGeometry;
     lowering.matrixSkin = matrixSkin;
     lowering.fixedPoint = fixedPoint;
     lowering.matrixPairs = matrixPairs && !fixedPoint;

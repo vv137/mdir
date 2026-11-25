@@ -799,6 +799,8 @@ def ConvertMDDistToLoops
            "Verlet skin for the domain candidate rows">,
     Option<"matrixWidth", "matrix-width", "int64_t", "64",
            "initial width of a host MATRIX row">,
+    Option<"gpuImageGeometry", "gpu-image-geometry", "bool", "false",
+           "Restore untranslated positions for mixed device pairs">,
     Option<"gpuPairs", "gpu-pairs", "bool", "false",
            "Use device MATRIX neighbors in rank-local domain loops">,
     Option<"matrixPairs", "matrix-pairs", "bool", "false",

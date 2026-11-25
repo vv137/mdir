@@ -21,6 +21,11 @@ using namespace mdir::md_exec;
 
 /// Returns true if `a` and `b` run over the same pairs in the same way.
 static bool haveSameDomain(PairForOp a, PairForOp b) {
+  if (a->hasAttr("md_exec.image_geometry") != b->hasAttr("md_exec.image_geometry"))
+    return false;
+  if (a->hasAttr("md_exec.image_geometry") &&
+      a.getIns().take_front(2) != b.getIns().take_front(2))
+    return false;
   return a.getNeighbors() == b.getNeighbors() &&
          a.getPositions() == b.getPositions() && a.getCell() == b.getCell() &&
          a.getCutoffAttr() == b.getCutoffAttr() &&
@@ -132,6 +137,9 @@ static void fuse(PairForOp first, PairForOp second) {
       // Chosen later, for the fused loop (md-exec-choose-scatter).
       /*scatter=*/ScatterAttr(),
       /*hostLanes=*/IntegerAttr());
+
+  if (auto geometry = first->getAttr("md_exec.image_geometry"))
+    fused->setAttr("md_exec.image_geometry", geometry);
 
   // The kernel: the first kernel, then the second.
   Block *block = new Block();

@@ -299,8 +299,13 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
   Location loc = op.getLoc();
   Value positions = layout ? layout->positions : op.getPositions();
   SmallVector<Value> insBuffers(op.getIns().begin(), op.getIns().end());
-  if (layout)
+  if (layout) {
     insBuffers.assign(layout->ins.begin(), layout->ins.end());
+    if (op->hasAttr("md_exec.image_geometry")) {
+      imagePositions = insBuffers[0];
+      imageShifts = insBuffers[1];
+    }
+  }
   Block &kernel = op.getKernel().front();
   Operation *yield = kernel.getTerminator();
   unsigned numIns = op.getIns().size();

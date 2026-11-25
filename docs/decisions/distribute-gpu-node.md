@@ -27,3 +27,8 @@ each send once. The host step state supplies the local field before each
 pack and consumes its result after each device unpack. Reverse-force bytes and time are accounted separately.
 The first validation targets fixed-cell finite-range Coulomb/LJ, including
 reaction field. Reciprocal-space decomposition is outside this stage.
+
+Mixed MATRIX gathers the imaged search coordinates and their translations in
+full precision. Restore the original coordinates before narrowing and subtracting
+them, then apply the image translation in kernel precision, as in the host
+MATRIX traversal. This preserves cutoff membership across periodic faces.

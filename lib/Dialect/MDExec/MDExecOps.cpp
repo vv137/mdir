@@ -1053,6 +1053,18 @@ static SmallVector<Type, 2> getPairGeometryTypes(PairForOp op) {
 }
 
 LogicalResult PairForOp::verify() {
+  if (auto geometry = (*this)->getAttr("md_exec.image_geometry")) {
+    if (!isa<UnitAttr>(geometry) || getImages() != Images::Explicit ||
+        getIns().size() < 2)
+      return emitOpError("image_geometry requires explicit images and two geometry inputs");
+    for (Value input : getIns().take_front(2)) {
+      Type type = input.getType();
+      if (!isPositionType(type) ||
+          !(isa<FieldType>(type) ? cast<FieldType>(type).getElementType()
+                                : cast<MemRefType>(type).getElementType()).isF64())
+        return emitOpError("image_geometry requires full-precision positions and translations");
+    }
+  }
   // The table of a block (D291) is for a loop that adds at both
   // ends of a pair; a loop that writes only at its centers scatters
   // nothing.

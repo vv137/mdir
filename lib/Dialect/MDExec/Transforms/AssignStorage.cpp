@@ -970,6 +970,8 @@ LogicalResult Assignment::convertPairFor(PairForOp op, Scope &scope,
       op.getScatterAttr(),
       // The lanes of a row on the host (D402).
       op.getHostLanesAttr());
+  if (auto geometry = op->getAttr("md_exec.image_geometry"))
+    loop->setAttr("md_exec.image_geometry", geometry);
   algebra::carry(op, loop);
   copyKernel(loop, op.getKernel().front());
   for (Value buffer : scratch)
