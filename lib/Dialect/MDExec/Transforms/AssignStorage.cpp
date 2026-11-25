@@ -2140,8 +2140,6 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
   }
   if (auto snapshot = dyn_cast<mdrt::SnapshotOp>(op)) {
     Value buffer;
-    if (onDevice)
-      return snapshot.emitOpError("requires CPU storage");
     if (failed(getBuffer(snapshot.getField(), scope, buffer)))
       return failure();
     auto type = cast<MemRefType>(snapshot.getResult().getType());
@@ -2149,7 +2147,10 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
       return snapshot.emitOpError("requires the buffer shape and type of its field");
     Value size = memref::DimOp::create(builder, op->getLoc(), buffer, 0);
     auto copy = memref::AllocOp::create(builder, op->getLoc(), type, ValueRange{size});
-    memref::CopyOp::create(builder, op->getLoc(), buffer, copy);
+    if (onDevice)
+      createTransfer(builder, op->getLoc(), copy, buffer);
+    else
+      memref::CopyOp::create(builder, op->getLoc(), buffer, copy);
     mapping.map(snapshot.getResult(), copy.getResult());
     return success();
   }

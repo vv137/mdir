@@ -13,6 +13,9 @@
    the schedule as it runs. */
 
 #include "mdrt_dist_stats.h"
+#ifdef MDIR_ENABLE_NCCL
+#include "mdrt_nccl.h"
+#endif
 #include "mdrt_host_matrix.h"
 #ifdef MDIR_ENABLE_MPI
 #include "mdrt_mpi.h"
@@ -126,6 +129,9 @@ struct Halo {
   struct DomainMatrix *matrices;
 #ifdef MDIR_ENABLE_MPI
   struct TransferPlan plans[2];
+#endif
+#ifdef MDIR_ENABLE_NCCL
+  struct NCCLPlan *ncclPlan;
 #endif
   int64_t capacity; /* the most ghosts of one domain */
   int64_t *rows;    /* [domains] */
@@ -1565,6 +1571,21 @@ static struct TransferPlan *transferPlan(struct Halo *h, int transpose) {
 static void exchangeHalo(struct Halo *h, struct Memref3D *owned,
                          struct Memref3D *ghosts, int image, int transpose,
                          struct Memref3W *ownedWords, struct Memref3W *ghostWords) {
+#ifdef MDIR_ENABLE_NCCL
+  if (mdrtNCCLActive()) {
+    if (ownedWords || ghostWords) fail("NCCL requires floating-point halo payloads");
+    if (owned->strides[2] != 1 || ghosts->strides[2] != 1 ||
+        owned->strides[1] != owned->sizes[2] || ghosts->strides[1] != ghosts->sizes[2])
+      fail("NCCL halo fields require contiguous rows");
+    int64_t d = mdrtMPIDomainBound(h->layout->domains, 0);
+    if (!h->ncclPlan)
+      h->ncclPlan = mdrtNCCLPlan(h->layout->domains, h->rows, h->capacity,
+          h->sourceDomain, h->sourceRow, h->image, h->layout->edges);
+    mdrtNCCLHalo(h->ncclPlan, at3(owned,d,0,0), h->layout->rows[d],
+                 at3(ghosts,d,0,0), owned->sizes[2], image, transpose);
+    return;
+  }
+#endif
   const int peers = mdrtMPISize(), rank = mdrtMPIRank();
   struct TransferPlan *plan = transferPlan(h, transpose);
   int *counts = calloc((size_t)peers * 6, sizeof(int));
@@ -1775,6 +1796,9 @@ void mdrtDistReleaseHalo(int64_t handle) {
     free(m->shifts);
     free(m);
   }
+#ifdef MDIR_ENABLE_NCCL
+  mdrtNCCLFreePlan(h->ncclPlan);
+#endif
   free(h->rows);
   free(h->edges);
   free(h->firstGhost);

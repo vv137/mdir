@@ -225,13 +225,6 @@ int mdrtMPIAllTrue(int predicate) {
 void mdrtMPIExchange(void *send, int *sendCounts, int *sendOffsets,
                      void *recv, int *recvCounts, int *recvOffsets, int words) {
   arrival();
-#ifdef MDIR_ENABLE_NCCL
-  if (useNCCL) {
-    if (words) mdrtMPIAbort("NCCL transport does not support fixed-point words");
-    mdrtNCCLExchangeHost(send, sendCounts, sendOffsets, recv, recvCounts, recvOffsets);
-    return;
-  }
-#endif
   MPI_Datatype type = words ? wideWord : MPI_DOUBLE;
   MPI_Alltoallv(send, sendCounts, sendOffsets, type,
                 recv, recvCounts, recvOffsets, type, comm);

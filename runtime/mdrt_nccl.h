@@ -4,15 +4,16 @@
 #include <mpi.h>
 #include <stdint.h>
 
-/* All ranks enter with the same MPI communicator. Counts and offsets for
-   the halo payload are in doubles. Device pointers may be null for an
-   empty send or receive. */
 void mdrtNCCLStart(MPI_Comm world);
 void mdrtNCCLFinish(void);
-void mdrtNCCLExchangeDevice(const double *send, const int *ns, const int *os,
-                            double *recv, const int *nr, const int *or);
-void mdrtNCCLExchangeHost(const double *send, const int *ns, const int *os,
-                          double *recv, const int *nr, const int *or);
+int mdrtNCCLActive(void);
+struct NCCLPlan;
+struct NCCLPlan *mdrtNCCLPlan(int64_t domains, const int64_t *ghosts,
+    int64_t capacity, const int64_t *sourceDomain, const int64_t *sourceRow,
+    const int64_t *image, const double *edges);
+void mdrtNCCLFreePlan(struct NCCLPlan *p);
+void mdrtNCCLHalo(const struct NCCLPlan *p, double *owned, int64_t nOwned,
+    double *ghosts, int k, int image, int reverse);
 int mdrtNCCLNode(int rank);
 
 #endif

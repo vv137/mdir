@@ -1,5 +1,8 @@
 #include "mdrt_nccl.h"
 #include "mdrt_mpi.h"
+#include "mdrt_dist_stats.h"
+#include <limits.h>
+#include <cuda.h>
 #include <cuda_runtime_api.h>
 #include <nccl.h>
 #include <stdio.h>
@@ -10,8 +13,8 @@ static ncclComm_t peers;
 static cudaStream_t stream;
 static int size;
 static int *nodes;
-static double *outgoing, *incoming;
-static size_t outCapacity, inCapacity;
+static double *outgoing, *incoming, *ownedField, *ghostField;
+static size_t outCapacity, inCapacity, ownedCapacity, ghostCapacity;
 
 static void checkCuda(cudaError_t status) {
   if (status != cudaSuccess) mdrtMPIAbort(cudaGetErrorString(status));
@@ -60,17 +63,93 @@ void mdrtNCCLStart(MPI_Comm world) {
 
 int mdrtNCCLNode(int rank) { return nodes[rank]; }
 
-void mdrtNCCLExchangeDevice(const double *send, const int *ns, const int *os,
-                            double *recv, const int *nr, const int *or) {
-  checkNCCL(ncclGroupStart());
-  for (int p = 0; p < size; ++p) {
-    if (ns[p])
-      checkNCCL(ncclSend(send + os[p], ns[p], ncclDouble, p, peers, stream));
-    if (nr[p])
-      checkNCCL(ncclRecv(recv + or[p], nr[p], ncclDouble, p, peers, stream));
+int mdrtNCCLActive(void) { return peers != NULL; }
+
+struct NCCLPlan {
+  int *counts, *ns, *nr, *os, *offsetRecv;
+  int *source, *dest;
+  double *shifts;
+  int sendRows, recvRows;
+};
+
+static void *upload(const void *host, size_t bytes) {
+  void *device = NULL;
+  if (bytes) {
+    checkCuda(cudaMalloc(&device, bytes));
+    checkCuda(cudaMemcpy(device, host, bytes, cudaMemcpyHostToDevice));
   }
-  checkNCCL(ncclGroupEnd());
-  checkCuda(cudaStreamSynchronize(stream));
+  return device;
+}
+
+struct NCCLPlan *mdrtNCCLPlan(int64_t domains, const int64_t *ghosts,
+    int64_t capacity, const int64_t *sourceDomain, const int64_t *sourceRow,
+    const int64_t *image, const double *edges) {
+  int rank = mdrtMPIRank();
+  struct NCCLPlan *p = calloc(1, sizeof *p);
+  if (!p || !(p->counts = calloc(6 * (size_t)size, sizeof(int))))
+    mdrtMPIAbort("out of memory building halo plan");
+  p->ns = p->counts; p->nr = p->ns + size;
+  p->os = p->nr + size; p->offsetRecv = p->os + size;
+  int *ws = p->offsetRecv + size, *wr = ws + size;
+  int *sources = NULL, *targets = NULL;
+  double *shifts = NULL;
+  for (int pass = 0; pass < 2; ++pass) {
+    for (int64_t d = 0; d < domains; ++d) {
+      int to = mdrtMPIOwner(domains, d);
+      for (int64_t g = 0; g < ghosts[d]; ++g) {
+        int64_t i = d*capacity+g;
+        int from = mdrtMPIOwner(domains, sourceDomain[i]);
+        if (!pass) {
+          if (from == rank) {
+            if (p->ns[to] == INT_MAX) mdrtMPIAbort("too many send rows");
+            ++p->ns[to];
+          }
+          if (to == rank) {
+            if (p->nr[from] == INT_MAX) mdrtMPIAbort("too many receive rows");
+            ++p->nr[from];
+          }
+        } else {
+          if (from == rank) {
+            if (sourceRow[i] > INT_MAX) mdrtMPIAbort("too many owned rows");
+            sources[ws[to]++] = sourceRow[i];
+          }
+          if (to == rank) {
+            int r = wr[from]++;
+            targets[r] = g;
+            for (int k = 0; k < 3; ++k)
+              shifts[3LL*r+k] = image[3*i+k]*edges[k];
+          }
+        }
+      }
+    }
+    if (!pass) {
+      for (int peer = 0; peer < size; ++peer) {
+        if (p->ns[peer] > INT_MAX - p->sendRows || p->nr[peer] > INT_MAX - p->recvRows)
+          mdrtMPIAbort("halo row displacement exceeds int");
+        p->os[peer] = ws[peer] = p->sendRows;
+        p->offsetRecv[peer] = wr[peer] = p->recvRows;
+        p->sendRows += p->ns[peer]; p->recvRows += p->nr[peer];
+      }
+      sources = calloc(1u+(size_t)p->sendRows, sizeof(int));
+      targets = calloc(1u+(size_t)p->recvRows, sizeof(int));
+      shifts = calloc(1u+3*(size_t)p->recvRows, sizeof(double));
+      if (!sources || !targets || !shifts) mdrtMPIAbort("out of memory mapping halo rows");
+    }
+  }
+  p->source = upload(sources, (size_t)p->sendRows*sizeof(int));
+  p->dest = upload(targets, (size_t)p->recvRows*sizeof(int));
+  p->shifts = upload(shifts, (size_t)p->recvRows*3*sizeof(double));
+  free(sources); free(targets); free(shifts);
+  return p;
+}
+
+void mdrtNCCLFreePlan(struct NCCLPlan *p) {
+  if (!p) return;
+  checkCuda(cudaFree(p->source));
+  checkCuda(cudaFree(p->dest));
+  checkCuda(cudaFree(p->shifts));
+  free(p->counts);
+  free(p);
 }
 
 static void reserve(double **buffer, size_t *capacity, size_t bytes) {
@@ -80,25 +159,62 @@ static void reserve(double **buffer, size_t *capacity, size_t bytes) {
   *capacity = bytes;
 }
 
-/* The step-state lowering currently packs MPI payloads in host storage.
-   Keep both peer buffers on this rank's GPU across exchanges. */
-void mdrtNCCLExchangeHost(const double *send, const int *ns, const int *os,
-                          double *recv, const int *nr, const int *or) {
-  size_t sent = ((size_t)os[size - 1] + ns[size - 1]) * sizeof(double);
-  size_t received = ((size_t)or[size - 1] + nr[size - 1]) * sizeof(double);
-  reserve(&outgoing, &outCapacity, sent);
-  reserve(&incoming, &inCapacity, received);
-  if (sent) checkCuda(cudaMemcpyAsync(outgoing, send, sent, cudaMemcpyHostToDevice, stream));
-  mdrtNCCLExchangeDevice(outgoing, ns, os, incoming, nr, or);
-  if (received) {
-    checkCuda(cudaMemcpyAsync(recv, incoming, received, cudaMemcpyDeviceToHost, stream));
+extern void mdrtDistPhase(int64_t phase);
+extern void mdrtNCCLRows(int gather, const double *input, const int *rows,
+    double *output, long long n, int k, const double *shift, int transpose, CUstream stream);
+
+void mdrtNCCLHalo(const struct NCCLPlan *p, double *owned, int64_t nOwned,
+    double *ghosts, int k, int image, int reverse) {
+  if (image && k != 3) mdrtMPIAbort("imaged halo positions require three components");
+  size_t row = (size_t)k * sizeof(double);
+  reserve(&ownedField, &ownedCapacity, nOwned*row);
+  reserve(&ghostField, &ghostCapacity, p->recvRows*row);
+  int send = reverse ? p->recvRows : p->sendRows;
+  int recv = reverse ? p->sendRows : p->recvRows;
+  reserve(&outgoing, &outCapacity, send*row);
+  reserve(&incoming, &inCapacity, recv*row);
+  if (nOwned) checkCuda(cudaMemcpyAsync(ownedField, owned, nOwned*row, cudaMemcpyHostToDevice, stream));
+  if (reverse && p->recvRows)
+    checkCuda(cudaMemcpyAsync(ghostField, ghosts, p->recvRows*row, cudaMemcpyHostToDevice, stream));
+  mdrtNCCLRows(1, reverse ? ghostField : ownedField, reverse ? p->dest : p->source,
+               outgoing, (long long)send*k, k, NULL, reverse, stream);
+  checkCuda(cudaStreamSynchronize(stream));
+  int rank = mdrtMPIRank();
+  for (int inter = 0; inter <= 1; ++inter) {
+    int phase = inter ? DistInterHalo : DistIntraHalo;
+    if (!reverse) mdrtDistPhase(phase);
+    checkNCCL(ncclGroupStart());
+    for (int peer = 0; peer < size; ++peer) {
+      if ((nodes[peer] != nodes[rank]) != inter) continue;
+      size_t ns = (size_t)(reverse ? p->nr[peer] : p->ns[peer])*k;
+      size_t nr = (size_t)(reverse ? p->ns[peer] : p->nr[peer])*k;
+      if (ns) {
+        size_t offset = (size_t)(reverse ? p->offsetRecv[peer] : p->os[peer])*k;
+        checkNCCL(ncclSend(outgoing+offset, ns, ncclDouble, peer, peers, stream));
+      }
+      if (nr) {
+        size_t offset = (size_t)(reverse ? p->os[peer] : p->offsetRecv[peer])*k;
+        checkNCCL(ncclRecv(incoming+offset, nr, ncclDouble, peer, peers, stream));
+      }
+    }
+    checkNCCL(ncclGroupEnd());
     checkCuda(cudaStreamSynchronize(stream));
+    if (!reverse) mdrtDistPhase(-phase);
   }
+  double *result = reverse ? ownedField : ghostField;
+  mdrtNCCLRows(0, incoming, reverse ? p->source : p->dest, result,
+               (long long)recv*k, k, image ? p->shifts : NULL, reverse, stream);
+  size_t bytes = (reverse ? nOwned : p->recvRows)*row;
+  if (bytes) checkCuda(cudaMemcpyAsync(reverse ? owned : ghosts, result, bytes,
+                                       cudaMemcpyDeviceToHost, stream));
+  checkCuda(cudaStreamSynchronize(stream));
 }
 
 void mdrtNCCLFinish(void) {
   if (!peers) return;
   checkNCCL(ncclCommDestroy(peers));
+  checkCuda(cudaFree(ownedField));
+  checkCuda(cudaFree(ghostField));
   checkCuda(cudaFree(outgoing));
   checkCuda(cudaFree(incoming));
   checkCuda(cudaStreamDestroy(stream));
