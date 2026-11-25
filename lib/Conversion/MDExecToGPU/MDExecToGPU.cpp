@@ -5873,7 +5873,8 @@ static void recordFFTPlan(ModuleOp module, md_exec::ReciprocalOp op,
     fields.set(key, b.getStringAttr(value));
   };
   text("category", "rule");
-  text("requested", requested.getValue());
+  text("requested",
+       requested.getValue() == "auto-cufft" ? "auto" : requested.getValue());
   text("backend", generated ? "axis" : "cufft");
   text("reason", reason);
   text("evaluation", op.getEnergy().use_empty() && op.getVirial().use_empty()
@@ -5881,10 +5882,12 @@ static void recordFFTPlan(ModuleOp module, md_exec::ReciprocalOp op,
                          : "observed");
   fields.set("grid", b.getDenseI64ArrayAttr(op.getGrid()));
   if (generated) {
-    text("twiddles", cast<MemRefType>(op.getScratch()[1].getType()).getElementType().isF64()
-                         ? "f64 butterfly constants and cross phases"
-                         : "f64-rounded butterfly constants, f32 SFU cross phases");
-    text("influence", op.getProlate() ? "prolate radial spectrum and window deconvolution"
+    text("twiddles",
+         cast<MemRefType>(op.getScratch()[1].getType()).getElementType().isF64()
+             ? "f64 butterfly constants and cross phases"
+             : "f64-rounded butterfly constants, f32 SFU cross phases");
+    text("influence", op.getProlate()
+                          ? "prolate radial spectrum and window deconvolution"
                       : isTriclinic(op.getCellMutable().get())
                           ? "axis tables and triclinic Gaussian"
                           : "prepared axis tables");
@@ -6014,7 +6017,8 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   bool radial = op.getProlate();
   bool prolateWindow = radial && !op.getSplineAssignment();
   if (op.getScratch().size() <= 5)
-    return op->emitOpError() << "expected a buffer for the factors of the influence function";
+    return op->emitOpError()
+           << "expected a buffer for the factors of the influence function";
   Value tables = op.getScratch()[5];
   // The charges in fixed point where the spreading is `fixed_order` (the
   // deterministic mode), then converted;
@@ -6041,10 +6045,10 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     std::string spreadTag = listed ? "_listed" : "";
     // Into tiles (D282): the bins of the PME emitter from the weights,
     // then the window into the tiles.
-    if (int64_t tiles = getTileEdge(op)) {
-      std::string edge = std::to_string(tiles);
-      func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_bin" + edge + spreadTag),
-                           withList({charges, weights, bins, real, k1, k2, k3}));
+    if (tiles) {
+      func::CallOp::create(
+          builder, loc, instance("mdrt_gpu_pme_bin" + edge + spreadTag),
+          withList({charges, weights, bins, real, k1, k2, k3}));
       func::CallOp::create(
           builder, loc, instance("mdrt_gpu_pme_prolate_spread_tiles" + edge),
           ValueRange{charges, weights, tables, bins, real, k1, k2, k3});
@@ -6125,13 +6129,20 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // virial of its own; its tables give `scale` eq. 2.28 as they are.
   std::string tabled = op.getP3m() ? "_p3m" : kind;
   std::string tableKernel = prolateWindow ? "mdrt_gpu_pme_prolate_tables"
-                            : radial ? "mdrt_gpu_pme_radial_spline_tables"
-                                     : "mdrt_gpu_pme_tables" + tabled;
+                            : radial      ? "mdrt_gpu_pme_radial_spline_tables"
+                                          : "mdrt_gpu_pme_tables" + tabled;
   func::CallOp convolve;
   auto pitch = op->getAttrOfType<IntegerAttr>("md_exec.fft_pitch");
   bool forceOnly = op.getEnergy().use_empty() && op.getVirial().use_empty();
   StringRef fallback;
-  if ((!narrowGrid && !radial) || !position.isF64())
+  auto request = op->getAttrOfType<StringAttr>("md_exec.fft_requested");
+  if (radial && !supportsAxisFFT(grid))
+    fallback = "unsupported axis length";
+  else if (radial && request && request.getValue() == "off")
+    fallback = "cuFFT requested";
+  else if (radial && request && request.getValue() == "auto-cufft")
+    fallback = "no qualified timing for this prolate target or split";
+  else if ((!narrowGrid && !radial) || !position.isF64())
     fallback = "requires mixed precision";
   else if (!radial && op.getOrder() != 4)
     fallback = "unqualified spline order";
@@ -6147,8 +6158,12 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     fallback = "fixed-order evaluation";
   else if (!supportsAxisFFT(grid))
     fallback = "unsupported axis length";
+  else if (op->hasAttr("md_exec.fft_measured_cufft"))
+    fallback = "axis did not win both whole-step timings";
   else if (!pitch || pitch.getInt() != axisFFTPitch(grid[2]))
-    fallback = "no pitched plan for this mesh";
+    fallback = radial && request && request.getValue() == "auto"
+                   ? "no qualified prolate axis timing for this mesh"
+                   : "no pitched plan for this mesh";
   else if (!forceOnly && (grid[2] / 2 + 8) / 8 > grid[0])
     fallback = "insufficient block partial storage";
   if (fallback.empty()) {
@@ -6169,9 +6184,13 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
       OpBuilder stages(module.getContext());
       DevicePME emitter(stages, module, position, charge, force, op.getOrder(),
                         32);
-      fn = emitter.emitAxisFFT(name, grid, pitch.getInt(), !forceOnly, tilted, radial);
+      fn = emitter.emitAxisFFT(name, grid, pitch.getInt(), !forceOnly, tilted,
+                               radial);
     }
-    recordFFTPlan(module, op, "supported mixed-radix mesh", fn);
+    StringRef reason = radial && request && request.getValue() == "auto"
+                           ? "prolate axis faster in both timing orders"
+                           : "supported mixed-radix mesh";
+    recordFFTPlan(module, op, reason, fn);
     SmallVector<Value> args{real, complex, tables};
     if (!forceOnly)
       args.push_back(rows);
@@ -6203,9 +6222,9 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
       function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
     func::CallOp::create(builder, loc, forward,
                          ValueRange{real, complex, sizes[0], sizes[1], sizes[2]});
-    func::CallOp::create(builder, loc, instance(tableKernel),
-                         ValueRange{op.getModuli(), tables, box, beta, coulomb,
-                                    k1, k2, k3});
+    func::CallOp::create(
+        builder, loc, instance(tableKernel),
+        ValueRange{op.getModuli(), tables, box, beta, coulomb, k1, k2, k3});
     bool fuse = false;
 #ifdef MDIR_PME_CALLBACK
     // The callback indexes three table rows per axis with unsigned offsets.

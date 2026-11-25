@@ -6,8 +6,8 @@
 #include "mdir/Conversion/ReductionEmitter.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include <cmath>
 
 using namespace mlir;
@@ -23,8 +23,10 @@ public:
   Axis(OpBuilder &b, Location loc, ArrayRef<int64_t> grid, int pitch,
        Value real, Value spectrum, int axis, bool inverse)
       : KernelCode(b, loc), grid(grid), pitch(pitch), real(real),
-        spectrum(spectrum), scalar(cast<MemRefType>(real.getType()).getElementType()), axis(axis), inverse(inverse),
-        n(axis == 2 ? grid[2] / 2 : grid[axis]), f(*factorAxis(n)) {}
+        spectrum(spectrum),
+        scalar(cast<MemRefType>(real.getType()).getElementType()), axis(axis),
+        inverse(inverse), n(axis == 2 ? grid[2] / 2 : grid[axis]),
+        f(*factorAxis(n)) {}
 
   int emit(FFTPointwise pointwise, int count, FFTPartial partial,
            bool preservesEndPlaneSymmetry) {
@@ -33,7 +35,9 @@ public:
     int lines = 8;
     const int exchange = f.first * (f.second + (f.second % 2 == 0));
     const int sharedPerLine = exchange + (z && !inverse ? n : 0);
-    while (lines * sharedPerLine * (scalar.getIntOrFloatBitWidth() / 4) > (count ? 47 : 48) * 1024)
+    const int complexBytes = 2 * (scalar.getIntOrFloatBitWidth() / 8);
+    while (lines * sharedPerLine * complexBytes >
+           (count ? 47 : 48) * 1024)
       lines /= 2;
     const int tiles = (h + lines - 1) / lines;
     int blocks = z ? (grid[0] * grid[1] + lines - 1) / lines
@@ -220,8 +224,9 @@ private:
   C read(Value mem, Value i) {
     Value at = muli(i, idx(2));
     if (mem == real || mem == spectrum) {
-      Value pair = vector::LoadOp::create(b, loc, VectorType::get({2}, scalar),
-                                           mem, ValueRange{at}, false, llvm::Align(8));
+      Value pair =
+          vector::LoadOp::create(b, loc, VectorType::get({2}, scalar), mem,
+                                 ValueRange{at}, false, llvm::Align(8));
       return {extract(pair, 0), extract(pair, 1)};
     }
     return {load(mem, {at}), load(mem, {addi(at, idx(1))})};
@@ -251,7 +256,8 @@ private:
     Value angle = mulf(sitofp(scalar, indexCast(b.getI32Type(), k)),
                        constant((backward ? tau : -tau) / length));
     if (scalar.isF64())
-      return {math::CosOp::create(b, loc, angle), math::SinOp::create(b, loc, angle)};
+      return {math::CosOp::create(b, loc, angle),
+              math::SinOp::create(b, loc, angle)};
     return {NVVM::CosOp::create(b, loc, angle),
             NVVM::SinOp::create(b, loc, angle)};
   }

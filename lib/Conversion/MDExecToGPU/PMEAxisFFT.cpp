@@ -74,21 +74,26 @@ func::FuncOp DevicePME::emitAxisFFT(StringRef name, ArrayRef<int64_t> grid,
       for (Value v : wave)
         square = square ? addf(square, mulf(v, v)) : mulf(v, v);
     }
-    Influence mode = radial
-        ? radialInfluence(tables, arith::ConstantIndexOp::create(b, loc, offset),
-                          arith::ConstantIndexOp::create(b, loc, 1), square, one,
-                          factors[0], factors[1], factors[2])
-        : tilted
-        ? gaussianInfluenceTriclinic(square, zero, one, factors[0], factors[1],
-                                     factors[2], gauss)
-        : gaussianInfluence(square, zero, one, factors[0], factors[1], factors[2]);
+    Influence mode;
+    if (radial) {
+      Value metadata = arith::ConstantIndexOp::create(b, loc, offset);
+      Value stride = arith::ConstantIndexOp::create(b, loc, 1);
+      mode = radialInfluence(tables, metadata, stride, square, one, factors[0],
+                             factors[1], factors[2]);
+    } else if (tilted) {
+      mode = gaussianInfluenceTriclinic(square, zero, one, factors[0],
+                                        factors[1], factors[2], gauss);
+    } else {
+      mode = gaussianInfluence(square, zero, one, factors[0], factors[1], factors[2]);
+    }
     Value influence = mode.factor;
     if (observed) {
       Value last = arith::ConstantIndexOp::create(b, loc, grid[2] / 2);
       Value first = arith::ConstantIndexOp::create(b, loc, 0);
       Value edge = ori(cmpi(arith::CmpIPredicate::eq, z, first),
                        cmpi(arith::CmpIPredicate::eq, z, last));
-      Value half = arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 0.5));
+      Value half =
+          arith::ConstantOp::create(b, loc, b.getFloatAttr(realType, 0.5));
       Value e = mulf(mulf(select(edge, half, one), influence),
                      addf(mulf(c.re, c.re), mulf(c.im, c.im)));
       sums[0] = addf(sums[0], e);

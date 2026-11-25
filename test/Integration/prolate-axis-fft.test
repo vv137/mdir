@@ -2,6 +2,18 @@
 # RUN: rm -f %t
 # RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --grid 188 90 90 | sed -E '/md_exec.reciprocal/s/(coulomb\([^)]+\))/\1 prolate spline_assignment/' > %t
 # RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=on" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --implicit-check-not=fft_stage
+# RUN: sed 's/grid(\[188, 90, 90\])/grid([189, 90, 90])/' %t | mdir-opt --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=MEASURED
+# MEASURED: backend = "cufft"
+# MEASURED-SAME: reason = "axis did not win both whole-step timings"
+# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --grid 30 30 30 | sed -E '/md_exec.reciprocal/s/(coulomb\([^)]+\))/\1 prolate spline_assignment/' > %t
+# RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=AUTO
+# RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=off" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=OFF
+# AUTO: backend = "axis"
+# AUTO-SAME: reason = "prolate axis faster in both timing orders"
+# AUTO: call @mdrt_gpu_pme_axis_fft_30x30x30_prolate_observed
+# OFF: backend = "cufft"
+# OFF-SAME: reason = "cuFFT requested"
+# OFF-SAME: requested = "off"
 # CHECK: backend = "cufft"
 # CHECK-SAME: reason = "unsupported axis length"
 # CHECK: call @mdrtCudaFFTForward3DF32
