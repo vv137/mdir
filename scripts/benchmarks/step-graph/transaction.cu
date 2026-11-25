@@ -13,6 +13,7 @@ extern "C" intptr_t mdrtStepBank(intptr_t, int64_t, int64_t);
 extern "C" int64_t mdrtStepPhases(intptr_t);
 extern "C" intptr_t mdrtStepFatalAddress(intptr_t);
 extern "C" int mdrtStepBegin(intptr_t, int64_t, int64_t, int64_t, intptr_t);
+extern "C" void mdrtStepCapture(intptr_t);
 extern "C" void mdrtStepDrift(intptr_t, intptr_t, int64_t, intptr_t, intptr_t, intptr_t, intptr_t);
 extern "C" void mdrtStepForce(intptr_t, intptr_t);
 extern "C" void mdrtStepEnd(intptr_t);
@@ -60,6 +61,7 @@ static void trial(int mode) {
   int64_t table[] = {intptr_t(bank[0]),24,1, intptr_t(bank[1]),24,2};
   auto capture = [&]() {
     if (!mdrtStepBegin(cache, 1, 2, 0, intptr_t(table))) return false;
+    mdrtStepCapture(cache);
     auto *fatal = reinterpret_cast<int *>(mdrtStepFatalAddress(cache));
     int64_t phases = mdrtStepPhases(cache);
     for (int64_t i = 0; i < phases; ++i) {

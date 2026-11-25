@@ -56,6 +56,11 @@ llvm::Expected<std::string> mdir::tool::getExecutionPins(StringRef path) {
       if (!value || *value < 1) return llvm::createStringError("incomplete TOWERS launch shape");
       os << key << " = " << *value << ", ";
     }
+    if (auto pack = shape->getString("pack")) {
+      if (pack != "COMPACT" && pack != "WIDE" && pack != "AUTO")
+        return llvm::createStringError("invalid TOWERS pack");
+      os << "pack = \"" << *pack << "\", ";
+    }
     auto height = shape->getString("cell_height");
     if (height != "FULL" && height != "HALF")
       return llvm::createStringError("incomplete TOWERS cell height");

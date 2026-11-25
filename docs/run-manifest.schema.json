@@ -351,6 +351,7 @@
                   "type": "integer",
                   "minimum": 1
                 },
+                "pack": {"enum": ["COMPACT", "WIDE", "AUTO"]},
                 "cell_height": {
                   "enum": [
                     "FULL",

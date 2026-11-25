@@ -55,6 +55,8 @@ def run(name, mode, steps, period, checkpoint=None):
         assert logged and json.loads(logged[1]) == choice
         pin = subprocess.check_output([sys.argv[3], "pin", "choices.jsonl"], cwd=directory, text=True)
         assert f'step_graph = "{winner}"' in pin and "towers_shape = {" in pin
+        pack = start["effective"]["towers_shape"]["effective"]["pack"]
+        assert f'pack = "{pack}"' in pin
     with h5py.File(directory / "state.h5") as f:
         fields = {k: f["particles/all/" + k][()] for k in
                   ("position/value", "velocity/value", "force/value", "position/time", "position/step")}

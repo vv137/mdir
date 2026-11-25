@@ -1825,7 +1825,7 @@ static int getFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward,
 
 /* A captured transform keeps its plan and workspace across graph launches.
    An aligned restart can reach capture before its first ordinary FFT. */
-int mdrtRetainFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward, int single) {
+int mdrtRetainFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward, int single, const float *tables) {
   cufftHandle plan;
   enter();
   if (!getFFTPlan(k1, k2, k3, forward, single, tables, &plan)) return -1;
