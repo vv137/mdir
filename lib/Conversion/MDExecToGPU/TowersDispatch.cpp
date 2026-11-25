@@ -233,6 +233,7 @@ struct Dispatch {
 
 LogicalResult Dispatch::run(Value positions, Value *forceWords) {
   shape.keepForceWords = forceWords != nullptr;
+  shape.scalarScreen = module->hasAttr("mdir.towers_scalar_screen");
   shape.movingDispatch = true;
   if (!g.triclinic && g.cells() <= g.atoms)
     shape.cartesianPositions = positions.getType();

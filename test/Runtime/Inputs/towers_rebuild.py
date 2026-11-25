@@ -15,6 +15,11 @@ I, F, D = C.c_int32, C.c_float, C.c_double
 P = C.c_void_p
 
 
+def device_capability():
+    """The compute capability of the device lit probed (sm_XY -> XY)."""
+    return int(os.environ["MDIR_LIT_GPU_CHIP"][3:])
+
+
 def compile_entries(
     directory,
     dims,
@@ -37,6 +42,8 @@ def compile_entries(
         audit=int(audit),
     )
     source = b"module {}"
+    if gpu:
+        options["scalar-screen"] = int(device_capability() < 75)
     if force_body:
         options["force-body"], source = force_body
         options.update(force_options or {})
@@ -49,9 +56,8 @@ def compile_entries(
     opts = ["mlir-opt", "--canonicalize", "--cse"]
     if gpu:
         ir = subprocess.check_output(
-            opts
-            + [
-                f"--gpu-lower-to-nvvm-pipeline=cubin-format=isa cubin-chip={os.environ['MDIR_LIT_GPU_CHIP']} "
+            [MDIR_OPT, "--canonicalize", "--cse",
+                f"--mdir-gpu-lower-to-nvvm=cubin-format=isa cubin-chip={os.environ['MDIR_LIT_GPU_CHIP']} "
                 "kernel-bare-ptr-calling-convention=true"
             ],
             input=ir,

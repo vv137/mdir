@@ -766,6 +766,7 @@ public:
     TowersForceShape shape{forcePanel,   forceStripe,    forceWorkers,
                            forceRecords, forceResidency, packedChargeType,
                            certifyForce, exclusions,     forceSplit};
+    shape.scalarScreen = scalarScreen;
     auto emit = [&](ArrayRef<mdir::md_exec::PairForOp> regions,
                     TowersOutput output) {
       shape.output = output;

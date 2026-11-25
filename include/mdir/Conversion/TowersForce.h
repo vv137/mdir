@@ -21,6 +21,7 @@ struct TowersForceShape {
   bool emitRetryCounter = false;
   /// Leave certified per-atom force words for the following bonded kernel.
   bool keepForceWords = false;
+  bool scalarScreen = false;
 
   // Compact only lists that can fill 128 four-row blocks. Smaller lists
   // need the parallelism of one thread per pair (D431).

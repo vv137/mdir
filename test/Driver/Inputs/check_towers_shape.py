@@ -33,6 +33,8 @@ check('{threads=512, blocks_per_sm=2, panel=320, stripe=352, records=3520, cell_
 check('{cell_height="FULL"}', "cell height",
       template.replace("34.7786, 34.7786, 34.7786", "34.7786, 34.7786, 21.0"))
 shape = check('{threads=512, blocks_per_sm=2, panel=352, stripe=384, records=1536, split=1, pack="COMPACT", cell_height="HALF"}')
+assert shape["source"].pop("screen") == shape["requested"].pop("screen") == "AUTO"
+assert shape["effective"].pop("screen") in ("MMA", "SCALAR")
 assert shape["requested"] == shape["effective"]
 assert set(shape["source"].values()) == {"control"}
 diagnostic = check('{threads=384, blocks_per_sm=4, panel=32, stripe=32, records=1, cell_height="FULL"}',

@@ -317,6 +317,7 @@ mdir::tool::prepareTowersSpecialization(const Control &control,
             true,
             exclusions,
             int(shape.split)};
+        launch.scalarScreen = shape.screen == "SCALAR";
         launch.movingDispatch = true;
         launch.emitRetryCounter = true;
         launch.indexedExclusions = exclusions != 0;

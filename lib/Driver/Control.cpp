@@ -3001,7 +3001,8 @@ Error Reader::readTowersShape(const toml::table &execution) {
   control.towersShapeTable = true;
   if (Error error = checkKeywords(*table, "towers_shape",
                                   {"threads", "blocks_per_sm", "stripe",
-                                   "panel", "records", "split", "cell_height", "pack"}))
+                                   "panel", "records", "split", "cell_height", "pack",
+                                   "screen"}))
     return error;
   TowersShape &shape = control.towersShape;
   for (auto [key, field] : {std::pair{"threads", &shape.threads},
@@ -3026,6 +3027,10 @@ Error Reader::readTowersShape(const toml::table &execution) {
                 "towers_shape panel exceeds the 16 warp groups of a record");
   if (Error error = readChoice<std::string>(*table, "pack", shape.pack,
           {{"COMPACT", "COMPACT"}, {"WIDE", "WIDE"}, {"AUTO", ""}}))
+    return error;
+  if (Error error = readChoice<std::string>(
+          *table, "screen", shape.screen,
+          {{"AUTO", "AUTO"}, {"MMA", "MMA"}, {"SCALAR", "SCALAR"}}))
     return error;
   return readChoice<std::string>(
       *table, "cell_height", shape.cellHeight,

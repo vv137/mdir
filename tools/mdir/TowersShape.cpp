@@ -35,12 +35,12 @@ llvm::Error refusal(llvm::StringRef reason) {
                                  "towers_shape: %s", reason.str().c_str());
 }
 struct Limits {
-  bool supportsTowers = true;
+  bool supportsMma;
   std::string uuid;
   int driver;
   int device, blockBytes, smBytes, reserved, threads, smThreads, blocks;
 };
-llvm::Expected<std::optional<Limits>> deviceLimits() {
+llvm::Expected<std::optional<Limits>> deviceLimits(bool requireMma) {
 #if MDIR_HAS_CUDA
   auto lib = llvm::sys::DynamicLibrary::getPermanentLibrary("libcuda.so.1");
   if (lib.isValid()) {
@@ -61,10 +61,9 @@ llvm::Expected<std::optional<Limits>> deviceLimits() {
               CUDA_SUCCESS)
         return refusal("could not query CUDA compute capability");
       Limits l{};
-      if (major < 7 || (major == 7 && minor < 5)) {
-        l.supportsTowers = false;
-        return l;
-      }
+      l.supportsMma = major > 7 || (major == 7 && minor >= 5);
+      if (requireMma && !l.supportsMma)
+        return refusal("screen MMA requires mma.sync m16n8k8 f16 (sm_75 or newer)");
       for (auto [field, key] :
            {std::pair{&l.blockBytes,
                       CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN},
@@ -338,6 +337,8 @@ Object fields(const TowersShape &s, bool provenance) {
                              : Value("AUTO");
   result["pack"] = provenance ? Value(s.pack.empty() ? "AUTO" : "control")
                               : Value(s.pack.empty() ? "AUTO" : s.pack);
+  result["screen"] = provenance ? Value(s.screen == "AUTO" ? "AUTO" : "control")
+                                : Value(s.screen);
   result["cell_height"] =
       provenance ? Value(s.cellHeight.empty() ? "AUTO" : "control")
                  : Value(s.cellHeight.empty() ? "AUTO" : s.cellHeight);
@@ -583,7 +584,7 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
   if (!control.periodic)
     return refusal("cell height requires a periodic box");
   TowersCell geometry(system);
-  auto limits = deviceLimits();
+  auto limits = deviceLimits(control.towersShape.screen == "MMA");
   if (!limits)
     return limits.takeError();
   auto given = control.towersShape;
@@ -591,13 +592,15 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
                                   ? Value(fields(given, false))
                                   : Value("AUTO")},
                 {"source", fields(given, true)}};
-  if (*limits && !(**limits).supportsTowers) {
-    constexpr auto reason =
-        "TOWERS requires mma.sync m16n8k8 f16 (sm_75 or newer)";
-    if (control.neighborStructure == NeighborStructure::Towers)
-      return refusal(reason);
-    result["selection"] = reason;
-    return result;
+  if (*limits) {
+    if (given.screen == "AUTO") {
+      given.screen = (**limits).supportsMma ? "MMA" : "SCALAR";
+      result["screen_reason"] = (**limits).supportsMma
+                                    ? "device supports m16n8k8"
+                                    : "device lacks m16n8k8";
+    } else {
+      result["screen_reason"] = "control";
+    }
   }
   if (!checkpointHeight.empty()) {
     if (checkpointHeight != "FULL" && checkpointHeight != "HALF")

@@ -38,6 +38,8 @@ llvm::Error Builder::build() {
     mlir::Builder b(module.getContext());
     if (setup.launch.pack == "WIDE")
       module->setAttr("mdir.towers_wide_pack", b.getUnitAttr());
+    if (setup.launch.screen == "SCALAR")
+      module->setAttr("mdir.towers_scalar_screen", b.getUnitAttr());
     if (control.stepGraph == "GRAPH")
       module->setAttr("mdir.towers_dt", b.getF64FloatAttr(control.timestep));
     if (system.topology)

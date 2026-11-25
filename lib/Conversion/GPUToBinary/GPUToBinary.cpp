@@ -671,9 +671,10 @@ struct GpuLowerToNVVMOptions : public gpu::GPUToNVVMPipelineOptions {
 
 struct ExpandSubgroupReductions
     : PassWrapper<ExpandSubgroupReductions, OperationPass<gpu::GPUModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ExpandSubgroupReductions)
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
-    gpu::populateGpuLowerSubgroupReduceToShufflePatterns(patterns, 32);
+    populateGpuLowerSubgroupReduceToShufflePatterns(patterns, 32);
     walkAndApplyPatterns(getOperation(), std::move(patterns));
   }
 };
@@ -692,7 +693,10 @@ void buildGpuLowerToNVVM(OpPassManager &pm,
   GpuNVVMAttachTargetOptions target;
   target.triple = options.cubinTriple;
   target.chip = options.cubinChip;
-  target.features = options.cubinFeatures;
+  // LLVM defaults to PTX 6.3 for Turing. Its m16n8k8 instruction needs 6.5.
+  target.features = options.cubinChip == "sm_75" && options.cubinFeatures.getValue().empty()
+                        ? "+ptx65"
+                        : options.cubinFeatures.getValue();
   target.optLevel = options.optLevel;
   target.cmdOptions = options.cmdOptions;
   pm.addPass(createGpuNVVMAttachTarget(target));
