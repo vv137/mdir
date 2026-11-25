@@ -93,6 +93,8 @@ struct Program {
   /// Whether the entry runs over the domains of [distribute], and their
   /// divisions along x, y, and z (D447).
   bool distributed = false;
+  bool domainTopology = false;
+  double domainTupleExtent = 0.0; // Maximum tuple radius at setup, in nm.
   std::array<int64_t, 3> domainGrid{1, 1, 1};
   /// The module, as text.
   std::string module;

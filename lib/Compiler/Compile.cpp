@@ -344,10 +344,12 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
   llvm::raw_string_ostream os(pipeline);
   os << "md-check-exchange,";
   if (control.distribution) {
+    if (program.domainTopology) os << "md-differentiate,";
     const auto &grid = program.domainGrid;
     os << "md-distribute{grid=" << grid[0] << "," << grid[1] << "," << grid[2]
        << " traversal=" << control.distribution->traversal
-       << " reach=" << control.getDistributionReach() * driver::units::length << "},";
+       << (program.domainTopology ? " derivatives=true" : "")
+       << " reach=" << (control.getDistributionReach() * driver::units::length + program.domainTupleExtent) << "},";
   }
   os << "md-differentiate,md-expand-truncation,md-inline,"
      << "dyn-expand-couplings,md-bypass-updates,";

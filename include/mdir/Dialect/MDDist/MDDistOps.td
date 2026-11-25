@@ -497,11 +497,24 @@ def MDDist_PartitionCentersOp : MDDist_Op<"partition_centers", [Pure]> {
 def MDDist_YieldOp : MDDist_Op<"yield", [
     Pure, Terminator, ReturnLike,
     ParentOneOf<["SumPairsOp", "GatherPairsOp", "SumParticlesOp",
-                 "MapParticlesOp"]>
+                 "MapParticlesOp", "TupleKernelOp"]>
   ]> {
   let summary = "Yields the value of a kernel";
   let arguments = (ins Variadic<AnyType>:$values);
   let assemblyFormat = "attr-dict ($values^ `:` type($values))?";
+}
+
+def MDDist_TupleKernelOp : MDDist_Op<"tuple_kernel", [
+    AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock]> {
+  let summary = "Evaluate a topology tuple once on its scheduled CPU domain";
+  let arguments = (ins I64MemRef:$rows, MDDist_FieldType:$positions,
+      MDDist_FieldType:$ghosts, MDDist_HaloType:$halo,
+      Variadic<MDDist_FieldType>:$gathered, Variadic<MD_ReferenceFieldType>:$parameters,
+      DenseI32ArrayAttr:$coordinate_kinds, DenseI64ArrayAttr:$coordinate_members);
+  let regions = (region SizedRegion<1>:$kernel);
+  let results = (outs Variadic<AnyType>:$results);
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
 }
 
 class MDDist_PairOp<string mnemonic> : MDDist_Op<mnemonic, [

@@ -150,6 +150,7 @@ private:
   LogicalResult lowerHaloCopy(HaloCopyOp op);
   LogicalResult lowerHaloSum(HaloSumOp op);
   LogicalResult lowerZeros(ZerosOp op);
+  LogicalResult lowerTupleKernel(TupleKernelOp op);
   LogicalResult lowerTupleRows(TupleRowsOp op);
   LogicalResult lowerNeighborhood(NeighborhoodOp op);
   LogicalResult lowerPartitionCenters(PartitionCentersOp op);
@@ -240,6 +241,7 @@ private:
   void addValue(OpBuilder &b, Value value, Value buffer, Value domain,
                 Value row);
   /// Inlines `kernel` with `arguments` and returns the value it yields.
+  void cloneKernelOp(OpBuilder &b, Operation &op, IRMapping &mapping);
   Value inlineKernel(OpBuilder &b, Block &kernel, ValueRange arguments);
 
   /// The layout or halo storage of the rows of a field.
@@ -493,8 +495,11 @@ Value Lowering::loadValue(OpBuilder &b, Value buffer, Value domain, Value row,
   for (int64_t c = 0; c < k; ++c)
     parts.push_back(memref::LoadOp::create(
         b, loc, buffer, ValueRange{domain, row, index(b, c)}));
-  if (!vector)
+  if (!vector) {
+    if (type.isInteger(32) && parts[0].getType().isF64())
+      return arith::FPToSIOp::create(b, loc, type, parts[0]);
     return parts[0];
+  }
   return vector::FromElementsOp::create(b, loc, vector, parts);
 }
 
@@ -505,6 +510,8 @@ void Lowering::storeValue(OpBuilder &b, Value value, Value buffer,
   for (int64_t c = 0; c < k; ++c) {
     Value part =
         vector ? Value(vector::ExtractOp::create(b, loc, value, c)) : value;
+    if (part.getType().isInteger(32) && cast<MemRefType>(buffer.getType()).getElementType().isF64())
+      part = arith::SIToFPOp::create(b, loc, b.getF64Type(), part);
     memref::StoreOp::create(b, loc, part, buffer,
                             ValueRange{domain, row, index(b, c)});
   }
@@ -516,12 +523,33 @@ void Lowering::addValue(OpBuilder &b, Value value, Value buffer, Value domain,
   storeValue(b, add(b, old, value), buffer, domain, row);
 }
 
+void Lowering::cloneKernelOp(OpBuilder &b, Operation &op, IRMapping &mapping) {
+  auto lookup = dyn_cast<md::LookupOp>(op);
+  if (!lookup) {
+    b.clone(op, mapping);
+    return;
+  }
+  Value table = lookup.getTable();
+  Value buffer;
+  {
+    OpBuilder::InsertionGuard guard(b);
+    b.setInsertionPointAfterValue(table);
+    buffer = mdrt::ToBufferOp::create(b, loc, mdrt::getTableBufferType(cast<md::TableType>(table.getType())), table);
+  }
+  SmallVector<Value> indices;
+  for (Value i : lookup.getIndices()) {
+    Value value = mapping.lookupOrDefault(i);
+    indices.push_back(value.getType().isIndex() ? value : toIndex(b, value));
+  }
+  mapping.map(lookup.getResult(), memref::LoadOp::create(b, loc, buffer, indices));
+}
+
 Value Lowering::inlineKernel(OpBuilder &b, Block &kernel,
                              ValueRange arguments) {
   IRMapping mapping;
   mapping.map(kernel.getArguments(), arguments);
   for (Operation &op : kernel.without_terminator())
-    b.clone(op, mapping);
+    cloneKernelOp(b, op, mapping);
   auto yield = cast<YieldOp>(kernel.getTerminator());
   return mapping.lookupOrDefault(yield.getValues()[0]);
 }
@@ -653,8 +681,8 @@ LogicalResult Lowering::lowerMigrate(MigrateOp op) {
 LogicalResult Lowering::lowerDistribute(DistributeOp op) {
   OpBuilder b(op);
   auto fieldType = cast<md::FieldType>(op.getField().getType());
-  if (!fieldType.getElementType().isF64())
-    return op.emitOpError() << "the reference executor runs f64 only";
+  if (!fieldType.getElementType().isF64() && !fieldType.getElementType().isInteger(32))
+    return op.emitOpError() << "the CPU executor transports f64 fields and i32 particle types";
   Value edges[3];
   if (op.getImage() && failed(getEdges(op, op.getImage(), edges)))
     return failure();
@@ -679,6 +707,8 @@ LogicalResult Lowering::lowerDistribute(DistributeOp op) {
                                                           ValueRange{j}))
                            : Value(memref::LoadOp::create(
                                  br, loc, global, ValueRange{j, index(br, c)}));
+                if (v.getType().isInteger(32))
+                  v = arith::SIToFPOp::create(br, loc, br.getF64Type(), v);
                 if (op.getImage()) {
                   // v − L floor(v / L)
                   Value u = arith::DivFOp::create(br, loc, v, edges[c]);
@@ -742,6 +772,8 @@ LogicalResult Lowering::lowerCollect(CollectOp op) {
               for (int64_t c = 0; c < k; ++c) {
                 Value v = memref::LoadOp::create(
                     br, loc, owned, ValueRange{d, r, index(br, c)});
+                if (fieldType.getElementType().isInteger(32))
+                  v = arith::FPToSIOp::create(br, loc, br.getI32Type(), v);
                 if (k == 1)
                   memref::StoreOp::create(br, loc, v, global, ValueRange{j});
                 else
@@ -761,7 +793,8 @@ LogicalResult Lowering::lowerCollect(CollectOp op) {
 
 LogicalResult Lowering::lowerRedistribute(RedistributeOp op) {
   OpBuilder b(op);
-  if (!op.getField().getType().getElementType().isF64())
+  if (!op.getField().getType().getElementType().isF64() &&
+      !op.getField().getType().getElementType().isInteger(32))
     return op.emitOpError() << "the in-process executor runs f64 fields only";
   Storage &old = storage[op.getOldLayout()];
   Storage &next = storage[op.getNewLayout()];
@@ -852,6 +885,7 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
   Type i64 = b.getI64Type();
   bool separateImage = fixedPoint || llvm::any_of(op.getResult().getUsers(),
       [](Operation *user) {
+        if (isa<TupleKernelOp>(user)) return true;
         auto relation = dyn_cast<NeighborhoodOp>(user);
         return relation && relation.getResult().getType().getTraversal() == Traversal::Midpoint;
       });
@@ -949,6 +983,135 @@ LogicalResult Lowering::lowerZeros(ZerosOp op) {
       allocate(b, rows.capacity, op.getResult().getType().getNumComponents());
   fillZero(b, buffer);
   storage[op.getResult()].buffer = buffer;
+  return success();
+}
+
+LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
+  OpBuilder b(op);
+  Value edge[3];
+  if (failed(getHaloEdges(op, op.getHalo(), edge)))
+    return failure();
+  auto vec = VectorType::get({3}, b.getF64Type());
+  Value edges = vector::FromElementsOp::create(b, loc, vec, ValueRange(edge));
+  auto coordinates = md::getCoordinates(op.getCoordinateKinds(), op.getCoordinateMembers());
+  int64_t arity = op.getRows().getType().getDimSize(1) - 1;
+  bool reduce = op.getNumResults() == 1;
+  Type resultType = reduce ? cast<PartialType>(op.getResult(0).getType()).getValueType() : vec;
+  auto vector = dyn_cast<VectorType>(resultType);
+  int64_t width = vector ? vector.getNumElements() : 1;
+  Type scalar = sumType(b.getF64Type());
+  Storage &halo = storage[op.getHalo()];
+  Storage &layout = storage[layoutOf(op.getHalo())];
+  auto buffer = [&](ArrayRef<int64_t> shape, ValueRange sizes) {
+    Value value = allocate(b, MemRefType::get(shape, scalar), sizes);
+    fillZero(b, value);
+    return value;
+  };
+  constexpr int64_t dyn = ShapedType::kDynamic;
+  Value partial, ownedOut, ghostOut;
+  if (reduce) {
+    partial = buffer({dyn, dyn}, {index(b, domains), index(b, width)});
+    storage[op.getResult(0)].buffer = partial;
+  } else {
+    ownedOut = buffer({dyn, dyn, dyn}, {index(b, domains), layout.capacity, index(b, 3)});
+    ghostOut = buffer({dyn, dyn, dyn}, {index(b, domains), halo.capacity, index(b, 3)});
+    storage[op.getResult(0)].buffer = ownedOut;
+    storage[op.getResult(1)].buffer = ghostOut;
+  }
+  SmallVector<Value> parameters;
+  for (Value field : op.getParameters()) {
+    auto type = cast<md::FieldType>(field.getType());
+    parameters.push_back(mdrt::ToBufferOp::create(b, loc, mdrt::getBufferType(type), field));
+  }
+  Value count = memref::DimOp::create(b, loc, op.getRows(), 0);
+  Value first = domainBound(b, false), past = domainBound(b, true);
+  scf::ForOp::create(b, loc, index(b, 0), count, index(b, 1), ValueRange(),
+      [&](OpBuilder &at, Location, Value t, ValueRange) {
+        auto row = [&](OpBuilder &builder, int64_t column) {
+          return toIndex(builder, memref::LoadOp::create(builder, loc, op.getRows(),
+                                                ValueRange{t, index(builder, column)}));
+        };
+        Value d = row(at, 0);
+        Value mine = arith::AndIOp::create(at, loc,
+            arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ule, first, d),
+            arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, d, past));
+        scf::IfOp::create(at, loc, mine, [&](OpBuilder &k, Location) {
+          Value n = toIndex(k, memref::LoadOp::create(k, loc, layout.rows, d));
+          SmallVector<Value> localRows, isOwned, ghostRows, positions, args;
+          for (int64_t a = 0; a < arity; ++a) {
+            Value r = row(k, a + 1);
+            localRows.push_back(r);
+            isOwned.push_back(arith::CmpIOp::create(k, loc, arith::CmpIPredicate::ult, r, n));
+            ghostRows.push_back(arith::SubIOp::create(k, loc, r, n));
+          }
+          auto read = [&](int64_t a, Value owned, Value ghosts) {
+            Type type = cast<FieldType>(owned.getType()).getKernelValueType();
+            auto value = scf::IfOp::create(k, loc, isOwned[a], [&](OpBuilder &yes, Location) {
+              scf::YieldOp::create(yes, loc, loadValue(yes, storage[owned].buffer, d, localRows[a], type));
+            }, [&](OpBuilder &no, Location) {
+              scf::YieldOp::create(no, loc, loadValue(no, storage[ghosts].buffer, d, ghostRows[a], type));
+            });
+            return value.getResult(0);
+          };
+          for (int64_t a = 0; a < arity; ++a)
+            positions.push_back(read(a, op.getPositions(), op.getGhosts()));
+          Value half = arith::ConstantOp::create(k, loc, DenseElementsAttr::get(vec, k.getF64FloatAttr(0.5)));
+          for (auto coordinate : coordinates) {
+            SmallVector<Value, 3> values;
+            for (auto displacement : md::getDisplacements(coordinate)) {
+              auto m = displacement.members;
+              Value raw = arith::SubFOp::create(k, loc, positions[m[0]], positions[m[1]]);
+              Value image = math::FloorOp::create(k, loc, arith::AddFOp::create(k, loc, half,
+                                                         arith::DivFOp::create(k, loc, raw, edges)));
+              values.push_back(arith::SubFOp::create(k, loc, raw, arith::MulFOp::create(k, loc, image, edges)));
+            }
+            args.push_back(md::emitCoordinate(k, loc, coordinate.kind, values));
+          }
+          for (size_t f = 0; f < op.getGathered().size(); f += 2)
+            for (int64_t a = 0; a < arity; ++a)
+              args.push_back(read(a, op.getGathered()[f], op.getGathered()[f+1]));
+          for (auto [field, values] : llvm::zip(op.getParameters(), parameters)) {
+            auto type = cast<md::FieldType>(field.getType());
+            if (type.getNumComponents() == 1)
+              args.push_back(memref::LoadOp::create(k, loc, values, t));
+            else {
+              SmallVector<Value> components;
+              for (unsigned c = 0; c < type.getNumComponents(); ++c)
+                components.push_back(memref::LoadOp::create(k, loc, values, ValueRange{t, index(k, c)}));
+              args.push_back(vector::FromElementsOp::create(k, loc,
+                  cast<VectorType>(type.getKernelValueType()), components));
+            }
+          }
+          Block &body = op.getKernel().front();
+          IRMapping map;
+          map.map(body.getArguments(), args);
+          for (Operation &nested : body.without_terminator())
+            cloneKernelOp(k, nested, map);
+          auto yielded = body.getTerminator()->getOperands();
+          if (reduce) {
+            Value word = quantize(k, map.lookupOrDefault(yielded.front()), 32);
+            for (int64_t c = 0; c < width; ++c) {
+              Value component = vector ? Value(vector::ExtractOp::create(k, loc, word, c)) : word;
+              SmallVector<Value, 2> place{d, index(k, c)};
+              Value old = memref::LoadOp::create(k, loc, partial, place);
+              memref::StoreOp::create(k, loc, add(k, old, component), partial, place);
+            }
+          } else {
+            for (int64_t a = 0; a < arity; ++a) {
+              Value word = quantize(k, map.lookupOrDefault(yielded[a]), 40);
+              scf::IfOp::create(k, loc, isOwned[a], [&](OpBuilder &yes, Location) {
+                addValue(yes, word, ownedOut, d, localRows[a]);
+                scf::YieldOp::create(yes, loc);
+              }, [&](OpBuilder &no, Location) {
+                addValue(no, word, ghostOut, d, ghostRows[a]);
+                scf::YieldOp::create(no, loc);
+              });
+            }
+          }
+          scf::YieldOp::create(k, loc);
+        });
+        scf::YieldOp::create(at, loc);
+      });
   return success();
 }
 
@@ -1311,15 +1474,16 @@ void Lowering::emitPairs(
                                 args.push_back(vector::ExtractOp::create(t, loc, vec, axis));
                             auto result = func::CallOp::create(t, loc, owns, args);
                             Value include = result.getResult(0);
-                            if (exclusions) {
-                              auto eligible = func::CallOp::create(t, loc, allowed,
-                                  ValueRange{exclusions, idi, side.getResults().back()});
-                              include = arith::AndIOp::create(t, loc, include, eligible.getResult(0));
-                            }
                             scf::YieldOp::create(t, loc, arith::TruncIOp::create(
                                 t, loc, t.getI1Type(), include).getResult());
                           }, [&](OpBuilder &e, Location) { scf::YieldOp::create(e, loc, take); });
                       take = owner.getResult(0);
+                    }
+                    if (exclusions) {
+                      auto eligible = func::CallOp::create(bk, loc, allowed,
+                          ValueRange{exclusions, idi, side.getResults().back()});
+                      Value ok = arith::TruncIOp::create(bk, loc, bk.getI1Type(), eligible.getResult(0));
+                      take = arith::AndIOp::create(bk, loc, take, ok);
                     }
                     auto branch = scf::IfOp::create(bk, loc, {accumulator},
                                                     take,
@@ -2327,6 +2491,7 @@ LogicalResult Lowering::lower(Operation *op) {
       .Case([&](HaloSumOp o) { return lowerHaloSum(o); })
       .Case([&](ZerosOp o) { return lowerZeros(o); })
       .Case([&](NeighborhoodOp o) { return lowerNeighborhood(o); })
+      .Case([&](TupleKernelOp o) { return lowerTupleKernel(o); })
       .Case([&](TupleRowsOp o) { return lowerTupleRows(o); })
       .Case([&](PartitionCentersOp o) { return lowerPartitionCenters(o); })
       .Case([&](SumPairsOp o) { return lowerSumPairs(o); })

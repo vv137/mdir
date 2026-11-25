@@ -39,7 +39,7 @@ namespace {
 
 class Distributor {
 public:
-  Distributor(PotentialOp potential, ArrayRef<int64_t> grid,
+  Distributor(FunctionOpInterface potential, ArrayRef<int64_t> grid,
               md_dist::Traversal traversal, double reach)
       : potential(potential), grid(grid), traversal(traversal),
         requestedReach(reach), builder(potential.getContext()) {}
@@ -76,10 +76,11 @@ private:
   LogicalResult rewrite(NeighborhoodOp op);
   LogicalResult rewrite(SumRelationOp op);
   LogicalResult rewrite(GatherRelationOp op);
+  template <typename Op> LogicalResult rewriteTuple(Op op);
   LogicalResult rewrite(SumParticlesOp op);
   LogicalResult rewrite(MapParticlesOp op);
 
-  PotentialOp potential;
+  FunctionOpInterface potential;
   ArrayRef<int64_t> grid;
   md_dist::Traversal traversal;
   double requestedReach;
@@ -103,10 +104,10 @@ private:
 LogicalResult Distributor::check() {
   if (potential.isExternal())
     return potential.emitOpError() << "cannot distribute a declaration";
-  if (!llvm::hasSingleElement(potential.getBody()))
+  if (!llvm::hasSingleElement(potential->getRegion(0)))
     return potential.emitOpError()
            << "cannot distribute a body of more than one block";
-  body = &potential.getBody().front();
+  body = &potential->getRegion(0).front();
   positions = body->getArgument(0);
   cell = body->getArgument(1);
 
@@ -114,7 +115,7 @@ LogicalResult Distributor::check() {
     if (isa<ReturnOp>(op))
       continue;
     if (auto neighborhood = dyn_cast<NeighborhoodOp>(op)) {
-      if (neighborhood.getExcluded() && traversal != md_dist::Traversal::Midpoint)
+      if (neighborhood.getExcluded() && traversal != md_dist::Traversal::Midpoint && !isa<FunctionOp>(potential.getOperation()))
         return op.emitOpError()
                << "cannot be distributed: exclusions are pairs of a tuple "
                   "set, which needs the topology across domains (stage 2 of "
@@ -128,6 +129,12 @@ LogicalResult Distributor::check() {
     if (isa<SumRelationOp, GatherRelationOp, SumParticlesOp, MapParticlesOp>(
             op))
       continue;
+    if (isa<SumTuplesOp, GatherTuplesOp>(op) && (traversal == md_dist::Traversal::Midpoint || isa<FunctionOp>(potential.getOperation()))) {
+      if (!requestedReach)
+        return op.emitOpError("midpoint topology tuples require an explicit halo reach for their extent");
+      needsHalo = true;
+      continue;
+    }
     if (isa<SumTuplesOp, GatherTuplesOp>(op))
       return op.emitOpError()
              << "cannot be distributed: a sum over tuples needs the topology "
@@ -162,7 +169,9 @@ LogicalResult Distributor::check() {
 
 LogicalResult Distributor::declareDecomposition() {
   auto positionType = cast<FieldType>(positions.getType());
-  std::string name = (potential.getSymName() + ".domains").str();
+  std::string name = (SymbolTable::getSymbolName(potential).getValue() + ".domains").str();
+  if (isa<FunctionOp>(potential.getOperation()))
+    name = (positionType.getParticleSet().getValue() + ".midpoint_domains").str();
   decompositionName = FlatSymbolRefAttr::get(builder.getContext(), name);
   auto module = potential->getParentOfType<ModuleOp>();
   if (Operation *existing = SymbolTable::lookupSymbolIn(module, name)) {
@@ -390,6 +399,39 @@ LogicalResult Distributor::rewrite(GatherRelationOp op) {
   return success();
 }
 
+template <typename Op>
+LogicalResult Distributor::rewriteTuple(Op op) {
+  if (op.getPositions() != positions || op.getCell() != cell || op->getNumResults() != 1)
+    return op.emitOpError("expected one topology quantity at the current positions and cell");
+  builder.setInsertionPoint(op);
+  auto rowsType = MemRefType::get({ShapedType::kDynamic, 1 + int64_t(op.getArity())},
+                                  builder.getI64Type());
+  Value rows = md_dist::TupleRowsOp::create(builder, op.getLoc(), rowsType,
+                                            op.getRelation(), ownedPositions, halo);
+  SmallVector<Value> fields;
+  if (failed(gatheredPairs(op, op.getGathered(), fields))) return failure();
+  builder.setInsertionPoint(op);
+  SmallVector<Type> outputs;
+  Type result = op.getResult().getType();
+  if constexpr (std::is_same_v<Op, SumTuplesOp>)
+    outputs.push_back(md_dist::PartialType::get(builder.getContext(), result));
+  else {
+    auto type = ownedType(result);
+    outputs = {type.with(md_dist::Role::Owned, true), type.with(md_dist::Role::Ghost, true)};
+  }
+  auto kernel = md_dist::TupleKernelOp::create(builder, op.getLoc(), outputs, rows, ownedPositions,
+      ghostPositions, halo, fields, op.getParameters(), op.getCoordinateKindsAttr(), op.getCoordinateMembersAttr());
+  cloneKernel(op, kernel);
+  if constexpr (std::is_same_v<Op, SumTuplesOp>) {
+    auto total = md_dist::AllReduceOp::create(builder, op.getLoc(), result, kernel.getResult(0));
+    op.getResult().replaceAllUsesWith(total.getResult());
+  } else {
+    owned[op.getResult()] = md_dist::HaloSumOp::create(builder, op.getLoc(), ownedType(result),
+        kernel.getResult(0), kernel.getResult(1), halo);
+  }
+  return success();
+}
+
 LogicalResult Distributor::rewrite(SumParticlesOp op) {
   SmallVector<Value> fields;
   for (Value field : op.getGathered()) {
@@ -449,6 +491,10 @@ LogicalResult Distributor::run() {
       status = rewrite(o);
     else if (auto o = dyn_cast<GatherRelationOp>(op))
       status = rewrite(o);
+    else if (auto o = dyn_cast<SumTuplesOp>(op))
+      status = rewriteTuple(o);
+    else if (auto o = dyn_cast<GatherTuplesOp>(op))
+      status = rewriteTuple(o);
     else if (auto o = dyn_cast<SumParticlesOp>(op))
       status = rewrite(o);
     else if (auto o = dyn_cast<MapParticlesOp>(op))
@@ -460,6 +506,11 @@ LogicalResult Distributor::run() {
     if (rewritten)
       erased.push_back(op);
   }
+  auto result = cast<ReturnOp>(body->getTerminator());
+  builder.setInsertionPoint(result);
+  for (OpOperand &operand : result->getOpOperands())
+    if (Value field = owned.lookup(operand.get()))
+      operand.set(md_dist::CollectOp::create(builder, result.getLoc(), operand.get().getType(), field, layout));
   // The ops of md go, in reverse order: a field or a relation that they
   // give is used only by the others, whose results are replaced.
   for (Operation *op : llvm::reverse(erased)) {
@@ -535,6 +586,19 @@ public:
     SmallVector<int64_t, 3> divisions =
         domains ? md_dist::selectGrid(domains, box)
                 : SmallVector<int64_t, 3>(grid.begin(), grid.end());
+    if (derivatives) {
+      for (FunctionOp fn : module.getOps<FunctionOp>()) {
+        bool derived = llvm::any_of(selected, [&](PotentialOp p) {
+          return fn.getSymName().starts_with((p.getSymName() + ".").str());
+        });
+        if (!derived || !llvm::any_of(fn.getBody().front(), [](Operation &op) {
+              return isa<NeighborhoodOp, SumTuplesOp, GatherTuplesOp>(op);
+            })) continue;
+        if (failed(Distributor(fn, divisions, kind, reach).run()))
+          return signalPassFailure();
+      }
+      return;
+    }
     for (PotentialOp potential : selected) {
       Distributor distributor(potential, divisions, kind, reach);
       if (failed(distributor.run()))
