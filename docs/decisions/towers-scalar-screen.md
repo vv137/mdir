@@ -1,4 +1,6 @@
-# D[towers-scalar-screen] TOWERS distance screens and warp votes
+# D[towers-scalar-screen]
+
+Recorded at its merge.
 
 The optional `[execution] towers_shape.screen` selects `"AUTO"`, `"MMA"`,
 or `"SCALAR"`. AUTO uses the matrix instruction at compute capability 7.5
