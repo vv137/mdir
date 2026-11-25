@@ -129,6 +129,14 @@ void mdrtMPIBroadcast(double *values, int64_t count, int root) {
   }
 }
 
+// Each rank has already filled its contiguous interval in domain order.
+void mdrtMPIShareBlocks(void *values, const int *counts, const int *offsets, int words) {
+  if (size == 1) return;
+  arrival();
+  MPI_Allgatherv(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, values, counts, offsets,
+                 words ? wideWord : MPI_DOUBLE, comm);
+}
+
 int mdrtMPIAllTrue(int predicate) {
   int result;
   arrival();

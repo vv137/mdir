@@ -698,10 +698,41 @@ int64_t _mlir_ciface_mdrtDistMPIPartition(struct Memref2D *x, int64_t gx,
 /* The lowering passes a dense allocation. Transfer only live rows.
    Replicated ownership metadata keeps record order independent of rank count. */
 static void shareRows(struct Layout *l, const int64_t *rows, struct Memref3D *field) {
-  if (!l->mpi)
+  if (!l->mpi || mdrtMPISize() == 1)
     return;
   if (field->strides[2] != 1 || field->strides[1] != field->sizes[2])
     mdrtMPIAbort("expected contiguous field rows");
+  // Gather compact live rows once. The owner of each domain fills its
+  // original interval, so all consumers see the same doubles in row order.
+  int peers = mdrtMPISize(), rank = mdrtMPIRank();
+  int64_t width = field->sizes[2];
+  if (l->count && width > 0 && l->count <= INT_MAX / width) {
+    int *counts = calloc(2*(size_t)peers, sizeof *counts);
+    double *packed = malloc((size_t)l->count*width*sizeof *packed);
+    if (!counts || !packed) fail("out of memory collecting domain rows");
+    int *offsets = counts + peers;
+    int offset = 0;
+    for (int64_t d = 0; d < l->domains; ++d) {
+      int owner = mdrtMPIOwner(l->domains,d);
+      int length = rows[d]*width;
+      if (owner == rank && length)
+        memcpy(packed+offset, at3(field,d,0,0), length*sizeof *packed);
+      counts[owner] += length;
+      offset += length;
+    }
+    for (int p = 1; p < peers; ++p) offsets[p] = offsets[p-1]+counts[p-1];
+    mdrtMPIShareBlocks(packed,counts,offsets,0);
+    offset = 0;
+    for (int64_t d = 0; d < l->domains; ++d) {
+      int length = rows[d]*width;
+      if (mdrtMPIOwner(l->domains,d) != rank && length)
+        memcpy(at3(field,d,0,0), packed+offset, length*sizeof *packed);
+      offset += length;
+    }
+    free(packed);
+    free(counts);
+    return;
+  }
   for (int64_t d = 0; d < l->domains; ++d)
     if (rows[d])
       mdrtMPIBroadcast(at3(field, d, 0, 0), rows[d] * field->sizes[2],
