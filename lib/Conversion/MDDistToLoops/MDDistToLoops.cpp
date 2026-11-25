@@ -965,7 +965,7 @@ LogicalResult Lowering::lowerPartitionCenters(PartitionCentersOp op) {
     return arith::ConstantIndexOp::create(at, loc, v);
   };
   scf::ForOp::create(
-      b, loc, first, past, c(b, 1), ValueRange(),
+      b, loc, domainBound(b, false), domainBound(b, true), c(b, 1), ValueRange(),
       [&](OpBuilder &bd, Location, Value d, ValueRange) {
         Value nOwned = toIndex(
             bd, memref::LoadOp::create(bd, loc, layout.rows, ValueRange{d}));
