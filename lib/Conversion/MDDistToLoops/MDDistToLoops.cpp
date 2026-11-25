@@ -282,7 +282,7 @@ func::FuncOp Lowering::declare(StringRef name, FunctionType type,
 // All terms are rounded before entering any center or domain subtotal.
 Type Lowering::sumType(Type type) {
   if (!fixedPoint) return type;
-  Type word = IntegerType::get(module.getContext(), 64);
+  Type word = IntegerType::get(module.getContext(), 128);
   if (auto vector = dyn_cast<VectorType>(type))
     return VectorType::get(vector.getShape(), word);
   return word;
@@ -296,7 +296,8 @@ Value Lowering::quantize(OpBuilder &b, Value value, int fractionalBits) {
       b.getFunctionType({b.getF64Type(), b.getF64Type()}, {b.getI64Type()}), false);
   Value scale = real(b, double(uint64_t{1} << fractionalBits));
   auto scalar = [&](Value x) {
-    return func::CallOp::create(b, loc, convert, ValueRange{x, scale}).getResult(0);
+    Value word = func::CallOp::create(b, loc, convert, ValueRange{x, scale}).getResult(0);
+    return arith::ExtSIOp::create(b, loc, b.getIntegerType(128), word).getResult();
   };
   if (auto vector = dyn_cast<VectorType>(value.getType())) {
     SmallVector<Value> parts;
@@ -311,6 +312,19 @@ Value Lowering::quantize(OpBuilder &b, Value value, int fractionalBits) {
 Value Lowering::finish(OpBuilder &b, Value sum, int fractionalBits) {
   if (!fixedPoint) return sum;
   Type type = b.getF64Type();
+  auto narrow = declare("mdrtDistNarrowWord",
+      b.getFunctionType({b.getIntegerType(128)}, {b.getI64Type()}), false);
+  auto scalar = [&](Value v) {
+    return func::CallOp::create(b, loc, narrow, ValueRange{v}).getResult(0);
+  };
+  if (auto vector = dyn_cast<VectorType>(sum.getType())) {
+    SmallVector<Value> parts;
+    for (int64_t c = 0; c < vector.getNumElements(); ++c)
+      parts.push_back(scalar(vector::ExtractOp::create(b, loc, sum, c)));
+    sum = vector::FromElementsOp::create(b, loc,
+        VectorType::get(vector.getShape(), b.getI64Type()), parts);
+  } else
+    sum = scalar(sum);
   Value scale = real(b, 1.0 / double(uint64_t{1} << fractionalBits));
   if (auto vector = dyn_cast<VectorType>(sum.getType())) {
     type = VectorType::get(vector.getShape(), type);
@@ -328,9 +342,10 @@ Value Lowering::decodeObservable(OpBuilder &b, Value sum, int bits) {
 
 Value Lowering::add(OpBuilder &b, Value lhs, Value rhs) {
   if (!fixedPoint) return arith::AddFOp::create(b, loc, lhs, rhs);
-  // Check signed overflow for every scalar lane, including reverse updates.
-  auto word = b.getI64Type();
-  auto checked = declare("mdrtDistAddWords", b.getFunctionType({word, word}, {word}), false);
+  // The count certificate bounds every pair subtotal by N(N-1) * 2^63.
+  // Check the wider sums across different terms as well.
+  auto wide = b.getIntegerType(128);
+  auto checked = declare("mdrtDistAddWide", b.getFunctionType({wide, wide}, {wide}), false);
   auto scalar = [&](Value a, Value v) {
     return func::CallOp::create(b, loc, checked, ValueRange{a, v}).getResult(0);
   };
@@ -345,7 +360,7 @@ Value Lowering::add(OpBuilder &b, Value lhs, Value rhs) {
 }
 
 Value Lowering::zero(OpBuilder &b, Type type) {
-  if (getElementTypeOrSelf(type).isInteger(64))
+  if (isa<IntegerType>(getElementTypeOrSelf(type)))
     return arith::ConstantOp::create(b, loc, b.getZeroAttr(type));
   if (auto vector = dyn_cast<VectorType>(type))
     return arith::ConstantOp::create(
@@ -466,6 +481,12 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
   if (!fieldType.getElementType().isF64())
     return op.emitOpError() << "the reference executor runs f64 only";
   Value positions = inputSnapshot(b, fieldType, op.getPositions());
+  if (fixedPoint) {
+    Value count = memref::DimOp::create(b, loc, positions, 0);
+    auto check = declare("mdrtDistCheckWordCount", b.getFunctionType({b.getI64Type()}, {}), false);
+    func::CallOp::create(b, loc, check, ValueRange{
+        arith::IndexCastOp::create(b, loc, b.getI64Type(), count)});
+  }
   auto wide = MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
                               b.getF64Type());
   Value cast = memref::CastOp::create(b, loc, wide, positions);
@@ -771,7 +792,7 @@ LogicalResult Lowering::lowerHaloSum(HaloSumOp op) {
   Value ghosts = storage[op.getGhosts()].buffer;
   int64_t k = op.getResult().getType().getNumComponents();
   Value result = allocate(b, layout.capacity, k);
-  if (fixedPoint && cast<MemRefType>(owned.getType()).getElementType().isInteger(64)) {
+  if (fixedPoint && cast<MemRefType>(owned.getType()).getElementType().isInteger(128)) {
     auto sum = declare("mdrtDistHaloSumWords",
         b.getFunctionType({b.getI64Type(), owned.getType(), ghosts.getType(),
                            result.getType()}, {}), true);
@@ -1338,7 +1359,7 @@ LogicalResult Lowering::lowerMapParticles(MapParticlesOp op) {
   bool combine = fixedPoint && op->hasAttr("md_dist.add_terms");
   Value raw;
   if (combine && needsWords(op.getResult())) {
-    raw = allocate(b, cast<MemRefType>(cast<MemRefType>(result.getType()).clone(b.getI64Type())),
+    raw = allocate(b, MemRefType::get(cast<MemRefType>(result.getType()).getShape(), b.getIntegerType(128)),
                    {index(b, domains), rows.capacity, index(b, resultType.getNumComponents())});
     fieldWords[op.getResult()] = raw;
   }

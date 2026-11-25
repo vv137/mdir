@@ -4,15 +4,6 @@ import sys
 
 lib = c.CDLL(sys.argv[1])
 word = c.c_int64
-if sys.argv[2] == "overflow":
-    add = lib.mdrtDistAddWords
-    add.argtypes = [word, word]
-    add.restype = word
-    assert add(2**63 - 2, 1) == 2**63 - 1
-    add(2**63 - 1, 1)
-    raise AssertionError("overflow accepted")
-
-
 def descriptor(shape, data):
     rank = len(shape)
     indices = word * rank
