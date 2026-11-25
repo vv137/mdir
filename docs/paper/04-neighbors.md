@@ -1345,6 +1345,14 @@ stages. For larger populations each key's rank is the number of strictly
 smaller keys. Both paths assign the same slots and thus the same ordered
 spans to the force traversal.
 
+The four-key and eight-key limits use separate kernel entries. Each
+insertion group's reservation yields the new population of its cell.
+Their maximum, accumulated on the device, selects the entry for that
+evaluation. When the mean population exceeds 128, the maximum exceeds
+128 as well, and the grid requires only the wide launch. At most 128
+atoms in the entire system require only the compact launch. On other
+grids the two entries test the same maximum on the simulation stream.
+
 The rectangular force entry realizes the screen in the owning box's image.
 It rounds the scaled positions to a lattice and rounds the encoded source
 squared norm downward. A padded distance threshold accounts for the endpoint

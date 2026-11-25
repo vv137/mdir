@@ -204,22 +204,9 @@ struct Dispatch {
       initialState = buffer("certificate", mem({2}, narrow));
       initialFailed = buffer("failed conversions", mem({1}, wide));
     }
-    TowersMovingRow input{g,
-                          bool(shape.cartesianPositions),
-                          positions,
-                          cell,
-                          raw,
-                          box,
-                          geometry,
-                          status,
-                          charge,
-                          types,
-                          counts,
-                          keys,
-                          local,
-                          initialWords,
-                          initialState,
-                          initialFailed,
+    TowersMovingRow input{g, bool(shape.cartesianPositions), positions, cell,
+                          raw, box, geometry, status, charge, types, counts,
+                          keys, local, initialWords, initialState, initialFailed,
                           arrivals};
     rows(b, loc, idx(g.atoms), [&](OpBuilder &k, Value i) {
       input.emit(k, loc, i, binsInfo, fields);
