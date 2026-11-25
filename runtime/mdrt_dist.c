@@ -106,6 +106,12 @@ int64_t mdrtDistAddWords(int64_t a, int64_t b) {
 
 void _mlir_ciface_mdrtDistImageShifts(int64_t handle, struct Memref3D *shifts) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
+  if (!h || !shifts || shifts->sizes[0] != h->layout->domains ||
+      shifts->sizes[2] != 3)
+    fail("deterministic pair geometry requires a complete halo image field");
+  for (int64_t d = 0; d < h->layout->domains; ++d)
+    if (shifts->sizes[1] < h->rows[d])
+      fail("missing halo rows for deterministic pair geometry");
   for (int64_t d = 0; d < h->layout->domains; ++d)
     for (int64_t g = 0; g < h->rows[d]; ++g)
       for (int c = 0; c < 3; ++c)
