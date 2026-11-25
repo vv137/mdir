@@ -29,3 +29,10 @@ in squared distance by Horner's rule with the analytic cutoff factor. The
 force follows by differentiation of the same energy. Other explicit basis
 sizes retain Clenshaw evaluation. The [cutoff comparison](../pme.md#cutoff-continuity-of-the-prolate-splitting)
 gives the binary32 errors and the TOWERS instruction counts.
+
+The GPU uses cuFFT for both assignment windows. With cubic B-splines it
+combines spline weights and deconvolution with the radial influence of
+the selected density. A force-only step applies that influence before
+the inverse transform. Steps that request energy or virial also accumulate
+the reciprocal observables there. D433's inverse-load callback and D435's
+five-pass axis FFT implement the Gaussian product.

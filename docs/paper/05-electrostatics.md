@@ -1093,6 +1093,13 @@ in $1-x^2$ with the factor $(1-x)^{k+1}$ extracted from the direct
 potential. Differentiation then preserves the cutoff zeros. Other basis
 sizes use the Chebyshev recurrence. The reciprocal calculation uses the cosine transform
 of this density. The default assignment for positive continuity is a four-point B-spline.
+Its deconvolution corrects the spline assignment while the radial factor
+retains the cosine transform of the constrained density. On the GPU,
+cuFFT transforms the charge grid and the radial product is applied before
+the inverse transform. The Gaussian product in the inverse-load callback
+(D433) and in the five-pass axis transform (D435) would change the
+reciprocal force for this split. Both prolate windows therefore use the
+separate radial product, including under automatic FFT selection.
 
 The public cuPotential theory documentation describes a compact C² prolate
 split whose long-range kernel matches Coulomb through two derivatives at

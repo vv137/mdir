@@ -20,6 +20,20 @@ func.func @ordinary(%x: !pos, %q: !scalar, %cell: !md.cell, %m: !mod,
   return
 }
 
+// CHECK-LABEL: func.func @prolate_spline(
+// CHECK: call @mdrt_gpu_pme_radial_spline_tables_
+// CHECK: call @mdrt_gpu_pme_prolate_scale_
+// CHECK: call @mdrtCudaFFTBackward3DF32
+func.func @prolate_spline(%x: !pos, %q: !scalar, %cell: !md.cell, %m: !mod,
+     %f: !frc, %p: !scalar, %s0: memref<?xi64, 1>, %s1: !scalar, %s2: !scalar,
+     %s3: memref<?xf64, 1>, %s4: !scalar, %s5: !scalar) {
+  %e, %w = md_exec.reciprocal %x, %q, %cell, %m outs(%f : !frc)
+    scratch(%s0, %s1, %s2, %s3, %s4, %s5 : memref<?xi64, 1>, !scalar, !scalar, memref<?xf64, 1>, !scalar, !scalar)
+    grid([32, 32, 30]) order(4) beta(3.0) coulomb(138.9) prolate spline_assignment
+    : !pos, !scalar, !mod -> f64, vector<9xf64>
+  return
+}
+
 // CHECK-LABEL: func.func @energy(
 // CHECK: call @mdrt_gpu_pme_convolve
 // CHECK: call @mdrtCudaFFTBackward3DF32
