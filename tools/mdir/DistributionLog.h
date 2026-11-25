@@ -28,11 +28,13 @@ class DistributionLog {
   int rank, ranks;
   int64_t domains, first, step, period;
   bool setup = true;
+  bool enteredStep = false;
+  double reach;
   FILE *trace = nullptr;
   std::vector<int64_t> owned, ghosts;
   llvm::json::Array boxes;
   Sample current, interval, total;
-  Clock::time_point began = Clock::now();
+  Clock::time_point started = Clock::now(), began = started;
   std::array<Clock::time_point, DistPhaseCount> starts;
   static constexpr const char *names[] = {"wall", "pairs", "other_terms",
       "halo_copy", "halo_sum", "all_reduce", "migration", "wait"};
@@ -49,12 +51,17 @@ class DistributionLog {
       lower.push_back(lo[i] * 10);
       upper.push_back(hi[i] * 10);
     }
-    log.print("MDIR: domain %lld rank %d box Ang [%g,%g] [%g,%g] [%g,%g] owned %lld ghosts %lld position import %lld bytes\n",
+    double a = 10*(hi[0]-lo[0]), b = 10*(hi[1]-lo[1]), c = 10*(hi[2]-lo[2]);
+    // The Euclidean halo rounds each edge and corner of the domain box.
+    const double pi = std::acos(-1.);
+    double volume = 2*reach*(a*b+b*c+c*a) + pi*reach*reach*(a+b+c) +
+                    4*pi*reach*reach*reach/3;
+    log.print("MDIR: domain %lld rank %d box Ang [%g,%g] [%g,%g] [%g,%g] owned %lld ghosts %lld position import %lld bytes, halo volume %.9g Ang^3\n",
         (long long)d, owner(d), lo[0]*10, hi[0]*10, lo[1]*10, hi[1]*10,
-        lo[2]*10, hi[2]*10, (long long)n, (long long)g, (long long)g*24);
+        lo[2]*10, hi[2]*10, (long long)n, (long long)g, (long long)g*24, volume);
     boxes.push_back(llvm::json::Object{{"domain", d}, {"rank", owner(d)},
         {"lower_angstrom", std::move(lower)}, {"upper_angstrom", std::move(upper)},
-        {"owned", n}, {"ghosts", g}, {"position_import_bytes", g * 24}});
+        {"import_volume_angstrom3", volume}, {"owned", n}, {"ghosts", g}, {"position_import_bytes", g * 24}});
     if (d + 1 == domains) {
       setup = false;
       if (auto e = manifest.domainSetup(std::move(boxes)))
@@ -150,6 +157,12 @@ class DistributionLog {
   void phase(int64_t code) {
     auto now = Clock::now();
     if (code == DistStep) {
+      // Finish the preceding step after its energy, frame and checkpoint
+      // callbacks. The first marker opens the first step of this invocation.
+      if (!enteredStep) {
+        enteredStep = true;
+        return;
+      }
       ++step;
       current.seconds[0] = std::chrono::duration<double>(now-began).count();
       if (trace) rows(current, "trace", true);
@@ -168,9 +181,9 @@ public:
   std::string error;
   void (*gather)(const double *, double *, int) = nullptr;
   DistributionLog(driver::Log &log, Manifest &manifest, int rank, int ranks,
-                  int64_t n, int64_t first, int64_t period)
+                  int64_t n, int64_t first, int64_t period, double reach)
       : log(log), manifest(manifest), rank(rank), ranks(ranks), domains(n),
-        first(first), step(first), period(period), owned(n), ghosts(n),
+        first(first), step(first), period(period), reach(reach), owned(n), ghosts(n),
         current(n), interval(n), total(n) {}
   bool open(const char *prefix) {
     if (!prefix || !*prefix) return true;
@@ -180,9 +193,10 @@ public:
     return trace != nullptr;
   }
   void finish() {
-    current.seconds[0] += std::chrono::duration<double>(Clock::now()-began).count();
+    if (enteredStep) phase(DistStep);
     add(interval, current);
     add(total, interval);
+    total.seconds[0] = std::chrono::duration<double>(Clock::now()-started).count();
     rows(total, "total", false);
   }
   ~DistributionLog() { if (trace) std::fclose(trace); }
