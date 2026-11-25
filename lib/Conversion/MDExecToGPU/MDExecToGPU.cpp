@@ -682,6 +682,9 @@ private:
   LogicalResult emitBuild(OpBuilder &builder, Location loc,
                           const Neighbors &structure, Value positions,
                           Value box, double reach, double cellWidth);
+  LogicalResult emitUncachedBuild(OpBuilder &builder, Location loc,
+                                  const Neighbors &structure, Value positions,
+                                  Value box, double reach, double cellWidth);
   /// Stops the run, through the runtime, if `notNumbers` positions, as a
   /// build counted them, are not numbers (D107).
   void emitStopNotNumbers(OpBuilder &builder, Location loc, Value notNumbers);
@@ -8599,6 +8602,40 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                                   const Neighbors &structure, Value positions,
                                   Value box, double reach,
                                   double cellWidth) {
+  auto function = builder.getInsertionBlock()->getParentOp()->getParentOfType<func::FuncOp>();
+  if (!function)
+    function = dyn_cast<func::FuncOp>(builder.getInsertionBlock()->getParentOp());
+  Value slot;
+  if (function && !structure.groups)
+    for (auto call : function.getOps<func::CallOp>())
+      if (call.getCallee() == "mdrtDistDeviceMatrixSlot") slot = call.getResult(0);
+  if (!slot) return emitUncachedBuild(builder,loc,structure,positions,box,reach,cellWidth);
+  SmallVector<Value> args{slot,structure.handle,structure.counts,structure.order};
+  Type wide = builder.getI64Type();
+  auto declare = [&](StringRef name, TypeRange outputs) {
+    auto f = getOrDeclare(name,builder.getFunctionType(ValueRange(args).getTypes(),outputs));
+    f->setAttr("llvm.emit_c_interface",builder.getUnitAttr());
+    return f;
+  };
+  auto restore = declare("mdrtDeviceRestoreDomainMatrix",TypeRange{wide});
+  auto save = declare("mdrtDeviceSaveDomainMatrix",{});
+  Value hit = func::CallOp::create(builder,loc,restore,args).getResult(0);
+  Value missing = arith::CmpIOp::create(builder,loc,arith::CmpIPredicate::eq,hit,
+                                       arith::ConstantIntOp::create(builder,loc,0,64));
+  LogicalResult status = success();
+  scf::IfOp::create(builder,loc,missing,[&](OpBuilder &at, Location) {
+    status = emitUncachedBuild(at,loc,structure,positions,box,reach,cellWidth);
+    func::CallOp::create(at,loc,save,args);
+    scf::YieldOp::create(at,loc);
+  },[&](OpBuilder &at, Location) {
+    if (succeeded(status)) status = finishBuild(at,loc,structure,positions,box);
+    scf::YieldOp::create(at,loc);
+  });
+  return status;
+}
+
+LogicalResult Lowering::emitUncachedBuild(OpBuilder &builder, Location loc,
+    const Neighbors &structure, Value positions, Value box, double reach, double cellWidth) {
   if (structure.groups) {
     if (failed(emitGroupsBuild(builder, loc, structure, positions, box,
                                reach)))

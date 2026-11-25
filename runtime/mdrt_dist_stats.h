@@ -6,6 +6,12 @@
 enum DistPhase { DistPairs = 1, DistOther, DistCopy, DistSum, DistReduce,
                  DistMigration, DistWait, DistList, DistPack, DistIntra, DistInter,
                  DistIntegrate, DistOutput, DistState, DistHaloBuild, DistIntraHalo, DistInterHalo, DistPhaseCount, DistStep };
+// Opaque device storage freed with the halo that fixes its row identities.
+struct DistDeviceMatrix {
+  void *data;
+  void (*release)(void *);
+};
+
 struct DistObserver {
   void *context;
   void (*domain)(void *, int64_t, int64_t, int64_t, const double *, const double *);

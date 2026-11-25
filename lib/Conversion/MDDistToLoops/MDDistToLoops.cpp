@@ -2403,6 +2403,16 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
         midpoint ? 2 : traversal == Traversal::Unique ? 1 : 0);
     return {positions, structure, nOwned, relation.cell, centers};
   }
+  if (sharedState() && !op.getExcluded() && op.getHalo().getDefiningOp<UnpackOp>() &&
+      module->hasAttr("md_dist.driver") && matrixSkin > 0) {
+    // Within this Verlet epoch each row moves at most half the halo
+    // margin from its reference. Between two evaluations the separation
+    // can therefore change by twice the margin.
+    skin = 2*(op.getHalo().getType().getReach().convertToDouble()-cutoff);
+    auto fn = declare("mdrtDistDeviceMatrixSlot",
+                      b.getFunctionType({b.getI64Type(), b.getF64Type()}, {b.getI64Type()}), false);
+    func::CallOp::create(b,loc,fn,ValueRange{halo.handle,real(b,cutoff)});
+  }
   Value excluded;
   if (gpuPairs && op.getExcluded()) {
     auto name = (set.getValue() + ".excluded").str();

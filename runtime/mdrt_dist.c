@@ -136,6 +136,8 @@ struct Halo {
 #endif
 #ifdef MDIR_ENABLE_NCCL
   struct NCCLPlan *ncclPlan;
+  struct DistDeviceMatrix deviceMatrix;
+  double deviceCutoff;
 #endif
   int64_t capacity; /* the most ghosts of one domain */
   int64_t *rows;    /* [domains] */
@@ -1680,6 +1682,13 @@ static struct TransferPlan *transferPlan(struct Halo *h, int transpose) {
 }
 
 #ifdef MDIR_ENABLE_NCCL
+int64_t mdrtDistDeviceMatrixSlot(int64_t halo, double cutoff) {
+  struct Halo *h = (struct Halo *)(intptr_t)halo;
+  if (h->deviceCutoff && h->deviceCutoff != cutoff) return 0;
+  h->deviceCutoff = cutoff;
+  return (int64_t)(intptr_t)&h->deviceMatrix;
+}
+
 static struct NCCLPlan *devicePlan(struct Halo *h) {
   if (!h->ncclPlan)
     h->ncclPlan = mdrtNCCLPlan(h->layout->domains, h->rows, h->capacity,
@@ -1933,6 +1942,7 @@ void mdrtDistReleaseHalo(int64_t handle) {
     free(m);
   }
 #ifdef MDIR_ENABLE_NCCL
+  if (h->deviceMatrix.data) h->deviceMatrix.release(h->deviceMatrix.data);
   mdrtNCCLFreePlan(h->ncclPlan);
 #endif
   free(h->rows);

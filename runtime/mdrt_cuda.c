@@ -6,6 +6,7 @@
    the header of the toolkit, and nothing else of the toolkit. */
 
 #include <cuda.h>
+#include "mdrt_dist_stats.h"
 #include "mdir/Runtime/GroupsABI.h"
 #include "mdir/Runtime/CopyAudit.h"
 
@@ -2351,6 +2352,65 @@ void _mlir_ciface_mdrtMatrixEntries(struct Buffer2 *result, int64_t handle) {
   result->sizes[1] = matrix->width;
   result->strides[0] = matrix->width;
   result->strides[1] = 1;
+}
+
+struct CachedDomainMatrix {
+  struct Matrix matrix;
+  CUdeviceptr counts, order;
+};
+
+static void releaseDomainMatrix(void *data) {
+  struct CachedDomainMatrix *cache = data;
+  check(cuMemFree((CUdeviceptr)cache->matrix.data), "release domain matrix");
+  check(cuMemFree(cache->counts), "release domain counts");
+  check(cuMemFree(cache->order), "release domain order");
+  free(cache);
+}
+
+/* Keep entries, traversal order and row lengths together. A hit lends the
+   entries to this force evaluation and fills its private counts and order.
+   Temporary allocations remain owned by its activation. */
+int64_t _mlir_ciface_mdrtDeviceRestoreDomainMatrix(int64_t slot, int64_t handle,
+    struct Buffer1 *counts, struct Buffer1 *order) {
+  struct DistDeviceMatrix *owner = (void *)(intptr_t)slot;
+  if (!owner || !owner->data) return 0;
+  struct CachedDomainMatrix *cache = owner->data;
+  struct Matrix *matrix = (void *)(intptr_t)handle;
+  if (matrix->rows != cache->matrix.rows || counts->size != order->size ||
+      (counts->size ? counts->size : 1) != matrix->rows) abort();
+  *matrix = cache->matrix;
+  size_t bytes = counts->size*sizeof(int32_t);
+  if (bytes) {
+    check(cuMemcpyDtoDAsync((CUdeviceptr)counts->aligned,cache->counts,bytes,sharedStream), "restore domain counts");
+    check(cuMemcpyDtoDAsync((CUdeviceptr)order->aligned,cache->order,bytes,sharedStream), "restore domain order");
+    isPending = 1;
+  }
+  return 1;
+}
+
+void _mlir_ciface_mdrtDeviceSaveDomainMatrix(int64_t slot, int64_t handle,
+    struct Buffer1 *counts, struct Buffer1 *order) {
+  struct DistDeviceMatrix *owner = (void *)(intptr_t)slot;
+  if (!owner) return;
+  struct Matrix *matrix = (void *)(intptr_t)handle;
+  struct CachedDomainMatrix *cache = calloc(1,sizeof *cache);
+  if (!cache || owner->data) abort();
+  size_t rows = matrix->rows*sizeof(int32_t);
+  size_t entries = rows*matrix->width;
+  CUdeviceptr saved;
+  check(cuMemAlloc(&saved,entries), "allocate cached domain entries");
+  check(cuMemAlloc(&cache->counts,rows), "allocate cached domain counts");
+  check(cuMemAlloc(&cache->order,rows), "allocate cached domain order");
+  check(cuMemcpyDtoDAsync(saved,(CUdeviceptr)matrix->data,entries,sharedStream), "save domain entries");
+  if (counts->size) {
+    check(cuMemcpyDtoDAsync(cache->counts,(CUdeviceptr)counts->aligned,rows,sharedStream), "save domain counts");
+    check(cuMemcpyDtoDAsync(cache->order,(CUdeviceptr)order->aligned,rows,sharedStream), "save domain order");
+  }
+  cache->matrix = *matrix;
+  cache->matrix.data = (void *)saved;
+  owner->data = cache;
+  owner->release = releaseDomainMatrix;
+  isPending = 1;
 }
 
 /* Makes the rows hold `width` entries, a quarter more than asked, if they
