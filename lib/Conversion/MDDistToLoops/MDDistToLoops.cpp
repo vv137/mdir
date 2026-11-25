@@ -2793,7 +2793,7 @@ static LogicalResult convertStateFlow(func::FuncOp function) {
 /// a step, the sets of md_exec have the sizes of that step. A cell and the
 /// constants the body reads are made again in the function, so that the
 /// passes that need the op of a cell find it.
-static LogicalResult outlineSteps(ModuleOp module, func::FuncOp function, StringRef marker) {
+static LogicalResult outlineSteps(ModuleOp module, func::FuncOp function, StringRef marker, bool gpuPairs) {
   SmallVector<scf::ForOp> loops;
   function.walk([&](scf::ForOp loop) {
     if (loop->hasAttr(marker))
@@ -2827,8 +2827,10 @@ static LogicalResult outlineSteps(ModuleOp module, func::FuncOp function, String
       visit(value);
     Block *body = loop.getBody();
     SmallVector<Type> inputs(body->getArgumentTypes());
-    for (Value value : passed)
-      inputs.push_back(value.getType());
+    for (Value value : passed) {
+      auto table = dyn_cast<md::TableType>(value.getType());
+      inputs.push_back(gpuPairs && table ? Type(mdrt::getTableBufferType(table)) : value.getType());
+    }
     SmallVector<Type> results(loop.getResultTypes());
     OpBuilder b(function);
     std::string name =
@@ -2844,11 +2846,15 @@ static LogicalResult outlineSteps(ModuleOp module, func::FuncOp function, String
          llvm::zip(body->getArguments(),
                    entry->getArguments().take_front(body->getNumArguments())))
       mapping.map(argument, value);
+    OpBuilder inside = OpBuilder::atBlockBegin(entry);
     for (auto [value, argument] :
          llvm::zip(passed,
-                   entry->getArguments().drop_front(body->getNumArguments())))
-      mapping.map(value, argument);
-    OpBuilder inside = OpBuilder::atBlockBegin(entry);
+                   entry->getArguments().drop_front(body->getNumArguments()))) {
+      Value mapped = argument;
+      if (gpuPairs && isa<md::TableType>(value.getType()))
+        mapped = mdrt::FromBufferOp::create(inside, loop.getLoc(), value.getType(), argument);
+      mapping.map(value, mapped);
+    }
     for (Operation *op : remade)
       inside.clone(*op, mapping);
     for (Operation &op : body->without_terminator())
@@ -2860,7 +2866,12 @@ static LogicalResult outlineSteps(ModuleOp module, func::FuncOp function, String
     func::ReturnOp::create(inside, loop.getLoc(), returned);
     // The loop calls the step.
     SmallVector<Value> operands(body->getArguments());
-    operands.append(passed.begin(), passed.end());
+    OpBuilder callSite(loop);
+    for (Value value : passed) {
+      if (auto table = dyn_cast<md::TableType>(value.getType()); gpuPairs && table)
+        value = mdrt::ToBufferOp::create(callSite, loop.getLoc(), mdrt::getTableBufferType(table), value);
+      operands.push_back(value);
+    }
     SmallVector<Operation *> moved;
     for (Operation &op : body->without_terminator())
       moved.push_back(&op);
@@ -3035,7 +3046,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
     cast.erase();
   }
   if (throughExec || matrixPairs) {
-    if (failed(outlineSteps(module, function, matrixPairs ? "md_dist.domain_loop" : kStepLoop)))
+    if (failed(outlineSteps(module, function, matrixPairs ? "md_dist.domain_loop" : kStepLoop, gpuPairs)))
       return failure();
   }
   if (!throughExec) {
