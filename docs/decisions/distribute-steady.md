@@ -12,3 +12,11 @@ including local entries, to preserve the order of force accumulation.
 Validated constraint groups read every tuple member at its owner.
 Mixed CPU midpoint rows subtract the explicit-image coordinates in double
 before converting the displacement to kernel precision.
+
+The native constrained CPU force loop retains a MATRIX layout, halo images
+and list references across steps within half the pairlist skin. Membership
+is keyed by particle identity within the numbering of the current loop.
+The nondeterministic midpoint path reports the box of possible interaction
+centers for its halo. A group member across a periodic face can be far
+from that box, while its pair midpoint must lie inside. Group-local solves
+require only owned rows.
