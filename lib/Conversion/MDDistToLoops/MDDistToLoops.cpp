@@ -875,6 +875,18 @@ LogicalResult Lowering::lowerRedistribute(RedistributeOp op) {
 
 LogicalResult Lowering::lowerHalo(HaloOp op) {
   OpBuilder b(op);
+  // All constraint members are owned. Such a solve only needs the layout
+  // for row lookup and never reads the halo or an imported field.
+  if (llvm::all_of(op.getResult().getUsers(), [&](Operation *use) {
+        if (auto rows = dyn_cast<TupleRowsOp>(use)) return rows.getGroup();
+        if (auto copy = dyn_cast<HaloCopyOp>(use))
+          return !copy.getResult().use_empty() &&
+                 llvm::all_of(copy.getResult().getUsers(), [&](Operation *u) {
+                   return constraintKernels.contains(u);
+                 });
+        return constraintKernels.contains(use);
+      }))
+    return success();
   Storage &layout = storage[op.getLayout()];
   Value positions = storage[op.getPositions()].buffer;
   Type i64 = b.getI64Type();
@@ -1223,7 +1235,8 @@ LogicalResult Lowering::lowerTupleRows(TupleRowsOp op) {
   Value positions = storage[op.getPositions()].buffer;
   auto fill = declare(op.getGroup() ? "mdrtDistConstraintRows" : "mdrtDistTupleRows",
       b.getFunctionType({b.getI64Type(), positions.getType(), source.getType(), result.getType()}, {}), true);
-  func::CallOp::create(b, loc, fill, ValueRange{storage[op.getHalo()].handle, positions, source, result});
+  func::CallOp::create(b, loc, fill, ValueRange{op.getGroup() ? storage[layoutOf(op.getHalo())].handle
+                               : storage[op.getHalo()].handle, positions, source, result});
   op.getRows().replaceAllUsesWith(rows);
   return success();
 }
@@ -2002,7 +2015,19 @@ Value Lowering::copyForState(OpBuilder &b, Value buffer) {
   for (int64_t i = 0; i < type.getRank(); ++i)
     sizes.push_back(memref::DimOp::create(b, loc, buffer, i));
   Value copy = memref::AllocOp::create(b, loc, type, sizes);
-  memref::CopyOp::create(b, loc, buffer, copy);
+  if (mpi) {
+    auto first = domainBound(b, false), past = domainBound(b, true);
+    auto span = arith::SubIOp::create(b, loc, past, first);
+    SmallVector<OpFoldResult> offsets{first, b.getIndexAttr(0), b.getIndexAttr(0)};
+    SmallVector<OpFoldResult> extent{span, sizes[1], sizes[2]};
+    SmallVector<OpFoldResult> strides(3, b.getIndexAttr(1));
+    auto slice = [&](Value value) {
+      return memref::SubViewOp::create(b, loc, value, offsets, extent, strides);
+    };
+    memref::CopyOp::create(b, loc, slice(buffer), slice(copy));
+  } else {
+    memref::CopyOp::create(b, loc, buffer, copy);
+  }
   return copy;
 }
 
