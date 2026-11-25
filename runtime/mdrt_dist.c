@@ -13,7 +13,9 @@
    the schedule as it runs. */
 
 #include "mdrt_dist_stats.h"
-#include <float.h>
+#ifdef MDIR_ENABLE_MPI
+#include "mdrt_mpi.h"
+#endif
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -68,6 +70,7 @@ static void fail(const char *message) {
    op that makes one holds the first, a md_dist.state holds one while it
    carries it, and a halo holds one of its layout. */
 struct Layout {
+  int mpi;
   int64_t references;
   int64_t grid[3], domains, count;
   double edges[3];
@@ -297,6 +300,42 @@ int64_t _mlir_ciface_mdrtDistPartition(struct Memref2D *x, int64_t gx,
   return (int64_t)(intptr_t)l;
 }
 
+#ifdef MDIR_ENABLE_MPI
+int64_t _mlir_ciface_mdrtDistMPIPartition(struct Memref2D *x, int64_t gx,
+    int64_t gy, int64_t gz, double lx, double ly, double lz) {
+  mdrtMPIDomainBound(gx * gy * gz, 0);
+  int64_t handle = _mlir_ciface_mdrtDistPartition(x, gx, gy, gz, lx, ly, lz);
+  ((struct Layout *)(intptr_t)handle)->mpi = 1;
+  return handle;
+}
+
+/* The lowering passes a dense allocation. Transfer only live rows.
+   Replicated ownership metadata keeps record order independent of rank count. */
+static void shareRows(struct Layout *l, const int64_t *rows, struct Memref3D *field) {
+  if (!l->mpi)
+    return;
+  if (field->strides[2] != 1 || field->strides[1] != field->sizes[2])
+    mdrtMPIAbort("expected contiguous field rows");
+  for (int64_t d = 0; d < l->domains; ++d)
+    if (rows[d])
+      mdrtMPIBroadcast(at3(field, d, 0, 0), rows[d] * field->sizes[2],
+                       mdrtMPIOwner(l->domains, d));
+}
+
+void _mlir_ciface_mdrtMPICollectRows(int64_t handle, struct Memref3D *field) {
+  struct Layout *layout = (struct Layout *)(intptr_t)handle;
+  shareRows(layout, layout->rows, field);
+}
+
+void _mlir_ciface_mdrtMPISharePartials(struct Memref2D *partial) {
+  for (int64_t d = 0; d < partial->sizes[0]; ++d)
+    mdrtMPIBroadcast(at2(partial, d, 0), partial->sizes[1],
+                     mdrtMPIOwner(partial->sizes[0], d));
+}
+#else
+#define shareRows(layout, rows, field) ((void)0)
+#endif
+
 /* The owned rows of each domain, and the particle of each. */
 void _mlir_ciface_mdrtDistLayoutRows(int64_t handle, struct Memref1I *rows,
                                      struct Memref2I *ids) {
@@ -400,6 +439,7 @@ int64_t _mlir_ciface_mdrtDistMigrate(int64_t oldHandle,
       positions->sizes[1] < old->count || positions->sizes[2] != 3)
     fail("migration positions do not cover the old layout");
   checkIdentities(old);
+  shareRows(old, old->rows, positions);
   double edges[3] = {lx, ly, lz};
   for (int k = 0; k < 3; ++k)
     if (!(isfinite(edges[k]) && edges[k] > 0.0))
@@ -408,6 +448,7 @@ int64_t _mlir_ciface_mdrtDistMigrate(int64_t oldHandle,
   if (!next)
     fail("out of memory");
   next->references = 1;
+  next->mpi = old->mpi;
   next->domains = old->domains;
   next->count = old->count;
   for (int k = 0; k < 3; ++k) {
@@ -464,6 +505,7 @@ void _mlir_ciface_mdrtDistRedistribute(int64_t oldHandle, int64_t newHandle,
       source->sizes[2] != destination->sizes[2] ||
       (image && source->sizes[2] != 3))
     fail("redistribution requires matching, distinct field buffers");
+  shareRows(old, old->rows, source);
   int64_t components = source->sizes[2];
   for (int64_t j = 0; j < old->count; ++j)
     for (int64_t k = 0; k < components; ++k) {
@@ -551,6 +593,7 @@ int64_t _mlir_ciface_mdrtDistHalo(int64_t layout, struct Memref3D *x,
   h->layout = (struct Layout *)(intptr_t)layout;
   mdrtDistRetainLayout(layout);
   h->reach = reach;
+  shareRows(h->layout, h->layout->rows, x);
   int64_t domains = h->layout->domains;
   h->rows = calloc(domains, sizeof(int64_t));
   if (!h->rows)
@@ -630,7 +673,14 @@ int64_t _mlir_ciface_mdrtDistCovered(int64_t handle,
     fail("coverage positions do not span the halo layout");
   double halfSkin = (h->reach - cutoff) * 0.5;
   double limit2 = halfSkin * halfSkin;
-  for (int64_t d = 0; d < l->domains; ++d)
+  int64_t first = 0, past = l->domains;
+#ifdef MDIR_ENABLE_MPI
+  if (l->mpi) {
+    first = mdrtMPIDomainBound(l->domains, 0);
+    past = mdrtMPIDomainBound(l->domains, 1);
+  }
+#endif
+  for (int64_t d = first; d < past; ++d)
     for (int64_t r = 0; r < l->rows[d]; ++r) {
       double displacement2 = 0.0;
       for (int k = 0; k < 3; ++k) {
@@ -646,8 +696,18 @@ int64_t _mlir_ciface_mdrtDistCovered(int64_t handle,
         displacement2 += delta * delta;
       }
       if (!(displacement2 < limit2))
-        return 0;
+        {
+#ifdef MDIR_ENABLE_MPI
+          if (l->mpi)
+            return mdrtMPIAllTrue(0);
+#endif
+          return 0;
+        }
     }
+#ifdef MDIR_ENABLE_MPI
+  if (l->mpi)
+    return mdrtMPIAllTrue(1);
+#endif
   return 1;
 }
 
@@ -681,6 +741,7 @@ void _mlir_ciface_mdrtDistHaloCopy(int64_t handle, struct Memref3D *owned,
       observer->transfer(observer->context, edge.from, edge.to,
                          edge.rows * owned->sizes[2] * (int64_t)sizeof(double));
     }
+  shareRows(h->layout, h->layout->rows, owned);
   int64_t k = owned->sizes[2];
   for (int64_t d = 0; d < h->layout->domains; ++d)
     for (int64_t g = 0; g < h->rows[d]; ++g) {
@@ -710,6 +771,7 @@ void _mlir_ciface_mdrtDistHaloSum(int64_t handle, struct Memref3D *ghosts,
       observer->transfer(observer->context, edge.to, edge.from,
                          edge.rows * owned->sizes[2] * (int64_t)sizeof(double));
     }
+  shareRows(h->layout, h->rows, ghosts);
   int64_t k = owned->sizes[2];
   for (int64_t d = 0; d < h->layout->domains; ++d)
     for (int64_t g = 0; g < h->rows[d]; ++g) {
