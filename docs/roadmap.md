@@ -313,3 +313,5 @@ Distributed reciprocal space remains a separate milestone.
 
 D[distribute-pair-lowering] connects default distributed CPU pairs to the
 ordinary MATRIX list, host lane chooser, and threaded center traversal.
+
+D[distribute-steady] adds exclusive CPU phase clocks and epoch-local transport schedules.
