@@ -265,6 +265,17 @@ dynamics using stochastic velocity rescaling," *J. Chem. Phys.* **130**,
 Used for: the second-order barostat that M1 considered and did not take
 (D50).
 
+### Cerutti2024
+
+D. S. Cerutti, R. Wiewiora, S. Boothroyd, W. Sherman,
+"STORMM: Structure and topology replica molecular mechanics for chemical
+simulations," *J. Chem. Phys.* **161**, 032501 (2024).
+[doi:10.1063/5.0211032](https://doi.org/10.1063/5.0211032)
+
+Used for: atom-local valence work units, overlapping imports, and single-owner
+energy accounting (Section IV B, Figures 3–6 and Tables IV–V). Section 8 derives
+the MDIR bonded force scale and range.
+
 ### Chaitin1982
 
 G. J. Chaitin, "Register allocation & spilling via graph coloring,"

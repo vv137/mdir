@@ -4,6 +4,7 @@
 #include "NeighborBuildCode.h"
 #include "mdir/Conversion/CompactionEmitter.h"
 #include "mdir/Conversion/MDExecKernels.h"
+#include "mdir/Support/ForceWords.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -38,6 +39,7 @@ public:
         residency(shape.residency), groups(panel / 32),
         packedChargeType(shape.packedChargeType), certified(shape.certified),
         movingDispatch(shape.movingDispatch), probe(probe),
+        keepForceWords(shape.keepForceWords),
         indexedExclusions(shape.indexedExclusions),
         cartesianPositions(shape.cartesianPositions),
         typeCount(shape.typeCount), emitRetryCounter(shape.emitRetryCounter),
@@ -88,7 +90,8 @@ private:
   void exclusion(Value row);
 
   int panel, stripe, workers, recordCap, residency, groups;
-  bool packedChargeType, certified, movingDispatch, probe, indexedExclusions;
+  bool packedChargeType, certified, movingDispatch, probe, keepForceWords,
+      indexedExclusions;
   Type cartesianPositions;
   int64_t typeCount;
   bool emitRetryCounter, counting = false;
@@ -1952,10 +1955,11 @@ void Force::publishGrid(Value provisional, Value destination, Value retry,
                   {i64}, retry,
                   [&] { return Values{load(words, {atom, cx(a)})}; },
                   [&] { return Values{planeWord(provisional, atom, a)}; })[0];
-              if (term.getNumResults() == 0) {
+              if (term.getNumResults() == 0 && !keepForceWords) {
                 Type t =
                     cast<MemRefType>(destination.getType()).getElementType();
-                v = mulf(sitofp(t, v), createReal(b, loc, t, 0x1p-18));
+                v = mulf(sitofp(t, v),
+                         createReal(b, loc, t, 1.0 / forceWordScale));
                 if (!term.overwrites(0))
                   v = addf(v, load(destination, {atom, cx(a)}));
               }
@@ -2391,7 +2395,7 @@ LogicalResult Force::emit() {
       if (movingDispatch) {
         replay.push_back(types[4]);
         replay.push_back(mem({1}, i32));
-        replay.push_back(term.getNumResults() == 0
+        replay.push_back(term.getNumResults() == 0 && !keepForceWords
                              ? term.getOuts().front().getType()
                              : types[4]);
       }

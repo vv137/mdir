@@ -516,3 +516,209 @@ the change gains less there.
   particles would then leave 0.10 particles a member on Cellulose instead
   of the block's 0.237, but the order of the tuples is that of the files,
   which the energies of the terms and their fields follow. A follow-up.
+
+## 12. Topology-order work units
+
+The offline target `bonded-partition` reads a control file through the
+driver, after removal of the terms held by SHAKE and SETTLE. It constructs
+intervals in file order. An interval imports the distinct atoms of all
+terms touching an owned atom, including atoms outside the interval. Each
+term appears once in each touching interval. Only the owning interval
+exports a given member's force, and the interval of slot zero takes the
+energy and virial. The packer checks both rules against every original
+term slot. The simulation translates the import and export lists through
+the current inverse permutation (Section 2). The offline target uses
+file-order positions.
+
+Each instruction starts with a 32-bit index in the original term table.
+The following one or two words pack the local atom indices in slot order,
+ten bits per slot, least significant first. The maximum index is 1023.
+The table index identifies the term family and its parameters. The
+packer checks the decoded slots against the original members. A 1–4
+pair has its own instruction. The local-to-file atom list takes another
+four bytes per import.
+
+| System | Extra valence evaluations at 64 atoms | 128 | 256 | 512 | Active units at 128 | Largest import list at 512 |
+|---|---:|---:|---:|---:|---:|---:|
+| JAC | 10.88% | 5.68% | 2.85% | 1.19% | 20 | 530 |
+| Factor IX | 11.28% | 5.62% | 3.18% | 1.83% | 46 | 547 |
+| Cellulose | 13.09% | 6.55% | 3.27% | 1.64% | 712 | 542 |
+| STMV | 11.80% | 5.88% | 2.95% | 1.46% | 1,300 | 547 |
+
+At 128 atoms the JAC valence instruction stream occupies 208,960 bytes
+plus 11,268 bytes of atom imports. The original 32-bit member indices
+occupy 248,252 bytes. On Cellulose the corresponding sizes are 8,596,816
+plus 423,464 bytes against 10,110,096. These counts exclude force-field
+parameters and unit descriptors. The separate exclusion correction matters
+when comparing with a trace of the fused step kernel. Including it lowers
+the extra evaluations at 128 atoms to 3.58%, 3.03%, 5.10%, and 4.15%,
+respectively.
+
+The method source is Cerutti et al., Section IV B. Their Table IV gives
+RTX 4090 valence times of 9, 18, 58, and 125 µs for their four systems
+under their 4 fs NVT conditions. The MDIR suite uses other controls and
+includes the reciprocal-space exclusion correction in the fused tuple
+kernel. The sizes and term counts above describe the host partition.
+[Method source](references.md#cerutti2024)
+
+A fused integration would also need the constraint groups. At width 128
+the intervals split 110 of 7,023 SETTLE waters on JAC and 4,688 of
+300,053 on STMV. They split 9 of 790 and 614 of 52,761 hydrogen
+constraint groups on those two systems. A fused update of a split group
+would require additional imports and a single owner for its position
+update, or an interval construction that keeps the group together.
+
+The companion target `bonded-device-check` takes the same control file.
+One block imports each local position once. For every term, it derives a
+signed integer diagnostic from the coordinate bits of every slot, adds
+three components per owned member in shared memory, and flushes each
+owned component with one global 64-bit addition. It also counts the
+slot-zero owner on the device. A direct host walk over the original
+members checks every component and owner. These payloads exercise the
+data path independently of a physical force scale.
+
+| System | Ordinary tuple launch, µs | Global additions in one sampled step | Logical bytes of members and term parameters |
+|---|---:|---:|---:|
+| JAC | 10.98 | 394,443 | 973,060 |
+| Factor IX | 17.78 | 378,051 | 2,561,948 |
+| Cellulose | 90.83 | 3,028,536 | 35,291,736 |
+| STMV | 206.36 | 6,657,801 | 65,573,784 |
+
+The table measures the existing mixed kernel on an RTX 4090. The timed
+launch is the recurring force-only kernel in a 250-step trace. STMV
+also runs an alternate NPT branch at 204.46 µs. A separate instrumented
+launch counted each global force component addition in the executed
+path. Each launch uses 128 threads per block and can admit 10 blocks per
+multiprocessor, giving 83.33% theoretical occupancy. JAC's 432 blocks
+limit its device-wide ceiling to 28.125%. The logical byte counts exclude
+position and charge loads and cache traffic.
+
+### Physical evaluation and failure handling
+
+For mixed GPU dynamics with `MDIR_TUPLE_SUMS=workunits`, the compiler clones the differentiated
+tuple region for each interaction family. A block imports positions
+through the current inverse particle permutation, then evaluates terms
+using those positions and the original per-term parameters. Consecutive
+force-only loops sharing the same destination and cell can share a block.
+The packed directory records a count per family. A complemented atom
+index identifies a border import. Intervals normally own up to 128 atoms.
+If an interval needs more than 256 imports, the builder divides its
+instructions into consecutive batches that fit shared memory. Each batch
+flushes once per owned component. The runtime caches directories by the
+tuple sets and instruction format.
+
+The force quantum is $2^{-18}$ kJ mol⁻¹ nm⁻¹. A slot contributes at most
+$2^{-19}$ kJ mol⁻¹ nm⁻¹ of absolute rounding error per component. The
+signed range is $[-2^{45},2^{45}-2^{-18}]$ in these units. Conversion and
+both levels of addition are checked. Each shared add uses block scope.
+Global force and energy adds use relaxed device scope. A force-only
+publisher with all the words for its interval decodes them in the owning
+block. When an interval spans blocks, a separate acquire-release arrival
+count orders their checked subtotals before the last block decodes and
+clears the interval. An underfilled four-family packed grid admits at
+most 64 instructions per block. Its force-only kernel may first try
+int32 shared additions and repeat a block in int64 on narrowing or
+intermediate overflow. Short excluded-pair lists join the physical grid
+when the scatter policy selects direct atomics. Both producers use
+atomic floating additions to the same force in that launch. Long lists can also share the grid when their hash keys
+and vector sums fit the owner and position arrays of a work unit. Each exclusion block
+uses those arrays exclusively for its table. On int64 failure the GPU traps and the
+simulation stops. On a successful evaluation, the integer sum is
+independent of thread order. Slot-zero owners add Q32 energy words
+directly to a checked int64 total for each bonded energy output. They
+write virial components once per term for ordered binary64 reduction.
+Frame analysis, derivative programs and double precision use the original
+floating-point evaluator.
+[Derivation and comparison bound](paper/08-gpu.md)
+
+For a controlled comparison, `unpacked` uses one local index per 32-bit
+word with the same partition and arithmetic. `integer-direct` additionally
+sends each owned slot to the global word array. The latter two modes
+isolate instruction packing and shared accumulation, respectively.
+
+Moving TOWERS can retain its certified force words for subsequent work
+units that add to the same destination. Its PME exclusion correction
+then participates as another tuple family. The last consumer converts the
+combined word array once. A consumer that requires the floating-point
+destination ends that sharing window. The diagnostic strategy uses a
+separate zero-initialized plane to compare just the tuple contributions.
+
+### Fixed frames, dynamics, and timing
+
+The integer oracle compares each bonded force plane with direct evaluation
+of its slots on the same coordinates. It also compares the published plane
+with the original floating-point evaluator using the component bound above.
+Three independently compiled mixed runs on JAC and on the solvated CMAP
+peptide gave identical initial JAC force-word hashes and identical CMAP
+case hashes across runs. Including one deterministic mixed run per input,
+3,776,208 component comparisons had zero integer mismatches and zero
+violations of the floating-point bound. Across the three ordinary JAC
+runs the largest published-force difference was 0.000244140625
+kJ mol⁻¹ nm⁻¹ and the largest ratio to its bound was 0.973. Comparing
+decoded words with the wide sum of the same unrounded slots isolates
+quantization. The largest JAC RMS over incident components of a single
+bonded force plane was $3.412 \times 10^{-6}$ kJ mol⁻¹ nm⁻¹. Other terms
+in a mixed MD step can still use unordered floating-point sums.
+
+Two dyadic springs each supplied 1.5 Q32 words of energy. The mixed MD
+evaluator returned four words, while the continuous mixed and double
+evaluators returned three. The isolated mixed evaluation reproduced force,
+potential energy and virial bits over three runs. A force-loss VJP on the
+dipeptide gave identical parameter gradients and Hessian-vector products
+with and without the work-unit request.
+
+The original force-only quantization experiment measured relative endpoint
+changes of $5.403 \times 10^{-6}$ on the default path and
+$4.550 \times 10^{-5}$ with Q18 on JAC over 1,000 steps of 2 fs.
+The largest excursions across 21 saved energies were 5.3502 and
+5.7045 kcal/mol. The fixed-coordinate RMS model describes one force sum.
+Trajectory endpoints also depend on integration, constraints, floating-point
+reduction order and the divergence of subsequent coordinates. One endpoint
+pair cannot isolate a systematic drift due to quantization.
+
+With Q18 forces and Q32 energies, three JAC pairs used the same seed
+within each pair. Each trajectory covered 1,000 mixed NVE steps at 2 fs.
+The maximum excursion uses all 21 saved total energies and is in kcal/mol.
+
+| Seed | Absolute relative endpoint change, default | Q18/Q32 | Maximum excursion, default | Q18/Q32 |
+|---:|---:|---:|---:|---:|
+| 314159 | 3.723e-5 | 8.159e-5 | 5.2172 | 5.2547 |
+| 314160 | 8.451e-5 | 4.064e-5 | 6.0834 | 5.3046 |
+| 314161 | 8.802e-5 | 5.395e-5 | 6.3036 | 5.2982 |
+
+A second default run with seed 314159 gave $7.083 \times 10^{-5}$ and
+5.4613 kcal/mol. The sign of the difference between algorithms changes
+across seeds, and a single algorithm spans much of the same range on a
+same-seed repeat. These short runs do not establish a long-time drift rate.
+
+Before the Q32 energy change, two RTX 4090 jobs ran the four inputs and four strategies in opposite
+orders. A ran JAC, Factor IX, Cellulose and STMV, with the default,
+integer-direct, unpacked and packed strategies on each. B reversed both
+orders. For all 16 system/strategy combinations, the frozen timing
+executable and the final compiler emitted byte-identical lowered modules
+for the trace controls. Each cell below gives tuple time in µs and unprofiled step time
+in ms, except the single packed physical-kernel column (µs). Tuple time
+sums the recurring force-only launches, including the exclusion
+correction, clearing, and publication. The 250-step traces contain 249
+ordinary force-only launches for each NVE kernel. For STMV the two
+recurring NPT branches are weighted by their 207 and 23 occurrences.
+Step time covers steps 1,250–2,500 of a separate run. The baseline uses
+the default selector from main, including its direct atomics below the
+shared-hash threshold. Positive differences mean longer execution.
+
+| System | Order | Main | Packed | Physical kernel | Packed − main | Shared − direct, unpacked | Packed − unpacked, shared |
+|---|---|---:|---:|---:|---:|---:|---:|
+| JAC | A | 10.8 / 0.134 | 512.9 / 0.701 | 504.3 | +502.1 / +0.567 | +42.7 / +0.018 | -12.8 / +0.056 |
+| Factor IX | A | 17.7 / 0.291 | 1021.7 / 1.315 | 1005.9 | +1004.1 / +1.024 | +4.0 / -0.038 | +15.4 / +0.023 |
+| Cellulose | A | 90.4 / 1.115 | 12886.6 / 14.011 | 12822.3 | +12796.1 / +12.896 | +3224.5 / +3.357 | -52.5 / -0.076 |
+| STMV | A | 204.2 / 3.637 | 61697.0 / 66.073 | 61522.0 | +61492.8 / +62.436 | +48498.7 / +6.791 | -1347.4 / +40.008 |
+| JAC | B | 11.1 / 0.134 | 515.6 / 0.824 | 506.8 | +504.5 / +0.690 | +100.9 / +0.119 | -383.5 / -0.056 |
+| Factor IX | B | 17.6 / 0.285 | 1019.2 / 1.332 | 1002.9 | +1001.6 / +1.047 | -461.9 / +0.116 | +42.8 / -0.019 |
+| Cellulose | B | 91.0 / 1.099 | 12784.3 / 13.836 | 12720.6 | +12693.3 / +12.737 | +2984.9 / +2.907 | -12.6 / +0.090 |
+| STMV | B | 202.6 / 3.596 | 22791.2 / 25.922 | 22617.2 | +22588.6 / +22.326 | +7049.7 / +7.314 | +92.7 / -0.361 |
+
+Shared integer accumulation increased the whole-step time for Cellulose
+and STMV in both orders. Packing had no consistent whole-step benefit.
+The STMV packed step varied from 25.922 to 66.073 ms between jobs, so
+the two measurements are reported individually. The default remains the
+existing selector.

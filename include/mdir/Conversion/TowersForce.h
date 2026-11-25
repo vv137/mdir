@@ -19,6 +19,8 @@ struct TowersForceShape {
   mlir::Type cartesianPositions = {};
   int64_t typeCount = 0;
   bool emitRetryCounter = false;
+  /// Leave certified per-atom force words for the following bonded kernel.
+  bool keepForceWords = false;
 
   // Compact only lists that can fill 128 four-row blocks. Smaller lists
   // need the parallelism of one thread per pair (D431).

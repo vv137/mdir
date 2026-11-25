@@ -85,4 +85,35 @@ md.function @entry(%x: !vec, %cell: !md.cell, %q: !real) -> !real {
   }
   llvm::outs() << "a derivative without a rule is an input error that names "
                   "the op and the tunable\n";
+
+  // Exercise the public compiler selector without a CUDA device. A frame
+  // request must preserve the original reduction algebra as well as sums.
+  mdir::driver::Control mixed;
+  mixed.target = mdir::driver::Target::GPU;
+  mixed.precision = mdir::driver::Precision::Mixed;
+  auto pipeline = [&](const mdir::driver::Control &c) {
+    return mdir::compiler::getPipeline(c, mdir::driver::Program{});
+  };
+  if (pipeline(mixed).find("bonded-units=1") == std::string::npos)
+    return 7;
+  for (auto flag : {&mdir::driver::Control::frames,
+                    &mdir::driver::Control::frameProduct,
+                    &mdir::driver::Control::tunableGradient,
+                    &mdir::driver::Control::minimize}) {
+    auto analysis = mixed;
+    analysis.*flag = true;
+    auto passes = pipeline(analysis);
+    if (passes.find("bonded-units=") != std::string::npos ||
+        passes.find("md-exec-assign-algebra{deterministic=true}") !=
+            std::string::npos)
+      return 8;
+  }
+  for (auto precision : {mdir::driver::Precision::Double,
+                         mdir::driver::Precision::Single}) {
+    auto other = mixed;
+    other.precision = precision;
+    if (pipeline(other).find("bonded-units=") != std::string::npos)
+      return 9;
+  }
+  llvm::outs() << "only mixed dynamics selects bonded work units\n";
 }

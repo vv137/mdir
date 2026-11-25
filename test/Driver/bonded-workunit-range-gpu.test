@@ -1,0 +1,12 @@
+# REQUIRES: cuda
+# RUN: rm -rf %t
+# RUN: %python %S/Inputs/bonded_words.py mdir %t | FileCheck %s
+# CHECK: ties passed
+# CHECK: wide component passed
+# CHECK: component overflow passed
+# CHECK: shared sum overflow passed
+# CHECK: global sum overflow passed
+# CHECK: infinite contribution passed
+# CHECK: NaN contribution passed
+# CHECK: energy term overflow passed
+# CHECK: energy sum overflow passed

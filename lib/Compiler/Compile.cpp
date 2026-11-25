@@ -318,6 +318,26 @@ static std::string getFusedPruningOptions(llvm::StringRef gpuOptions) {
          std::to_string(value == "always" ? 0 : groups) + " ";
 }
 
+static int bondedUnitsMode(const Control &control) {
+  // Quantize only at the accumulation boundary of mixed dynamics.
+  if (control.precision != Precision::Mixed || control.frames ||
+      control.frameProduct || control.tunableGradient ||
+      control.dependentTerms || control.minimize || control.hasFreeEnergy ||
+      !control.observables.empty())
+    return 0;
+  const char *value = std::getenv("MDIR_TUPLE_SUMS");
+  StringRef mode = value ? value : "";
+  if (mode == "workunits")
+    return 1;
+  if (mode == "unpacked")
+    return 2;
+  if (mode == "integer-direct")
+    return 3;
+  if (mode == "workunits-check")
+    return 4;
+  return 0;
+}
+
 std::string mdir::compiler::getPairRegionPipeline(const Control &control,
                                const Program &program) {
   std::string pipeline;
@@ -399,6 +419,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
     // evaluated once from 100,000 tuples (D283); MDIR_PME_SPREAD and
     // MDIR_TUPLE_SUMS override the choice, to compare the strategies
     // (D285).
+    int units = bondedUnitsMode(control);
     os << "md-exec-choose-scatter{" << archOption << getScatterOptions(control)
        << "},";
     // Kernels in f32 look their tables up in f32.
@@ -441,6 +462,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // ... and builds them on the device where it does not take them
        // (D257).
        << "device-tuples=true "
+       << (units ? "bonded-units=" + std::to_string(units) + " " : "")
        // A check of the pruning of the dual lists, for tests
        // (D268).
        << (std::getenv("MDIR_CHECK_PRUNING") ? "check-pruning=true " : "")

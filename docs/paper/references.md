@@ -102,6 +102,13 @@ G. Bussi, D. Donadio, M. Parrinello, "Canonical sampling through velocity
 rescaling," *J. Chem. Phys.* **126**, 014101 (2007).
 [doi:10.1063/1.2408420](https://doi.org/10.1063/1.2408420)
 
+### Cerutti2024
+
+D. S. Cerutti, R. Wiewiora, S. Boothroyd, W. Sherman,
+"STORMM: Structure and topology replica molecular mechanics for chemical
+simulations," *J. Chem. Phys.* **161**, 032501 (2024).
+[doi:10.1063/5.0211032](https://doi.org/10.1063/5.0211032)
+
 ### Chaitin1982
 
 G. J. Chaitin, "Register allocation & spilling via graph coloring,"

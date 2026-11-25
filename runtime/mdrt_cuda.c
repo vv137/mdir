@@ -2924,6 +2924,8 @@ void mdrtDeviceTuplesEnter(void *store) { currentTuples = store; }
 
 void mdrtDeviceTuplesLeave(void) { currentTuples = NULL; }
 
+static void freeBondedDirectories(struct MdrtTuples *entry, int gone);
+
 void mdrtDeviceTuplesClose(void *opaque) {
   struct MdrtTupleStore *store = opaque;
   if (!store)
@@ -2950,6 +2952,7 @@ void mdrtDeviceTuplesClose(void *opaque) {
       check(cuMemFree((CUdeviceptr)e->deviceIncidence), "cuMemFree");
     if (!gone && e->deviceMembers)
       check(cuMemFree((CUdeviceptr)e->deviceMembers), "cuMemFree");
+    freeBondedDirectories(e, gone);
     if (!gone && e->deviceRenumbered)
       check(cuMemFree((CUdeviceptr)e->deviceRenumbered), "cuMemFree");
     if (!gone && e->ownsSet && e->deviceFile)
@@ -3471,6 +3474,9 @@ int64_t _mlir_ciface_mdrtDeviceTuplesTake(struct MdrtMemref2 *members,
   mdrtTuplesSpent(store, start);
   return (int64_t)(intptr_t)e;
 }
+
+#include "mdrt_bonded_units.h"
+#include <math.h>
 
 int32_t mdrtDeviceTuplesBuild(int64_t handle) {
   return ((struct MdrtTuples *)(intptr_t)handle)->building;

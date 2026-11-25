@@ -1,0 +1,5 @@
+# REQUIRES: cuda, python-api
+# RUN: rm -f %t.log
+# RUN: env MDIR_TUPLE_SUMS=workunits-check %mdir_python %S/Inputs/bonded_replay.py %S/Inputs/dipeptide > %t.log 2>&1 && FileCheck %s < %t.log
+# CHECK: 0 word mismatches, 0 outside bound
+# CHECK: wide force-only steps passed

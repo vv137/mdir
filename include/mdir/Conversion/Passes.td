@@ -450,6 +450,10 @@ def ConvertMDExecToGPU
            "an operand becomes a math.fma, whatever else uses the product, "
            "so that whether a product is fused does not depend on its "
            "other uses (the deterministic mode, #102)">,
+    Option<"bondedUnits", "bonded-units", "int64_t", /*default=*/"0",
+           "Bonded forces: 1 for packed work units, 2 for unpacked, 3 for "
+           "unpacked with direct integer scatter, 4 to check packed against a "
+           "direct slot oracle and the floating-point reduction">,
     Option<"tuplesOnce", "tuples-once", "bool", /*default=*/"true",
            "Whether a loop over tuples that may share particles evaluates "
            "each tuple once and adds to its members with atomics, where the "

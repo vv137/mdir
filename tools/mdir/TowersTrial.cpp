@@ -2,6 +2,7 @@
 #include "TowersTrial.h"
 #include "TowersCell.h"
 #include "mdir/Conversion/TowersLaunch.h"
+#include "mdir/Support/ForceWords.h"
 #if MDIR_HAS_CUDA
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/DynamicLibrary.h"
@@ -243,7 +244,7 @@ struct Sample {
                    &f.rebuildStatus});
   }
   bool pair(bool count = false) {
-    float scale = 262144;
+    float scale = mdir::forceWordScale;
     std::vector<void *> args{&f.spans, &f.packed, &f.ids, &f.geometry,
                              &f.words, &f.state,  &scale, &f.failed};
     if (f.exclusions)

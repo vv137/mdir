@@ -4,6 +4,7 @@
 #include "TowersDispatch.h"
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Conversion/TowersForce.h"
+#include "mdir/Support/ForceWords.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -226,11 +227,12 @@ struct Dispatch {
     return success();
   }
 
-  LogicalResult run(Value positions);
+  LogicalResult run(Value positions, Value *forceWords);
 };
 } // namespace
 
-LogicalResult Dispatch::run(Value positions) {
+LogicalResult Dispatch::run(Value positions, Value *forceWords) {
+  shape.keepForceWords = forceWords != nullptr;
   shape.movingDispatch = true;
   if (!g.triclinic && g.cells() <= g.atoms)
     shape.cartesianPositions = positions.getType();
@@ -341,7 +343,7 @@ LogicalResult Dispatch::run(Value positions) {
       words = fusedVirial;
     else if (!force || i != 0)
       fill(words, force || energy ? wide : dbl);
-    double scale = force ? 0x1p18 : energy ? 0x1p32 : 1.0;
+    double scale = force ? forceWordScale : energy ? 0x1p32 : 1.0;
     SmallVector<Value> args{spans,
                             packed,
                             ids,
@@ -383,7 +385,7 @@ LogicalResult Dispatch::run(Value positions) {
       if (i != 0)
         fill(arrivals, narrow);
       args.push_back(arrivals);
-      if (op.getNumResults())
+      if (op.getNumResults() || forceWords)
         finishedForce = buffer("published force", forceType);
       args.push_back(finishedForce ? finishedForce : op.getOuts().front());
       launch("towers_finish", n, shape.workers, args, shared);
@@ -448,7 +450,9 @@ LogicalResult Dispatch::run(Value positions) {
       }
     });
   }
-  if (finishedForce) {
+  if (forceWords)
+    *forceWords = finishedForce;
+  else if (finishedForce) {
     Value dest = op.getOuts().front();
     Type element = cast<MemRefType>(dest.getType()).getElementType();
     rows(b, loc, idx(n), [&](OpBuilder &k, Value atom) {
@@ -456,8 +460,8 @@ LogicalResult Dispatch::run(Value positions) {
         SmallVector<Value> at{atom, createIndex(k, loc, a)};
         Value word = memref::LoadOp::create(k, loc, finishedForce, at);
         Value value = arith::SIToFPOp::create(k, loc, element, word);
-        value = arith::MulFOp::create(k, loc, value,
-                                      createReal(k, loc, element, 0x1p-18));
+        value = arith::MulFOp::create(
+            k, loc, value, createReal(k, loc, element, 1.0 / forceWordScale));
         if (!op.overwrites(0))
           value = arith::AddFOp::create(
               k, loc, value, memref::LoadOp::create(k, loc, dest, at));
@@ -483,11 +487,9 @@ LogicalResult Dispatch::run(Value positions) {
   return success();
 }
 
-LogicalResult mdir::kernels::lowerTowersPair(md_exec::PairForOp pair,
-                                             Value positions, bool masked,
-                                             unsigned ordinal,
-                                             TowersRowLoop rows,
-                                             TowersTransfer transfer) {
+LogicalResult mdir::kernels::lowerTowersPair(
+    md_exec::PairForOp pair, Value positions, bool masked, unsigned ordinal,
+    TowersRowLoop rows, TowersTransfer transfer, Value *forceWords) {
   auto module = pair->getParentOfType<ModuleOp>();
   module->setAttr("gpu.container_module", UnitAttr::get(pair.getContext()));
   auto dims = module->getAttrOfType<DenseI64ArrayAttr>("mdir.towers_grid");
@@ -536,7 +538,7 @@ LogicalResult mdir::kernels::lowerTowersPair(md_exec::PairForOp pair,
                     b.getI64Type(),
                     b.getF32Type(),
                     b.getF64Type()};
-  return dispatch.run(positions);
+  return dispatch.run(positions, forceWords);
 }
 
 void mdir::kernels::markTowersExclusions(ModuleOp module) {
