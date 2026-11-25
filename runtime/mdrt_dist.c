@@ -81,6 +81,12 @@ struct Layout {
   int64_t references;
   int64_t grid[3], domains, count;
   double edges[3];
+  struct ConstraintGroup {
+    int32_t atoms[4];
+    int size;
+  } *groups;
+  size_t groupCount;
+  int32_t *groupCenters; /* center + 1; zero for a free atom */
   int64_t *owner; /* [count]: the domain that owns each particle */
   int64_t *row;   /* [count]: its owned row there */
   int64_t *rows;  /* [domains]: the number of owned rows */
@@ -324,6 +330,72 @@ int64_t mdrtDistMidpointOwns(int64_t handle, int64_t d, int64_t i,
   return owner == d;
 }
 
+/* Constraints in a group share the periodic image of the center atom.
+   The arithmetic mean is evaluated in topology order before division. */
+static int64_t groupOwner(const struct Layout *l, const struct ConstraintGroup *g,
+                          const double points[4][3]) {
+  int64_t owner = 0;
+  for (int k = 2; k >= 0; --k) {
+    double sum = 0, length = l->edges[k];
+    for (int a = 1; a < g->size; ++a) {
+      double delta = points[a][k] - points[0][k];
+      sum += delta - length * floor(delta / length + 0.5);
+    }
+    double u = (points[0][k] + sum / g->size) / length;
+    owner = owner * l->grid[k] + division(u - floor(u), l->grid[k]);
+  }
+  return owner;
+}
+
+static void numberOwnedRows(struct Layout *l) {
+  int64_t cap = l->count ? l->count : 1;
+  for (int64_t d = 0; d < l->domains; ++d)
+    l->rows[d] = 0;
+  for (int64_t j = 0; j < l->count; ++j) {
+    int64_t d = l->owner[j], r = l->rows[d]++;
+    l->ids[d * cap + r] = j;
+    l->row[j] = r;
+  }
+}
+
+void _mlir_ciface_mdrtDistGroupOwners(int64_t handle, struct Memref2D *positions,
+                                      struct Members *members) {
+  struct Layout *l = (struct Layout *)(intptr_t)handle;
+  size_t count = members->sizes[0];
+  int64_t size = members->sizes[1];
+  if (!count) return;
+  if (size < 2 || size > 4 || count > (size_t)l->count ||
+      count > SIZE_MAX / sizeof *l->groups - l->groupCount)
+    fail("invalid constraint group dimensions");
+  if (!l->groupCenters)
+    l->groupCenters = calloc(l->count, sizeof *l->groupCenters);
+  l->groups = realloc(l->groups, (l->groupCount + count) * sizeof *l->groups);
+  if (!l->groupCenters || !l->groups) fail("out of memory partitioning constraint groups");
+  for (size_t row = 0; row < count; ++row) {
+    struct ConstraintGroup *g = &l->groups[l->groupCount++];
+    g->size = size;
+    double points[4][3];
+    for (int a = 0; a < size; ++a) {
+      int32_t atom = members->aligned[members->offset + row * members->strides[0] + a * members->strides[1]];
+      if (atom < 0 || atom >= l->count) fail("invalid atom in constraint group");
+      g->atoms[a] = atom;
+      if (l->groupCenters[atom]) {
+        char message[192];
+        snprintf(message, sizeof message, "coupled constraint groups: atom %lld occurs at centers %lld and %lld",
+                 (long long)atom + 1, (long long)l->groupCenters[atom], (long long)g->atoms[0] + 1);
+        fail(message);
+      }
+      l->groupCenters[atom] = g->atoms[0] + 1;
+      for (int k = 0; k < 3; ++k)
+        points[a][k] = *at2(positions, atom, k);
+    }
+    int64_t owner = groupOwner(l, g, points);
+    for (int a = 0; a < size; ++a)
+      l->owner[g->atoms[a]] = owner;
+  }
+  numberOwnedRows(l);
+}
+
 int64_t _mlir_ciface_mdrtDistPartition(struct Memref2D *x, int64_t gx,
                                        int64_t gy, int64_t gz, double lx,
                                        double ly, double lz) {
@@ -450,6 +522,8 @@ void mdrtDistReleaseLayout(int64_t handle) {
     fail("release of a released layout");
   if (--l->references > 0)
     return;
+  free(l->groups);
+  free(l->groupCenters);
   free(l->owner);
   free(l->row);
   free(l->rows);
@@ -556,13 +630,31 @@ int64_t _mlir_ciface_mdrtDistMigrate(int64_t oldHandle,
     }
     int64_t d = cell[0] + next->grid[0] *
                             (cell[1] + next->grid[1] * cell[2]);
-    if (observer && old->owner[j] != d)
-      observer->migration(observer->context, old->owner[j], d);
     next->owner[j] = d;
-    next->row[j] = next->rows[d];
-    next->ids[d * cap + next->rows[d]] = j;
-    ++next->rows[d];
   }
+  if (old->groupCount) {
+    next->groups = malloc(old->groupCount * sizeof *next->groups);
+    if (!next->groups) fail("out of memory migrating constraint groups");
+    next->groupCount = old->groupCount;
+    for (size_t r = 0; r < old->groupCount; ++r) {
+      struct ConstraintGroup *g = &next->groups[r];
+      *g = old->groups[r];
+      double points[4][3];
+      for (int a = 0; a < g->size; ++a) {
+        int32_t j = g->atoms[a];
+        for (int k = 0; k < 3; ++k)
+          points[a][k] = *at3(positions, old->owner[j], old->row[j], k);
+      }
+      int64_t owner = groupOwner(next, g, points);
+      for (int a = 0; a < g->size; ++a)
+        next->owner[g->atoms[a]] = owner;
+    }
+  }
+  numberOwnedRows(next);
+  if (observer)
+    for (int64_t j = 0; j < n; ++j)
+      if (old->owner[j] != next->owner[j])
+        observer->migration(observer->context, old->owner[j], next->owner[j]);
   checkIdentities(next);
   if (tracing())
     traceMigration(old, next);

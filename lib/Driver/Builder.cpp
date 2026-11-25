@@ -292,6 +292,11 @@ llvm::Error Builder::build() {
       groups.push_back(&set);
   for (const Program::TupleSet *set : getShakeSets())
     groups.push_back(set);
+  if (control.distribution && control.distribution->traversal == "midpoint")
+    for (const auto *set : groups) {
+      auto declaration = termIR.getModule().lookupSymbol<mdir::md::TupleSetOp>(set->name);
+      declaration->setAttr("md_dist.constraint_group", declarationBuilder.getUnitAttr());
+    }
   std::vector<int32_t> members;
   for (const Program::TupleSet *set : groups)
     members.insert(members.end(), set->members.begin(), set->members.end());

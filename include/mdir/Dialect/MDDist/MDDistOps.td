@@ -58,10 +58,12 @@ def MDDist_PartitionOp : MDDist_Op<"partition", [
            : !md.field<@atoms, 3 x f64> -> !md_dist.layout<@dd>
     ```
   }];
-  let arguments = (ins MD_ReferenceFieldType:$positions, MD_CellType:$cell);
+  let arguments = (ins MD_ReferenceFieldType:$positions, MD_CellType:$cell,
+                       Variadic<MD_RelationType>:$groups);
   let results = (outs MDDist_LayoutType:$layout);
   let assemblyFormat = [{
-    $positions `,` $cell attr-dict `:` qualified(type($positions)) `->`
+    $positions `,` $cell (`groups` `(` $groups^ `:` type($groups) `)`)? attr-dict
+    `:` qualified(type($positions)) `->`
     qualified(type($layout))
   }];
 }

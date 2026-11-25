@@ -188,9 +188,19 @@ void Distributor::begin() {
   Location loc = potential.getLoc();
   MLIRContext *context = builder.getContext();
   builder.setInsertionPointToStart(body);
+  SmallVector<Value> groups;
+  if (traversal == md_dist::Traversal::Midpoint)
+    for (Value input : body->getArguments()) {
+      auto type = dyn_cast<RelationType>(input.getType());
+      if (type && type.getTupleSet()) {
+        auto set = SymbolTable::lookupNearestSymbolFrom<TupleSetOp>(potential, type.getTupleSet());
+        if (set && set->hasAttr("md_dist.constraint_group"))
+          groups.push_back(input);
+      }
+    }
   layout = md_dist::PartitionOp::create(
       builder, loc, md_dist::LayoutType::get(context, decompositionName),
-      positions, cell);
+      positions, cell, groups);
   ownedPositions = md_dist::DistributeOp::create(
       builder, loc, ownedType(positions.getType()), positions, layout, cell);
   owned[positions] = ownedPositions;
