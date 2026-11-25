@@ -753,6 +753,22 @@
                 {
                   "type": "object",
                   "properties": {
+                    "fft_plans": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["category", "requested", "backend", "reason", "evaluation", "grid"],
+                        "properties": {
+                          "category": {"const": "rule"},
+                          "requested": {"enum": ["auto", "on", "off"]},
+                          "backend": {"enum": ["axis", "cufft"]},
+                          "evaluation": {"enum": ["forces", "observed"]},
+                          "reason": {"type": "string"},
+                          "grid": {"type": "array", "minItems": 3, "maxItems": 3,
+                                   "items": {"type": "integer", "minimum": 1}}
+                        }
+                      }
+                    },
                     "force_only_product_rule": {
                       "enum": ["inverse_load", "separate", "axis_x"]
                     },

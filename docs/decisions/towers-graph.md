@@ -34,6 +34,27 @@ including compilation. `mdir pin MANIFEST` prints explicit submission and
 shape keys for a rerun. Outside the supported scope AUTO records the
 refusal and uses LAUNCH.
 
+## Specialization and plan lifetime
+
+Shape selection precedes graph construction. The launch captures the D434
+pack selected at setup, and the manifest pin includes that pack. With D435
+axis FFT, the force wrapper contributes all five GPU launches to the graph.
+With the D433 inverse-load callback, graph setup retains the cuFFT plan
+identified by grid, direction, precision and influence-table address before
+stream capture. The plan, its callback descriptor and its workspace stay
+live until graph destruction. D436–D438 bonded work units can participate
+in the same capture.
+
+In a 20-step mixed-precision JAC run with bonded work units on an RTX 4090,
+18 steps used the graph. With COMPACT packing and a $64^3$ axis FFT, the
+trace recorded 18 pack kernels and 90 axis kernels. With WIDE packing
+and the inverse-load callback, cuFFT kernels and 18 pack kernels appeared
+in the graph. The final force relative L2 differences against the matching
+LAUNCH runs were $2.06\times10^{-5}$ and $2.02\times10^{-5}$, respectively
+(tolerance $10^{-3}$). Checkpoint steps and times matched byte for byte.
+
+## Development measurements before D433–D438
+
 The previous trial measured LAUNCH once, then GRAPH once. With coupling every
 ten steps it ran 2,560 steps per path. After excluding construction it kept
 five equal blocks from the latter half (125 LAUNCH and 120 GRAPH chunks on

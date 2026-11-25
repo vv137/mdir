@@ -474,6 +474,11 @@ particle work, including the final kick. The absolute step and simulation
 time advance only on acceptance. At a boundary the host reads progress and
 selects the accepted banks. A failed proposal can be replayed from those banks.
 Coupling, output and checkpointing retain their absolute schedule.
+Setup selects the pack network before capture (D434). The ordinary force
+region includes the bonded work-unit grid when enabled (D436–D438).
+On an axis FFT mesh, each replay executes the five D435 passes. For the
+D433 cuFFT inverse-load path, the graph holds a reference to the plan
+bound to the influence table until the last replay has finished.
 
 AUTO skips the trial at 408,609 particles or more, the size of the smallest
 LAUNCH winner in the six-input RTX 4090 comparison. On smaller eligible
