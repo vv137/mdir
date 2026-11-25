@@ -1420,22 +1420,9 @@ void _mlir_ciface_mdrtDistConstraintRows(int64_t handle, struct Memref3D *positi
 
 /* Index the imported images by identity. An atom may have several images
    on one domain, including periodic images of a locally owned atom. */
-static void tupleRows(int64_t handle, struct Memref3D *positions,
-                      struct Members *members, struct Memref2I *out, int local) {
+void mdrtDistIndexTupleImages(int64_t handle) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
   struct Layout *l = h->layout;
-  int64_t count = members->sizes[0], arity = members->sizes[1];
-  if (arity < 2 || out->sizes[0] != count || out->sizes[1] != 1 + arity)
-    fail("invalid tuple ownership schedule shape");
-  if (count == 0) return;
-  int64_t begin = 0, end = l->domains;
-#ifdef MDIR_ENABLE_MPI
-  if (local) {
-    begin = mdrtMPIDomainBound(l->domains,0);
-    end = mdrtMPIDomainBound(l->domains,1);
-
-  }
-#endif
   if (!h->firstGhost) {
     h->firstGhost = malloc(l->domains*l->count*sizeof *h->firstGhost);
     h->nextGhost = malloc(l->domains*h->capacity*sizeof *h->nextGhost);
@@ -1451,10 +1438,21 @@ static void tupleRows(int64_t handle, struct Memref3D *positions,
       }
     }
   }
+}
+
+static void tupleRows(int64_t handle, struct Memref3D *positions,
+                      struct Members *members, struct Memref2I *out, int64_t begin, int64_t end,
+                      int64_t firstTuple, int64_t pastTuple) {
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  struct Layout *l = h->layout;
+  int64_t count = members->sizes[0], arity = members->sizes[1];
+  if (arity < 2 || out->sizes[0] != count || out->sizes[1] != 1 + arity)
+    fail("invalid tuple ownership schedule shape");
+  if (count == 0) return;
   int64_t *ids = malloc(arity*sizeof *ids);
   int64_t (*image)[3] = calloc(arity,sizeof *image);
   if (!ids || !image) fail("out of memory locating tuple members");
-  for (int64_t t = 0; t < count; ++t) {
+  for (int64_t t = firstTuple; t < pastTuple; ++t) {
     int64_t anchor = l->count;
     for (int64_t a = 0; a < arity; ++a) {
       ids[a] = members->aligned[members->offset + t*members->strides[0] + a*members->strides[1]];
@@ -1505,13 +1503,25 @@ static void tupleRows(int64_t handle, struct Memref3D *positions,
 
 void _mlir_ciface_mdrtDistTupleRows(int64_t handle, struct Memref3D *positions,
                                     struct Members *members, struct Memref2I *out) {
-  tupleRows(handle,positions,members,out,0);
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  if (members->sizes[0]) mdrtDistIndexTupleImages(handle);
+  tupleRows(handle,positions,members,out,0,h->layout->domains,0,members->sizes[0]);
 }
 
 #ifdef MDIR_ENABLE_MPI
+void _mlir_ciface_mdrtDistTupleRowBlock(int64_t handle, struct Memref3D *positions,
+    struct Members *members, struct Memref2I *out, int64_t begin, int64_t end,
+    int64_t firstTuple, int64_t pastTuple) {
+  tupleRows(handle,positions,members,out,begin,end,firstTuple,pastTuple);
+}
+
 void _mlir_ciface_mdrtDistLocalTupleRows(int64_t handle, struct Memref3D *positions,
                                          struct Members *members, struct Memref2I *out) {
-  tupleRows(handle,positions,members,out,1);
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  int64_t domains = h->layout->domains;
+  if (members->sizes[0]) mdrtDistIndexTupleImages(handle);
+  tupleRows(handle,positions,members,out,mdrtMPIDomainBound(domains,0),
+            mdrtMPIDomainBound(domains,1),0,members->sizes[0]);
 }
 #endif
 

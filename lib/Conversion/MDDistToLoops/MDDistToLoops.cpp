@@ -1299,10 +1299,30 @@ LogicalResult Lowering::lowerTupleRows(TupleRowsOp op) {
         llvm::all_of(op.getRows().getUsers(), [](Operation *u) { return isa<TupleKernelOp>(u); }))
       name = "mdrtDistLocalTupleRows";
   }
-  auto fill = declare(name,
-      b.getFunctionType({b.getI64Type(), positions.getType(), source.getType(), result.getType()}, {}), true);
-  func::CallOp::create(b, loc, fill, ValueRange{op.getGroup() ? storage[layoutOf(op.getHalo())].handle
-                               : storage[op.getHalo()].handle, positions, source, result});
+  if (parallelDomains && name == "mdrtDistLocalTupleRows") {
+    Value halo = storage[op.getHalo()].handle;
+    Type i64 = b.getI64Type();
+    auto prepare = declare("mdrtDistIndexTupleImages", b.getFunctionType({i64}, {}), false);
+    func::CallOp::create(b, loc, prepare, halo);
+    Value begin = arith::IndexCastOp::create(b, loc, i64, domainBound(b, false));
+    Value end = arith::IndexCastOp::create(b, loc, i64, domainBound(b, true));
+    Value chunk = index(b, 256);
+    auto fill = declare("mdrtDistTupleRowBlock", b.getFunctionType({i64, positions.getType(),
+        source.getType(), result.getType(), i64, i64, i64, i64}, {}), true);
+    scf::ParallelOp::create(b, loc, ValueRange{index(b, 0)}, ValueRange{count},
+        ValueRange{chunk}, [&](OpBuilder &at, Location, ValueRange ivs) {
+          Value past = arith::MinUIOp::create(at, loc, count,
+              arith::AddIOp::create(at, loc, ivs[0], chunk));
+          func::CallOp::create(at, loc, fill, ValueRange{halo, positions, source, result,
+              begin, end, arith::IndexCastOp::create(at, loc, i64, ivs[0]),
+              arith::IndexCastOp::create(at, loc, i64, past)});
+        });
+  } else {
+    auto fill = declare(name,
+        b.getFunctionType({b.getI64Type(), positions.getType(), source.getType(), result.getType()}, {}), true);
+    func::CallOp::create(b, loc, fill, ValueRange{op.getGroup() ? storage[layoutOf(op.getHalo())].handle
+                                 : storage[op.getHalo()].handle, positions, source, result});
+  }
   op.getRows().replaceAllUsesWith(rows);
   return success();
 }
