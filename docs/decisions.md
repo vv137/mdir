@@ -735,6 +735,7 @@ specification follow those made with it.
 | [D437](decisions/D437.md) | The mixed bonded work-unit evaluator uses a relaxed int64 atomic add with block scope for each contribution to a shared force word. | 2026-11-25 |
 | [D438](decisions/D438.md) | Launch exclusion corrections and packed valence work in separate block ranges of one grid for eligible mixed force-only steps. | 2026-11-25 |
 | [D439](decisions/D439.md) | Graph replay of ordinary TOWERS steps. | 2026-11-25 |
+| [D440](decisions/D440.md) | With `kernel = "PROLATE"`, `continuity` sets the number of continuous derivatives at the cutoff (0 through 3). | 2026-11-25 |
 <!-- end decisions-table -->
 
 

@@ -1068,7 +1068,7 @@ the prolate default took 0.83 to 0.87 times the step without tiles on
 Factor IX, Cellulose, and STMV (RTX 4090), its spreading 72, 209, and
 540 µs a step against 137, 585, and 1640.
 
-**Selectable continuity at the direct cutoff (D[prolate-continuity]).**
+**Selectable continuity at the direct cutoff (D440).**
 For a compact splitting density write $\chi(x)=\sum_{j=0}^{N_b-1}a_jP_{2j}(x)$
 on $[-1,1]$. Parseval's identity expresses the fraction of Fourier power
 inside $[-c,c]$ as $a^T A a/(a^T G a)$. Integrating the Fourier phase over

@@ -1,4 +1,4 @@
-"""Binary64 mesh and point-charge Ewald force references for D[prolate-continuity]."""
+"""Binary64 mesh and point-charge Ewald force references for D440."""
 from itertools import product
 import math
 from pathlib import Path
