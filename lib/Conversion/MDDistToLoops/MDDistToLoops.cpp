@@ -221,7 +221,8 @@ void emitPairs(
   Value quantize(OpBuilder &b, Value value, int fractionalBits);
   Value finish(OpBuilder &b, Value sum, int fractionalBits);
   Value add(OpBuilder &b, Value lhs, Value rhs);
-  llvm::DenseMap<Value, Value> devicePositions;
+  llvm::DenseMap<Value, Value> devicePositions, deviceScalars;
+  int64_t scalarSite = 0;
   llvm::DenseMap<Value, Value> imageShifts, fieldWords, excludedPairs;
   llvm::DenseMap<Value, std::pair<Value, int>> observableWords;
   Value decodeObservable(OpBuilder &b, Value sum, int bits);
@@ -1035,6 +1036,27 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
     auto release = declare("mdrtDistReleaseDevicePositions",
                            b.getFunctionType({type}, {}), true);
     func::CallOp::create(cleanup, loc, release, ValueRange{positions});
+    return success();
+  }
+  if (sharedState() && k == 1 && !op.getImage() && !op.getResult().use_empty() &&
+      llvm::all_of(op.getResult().getUses(), [&](OpOperand &use) {
+        Operation *user = use.getOwner();
+        if (user->getBlock() != op->getBlock()) return false;
+        ValueRange gathered;
+        if (auto sum = dyn_cast<SumPairsOp>(user)) gathered = sum.getGathered();
+        else if (auto force = dyn_cast<GatherPairsOp>(user)) gathered = force.getGathered();
+        else return false;
+        for (unsigned i=0; i<gathered.size(); i+=2)
+          if (gathered[i+1] == op.getResult() && gathered[i] != op.getField()) return false;
+        return llvm::is_contained(gathered,op.getResult());
+      })) {
+    Type element = op.getResult().getType().getElementType();
+    auto type = MemRefType::get({ShapedType::kDynamic},element,MemRefLayoutAttrInterface(),
+                                b.getI64IntegerAttr(1));
+    auto fn = declare(element.isInteger(32) ? "mdrtDistDeviceKinds" : "mdrtDistDeviceScalar",
+                      b.getFunctionType({i64,owned.getType(),i64},{type}),true);
+    deviceScalars[op.getResult()] = func::CallOp::create(b,loc,fn,ValueRange{
+        halo.handle,owned,arith::ConstantIntOp::create(b,loc,scalarSite++,64)}).getResult(0);
     return success();
   }
   hostRows(b, owned);
@@ -2541,9 +2563,14 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, Value d, FlatSymbolRefAttr
     auto key = std::make_pair(gathered[g], gathered[g + 1]);
     Value packed = matrixPairs ? domainFields.lookup(key) : Value();
     if (!packed) {
-      packed = makeField(b, set, type.getNumComponents(), type.getElementType(), d,
-                         {storage[key.first].buffer, storage[key.second].buffer},
-                         {nOwned, nGhosts});
+      if (Value device = deviceScalars.lookup(key.second)) {
+        auto field = md::FieldType::get(module.getContext(),set,1,type.getElementType());
+        packed = mdrt::FromBufferOp::create(b,loc,field,device);
+      } else {
+        packed = makeField(b, set, type.getNumComponents(), type.getElementType(), d,
+                           {storage[key.first].buffer, storage[key.second].buffer},
+                           {nOwned, nGhosts});
+      }
       if (matrixPairs)
         domainFields[key] = packed;
     }

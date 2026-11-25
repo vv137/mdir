@@ -225,13 +225,13 @@ void mdrtNCCLHalo(const struct NCCLPlan *plan, double *owned, int64_t rows,
 
 /* The outlined MATRIX borrows this immutable buffer until its block ends.
    Owned rows precede ghosts in the order of the neighborhood. */
-double *mdrtNCCLPositions(const struct NCCLPlan *plan, double *owned, int64_t rows) {
+double *mdrtNCCLPackedRows(const struct NCCLPlan *plan, double *owned, int64_t rows, int k, int image) {
   double *positions;
   size_t count = rows + (size_t)plan->recvRows;
-  checkCuda(cudaMalloc((void **)&positions, (count ? count : 1)*3*sizeof(double)));
+  checkCuda(cudaMalloc((void **)&positions, (count ? count : 1)*k*sizeof(double)));
   // The integration kernel writes owned rows on the default stream.
   checkCuda(cudaStreamSynchronize(0));
-  exchange(plan, owned, rows, NULL, 3, 1, 0, positions);
+  exchange(plan, owned, rows, NULL, k, image, 0, positions);
   return positions;
 }
 

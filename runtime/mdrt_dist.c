@@ -138,6 +138,7 @@ struct Halo {
   struct NCCLPlan *ncclPlan;
   struct DistDeviceMatrix deviceMatrix;
   double deviceCutoff;
+  struct ScalarHaloField *scalarFields;
 #endif
   int64_t capacity; /* the most ghosts of one domain */
   int64_t *rows;    /* [domains] */
@@ -1696,6 +1697,70 @@ static struct NCCLPlan *devicePlan(struct Halo *h) {
   return h->ncclPlan;
 }
 
+/* Scalar pair inputs are immutable values. A halo retains the last
+   input at each copy site. Decide reuse collectively, since all ranks
+   must participate in a miss. */
+struct ScalarHaloField {
+  struct ScalarHaloField *next;
+  struct Memref3D input;
+  int64_t site;
+  void *data;
+};
+
+static void discardScalar(struct ScalarHaloField *s) {
+  if (!s->data) return;
+  mdrtNCCLFreePositions(s->data);
+  _mlir_ciface_mdrtDistReleaseField(&s->input);
+}
+
+static void *scalarHalo(struct Halo *h, struct Memref3D *owned, int64_t site,
+                        int narrow, int64_t *count) {
+  struct ScalarHaloField **p = &h->scalarFields;
+  while (*p && (*p)->site != site) p = &(*p)->next;
+  if (!*p) {
+    *p = calloc(1,sizeof **p);
+    if (!*p) fail("out of memory recording scalar halo");
+    (*p)->site = site;
+  }
+  struct ScalarHaloField *s = *p;
+  int64_t d = mdrtMPIDomainBound(h->layout->domains,0), n = h->layout->rows[d];
+  *count = n+h->rows[d];
+  if (mdrtMPIAllTrue(s->data && s->input.allocated == owned->allocated))
+    return s->data;
+  discardScalar(s);
+  s->input = *owned;
+  _mlir_ciface_mdrtDistRetainField(owned);
+  if (observer)
+    for (size_t i=0; i<h->edgeCount; ++i) {
+      struct Edge e=h->edges[i];
+      observer->transfer(observer->context,e.from,e.to,e.rows*sizeof(double),0);
+    }
+  double *packed = mdrtNCCLPackedRows(devicePlan(h),deviceRows(owned,d,n,0),n,1,0);
+  if (narrow) {
+    s->data = mdrtNCCLAllocate((size_t)*count*sizeof(int32_t));
+    mdrtNCCLNarrow(packed,s->data,*count);
+    mdrtNCCLFreePositions(packed);
+  } else {
+    s->data = packed;
+  }
+  return s->data;
+}
+
+void _mlir_ciface_mdrtDistDeviceScalar(struct Memref1D *out, int64_t handle,
+    struct Memref3D *owned, int64_t site) {
+  int64_t n;
+  double *value = scalarHalo((void *)(intptr_t)handle,owned,site,0,&n);
+  *out = (struct Memref1D){value,value,0,{n},{1}};
+}
+
+struct DeviceKinds { int32_t *allocated, *aligned; int64_t offset, rows, stride; };
+void _mlir_ciface_mdrtDistDeviceKinds(struct DeviceKinds *out, int64_t handle,
+    struct Memref3D *owned, int64_t site) {
+  int64_t n;
+  int32_t *value = scalarHalo((void *)(intptr_t)handle,owned,site,1,&n);
+  *out = (struct DeviceKinds){value,value,0,n,1};
+}
+
 void _mlir_ciface_mdrtDistDevicePositions(struct Memref2D *result, int64_t handle,
                                           struct Memref3D *owned) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
@@ -1707,7 +1772,7 @@ void _mlir_ciface_mdrtDistDevicePositions(struct Memref2D *result, int64_t handl
       struct Edge edge = h->edges[i];
       observer->transfer(observer->context, edge.from, edge.to, edge.rows*3*sizeof(double), 0);
     }
-  double *data = mdrtNCCLPositions(devicePlan(h), deviceRows(owned,d,h->layout->rows[d],0), h->layout->rows[d]);
+  double *data = mdrtNCCLPackedRows(devicePlan(h), deviceRows(owned,d,h->layout->rows[d],0), h->layout->rows[d],3,1);
   *result = (struct Memref2D){data, data, 0, {h->layout->rows[d]+h->rows[d], 3}, {3, 1}};
 }
 
@@ -1942,6 +2007,12 @@ void mdrtDistReleaseHalo(int64_t handle) {
     free(m);
   }
 #ifdef MDIR_ENABLE_NCCL
+  while (h->scalarFields) {
+    struct ScalarHaloField *s = h->scalarFields;
+    h->scalarFields = s->next;
+    discardScalar(s);
+    free(s);
+  }
   if (h->deviceMatrix.data) h->deviceMatrix.release(h->deviceMatrix.data);
   mdrtNCCLFreePlan(h->ncclPlan);
 #endif

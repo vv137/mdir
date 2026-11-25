@@ -14,7 +14,8 @@ struct NCCLPlan *mdrtNCCLPlan(int64_t domains, const int64_t *ghosts,
 void mdrtNCCLFreePlan(struct NCCLPlan *p);
 void mdrtNCCLHalo(const struct NCCLPlan *p, double *owned, int64_t nOwned,
     double *ghosts, int k, int image, int reverse);
-double *mdrtNCCLPositions(const struct NCCLPlan *plan, double *owned, int64_t rows);
+double *mdrtNCCLPackedRows(const struct NCCLPlan *plan, double *owned, int64_t rows, int k, int image);
+void mdrtNCCLNarrow(const double *, void *, long long);
 void mdrtNCCLFreePositions(double *positions);
 double *mdrtNCCLAllocate(size_t bytes);
 void mdrtNCCLUpload(double *device, const double *host, size_t bytes);

@@ -22,6 +22,10 @@ extern "C" __global__ void unpack(const double *wire, const int *row,
   if (transpose) atomicAdd(field + dest, wire[i]);
   else field[dest] = wire[i] + (shift ? shift[(i/k)*3+i%k] : 0.);
 }
+extern "C" __global__ void narrow(const double *source, int *target, long long n) {
+  long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) target[i] = (int)source[i];
+}
 extern "C" __global__ void advance(const double *field, const double *slope,
     const double *mass, double *result, long long n, double dt) {
   long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
@@ -42,7 +46,7 @@ extern "C" __global__ void coverage(const double *x, const double *ref,
   if (!(r2 < limit)) atomicMax(flag,1);
 })";
 CUmodule module;
-CUfunction pack, unpack, advance, coverage;
+CUfunction pack, unpack, advance, coverage, narrow;
 
 void check(CUresult status) {
   if (status == CUDA_SUCCESS) return;
@@ -79,6 +83,7 @@ void compile() {
   check(cuModuleLoadData(&module, ptx.data()));
   check(cuModuleGetFunction(&pack, module, "pack"));
   check(cuModuleGetFunction(&unpack, module, "unpack"));
+  check(cuModuleGetFunction(&narrow, module, "narrow"));
   check(cuModuleGetFunction(&advance, module, "advance"));
   check(cuModuleGetFunction(&coverage, module, "coverage"));
 }
@@ -115,4 +120,12 @@ extern "C" int mdrtNCCLCoverage(const double *x, const double *ref,
   check(cuMemcpyDtoH(&value,flag,sizeof(value)));
   check(cuMemFree(flag));
   return value;
+}
+
+extern "C" void mdrtNCCLNarrow(const double *source, void *target, long long rows) {
+  if (!rows) return;
+  if (!module) compile();
+  void *args[] = {&source,&target,&rows};
+  check(cuLaunchKernel(narrow,(rows+255)/256,1,1,256,1,1,0,nullptr,args,nullptr));
+  check(cuStreamSynchronize(nullptr));
 }
