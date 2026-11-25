@@ -36,6 +36,7 @@
 #include "mlir/IR/Verifier.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/RegionUtils.h"
+#include "mlir/IR/Dominance.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringSwitch.h"
 
@@ -94,6 +95,7 @@ public:
 
   bool fixedPoint = false;
   bool matrixPairs = false;
+  double matrixSkin = 0;
   LogicalResult run(func::FuncOp function);
 
 private:
@@ -108,6 +110,12 @@ private:
                                     Value d, FlatSymbolRefAttr set);
   void forPairDomains(OpBuilder &b, Value rel,
       function_ref<void(OpBuilder &, Value, FlatSymbolRefAttr, DomainRelation)> emit);
+  LogicalResult lowerPairGroup(Operation *anchor, DominanceInfo &dominance);
+  scf::ForOp domainLoop;
+  DomainRelation domainRelation;
+  md_exec::PairForOp lastPair;
+  llvm::DenseSet<Operation *> grouped;
+  llvm::DenseMap<std::pair<Value, Value>, Value> domainFields;
   LogicalResult lowerSumPairsExec(SumPairsOp op);
   LogicalResult lowerGatherPairsExec(GatherPairsOp op);
   LogicalResult lowerSumParticlesExec(SumParticlesOp op);
@@ -2204,16 +2212,14 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
     auto traversal = op.getResult().getType().getTraversal();
     bool midpoint = traversal == Traversal::Midpoint;
     Value centers = midpoint ? Value(arith::AddIOp::create(b, loc, nOwned, nGhosts)) : nOwned;
-    double haloReach = op.getHalo().getType().getReach().convertToDouble();
-    double margin = haloReach - (midpoint ? 0.5 * cutoff : cutoff);
     Value excluded = excludedPairs.lookup(op.getResult());
     if (!excluded)
       excluded = arith::ConstantIntOp::create(b, loc, 0, 64);
     Value packed = positions.getDefiningOp<mdrt::FromBufferOp>().getBuffer();
     Value structure = mdrt::DomainMatrixOp::create(b, loc,
         md_exec::getBuildType(set, md_exec::NeighborKind::Matrix, md_exec::Images::Explicit),
-        halo.handle, d, centers, packed, relation.cell, excluded, owned, ghosts,
-        APFloat(cutoff), APFloat(std::max(0.0, margin)), width,
+        halo.handle, d, centers, packed, excluded, owned, ghosts,
+        APFloat(cutoff), APFloat(matrixSkin), width,
         midpoint ? 2 : traversal == Traversal::Unique ? 1 : 0);
     return {positions, structure, nOwned, relation.cell, centers};
   }
@@ -2310,11 +2316,16 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, Value d, FlatSymbolRefAttr
   SmallVector<Value> ins;
   for (unsigned g = 0; g < gathered.size(); g += 2) {
     auto type = cast<FieldType>(gathered[g].getType());
-    ins.push_back(makeField(b, set, type.getNumComponents(), type.getElementType(),
-                            d,
-                            {storage[gathered[g]].buffer,
-                             storage[gathered[g + 1]].buffer},
-                            {nOwned, nGhosts}));
+    auto key = std::make_pair(gathered[g], gathered[g + 1]);
+    Value packed = matrixPairs ? domainFields.lookup(key) : Value();
+    if (!packed) {
+      packed = makeField(b, set, type.getNumComponents(), type.getElementType(), d,
+                         {storage[key.first].buffer, storage[key.second].buffer},
+                         {nOwned, nGhosts});
+      if (matrixPairs)
+        domainFields[key] = packed;
+    }
+    ins.push_back(packed);
   }
   if (unique)
     ins.push_back(makeField(b, set, 1, b.getI64Type(), d,
@@ -2340,6 +2351,7 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, Value d, FlatSymbolRefAttr
       /*scatter=*/md_exec::ScatterAttr(),
       /*hostLanes=*/IntegerAttr());
   addPairKernel(loop, op, unique, scale);
+  if (matrixPairs) lastPair = loop;
   return loop;
 }
 
@@ -2351,17 +2363,53 @@ void Lowering::forPairDomains(OpBuilder &b, Value rel,
       emit(b, index(b, i), getSet(i, true, n.getHalo()), relations[rel][i]);
     return;
   }
-  auto loop = scf::ForOp::create(b, loc, domainBound(b, false), domainBound(b, true),
-      index(b, 1), ValueRange{}, [&](OpBuilder &body, Location, Value d, ValueRange) {
-        auto set = getSet(0, true, n.getHalo());
-        emit(body, d, set, buildLocalRelation(body, n, d, set));
-        scf::YieldOp::create(body, loc);
-      });
-  loop->setAttr("md_dist.domain_loop", b.getUnitAttr());
+  Value d = domainLoop.getInductionVar();
+  OpBuilder body(domainLoop.getBody()->getTerminator());
+  if (lastPair)
+    body.setInsertionPointAfter(lastPair);
+  auto set = getSet(0, true, n.getHalo());
+  emit(body, d, set, domainRelation);
+}
+
+LogicalResult Lowering::lowerPairGroup(Operation *anchor, DominanceInfo &dominance) {
+  Value rel = anchor->getOperand(0);
+  auto n = rel.getDefiningOp<NeighborhoodOp>();
+  SmallVector<Operation *> group{anchor};
+  // A later many-body stage can read the result of an earlier scatter.
+  // Only bring a kernel forward when all its inputs already dominate the
+  // first evaluation, including tables and scalars captured by its body.
+  for (Operation *user : rel.getUsers()) {
+    if (!isa<SumPairsOp, GatherPairsOp>(user) || user->getBlock() != anchor->getBlock() ||
+        !anchor->isBeforeInBlock(user) || grouped.contains(user))
+      continue;
+    llvm::SetVector<Value> inputs;
+    inputs.insert(user->getOperands().begin(), user->getOperands().end());
+    getUsedValuesDefinedAbove(user->getRegion(0), inputs);
+    if (llvm::all_of(inputs, [&](Value v) { return dominance.dominates(v, anchor); }))
+      group.push_back(user);
+  }
+  llvm::sort(group, [](Operation *a, Operation *b) { return a->isBeforeInBlock(b); });
+  OpBuilder b(anchor);
+  domainLoop = scf::ForOp::create(b, loc, domainBound(b, false), domainBound(b, true), index(b, 1));
+  domainLoop->setAttr("md_dist.domain_loop", b.getUnitAttr());
+  OpBuilder body(domainLoop.getBody()->getTerminator());
+  domainRelation = buildLocalRelation(body, n, domainLoop.getInductionVar(), getSet(0, true, n.getHalo()));
+  for (Operation *op : group) {
+    grouped.insert(op);
+    if (auto sum = dyn_cast<SumPairsOp>(op)) {
+      if (failed(lowerSumPairsExec(sum))) return failure();
+    } else if (failed(lowerGatherPairsExec(cast<GatherPairsOp>(op)))) {
+      return failure();
+    }
+  }
+  domainFields.clear();
+  lastPair = {};
+  domainLoop = {};
+  return success();
 }
 
 LogicalResult Lowering::lowerSumPairsExec(SumPairsOp op) {
-  OpBuilder b(op);
+  OpBuilder b(matrixPairs ? domainLoop.getOperation() : op.getOperation());
   Type type = op.getResult().getType().getValueType();
   auto vector = dyn_cast<VectorType>(type);
   int64_t length = vector ? vector.getNumElements() : 1;
@@ -2378,7 +2426,7 @@ LogicalResult Lowering::lowerSumPairsExec(SumPairsOp op) {
   forPairDomains(b, op.getRelation(), [&](OpBuilder &b, Value d, FlatSymbolRefAttr set, DomainRelation relation) {
     Value init = zero(b, type);
     auto loop = createPairLoop(b, op, d, set, relation, TypeRange{type}, ValueRange(),
-                               ValueRange{init}, weights, /*atomic=*/false,
+                               ValueRange{init}, weights, /*atomic=*/matrixPairs && !directed,
                                /*scale=*/1.0);
     Value sum = loop.getResult(0);
     for (int64_t c = 0; c < length; ++c) {
@@ -2393,7 +2441,7 @@ LogicalResult Lowering::lowerSumPairsExec(SumPairsOp op) {
 }
 
 LogicalResult Lowering::lowerGatherPairsExec(GatherPairsOp op) {
-  OpBuilder b(op);
+  OpBuilder b(matrixPairs ? domainLoop.getOperation() : op.getOperation());
   auto fieldType = cast<FieldType>(op.getResults()[0].getType());
   int64_t k = fieldType.getNumComponents();
   auto neighborhood = op.getRelation().getDefiningOp<NeighborhoodOp>();
@@ -2543,12 +2591,7 @@ LogicalResult Lowering::lower(Operation *op) {
     if (auto n = dyn_cast<NeighborhoodOp>(op)) {
       return lowerNeighborhoodExec(n);
     }
-    if (auto sum = dyn_cast<SumPairsOp>(op))
-      if (relations.count(sum.getRelation()))
-        return lowerSumPairsExec(sum);
-    if (auto gather = dyn_cast<GatherPairsOp>(op))
-      if (relations.count(gather.getRelation()))
-        return lowerGatherPairsExec(gather);
+
   }
   if (throughExec) {
     if (auto o = dyn_cast<NeighborhoodOp>(op))
@@ -2826,7 +2869,9 @@ LogicalResult Lowering::run(func::FuncOp function) {
                          declare("mdrtDistPhase", type, false),
                          ValueRange{value});
   };
+  DominanceInfo dominance(function);
   for (Operation *op : ops) {
+    if (grouped.contains(op)) continue;
     int phase = 0;
     if (statistics) {
       if (isa<SumPairsOp, GatherPairsOp>(op)) phase = DistPairs;
@@ -2840,10 +2885,14 @@ LogicalResult Lowering::run(func::FuncOp function) {
           mark(&step.getBody()->front(), DistStep);
       if (phase) mark(op, phase);
     }
-    if (failed(lower(op)))
+    if (matrixPairs && isa<SumPairsOp, GatherPairsOp>(op)) {
+      loc = op->getLoc();
+      end = op->getBlock()->getTerminator();
+      if (failed(lowerPairGroup(op, dominance))) return failure();
+    } else if (failed(lower(op))) {
       return failure();
-    if (phase)
-      mark(op, -phase);
+    }
+    if (phase) mark(op, -phase);
   }
   // The casts of the structural conversion: a cast of a state to its tuple
   // takes the tuple of the state; a cast of a tuple to a state goes with the
@@ -2906,6 +2955,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
   excludedPairs.clear();
   imageShifts.clear();
   storage.clear();
+  grouped.clear();
   relations.clear();
   ownedEpochs.clear();
   localEpochs.clear();
@@ -2920,7 +2970,12 @@ public:
   using ConvertMDDistToLoopsBase::ConvertMDDistToLoopsBase;
   void runOnOperation() final {
     ModuleOp module = getOperation();
-    Lowering lowering(module, false, 64, 3, haloEvents || mpi, mpi, parallelDomains);
+    Lowering lowering(module, false, matrixWidth, 3, haloEvents || mpi, mpi, parallelDomains);
+    if (!(matrixSkin >= 0) || matrixWidth <= 0) {
+      module.emitError("matrix-skin must be nonnegative and matrix-width positive");
+      return signalPassFailure();
+    }
+    lowering.matrixSkin = matrixSkin;
     lowering.fixedPoint = fixedPoint;
     lowering.matrixPairs = matrixPairs && !fixedPoint;
     SmallVector<func::FuncOp> functions(module.getOps<func::FuncOp>());

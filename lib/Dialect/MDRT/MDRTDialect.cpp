@@ -45,7 +45,7 @@ LogicalResult DomainMatrixOp::verify() {
       getGhostPositions().getType() != getOwnedPositions().getType())
     return emitOpError("requires packed xyz and domain-row-component position buffers");
   if (!(getCutoff().convertToDouble() > 0 && getSkin().convertToDouble() >= 0) ||
-      getRule() > 2 || !getWidth())
+      getRule() > 2 || getWidthAttr().getInt() <= 0)
     return emitOpError("requires positive cutoff and width, nonnegative skin, and a rule from 0 to 2");
   auto contract = NeighborsContract::matrix(NeighborsContract::Images::Explicit);
   if (!contract.meets(getResult().getType().getContract()))

@@ -97,7 +97,7 @@ struct Layout {
 struct DomainMatrix {
   struct DomainMatrix *next;
   int64_t domain, centers, rows, raw, selected;
-  double cutoff, skin;
+  double cutoff, skin, box[3];
   double *reference;
   int32_t *counts, *selectedCounts;
   int valid;
@@ -382,6 +382,10 @@ int64_t mdrtDistMidpointOwns(int64_t handle, int64_t d, int64_t i,
 int64_t mdrtDistMatrix(int64_t handle, int64_t domain, int64_t centers,
                        int64_t rows, double cutoff, double skin, int64_t width) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
+  if (!h || domain < 0 || domain >= h->layout->domains ||
+      rows != h->layout->rows[domain] + h->rows[domain] ||
+      (centers != h->layout->rows[domain] && centers != rows))
+    fail("domain matrix extents do not match its halo");
   struct DomainMatrix *m = h->matrices;
   while (m && !(m->domain == domain && m->centers == centers &&
                 m->cutoff == cutoff && m->skin == skin))
@@ -420,11 +424,26 @@ int64_t _mlir_ciface_mdrtDistMatrixRebuild(int64_t matrix, struct Memref2D *x) {
     }
     if (i == m->rows) return 0;
   }
+  double lo[3] = {INFINITY, INFINITY, INFINITY};
+  double hi[3] = {-INFINITY, -INFINITY, -INFINITY};
   for (int64_t i = 0; i < m->rows; ++i)
-    for (int c = 0; c < 3; ++c)
-      m->reference[3*i+c] = *at2(x, i, c);
+    for (int c = 0; c < 3; ++c) {
+      double value = *at2(x, i, c);
+      m->reference[3*i+c] = value;
+      lo[c] = fmin(lo[c], value);
+      hi[c] = fmax(hi[c], value);
+    }
+  /* The periodic search in this enclosing box agrees with a plain search
+     through the build radius. Each explicit halo image occurs only once
+     at its own position in the list. */
+  for (int c = 0; c < 3; ++c)
+    m->box[c] = (m->rows ? hi[c]-lo[c] : 0.0) + 2*(m->cutoff + m->skin);
   m->valid = 1;
   return 1;
+}
+
+double mdrtDistMatrixEdge(int64_t matrix, int64_t axis) {
+  return ((struct DomainMatrix *)(intptr_t)matrix)->box[axis];
 }
 
 int64_t mdrtDistMatrixHandle(int64_t matrix, int64_t selected) {
@@ -445,14 +464,10 @@ void _mlir_ciface_mdrtDistMatrixCounts(struct RowCounts *r, int64_t matrix, int6
   r->strides[0] = 1;
 }
 
-int64_t _mlir_ciface_mdrtDistSelectMatrix(int64_t handle, int64_t matrix,
-    int64_t exclusions, int64_t rule, struct Memref3D *owned, struct Memref3D *ghost) {
+int64_t mdrtDistSelectMatrix(int64_t matrix, int64_t exclusions, int64_t rule) {
   if (!rule && !exclusions) return 0;
   struct DomainMatrix *m = (struct DomainMatrix *)(intptr_t)matrix;
-  struct Halo *h = (struct Halo *)(intptr_t)handle;
-  struct Layout *l = h->layout;
-  int64_t d = m->domain, n = l->rows[d];
-  struct HostBuffer2 src, dst;
+  struct HostBuffer2 src;
   _mlir_ciface_mdrtHostMatrixEntries(&src, m->raw);
   if (!m->selected) {
     m->selected = mdrtHostMatrixAllocate(m->centers, src.sizes[1]);
@@ -460,17 +475,53 @@ int64_t _mlir_ciface_mdrtDistSelectMatrix(int64_t handle, int64_t matrix,
     if (!m->selectedCounts) fail("out of memory allocating filtered row counts");
   }
   mdrtHostMatrixGrow(m->selected, src.sizes[1]);
+  return 1;
+}
+
+
+static size_t firstKey(const struct Exclusions *e, uint64_t key) {
+  size_t first = 0, end = e->count;
+  while (first < end) {
+    size_t middle = first + (end-first)/2;
+    if (e->pairs[middle] < key) first = middle+1;
+    else end = middle;
+  }
+  return first;
+}
+
+void _mlir_ciface_mdrtDistSelectRows(int64_t handle, int64_t matrix,
+    int64_t exclusions, int64_t rule, int64_t first, int64_t end,
+    struct Memref3D *owned, struct Memref3D *ghost) {
+  struct DomainMatrix *m = (struct DomainMatrix *)(intptr_t)matrix;
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  struct Layout *l = h->layout;
+  int64_t d = m->domain, n = l->rows[d];
+  struct HostBuffer2 src, dst;
+  _mlir_ciface_mdrtHostMatrixEntries(&src, m->raw);
   _mlir_ciface_mdrtHostMatrixEntries(&dst, m->selected);
-  for (int64_t i = 0; i < m->centers; ++i) {
+  struct Exclusions *e = (struct Exclusions *)(intptr_t)exclusions;
+  for (int64_t i = first; i < end; ++i) {
     int64_t gi = d*h->capacity + i-n;
     int64_t idi = i<n ? l->ids[d*l->count+i] : h->ids[gi];
+    uint64_t prefix = (uint64_t)idi << 32;
+    size_t lo = 0, hi = 0;
+    if (e && rule) {
+      lo = firstKey(e, prefix);
+      hi = firstKey(e, prefix + (UINT64_C(1)<<32));
+    }
     int32_t count = 0;
     for (int32_t k = 0; k < m->counts[i]; ++k) {
       int32_t j = ((int32_t *)src.aligned)[i*src.strides[0]+k];
       int64_t gj = d*h->capacity + j-n;
       int64_t idj = j<n ? l->ids[d*l->count+j] : h->ids[gj];
       if (rule && idi >= idj) continue;
-      if (exclusions && !mdrtDistPairAllowed(exclusions, idi < idj ? idi : idj,
+      if (e && rule) {
+        uint64_t key = prefix | (uint32_t)idj;
+        size_t t = lo;
+        while (t < hi && e->pairs[t] < key) ++t;
+        if (t < hi && e->pairs[t] == key) continue;
+      }
+      if (e && !rule && !mdrtDistPairAllowed(exclusions, idi < idj ? idi : idj,
                                              idi < idj ? idj : idi)) continue;
       if (rule == 2) {
         double xi[3], dx[3];
@@ -488,7 +539,6 @@ int64_t _mlir_ciface_mdrtDistSelectMatrix(int64_t handle, int64_t matrix,
     }
     m->selectedCounts[i] = count;
   }
-  return 1;
 }
 
 /* Constraints in a group share the periodic image of the center atom.
