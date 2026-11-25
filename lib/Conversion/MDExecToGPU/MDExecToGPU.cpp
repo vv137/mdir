@@ -6575,10 +6575,14 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
     // The runtime holds the rows, which grow wider when a build finds them
     // too narrow (emitBuild).
     Type wide = builder.getI64Type();
+    auto function = op->getParentOfType<func::FuncOp>();
+    bool haloOwnsEntries = llvm::any_of(function.getOps<func::CallOp>(), [](func::CallOp call) {
+      return call.getCallee() == "mdrtDistDeviceMatrixSlot";
+    });
     structure.handle =
         func::CallOp::create(
             builder, loc,
-            getOrDeclare(createMatrixName,
+            getOrDeclare(haloOwnsEntries ? "mdrtDomainMatrixCreate" : createMatrixName,
                          builder.getFunctionType({wide, wide}, {wide})),
             ValueRange{
                 arith::IndexCastOp::create(builder, loc, wide, structure.size),

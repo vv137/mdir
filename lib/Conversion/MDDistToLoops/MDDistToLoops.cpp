@@ -3172,6 +3172,7 @@ static LogicalResult outlineSteps(ModuleOp module, func::FuncOp function, String
 }
 
 LogicalResult Lowering::run(func::FuncOp function) {
+  fieldSnapshots.clear();
   if (fixedPoint && module->hasAttr("md_dist.driver")) {
     SmallVector<md::SumParticlesOp> sums;
     function.walk([&](md::SumParticlesOp op) { sums.push_back(op); });

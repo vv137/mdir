@@ -2330,7 +2330,7 @@ static void allocateMatrix(struct Matrix *matrix) {
   allocationTag = NULL;
 }
 
-int64_t mdrtMatrixCreate(int64_t rows, int64_t width) {
+int64_t mdrtDomainMatrixCreate(int64_t rows, int64_t width) {
   struct Matrix *matrix = calloc(1, sizeof(struct Matrix));
   if (!matrix) {
     fprintf(stderr, "mdrt: out of memory of the host\n");
@@ -2338,13 +2338,19 @@ int64_t mdrtMatrixCreate(int64_t rows, int64_t width) {
   }
   matrix->rows = rows > 0 ? rows : 1;
   matrix->width = width > 0 ? width : 1;
-  allocateMatrix(matrix);
   recordCallHandle(matrix);
   return (int64_t)(intptr_t)matrix;
 }
 
+int64_t mdrtMatrixCreate(int64_t rows, int64_t width) {
+  int64_t handle = mdrtDomainMatrixCreate(rows, width);
+  allocateMatrix((struct Matrix *)(intptr_t)handle);
+  return handle;
+}
+
 void _mlir_ciface_mdrtMatrixEntries(struct Buffer2 *result, int64_t handle) {
   struct Matrix *matrix = (struct Matrix *)(intptr_t)handle;
+  if (!matrix->data) allocateMatrix(matrix);
   result->allocated = matrix->data;
   result->aligned = matrix->data;
   result->offset = 0;
@@ -2361,7 +2367,7 @@ struct CachedDomainMatrix {
 
 static void releaseDomainMatrix(void *data) {
   struct CachedDomainMatrix *cache = data;
-  check(cuMemFree((CUdeviceptr)cache->matrix.data), "release domain matrix");
+  mgpuMemFree(cache->matrix.data, NULL);
   check(cuMemFree(cache->counts), "release domain counts");
   check(cuMemFree(cache->order), "release domain order");
   free(cache);
@@ -2396,18 +2402,21 @@ void _mlir_ciface_mdrtDeviceSaveDomainMatrix(int64_t slot, int64_t handle,
   struct CachedDomainMatrix *cache = calloc(1,sizeof *cache);
   if (!cache || owner->data) abort();
   size_t rows = matrix->rows*sizeof(int32_t);
-  size_t entries = rows*matrix->width;
-  CUdeviceptr saved;
-  check(cuMemAlloc(&saved,entries), "allocate cached domain entries");
+  // The external halo now owns the entry block. The child activation
+  // still owns its Matrix handle and releases it at the end of the call.
+  for (int i = numLive; i-- != 0;) {
+    if (liveBlocks[i].pointer == (CUdeviceptr)matrix->data) {
+      liveBlocks[i].owner = NULL;
+      break;
+    }
+  }
   check(cuMemAlloc(&cache->counts,rows), "allocate cached domain counts");
   check(cuMemAlloc(&cache->order,rows), "allocate cached domain order");
-  check(cuMemcpyDtoDAsync(saved,(CUdeviceptr)matrix->data,entries,sharedStream), "save domain entries");
   if (counts->size) {
     check(cuMemcpyDtoDAsync(cache->counts,(CUdeviceptr)counts->aligned,rows,sharedStream), "save domain counts");
     check(cuMemcpyDtoDAsync(cache->order,(CUdeviceptr)order->aligned,rows,sharedStream), "save domain order");
   }
   cache->matrix = *matrix;
-  cache->matrix.data = (void *)saved;
   owner->data = cache;
   owner->release = releaseDomainMatrix;
   isPending = 1;
