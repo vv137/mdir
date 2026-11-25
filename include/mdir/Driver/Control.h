@@ -238,6 +238,7 @@ struct TowersSetup {
 struct Control {
   struct Distribution {
     std::array<int64_t, 3> grid{1, 1, 1};
+    bool gridGiven = false, transportGiven = false, traversalGiven = false;
     int64_t domains = 0; // Nonzero when the cell chooses the factorization.
     std::string traversal = "directed";
     std::string transport = "local";

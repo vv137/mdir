@@ -181,6 +181,7 @@ LogicalResult Segment::run(scf::ForOp root) {
 
 class DriverSteps : public impl::MDistributeDriverStepsBase<DriverSteps> {
   void runOnOperation() final {
+    getOperation()->setAttr("md_dist.driver_statistics", UnitAttr::get(&getContext()));
     SmallVector<scf::ForOp> roots;
     getOperation().walk([&](scf::ForOp op) {
       // A checkpoint segment may first reorder the particle set, carrying

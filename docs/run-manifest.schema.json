@@ -4,6 +4,19 @@
   "oneOf": [
     {
       "type": "object",
+      "required": ["schema_version", "event", "invocation", "timestamp_utc", "domains"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "event": {"const": "domain_setup"},
+        "invocation": {"type": "integer", "minimum": 1},
+        "timestamp_utc": {"type": "string"},
+        "domains": {"type": "array", "items": {"type": "object",
+          "required": ["domain", "rank", "lower_angstrom", "upper_angstrom", "owned", "ghosts", "position_import_bytes"]}}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
       "properties": {
         "schema_version": {
           "const": 1
@@ -441,6 +454,14 @@
                 },
                 "transport": {"const": "local"},
                 "traversal": {"enum": ["directed", "unique"]},
+                "ranks": {"type": "integer", "minimum": 1},
+                "cutoff_angstrom": {"type": "number"},
+                "skin_angstrom": {"type": "number"},
+                "grid_reason": {"type": "string"},
+                "requested_count": {"type": ["integer", "null"]},
+                "candidates": {"type": "array"},
+                "transport_source": {"enum": ["requested", "default"]},
+                "traversal_source": {"enum": ["requested", "default"]},
                 "reach_angstrom": {"type": "number", "exclusiveMinimum": 0}
               },
               "required": ["grid", "transport", "traversal", "reach_angstrom"],
@@ -490,6 +511,14 @@
                 "rest": {
                   "type": "object"
                 },
+                "ranks": {"type": "integer", "minimum": 1},
+                "cutoff_angstrom": {"type": "number"},
+                "skin_angstrom": {"type": "number"},
+                "grid_reason": {"type": "string"},
+                "requested_count": {"type": ["integer", "null"]},
+                "candidates": {"type": "array"},
+                "transport_source": {"enum": ["requested", "default"]},
+                "traversal_source": {"enum": ["requested", "default"]},
                 "reach_angstrom": {
                   "type": "number"
                 },

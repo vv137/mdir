@@ -3315,6 +3315,9 @@ Error Reader::read(const toml::table &root) {
                                     {"domains", "transport", "traversal"}))
       return error;
     auto &dist = control.distribution.emplace();
+    dist.gridGiven = table->contains("domains");
+    dist.transportGiven = table->contains("transport");
+    dist.traversalGiven = table->contains("traversal");
     if (const auto *node = table->get("domains")) {
       if (auto *grid = node->as_array()) {
         if (grid->size() != 3)

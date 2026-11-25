@@ -6,6 +6,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include <cstdint>
 #include <limits>
+#include "llvm/ADT/STLFunctionalExtras.h"
 
 namespace mdir::md_dist {
 /// Choose the factor grid with the smallest surface area of an
@@ -14,7 +15,8 @@ namespace mdir::md_dist {
 /// lexicographically. This geometric model is a compile-time choice, not a
 /// measurement of transport cost (Plimpton 1995; Saunders et al. 2018).
 inline llvm::SmallVector<int64_t, 3> selectGrid(int64_t count,
-                                           llvm::ArrayRef<double> edges) {
+                                           llvm::ArrayRef<double> edges,
+    llvm::function_ref<void(int64_t,int64_t,int64_t,long double)> visit = {}) {
   llvm::SmallVector<int64_t> factors;
   for (int64_t candidate = 1; candidate <= count / candidate; ++candidate)
     if (count % candidate == 0) {
@@ -34,6 +36,7 @@ inline llvm::SmallVector<int64_t, 3> selectGrid(int64_t count,
       long double score = static_cast<long double>(gx) / edges[0] +
                           static_cast<long double>(gy) / edges[1] +
                           static_cast<long double>(gz) / edges[2];
+      if (visit) visit(gx, gy, gz, score);
       // A permutation of an exactly tied grid can round its three adds in
       // another order. Keep the lexicographically first one within that
       // rounding, as the score is only a geometric estimate.
