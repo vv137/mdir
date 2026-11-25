@@ -12,3 +12,9 @@
 # RUN: sed '/^\[execution\]$/a deterministic = true' %t/run.toml > %t/det.toml
 # RUN: not mdir run %t/det.toml 2>&1 | FileCheck %s --check-prefix=DET
 # DET: distributed GPU pairs do not implement deterministic fixed-point sums
+# RUN: cd %t && mdir emit run.toml --stage=lowered | FileCheck %s --check-prefix=EPOCH
+# EPOCH-DAG: llvm.call @mdrtDistDeviceEpoch(
+# EPOCH-DAG: llvm.call @mdrtDistEpochPositions(
+# EPOCH-DAG: llvm.call @mdrtDistDeviceEpochHalo(
+# EPOCH-DAG: llvm.call @mdrtDistDevicePositions(
+# EPOCH-DAG: llvm.call @mdrtDeviceRestoreDomainMatrix(

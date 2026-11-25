@@ -67,7 +67,19 @@ margin. Building candidates at the cutoff plus twice the margin covers this
 relative displacement. The pair traversal applies its original cutoff.
 Destroying the halo invalidates the cached device matrix.
 
-The host still plans ownership, migrates rows, constructs halo maps and runs
+When the grid cells are wider than twice the halo reach, an unconstrained
+packed Verlet rebuild classifies owners and faces on the device. A row
+farther than the reach from every face can reach only its owner. A row
+within the halo reach of a face can also belong to the neighboring
+domain's halo. For edges and corners the squared distance is the sum
+of the squared distances to the participating faces. The GPU reports
+only rows that change owner or qualify for a neighboring halo. The host
+exchanges identity, owner and direction bits, then orders the rows by
+identity and periodic image. The runtime wraps physical positions on
+the device and retains immutable numbering when no ownership changes.
+
+For other grids and constrained systems the host plans ownership and halo
+membership from coordinates. The current implementation also runs
 the topology tuple and constraint paths. A host tuple or output consumer can
 require a local field slice. The constrained native integrator can also
 materialize global fields. Forward peer exchanges complete before the pair

@@ -39,6 +39,7 @@
 #include "mlir/Transforms/RegionUtils.h"
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/DenseMap.h"
+#include <optional>
 
 using namespace mlir;
 namespace md = mdir::md;
@@ -708,7 +709,7 @@ LogicalResult Lowering::lowerMigrate(MigrateOp op) {
     return failure();
   Storage &old = storage[op.getOldLayout()];
   Value positions = storage[op.getPositions()].buffer;
-  Type i64 = b.getI64Type(), f64 = b.getF64Type();
+  Type i64 = b.getI64Type();
   bool keepPositions = mpi && llvm::any_of(op.getLayout().getUsers(), [&](Operation *use) {
     auto field = dyn_cast<RedistributeOp>(use);
     return field && field.getNewLayout() == op.getLayout() && isMigrationPosition(field);
