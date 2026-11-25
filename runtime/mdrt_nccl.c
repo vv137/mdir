@@ -11,6 +11,7 @@
 
 static ncclComm_t peers;
 static cudaStream_t stream;
+static cudaMemPool_t rowPool;
 static int size;
 static int *nodes;
 static double *outgoing, *incoming, *ownedField, *ghostField;
@@ -36,6 +37,17 @@ void mdrtNCCLStart(MPI_Comm world) {
   checkCuda(cudaGetDeviceCount(&visible));
   int ordinal = visible == 1 ? 0 : localRank;
   checkCuda(cudaSetDevice(ordinal));
+  int pools = 0;
+  checkCuda(cudaDeviceGetAttribute(&pools, cudaDevAttrMemoryPoolsSupported, ordinal));
+  if (pools) {
+    cudaMemPoolProps props = {0};
+    props.allocType = cudaMemAllocationTypePinned;
+    props.location.type = cudaMemLocationTypeDevice;
+    props.location.id = ordinal;
+    checkCuda(cudaMemPoolCreate(&rowPool, &props));
+    uint64_t retained = 256ULL << 20;
+    checkCuda(cudaMemPoolSetAttribute(rowPool, cudaMemPoolAttrReleaseThreshold, &retained));
+  }
   struct cudaDeviceProp prop;
   checkCuda(cudaGetDeviceProperties(&prop, ordinal));
   cudaUUID_t *ids = calloc(localSize, sizeof(*ids));
@@ -228,7 +240,7 @@ void mdrtNCCLHalo(const struct NCCLPlan *plan, double *owned, int64_t rows,
 double *mdrtNCCLPackedRows(const struct NCCLPlan *plan, double *owned, int64_t rows, int k, int image) {
   double *positions;
   size_t count = rows + (size_t)plan->recvRows;
-  checkCuda(cudaMalloc((void **)&positions, (count ? count : 1)*k*sizeof(double)));
+  positions = mdrtNCCLAllocate((count ? count : 1)*k*sizeof(double));
   // The integration kernel writes owned rows on the default stream.
   checkCuda(cudaStreamSynchronize(0));
   exchange(plan, owned, rows, NULL, k, image, 0, positions);
@@ -236,12 +248,15 @@ double *mdrtNCCLPackedRows(const struct NCCLPlan *plan, double *owned, int64_t r
 }
 
 void mdrtNCCLFreePositions(double *positions) {
-  checkCuda(cudaFree(positions));
+  if (rowPool) checkCuda(cudaFreeAsync(positions, 0));
+  else checkCuda(cudaFree(positions));
 }
 
 double *mdrtNCCLAllocate(size_t bytes) {
   double *device;
-  checkCuda(cudaMalloc((void **)&device, bytes ? bytes : sizeof(double)));
+  size_t size = bytes ? bytes : sizeof(double);
+  if (rowPool) checkCuda(cudaMallocFromPoolAsync((void **)&device,size,rowPool,0));
+  else checkCuda(cudaMalloc((void **)&device,size));
   return device;
 }
 
@@ -273,8 +288,8 @@ void mdrtNCCLDownloadRows(const double *source, const int *indices, int64_t rows
   double *wire = mdrtNCCLAllocate(bytes);
   mdrtNCCLRows(1,source,map,wire,rows*width,width,NULL,0,NULL);
   mdrtNCCLDownload(host,wire,bytes);
-  checkCuda(cudaFree(map));
-  checkCuda(cudaFree(wire));
+  mdrtNCCLFreePositions((double *)map);
+  mdrtNCCLFreePositions(wire);
 }
 
 extern void mdrtNCCLReorderKernel(const double *, const double *, const int *,
@@ -287,6 +302,12 @@ void mdrtNCCLReorder(const double *owned, const double *incoming, int64_t receiv
   checkCuda(cudaFree(arrivals));
 }
 
+void mdrtNCCLRowsReady(void) {
+  // The ordinary reduction stream is nonblocking. Its borrowed fields
+  // include updates previously enqueued by Verlet on the default stream.
+  checkCuda(cudaStreamSynchronize(0));
+}
+
 void mdrtNCCLFinish(void) {
   if (!peers) return;
   checkNCCL(ncclCommDestroy(peers));
@@ -295,6 +316,11 @@ void mdrtNCCLFinish(void) {
   checkCuda(cudaFree(outgoing));
   checkCuda(cudaFree(incoming));
   checkCuda(cudaStreamDestroy(stream));
+  if (rowPool) {
+    checkCuda(cudaStreamSynchronize(0));
+    checkCuda(cudaMemPoolDestroy(rowPool));
+    rowPool = NULL;
+  }
   free(nodes);
   peers = NULL;
 }

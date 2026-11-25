@@ -808,6 +808,7 @@ void _mlir_ciface_mdrtDistScalarDeviceView(struct Memref1D *out, int64_t d, int6
                                            struct Memref3D *field) {
   if (field->sizes[2] != 1) fail("expected scalar device rows");
   double *data = deviceRows(field,d,n,0);
+  mdrtNCCLRowsReady();
   *out = (struct Memref1D){data,data,0,{n},{1}};
 }
 
@@ -815,6 +816,7 @@ void _mlir_ciface_mdrtDistVectorDeviceView(struct Memref2D *out, int64_t d, int6
                                            struct Memref3D *field) {
   if (field->sizes[2] != 3) fail("expected vector device rows");
   double *data = deviceRows(field,d,n,0);
+  mdrtNCCLRowsReady();
   *out = (struct Memref2D){data,data,0,{n,3},{3,1}};
 }
 

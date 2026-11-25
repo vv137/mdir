@@ -6,6 +6,7 @@
 
 void mdrtNCCLStart(MPI_Comm world);
 void mdrtNCCLFinish(void);
+void mdrtNCCLRowsReady(void);
 int mdrtNCCLActive(void);
 struct NCCLPlan;
 struct NCCLPlan *mdrtNCCLPlan(int64_t domains, const int64_t *ghosts,
