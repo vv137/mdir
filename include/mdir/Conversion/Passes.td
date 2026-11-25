@@ -757,6 +757,8 @@ def MDDistPrintSchedule
 }
 
 def MDistributeDriverSteps : Pass<"md-distribute-driver-steps", "::mlir::ModuleOp"> {
+  let options = [Option<"wrapDrift", "wrap-drift", "bool", "false",
+                       "keep the position representative independent of halo rebuilds">];
   let summary = "Carry the velocity Verlet state on domains through output intervals";
 }
 
