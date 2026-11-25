@@ -3021,8 +3021,13 @@ Error Reader::readExecution(const toml::table &table) {
                                   {"target", "threads", "precision",
                                    "neighbor_capacity", "fast_math",
                                    "spatial_order", "deterministic",
-                                   "neighbor_structure", "towers_shape"}))
+                                   "neighbor_structure", "towers_shape", "step_graph"}))
     return error;
+  StringRef mode = "LAUNCH";
+  if (Error error = readChoice<StringRef>(table, "step_graph", mode,
+          {{"LAUNCH", "LAUNCH"}, {"GRAPH", "GRAPH"}, {"AUTO", "AUTO"}}))
+    return error;
+  control.stepGraph = mode.str();
   if (Error error = readTowersShape(table))
     return error;
   if (Error error = readChoice<Target>(
@@ -3300,6 +3305,26 @@ Error Reader::read(const toml::table &root) {
   }
 
   return validateControl(control, path);
+}
+
+StringRef mdir::driver::Control::stepGraphRefusal(size_t constraints) const {
+  if (deterministic) return "deterministic execution requires LAUNCH";
+  if (target != Target::GPU) return "GRAPH requires the GPU target";
+  if (neighborStructure != NeighborStructure::Towers) return "GRAPH requires TOWERS";
+  if (precision != Precision::Mixed) return "GRAPH requires mixed precision";
+  if (barostat) return "GRAPH requires a fixed cell";
+  if (minimize || integrator != Integrator::VelocityVerlet) return "GRAPH requires velocity Verlet dynamics";
+  if (!pme || pmeKernel != PMEKernel::Gaussian) return "GRAPH requires Gaussian PME";
+  if (!thermostat || thermostatMethod != ThermostatMethod::VRescale) return "GRAPH requires V-rescale";
+  if (ljpme) return "GRAPH does not support dispersion PME";
+  if (!constraints) return "GRAPH requires constrained steps";
+  if (!numSteps) return "the schedule has no ordinary steps";
+  if (getCouplingPeriod() < 2 || energyPeriod == 1 || framePeriod == 1 || checkpointPeriod == 1)
+    return "the schedule has no ordinary steps between boundaries";
+  if (segments || !externalTerms.empty() || !models.empty() || !stagedModels.empty() ||
+      tunables || usesTime || hasFreeEnergy)
+    return "GRAPH does not support this step program";
+  return {};
 }
 
 llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {

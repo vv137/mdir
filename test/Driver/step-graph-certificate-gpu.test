@@ -1,0 +1,8 @@
+# REQUIRES: cuda
+# RUN: bash -c '"$CUDA_ROOT/bin/nvcc" -std=c++17 -arch=native %S/../../scripts/benchmarks/step-graph/transaction.cu %mdrt_cuda -Xlinker -rpath -Xlinker $(dirname %mdrt_cuda) -o %t'
+# RUN: %t | FileCheck %s
+# CHECK: failure 0 last accepted 4294967323 value 20 forces 20 kicks 20
+# CHECK: failure 1 last accepted 4294967306 value 3 forces 3 kicks 3
+# CHECK: failure 2 last accepted 4294967306 value 3 forces 3 kicks 3
+# CHECK: failure 3 last accepted 4294967306 value 3 forces 5 kicks 3
+# CHECK: failure 4 last accepted 4294967323 value 20 forces 21 kicks 20

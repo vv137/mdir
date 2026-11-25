@@ -63,6 +63,7 @@
 #include <mutex>
 
 namespace mdir {
+std::unique_ptr<mlir::Pass> createTowersStepGraph();
 #define GEN_PASS_DEF_GPUMODULETOBINARY
 #include "mdir/Conversion/Passes.h.inc"
 } // namespace mdir
@@ -669,6 +670,7 @@ struct GpuLowerToNVVMOptions : public gpu::GPUToNVVMPipelineOptions {
 
 void buildGpuLowerToNVVM(OpPassManager &pm,
                          const GpuLowerToNVVMOptions &options) {
+  pm.addPass(mdir::createTowersStepGraph());
   // The common part.
   pm.addPass(createConvertNVGPUToNVVMPass());
   pm.addPass(createGpuKernelOutliningPass());

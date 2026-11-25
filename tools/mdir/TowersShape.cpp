@@ -707,3 +707,25 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
   result["effective"] = fields(*shape, false);
   return result;
 }
+
+llvm::json::Object mdir::tool::initialStepGraphChoice(llvm::StringRef request,
+    llvm::StringRef refusal, size_t particles) {
+  Object choice{{"requested", request.str()}, {"value", request.str()},
+                {"category", "setup trial"}, {"reason", "fixed choice"}};
+  if (request != "AUTO")
+    return choice;
+  // Smallest measured LAUNCH winner in the six-input RTX 4090 comparison.
+  constexpr size_t threshold = 408609;
+  if (!refusal.empty()) {
+    choice["value"] = "LAUNCH";
+    choice["reason"] = refusal.str();
+  } else if (particles >= threshold) {
+    choice["value"] = "LAUNCH";
+    choice["category"] = "rule";
+    choice["reason"] = "particle count reaches the LAUNCH threshold";
+    choice["inputs"] = Object{{"particles", particles}, {"threshold", threshold}};
+  } else {
+    choice["reason"] = "setup trial pending";
+  }
+  return choice;
+}

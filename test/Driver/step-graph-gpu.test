@@ -1,0 +1,4 @@
+# REQUIRES: cuda, hdf5, h5py
+# RUN: rm -rf %t && mkdir %t
+# RUN: %h5md_python %S/Inputs/check_step_graph.py %S/Inputs/dipeptide %t mdir
+# RUN: %python %S/Inputs/manifest_schema.py %S/../../docs/run-manifest.schema.json %t/auto/choices.jsonl

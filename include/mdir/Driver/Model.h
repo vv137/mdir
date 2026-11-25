@@ -309,6 +309,7 @@ struct Execution {
   /// (D89); on a device, and not in the deterministic mode
   /// (D245). `Auto`, the default, chooses by the target, the mode, and the
   /// size of the system as the control file does (D261).
+  std::string stepGraph = "LAUNCH";
   driver::NeighborStructure neighborStructure = driver::NeighborStructure::Auto;
   /// `[performance] rigid_units` (D424): the pairs of the
   /// rigid kinds of D403 by units, resolved as the control file's.

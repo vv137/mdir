@@ -382,6 +382,14 @@ llvm::Error Builder::emitEntry() {
     emitRuntimeDeclarations(ir, declarations, true);
     auto step = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("step");
     SimpleStepEntryIRConfig config{levels.back().count};
+    if (control.restoredStep && termIR.getModule()->hasAttr("mdir.towers_dt")) {
+      auto off = [&](int64_t interval) { return interval && control.restoredStep % interval; };
+      if (off(control.getCouplingPeriod()) || off(control.energyPeriod) ||
+          off(control.framePeriod) || off(control.checkpointPeriod))
+        config.graphRestart = SimpleStepEntryIRConfig::RestartPeriods{
+            control.restoredStep, control.numSteps, control.getCouplingPeriod(),
+            control.energyPeriod, control.framePeriod, control.checkpointPeriod};
+    }
     config.segments = control.segments;
     config.partCounts = getPartCountsSize();
     config.removesMotion = control.comPeriod > 0;

@@ -23,6 +23,52 @@ using llvm::StringRef;
 using llvm::json::Object;
 using llvm::json::Value;
 
+// A continued manifest can have several invocations. Pin the latest start,
+// retaining its measurements as a TOML comment beside the runnable value.
+llvm::Expected<std::string> mdir::tool::getExecutionPins(StringRef path) {
+  std::ifstream file(path.str());
+  if (!file) return llvm::createStringError("cannot open manifest '%s'", path.str().c_str());
+  std::optional<Object> choices;
+  std::string line;
+  while (std::getline(file, line)) {
+    auto record = llvm::json::parse(line);
+    if (!record) return record.takeError();
+    auto *event = record->getAsObject();
+    if (!event) return llvm::createStringError("expected a manifest event");
+    if (event->getString("event") == "start") {
+      choices.reset();
+      if (auto *resolved = event->getObject("resolved_choices")) choices = *resolved;
+    }
+  }
+  if (file.bad()) return llvm::createStringError("cannot read manifest");
+  auto *step = choices ? choices->getObject("step_graph") : nullptr;
+  auto mode = step ? step->getString("value") : std::nullopt;
+  if (mode != "GRAPH" && mode != "LAUNCH")
+    return llvm::createStringError("latest manifest start has no resolved step_graph");
+  std::string text;
+  llvm::raw_string_ostream os(text);
+  os << "[execution]\n# step_graph " << Value(Object(*step))
+     << "\nstep_graph = \"" << *mode << "\"\n";
+  if (auto *shape = choices->getObject("towers_shape")) {
+    os << "neighbor_structure = \"TOWERS\"\ntowers_shape = { ";
+    for (StringRef key : {"threads", "blocks_per_sm", "panel", "stripe", "records", "split"}) {
+      auto value = shape->getInteger(key);
+      if (!value || *value < 1) return llvm::createStringError("incomplete TOWERS launch shape");
+      os << key << " = " << *value << ", ";
+    }
+    if (auto pack = shape->getString("pack")) {
+      if (pack != "COMPACT" && pack != "WIDE" && pack != "AUTO")
+        return llvm::createStringError("invalid TOWERS pack");
+      os << "pack = \"" << *pack << "\", ";
+    }
+    auto height = shape->getString("cell_height");
+    if (height != "FULL" && height != "HALF")
+      return llvm::createStringError("incomplete TOWERS cell height");
+    os << "cell_height = \"" << *height << "\" }\n";
+  }
+  return text;
+}
+
 llvm::json::Object mdir::tool::getManifestBuild() {
   Value dirty = StringRef(MDIR_GIT_DIRTY) == "unknown"
                     ? Value(nullptr) : Value(StringRef(MDIR_GIT_DIRTY) == "yes");

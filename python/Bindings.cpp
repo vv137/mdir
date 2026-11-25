@@ -723,6 +723,7 @@ PYBIND11_MODULE(_core, m) {
   property(execution, "reorder", &model::Execution::reorder);
   property(execution, "fast_math", &model::Execution::fastMath);
   property(execution, "neighbor_capacity", &model::Execution::neighborCapacity);
+  property(execution, "step_graph", &model::Execution::stepGraph);
   property(execution, "neighbor_structure", &model::Execution::neighborStructure);
   property(execution, "rigid_units", &model::Execution::rigidUnits);
   auto schedule = input<model::Schedule>(m, "Schedule");
@@ -834,6 +835,10 @@ PYBIND11_MODULE(_core, m) {
       // has them (D261), and the reaches in nm, the inner one
       // of a dual list 0 without one (D245).
       const driver::Control &resolved = p.prepared->control;
+      d["step_graph"] = resolved.stepGraph;
+      d["step_graph_requested"] = c.execution.stepGraph;
+      if (c.execution.stepGraph == "AUTO")
+        d["step_graph_reason"] = resolved.stepGraphRefusal(p.prepared->system.numConstraints).str();
       d["neighbor_structure"] = driver::getNeighborStructureName(resolved.neighborStructure);
       d["neighbor_structure_requested"] =
           driver::getNeighborStructureName(resolved.neighborStructureRequested);

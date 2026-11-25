@@ -1,6 +1,7 @@
 // mdir: the command line of MDIR. See docs/driver.md, Section 2.9.
 
 #include "Commands.h"
+#include "Manifest.h"
 
 #include "mdir/Compiler/CompileCache.h"
 #include "mdir/Driver/Control.h"
@@ -18,6 +19,9 @@ static llvm::cl::SubCommand emitCommand(
     "emit", "Print the program of a run instead of executing it");
 static llvm::cl::SubCommand checkCommand(
     "check", "Check the input and summarize the run, outputs, and warnings");
+static llvm::cl::SubCommand pinCommand("pin", "Print the resolved step graph and TOWERS shape as TOML");
+static llvm::cl::opt<std::string> pinManifest(llvm::cl::Positional, llvm::cl::desc("<manifest>"),
+                                              llvm::cl::Required, llvm::cl::sub(pinCommand));
 static llvm::cl::SubCommand templateCommand(
     "template", "Print a reference control file or a standard pipeline stage");
 static llvm::cl::SubCommand checkpointCommand(
@@ -183,6 +187,15 @@ int main(int argc, char **argv) {
                     "npt, production; got '"
                  << templateName << "'\n";
     return 1;
+  }
+  if (pinCommand) {
+    auto pins = getExecutionPins(pinManifest);
+    if (!pins) {
+      llvm::errs() << "mdir pin: " << llvm::toString(pins.takeError()) << "\n";
+      return 1;
+    }
+    llvm::outs() << *pins;
+    return 0;
   }
   if (checkpointCommand)
     return describeCheckpoints(checkpointFiles, checkpointField);

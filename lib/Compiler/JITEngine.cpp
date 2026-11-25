@@ -1,4 +1,4 @@
-#include "JITEngine.h"
+#include "mdir/Compiler/JITEngine.h"
 #include "JITMemory.h"
 #include "mdir/Compiler/Compile.h"
 #include "llvm/ExecutionEngine/JITEventListener.h"
@@ -208,6 +208,12 @@ Error JITEngine::initialize() {
     return ownedError(std::move(error));
   initialized = true;
   return Error::success();
+}
+Expected<void *> JITEngine::lookup(StringRef name) {
+  auto symbol = jit->lookup(name);
+  if (!symbol)
+    return ownedError(symbol.takeError());
+  return symbol->toPtr<void *>();
 }
 Expected<void (*)(void **)> JITEngine::lookupPacked(StringRef name) {
   auto symbol = jit->lookup("_mlir_" + name.str());

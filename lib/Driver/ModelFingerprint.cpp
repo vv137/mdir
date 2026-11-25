@@ -420,6 +420,8 @@ Fingerprint mdir::model::getFingerprint(const System &s,
   else if (s.prunedDistance != 0.0)
     add("execution", "[energy] pruned_distance",
         number(s.prunedDistance / length));
+  if (has(given.execution, "step_graph"))
+    add("execution", "[execution] step_graph", getFingerprintString(execution.stepGraph));
   if (has(given.execution, "neighbor_structure"))
     add("execution", "[execution] neighbor_structure",
         getFingerprintString(

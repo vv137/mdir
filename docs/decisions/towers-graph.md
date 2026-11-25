@@ -1,0 +1,327 @@
+# D[towers-graph]
+
+Recorded at its merge.
+
+Graph replay of ordinary TOWERS steps.
+
+`[execution] step_graph` selects LAUNCH (default), GRAPH or AUTO. Graph
+replay covers mixed-precision, constrained fixed-cell TOWERS dynamics with
+Gaussian PME, velocity Verlet and V-rescale. Output, checkpointing and
+thermostat coupling are host boundaries. Each graph contains up to 16
+ordinary steps and uses an absolute accepted-step counter to preserve the
+clock and thermostat phase across restarts.
+
+The graph binds accepted and proposal banks through a device pointer
+table. A sticky failure word guards particle work. Integration kernels
+also read the force certificate before writing a kick. Acceptance advances
+the bank phase. Rejection preserves the accepted phase for a single-step
+retry. No conditional graph node or full-state rollback copy is needed.
+
+AUTO measures whole ordinary chunks with stream events on disposable states
+starting from the same input. Four LAUNCH/GRAPH pairs alternate which path
+goes first (LG, GL, LG, GL). Each path is compiled once for all four
+rounds. Each run advances 64 coupling periods capped
+at 17 steps per period, for at most 8,704 disposable steps in total.
+Construction chunks are excluded. The last half of the remaining chunks
+contribute total elapsed time divided by total ordinary steps for that run.
+GRAPH wins when the average LAUNCH minus GRAPH time exceeds twice the
+sample standard deviation of the four paired differences. The spread is in
+µs per ordinary step. The one-sided decision keeps LAUNCH with the reason
+`within noise` whenever the measured GRAPH saving falls at or below that
+threshold, including when GRAPH is slower. The log and manifest include the four differences,
+the noise factor and wall time in milliseconds for all disposable runs,
+including compilation. `mdir pin MANIFEST` prints explicit submission and
+shape keys for a rerun. Outside the supported scope AUTO records the
+refusal and uses LAUNCH.
+
+## Specialization and plan lifetime
+
+Shape selection precedes graph construction. The launch captures the D434
+pack selected at setup, and the manifest pin includes that pack. With D435
+axis FFT, the force wrapper contributes all five GPU launches to the graph.
+With the D433 inverse-load callback, graph setup retains the cuFFT plan
+identified by grid, direction, precision and influence-table address before
+stream capture. The plan, its callback descriptor and its workspace stay
+live until graph destruction. D436–D438 bonded work units can participate
+in the same capture.
+
+In a 20-step mixed-precision JAC run with bonded work units on an RTX 4090,
+18 steps used the graph. With COMPACT packing and a $64^3$ axis FFT, the
+trace recorded 18 pack kernels and 90 axis kernels. With WIDE packing
+and the inverse-load callback, cuFFT kernels and 18 pack kernels appeared
+in the graph. The final force relative L2 differences against the matching
+LAUNCH runs were $2.06\times10^{-5}$ and $2.02\times10^{-5}$, respectively
+(tolerance $10^{-3}$). Checkpoint steps and times matched byte for byte.
+
+## Development measurements before D433–D438
+
+The previous trial measured LAUNCH once, then GRAPH once. With coupling every
+ten steps it ran 2,560 steps per path. After excluding construction it kept
+five equal blocks from the latter half (125 LAUNCH and 120 GRAPH chunks on
+JAC). Its noise was the larger within-path median absolute deviation of
+the five block means. A stable shift between the two runs could therefore
+exceed both noise estimates. Moreover, the faster median won even inside
+the reported noise. Reversing the order of production processes left the
+internal trial order fixed. LAUNCH won one JAC trial and lost the other.
+At 100 ms sampling, the first two GPU-active bursts
+on JAC had median SM clocks of 2,775 and 2,520 MHz in forward order, and
+2,760 and 2,760 MHz in reverse order. The samples lack chunk timestamps.
+A clock difference is plausible in the forward job, but the two results
+do not establish a systematic penalty for the first path. The manifests used the default single-stream PME
+pipeline. The fast and slow bands observed with a separate reciprocal
+stream in D429 experiments require that optional schedule.
+
+## Pinned whole-run measurements and AUTO validation
+
+Two idle RTX 4090 jobs reversed both the input order and which path was
+pinned first. Each job ran each pin twice per input and interleaved five
+fresh AUTO processes between the pinned runs. Both paths used the same
+physics, TOWERS shape and 2 fs timestep. Each pinned run covered 100,000
+steps on JAC and TIP3P 10k, or 10,000 on STMV, in 100 output intervals.
+The first interval was dropped. The 10%-trimmed mean of the remaining 99
+intervals passed the progressive plateau check at zero further warm-up cut
+in all 24 pinned runs. Each throughput below converts the mean of the two
+run times per step. Positive LAUNCH minus GRAPH time favors GRAPH.
+
+| Input | First pin | LAUNCH ns/day | GRAPH ns/day | LAUNCH − GRAPH µs/step | AUTO decisions matching pinned winner | Median setup ms (range) |
+|---|---|---:|---:|---:|---|---:|
+| JAC | LAUNCH | 1512.3 | 1543.9 | +2.338 | 5/5 GRAPH | 17,283 (17,224–18,341) |
+| JAC | GRAPH | 1475.4 | 1513.6 | +2.959 | 5/5 GRAPH | 16,811 (16,753–17,216) |
+| TIP3P 10k | LAUNCH | 1998.4 | 2077.9 | +3.307 | 5/5 GRAPH | 18,185 (18,109–19,287) |
+| TIP3P 10k | GRAPH | 1956.5 | 2028.6 | +3.136 | 5/5 GRAPH | 17,910 (17,738–18,753) |
+| STMV | LAUNCH | 57.38 | 56.82 | −29.475 | 5/5 LAUNCH | 130,934 (128,942–132,744) |
+| STMV | GRAPH | 56.76 | 56.33 | −23.241 | 5/5 LAUNCH | 131,630 (130,229–135,170) |
+
+Pinned GRAPH improved JAC throughput by 2.09% and 2.59%, and TIP3P 10k by
+3.98% and 3.68%. On STMV it reduced throughput by 0.97% and 0.76%.
+Across the ten JAC setups, the median paired saving was 4.50 µs when
+LAUNCH ran first and 5.30 µs when GRAPH ran first. The corresponding
+TIP3P values were both 5.15 µs. There was no consistent first-path
+penalty across these inputs. The ordinary-step estimate still overstates
+the size of the whole-run JAC gain: it averaged 5.12 and 5.08 µs in the
+two jobs. Coupling and output contribute to the pinned whole-run rate.
+
+## Prototype measurements
+
+Measurements used a 2 fs timestep in mixed-precision NVT dynamics, with
+V-rescale every ten steps. Two runs reversed the measurement order.
+The rates below convert the mean step times to simulated ns/day.
+Throughput changes use the launch measurements bracketing each graph run.
+
+| Input | LAUNCH µs/step | LAUNCH ns/day | GRAPH µs/step | GRAPH ns/day | Paired throughput change |
+|---|---:|---:|---:|---:|---:|
+| JAC | 120.61 | 1432.73 | 118.15 | 1462.56 | +2.11% |
+| TIP3P 10k | 91.32 | 1892.21 | 87.79 | 1968.32 | +4.01% |
+| TIP3P 20k | 117.00 | 1476.93 | 113.88 | 1517.39 | +2.76% |
+| Factor IX | 279.34 | 618.60 | 276.40 | 625.18 | +1.01% |
+| Cellulose | 1057.76 | 163.36 | 1062.42 | 162.65 | −0.40% |
+| STMV | 3047.66 | 56.70 | 3087.13 | 55.97 | −1.26% |
+
+Replacing rollback copies with bank swaps saved 399.17 µs/step on
+STMV in the factorial comparison. Removing conditional dispatch reduced
+traced ordinary-step idle time from 34.10 to 1.33 µs on JAC and from
+32.78 to 1.32 µs on TIP3P 10k. The 48 checkpoint comparisons matched
+step and time exactly. The maximum relative force L2 difference was
+6.34 × 10⁻⁵ against a tolerance of 10⁻³.
+
+### Particle-count rule
+
+1. [measured] The six paired prototype throughput changes above span four
+   GRAPH winners at 9,989 (TIP3P 10k), 19,880 (TIP3P 20k), 23,558
+   (JAC) and 90,906 particles (Factor IX). LAUNCH won at 408,609
+   (Cellulose) and 1,067,095 particles (STMV). The subsequent pinned runs confirm the signs for
+   TIP3P 10k, JAC and STMV.
+2. [computed] Starting the skip at the smallest measured LAUNCH winner
+   preserves trials for all four GRAPH winners and for the unmeasured gap
+   above Factor IX. On eligible inputs at or above 408,609 particles the
+   rule selects LAUNCH and records the count and inclusive threshold.
+   Explicit GRAPH remains available. The evidence for the cutoff is from
+   the RTX 4090.
+
+### Why the JAC trial and production windows differ
+
+1. [measured] The original two orders gave trial savings of 5.123 and
+   5.075 µs per ordinary step, and whole-run savings of 2.338 and 2.959 µs
+   per step. All eight pinned JAC runs used a thermostat every 10 steps and an
+   energy report every 1,000, with no trajectory or checkpoint writes.
+2. [computed] Nine steps in ten are ordinary. If the measured ordinary
+   saving transferred exactly, averaging over all steps would give 4.610
+   and 4.567 µs. The remaining discrepancies are 2.272 and 1.609 µs per
+   step, equivalent to 22.72 and 16.09 µs per ten-step cycle. The trial
+   uses the same nine-step chunks, below the graph unroll limit of 16,
+   but issues energy reports every 320 steps outside its event windows.
+   The GRAPH path reads and checks the accepted step on the host before
+   each thermostat factor and each energy report. Its end-of-chunk progress
+   read occurs inside the ordinary timer. Construction and the first half
+   of surviving chunks are omitted. The original JAC comparison retained
+   128 LAUNCH and 100 GRAPH chunks per setup.
+3. [measured] Repartitioning two archived 600-step production traces at the
+   same force-finish kernel in both paths gives interior GRAPH savings of
+   8.04 and 7.90 µs (320 interior spans per trace). Both spans adjacent to
+   each thermostat or energy boundary were counted separately from these
+   interiors. Node-level tracing raised the graph spans at coupling edges
+   above 1 ms, far beyond the boundary cost consistent with untraced rates.
+4. [hypothesis] Clock readback and synchronization around chunk and
+   thermostat boundaries can account for some of the missing saving.
+   The trial also synchronizes its stop event at every chunk. The traced
+   boundary durations cannot apportion the untraced discrepancy between
+   these effects.
+5. [measured] Timing complete 320-step disposable output intervals in the
+   original ten JAC setups reverses the sign. LAUNCH minus GRAPH averaged
+   −13.55 and −12.81 µs/step in the first interval of each job, and −10.88
+   and −10.80 in the second. Those short wall windows include graph
+   construction as well as boundary work and event synchronization. They
+   would select LAUNCH in both orders despite the pinned GRAPH wins.
+
+6. [measured] Pinned 64,000-step JAC runs without device tracing varied one cadence at a
+   time. Each condition used LAUNCH, GRAPH, GRAPH, LAUNCH order on one
+   RTX 4090. The rates use the same plateau check and two-sided 10% trim
+   as the pinned validation. Values are means of two runs per path.
+
+| Thermostat period | Energy period | LAUNCH µs/step | GRAPH µs/step | Saving µs/step |
+|---:|---:|---:|---:|---:|
+| 10 | 1,000 | 117.031 | 114.577 | 2.454 |
+| 10 | 320 | 117.744 | 115.154 | 2.590 |
+| 20 | 1,000 | 114.529 | 111.906 | 2.623 |
+
+7. [computed] Matching the trial's energy cadence changed the measured
+   production saving by +0.136 µs/step. Doubling the thermostat period
+   changed it by +0.169 µs/step and also lengthened the ordinary chunk
+   from 9 to 19 steps, crossing the width-16 graph limit. Neither
+   intervention reproduced a 5.1 µs production saving. These comparisons
+   do not isolate event synchronization from chunk-edge costs. The
+   selection score continues to measure ordinary steps.
+
+### Setup cost by phase
+
+1. [measured] Each cell below gives seconds for two consecutive fresh
+   processes on the same input and RTX 4090, first with an empty MDIR
+   compile-cache directory and then with the populated directory. These
+   are individual observations. All three builds used the original four pairs
+   and 64 coupling periods per invocation. Each table used a different
+   RTX 4090. Each input had its own cache directory.
+   Compilation covers parsing, lowering, host code generation or cache
+   lookup, linking and device module loading for each path. Instantiation
+   measures wall time inside CUDA graph instantiation calls. Warm and
+   timed chunk times sum stream-event seconds over both candidates.
+   Other setup is elapsed time less these four components and instantiation.
+   It includes input preparation, initial and boundary steps, capture,
+   construction chunks outside the instantiation call, and teardown.
+
+**Original trial with phase counters**
+
+| Input | LAUNCH compile | GRAPH compile | Instantiate | Warm chunks | Timed chunks | Other setup | Total | Cold − warm total |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| JAC | 9.99 / 7.02 | 8.06 / 7.10 | 0.023 / 0.023 | 0.24 / 0.24 | 0.24 / 0.24 | 2.39 / 2.33 | 20.95 / 16.96 | 3.99 |
+| TIP3P 10k | 11.00 / 7.83 | 9.02 / 7.86 | 0.023 / 0.023 | 0.18 / 0.18 | 0.18 / 0.18 | 1.88 / 1.82 | 22.28 / 17.90 | 4.39 |
+| TIP3P 20k | 10.97 / 7.82 | 9.03 / 7.91 | 0.023 / 0.023 | 0.24 / 0.24 | 0.24 / 0.24 | 2.38 / 2.32 | 22.88 / 18.55 | 4.33 |
+| Factor IX | 10.15 / 7.09 | 8.20 / 7.17 | 0.024 / 0.024 | 0.54 / 0.54 | 0.54 / 0.53 | 7.84 / 7.76 | 27.29 / 23.11 | 4.18 |
+| Cellulose | 9.38 / 6.63 | 7.75 / 6.65 | 0.032 / 0.033 | 2.12 / 2.12 | 2.02 / 2.02 | 41.04 / 40.99 | 62.34 / 58.45 | 3.90 |
+| STMV | 10.02 / 6.94 | 8.11 / 7.06 | 0.027 / 0.031 | 5.92 / 5.93 | 5.90 / 5.91 | 105.28 / 105.42 | 135.26 / 131.29 | 3.98 |
+
+2. [measured] On every second run both paths hit the PTX and cubin
+   caches for every GPU module. In table order the LAUNCH / GRAPH module
+   counts were 289 / 295, 304 / 310, 304 / 310, 292 / 299, 284 / 291 and
+   292 / 299. On a cold JAC process GRAPH already reused 271 of its 295
+   cubins after LAUNCH. The original host entries were compiled anew
+   in each process. On STMV the unassigned 105.42 seconds dominate the
+   warm total. A separate CPU measurement took 11.82 seconds to read
+   and prepare its input and 0.017 seconds to copy the prepared system.
+   Eight reads at that rate account for about 94.6 seconds.
+
+**Experimental input snapshot with common lowering, host-object caching and the size rule**
+
+| Input | LAUNCH compile | GRAPH compile | Instantiate | Warm chunks | Timed chunks | Other setup | Total | Cold − warm total |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| JAC | 10.01 / 4.37 | 7.23 / 3.63 | 0.022 / 0.022 | 0.23 / 0.23 | 0.23 / 0.23 | 0.70 / 0.66 | 18.44 / 9.15 | 9.29 |
+| TIP3P 10k | 10.95 / 4.95 | 8.01 / 4.06 | 0.022 / 0.022 | 0.18 / 0.18 | 0.18 / 0.18 | 1.03 / 0.98 | 20.36 / 10.37 | 9.98 |
+| TIP3P 20k | 10.93 / 4.93 | 8.01 / 4.05 | 0.023 / 0.022 | 0.22 / 0.23 | 0.22 / 0.23 | 0.74 / 0.68 | 20.16 / 10.15 | 10.01 |
+| Factor IX | 10.12 / 4.50 | 7.39 / 3.74 | 0.024 / 0.023 | 0.54 / 0.54 | 0.54 / 0.54 | 1.48 / 1.38 | 20.10 / 10.72 | 9.38 |
+| Cellulose | — | — | — | — | — | — | skipped | — |
+| STMV | — | — | — | — | — | — | skipped | — |
+
+3. [measured] Each of the four timed inputs reused the common lowering
+   for GRAPH. Each second process read one cached host object per path and
+   every PTX and cubin. Each first process generated both host objects.
+   The particle rule eliminated disposable compilation and timing on
+   Cellulose and STMV. Their production LAUNCH compilation still runs.
+4. [measured] The four smaller systems remained eligible for timing.
+   In the cold/warm observations Factor IX selected LAUNCH twice and the
+   warm TIP3P 20k selected LAUNCH within noise. Their historical pinned
+   GRAPH gains were 1.01% and 2.76%. The six-input evidence validates
+   which systems the size rule skips. The paired trial's winner agreement
+   is measured separately.
+
+**Final implementation with common lowering, host-object caching and the size rule**
+
+| Input | LAUNCH compile | GRAPH compile | Instantiate | Warm chunks | Timed chunks | Other setup | Total | Cold − warm total |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| JAC | 11.91 / 5.12 | 8.51 / 4.21 | 0.025 / 0.026 | 0.25 / 0.24 | 0.25 / 0.24 | 2.41 / 2.34 | 23.35 / 12.18 | 11.17 |
+| TIP3P 10k | 13.32 / 5.81 | 9.29 / 4.65 | 0.026 / 0.029 | 0.18 / 0.18 | 0.18 / 0.18 | 1.93 / 1.90 | 24.93 / 12.75 | 12.17 |
+| TIP3P 20k | 13.12 / 5.72 | 9.42 / 4.71 | 0.026 / 0.027 | 0.24 / 0.24 | 0.24 / 0.24 | 2.45 / 2.33 | 25.49 / 13.25 | 12.24 |
+| Factor IX | 11.95 / 5.06 | 8.57 / 4.19 | 0.026 / 0.026 | 0.54 / 0.54 | 0.54 / 0.54 | 7.65 / 7.51 | 29.27 / 17.87 | 11.40 |
+| Cellulose | — | — | — | — | — | — | skipped | — |
+| STMV | — | — | — | — | — | — | skipped | — |
+
+5. [measured] Across the four timed inputs, every second process hit
+   both host objects and every PTX and cubin entry. GRAPH reused the
+   common lowering in all eight processes. A populated cache removed
+   11.17–12.24 seconds from elapsed setup on this host. The cold and warm
+   observations selected GRAPH on JAC and both TIP3P inputs. Factor IX
+   selected GRAPH cold and LAUNCH warm. This small historical GRAPH win
+   remains eligible for timing.
+6. [computed] Across the four timed inputs, the scored chunks accounted
+   for 0.18–0.54 seconds of warm setup. The two compiles accounted for
+   9.25–10.46 seconds. Cellulose and STMV avoid their entire disposable
+   setup, measured at 58.45 and 131.29 seconds respectively with the
+   original warm cache.
+
+### Validation of the timing window
+
+1. [measured] A 48-period candidate used four pairs, with the same
+   ordering, exclusion of construction, half-window warm-up and noise
+   rule. Five independent AUTO processes per input on each of two cards
+   ran between whole-run pins in opposite orders. A diagnostic build
+   exercised both paths even on STMV. It matched the pinned winner in
+   5/10 JAC, 9/10 TIP3P 10k and 10/10 STMV setups. The paired whole-run
+   GRAPH saving was +2.426 / +2.914 µs on JAC, +3.377 / +3.212 on TIP3P
+   10k and −31.235 / −22.827 on STMV.
+2. [measured] Using the input snapshot with the original 64-period
+   window also changed the result. Against the same-job pins it matched
+   0/10 JAC and 8/10 TIP3P 10k setups. The size rule matched 10/10 STMV
+   pins. In one JAC order the second paired difference reached −8.51 µs
+   while each of the other three favored GRAPH by at least 3.9 µs.
+   Shortening further to 40 periods and discarding two entire priming
+   pairs before scoring four pairs matched only 2/5 JAC pins in the
+   first order.
+3. [measured] The implementation keeps the original trial length and
+   prepares each candidate from input on every invocation. It shares the
+   common MLIR passes only for equivalent input modules and matching pass
+   pipelines. Nonaligned restarts can have different schedules. The
+   trial shares matching PTX and cubin entries across candidates and
+   reuses cached host objects across processes on supported ELF hosts.
+   Each invocation still owns its trajectory state and graph handles.
+4. [measured] Restoring input preparation while holding the executable
+   and window fixed matched the pins in eight diagnostic setups across
+   JAC and TIP3P 10k. The final build was then tested with five fresh
+   setups per input in each of two opposite run orders, with two whole
+   runs per pin per order. One TIP3P 10k trial selected LAUNCH. Its four
+   paired gains were +5.41, −6.18, +4.27 and +4.58 µs. Their mean of
+   2.02 µs fell below the unchanged threshold of twice the sample
+   standard deviation (10.97 µs).
+
+| Input | Whole-run LAUNCH − GRAPH, forward / reverse (µs/step) | Matches, forward / reverse | Median disposable setup across ten (s) |
+|---|---:|---:|---:|
+| JAC | +3.617 / +3.038 | 5/5 / 5/5 | 12.093 |
+| TIP3P 10k | +3.590 / +3.252 | 4/5 / 5/5 | 12.909 |
+| STMV | −20.802 / −23.284 | 5/5 / 5/5 | 0 (rule) |
+
+5. [measured] The final implementation matched 29 of 30 pinned winners.
+   The original implementation had matched 30 of 30. Both final orders
+   ran on RTX 4090s and passed the per-run clock checks. The first reverse
+   STMV GRAPH pin preceded the final trial-only change and used the same
+   pinned execution path.
+6. [computed] Dividing the 12.093-second JAC median by the two same-series
+   pinned savings gives 3.34–3.98 million steps to repay setup. Holding
+   the original pinned savings of 2.338–2.959 µs/step fixed gives
+   4.09–5.17 million steps, isolating the change in setup cost.

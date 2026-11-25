@@ -16,7 +16,7 @@
 #include "mdir/Driver/Profile.h"
 #include "mdir/Runtime/CopyAudit.h"
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
-#include "JITEngine.h"
+#include "mdir/Compiler/JITEngine.h"
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"

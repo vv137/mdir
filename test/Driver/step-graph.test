@@ -1,0 +1,20 @@
+# RUN: rm -rf %t && mkdir %t
+# RUN: cp %S/../../examples/argon/argon.pdb %t
+# RUN: sed -e '/^trajectory/d' -e 's/steps * = 2000/steps = 100/' -e '/^threads/c threads = 1' -e '/^\[output\]/a manifest = "choices.jsonl"' %S/../../examples/argon/argon.toml > %t/control.toml
+# RUN: mdir check --json %t/control.toml | FileCheck %s --check-prefix=DEFAULT
+# RUN: echo 'step_graph = "AUTO"' >> %t/control.toml
+# RUN: mdir run %t/control.toml | FileCheck %s --check-prefix=AUTO
+# RUN: %python -c "import json; r=json.loads(open('%t/choices.jsonl').readline())['resolved_choices']['step_graph']; assert r['value']=='LAUNCH' and r['requested']=='AUTO' and 'GPU' in r['reason']"
+# RUN: mdir pin %t/choices.jsonl | FileCheck %s --check-prefix=PIN
+# PIN: [execution]
+# PIN: step_graph = "LAUNCH"
+# RUN: sed -i 's/step_graph = "AUTO"/step_graph = "GRAPH"/' %t/control.toml
+# RUN: not mdir check %t/control.toml 2>&1 | FileCheck %s --check-prefix=REFUSE
+# RUN: sed -i 's/"GRAPH"/"WHILE"/' %t/control.toml
+# RUN: not mdir check %t/control.toml 2>&1 | FileCheck %s --check-prefix=INVALID
+# RUN: %python %S/Inputs/check_step_graph_scope.py %t/scope.toml mdir
+# DEFAULT: "requested": "LAUNCH"
+# AUTO: MDIR: step_graph
+# AUTO-SAME: GRAPH requires the GPU target
+# REFUSE: step_graph: GRAPH requires the GPU target
+# INVALID: step_graph

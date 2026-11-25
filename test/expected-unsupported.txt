@@ -85,3 +85,4 @@ without release-tests: Driver/python-observe-release.test
 # The Amber benchmark suite, prepared in MDIR_BENCH_DIR.
 without amber-suite: Scale/amber-suite.test
 without amber-suite: Integration/md-alg-traverse-contract-jac-gpu.test
+without amber-suite: Scale/step-graph-size-gpu.test
