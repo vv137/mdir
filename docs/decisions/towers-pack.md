@@ -41,3 +41,8 @@ an additional 1.87 and 2.24 µs per step. On its fixed input keys, adding
 the guarded wide launch increased the event-bracketed pack interval from
 4.99 to 6.14 µs. Across the eight fixed frames, all 4,905,552 Q18 force
 words and their published components matched the reference bitwise.
+
+On the same TIP3P frame, a CUDA graph IF/ELSE node with a device
+condition took 10.24 µs including the condition-setting kernel and
+9.22 µs with that kernel outside the interval. Two guarded entries took
+6.14 µs in either measurement order.
