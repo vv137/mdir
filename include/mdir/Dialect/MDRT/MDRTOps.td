@@ -86,7 +86,7 @@ def MDRT_DomainMatrixOp : MDRT_Op<"domain_matrix"> {
   }];
   let hasVerifier = 1;
   let arguments = (ins I64:$halo, Index:$domain, Index:$centers,
-      MemRefOf<[F64]>:$positions, MD_CellType:$cell, I64:$exclusions,
+      MemRefOf<[F64]>:$positions, I64:$exclusions,
       MemRefOf<[F64]>:$ownedPositions, MemRefOf<[F64]>:$ghostPositions,
       F64Attr:$cutoff, F64Attr:$skin, I64Attr:$width, I64Attr:$rule);
   let results = (outs MDRT_NeighborsType:$result);

@@ -795,6 +795,10 @@ def ConvertMDDistToLoops
                            "::mlir::scf::SCFDialect",
                            "::mlir::vector::VectorDialect"];
   let options = [
+    Option<"matrixSkin", "matrix-skin", "double", "0",
+           "Verlet skin for the domain candidate rows">,
+    Option<"matrixWidth", "matrix-width", "int64_t", "64",
+           "initial width of a host MATRIX row">,
     Option<"matrixPairs", "matrix-pairs", "bool", "false",
            "lower distributed CPU pair evaluations through host MATRIX rows">,
     Option<"parallelDomains", "parallel-domains", "bool", /*default=*/"false",

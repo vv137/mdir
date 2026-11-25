@@ -900,12 +900,35 @@ LogicalResult Lowering::lowerDomainMatrix(mdrt::DomainMatrixOp op) {
   Value stale = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne, rebuild, word(0));
   auto branch = scf::IfOp::create(b, loc, stale, false);
   OpBuilder build = branch.getThenBodyBuilder();
-  if (failed(emitMatrixBuild(build, loc, list, x, op.getCellMutable().get(), cutoff + skin,
+  SmallVector<Value> edges;
+  auto edge = getOrDeclare("mdrtDistMatrixEdge", b.getFunctionType({i64, i64}, {b.getF64Type()}));
+  for (int axis = 0; axis < 3; ++axis) {
+    Value component = arith::ConstantIntOp::create(build, loc, axis, 64);
+    edges.push_back(func::CallOp::create(build, loc, edge, ValueRange{matrix, component}).getResult(0));
+  }
+  Value box = vector::FromElementsOp::create(build, loc, VectorType::get({3}, b.getF64Type()), edges);
+  if (failed(emitMatrixBuild(build, loc, list, x, box, cutoff + skin,
                              (cutoff + skin) / 3, op.getCenters())))
     return failure();
-  Value selected = call("mdrtDistSelectMatrix", i64,
-      {op.getHalo(), matrix, op.getExclusions(), word(op.getRule()),
-       op.getOwnedPositions(), op.getGhostPositions()}, true);
+  Value rule = word(op.getRule());
+  Value selected = call("mdrtDistSelectMatrix", i64, {matrix, op.getExclusions(), rule});
+  Value filter = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne, selected, word(0));
+  scf::IfOp::create(b, loc, filter, [&](OpBuilder &at, Location) {
+    Value zero = createIndex(at, loc, 0), chunk = createIndex(at, loc, 64);
+    scf::ParallelOp::create(at, loc, ValueRange{zero}, ValueRange{op.getCenters()},
+        ValueRange{chunk}, [&](OpBuilder &body, Location, ValueRange ivs) {
+          Value end = arith::MinUIOp::create(body, loc, op.getCenters(),
+              arith::AddIOp::create(body, loc, ivs[0], chunk));
+          SmallVector<Value> args{op.getHalo(), matrix, op.getExclusions(), rule,
+              arith::IndexCastOp::create(body, loc, i64, ivs[0]),
+              arith::IndexCastOp::create(body, loc, i64, end),
+              op.getOwnedPositions(), op.getGhostPositions()};
+          auto fn = getOrDeclare("mdrtDistSelectRows", body.getFunctionType(ValueRange(args).getTypes(), {}));
+          fn->setAttr("llvm.emit_c_interface", body.getUnitAttr());
+          func::CallOp::create(body, loc, fn, args);
+        });
+    scf::YieldOp::create(at, loc);
+  });
   view(selected);
   neighbors[op.getResult()] = list;
   return success();
