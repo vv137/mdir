@@ -882,8 +882,8 @@ before any domain writes the new epoch, and stops all of them. A
 transport of #828 keeps these three: a reduced bit for the branch, a
 reduced maximum for capacities, and an agreed failure.
 
-*The boundary with the driver.* The driver does not emit this loop yet
-(#832). It is to build, from the run's potential and integrator: the
+*The boundary with the driver.* D[distribute-driver] emits the CPU velocity Verlet loop
+(#832). It builds, from the run's potential and integrator: the
 decomposition from `[distribute]` (`domains`, `transport`, `traversal`,
 Section 13); the state type of the integrator's per-particle state (for
 velocity Verlet the positions, velocities, forces, and masses, and every
@@ -1542,8 +1542,3 @@ a field computed from the positions
   come with the new gather.
 - Derivatives in parameters or fields on domains; migration; MPI. The
   `mixed` mode and GPUs run through `md_exec` (Section 7.2, 7.4).
-
-D[distribute-driver] selects the grid and traversal of the potential
-rewrite from the control file. At the potential-lowering checkpoint a
-force evaluation creates its layout from current positions. Carrying the
-layout and halo between evaluations requires the step state of Section 8.1.

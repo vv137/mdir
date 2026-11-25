@@ -1694,3 +1694,29 @@ when unused, so a constant cannot silently replace a coordinate and its
 force. Compound terms accept declared `lambda_<name>` components through
 the existing lambda bindings, with forces, component derivatives, and
 state energy differences computed by the same differentiation path.
+
+### CPU spatial decomposition (D[distribute-driver])
+
+```toml
+[distribute]
+domains = [2, 1, 1]
+transport = "local"
+traversal = "directed"
+```
+
+The optional table selects the distributed velocity Verlet entry. Its
+default grid is one domain. An integer count chooses the minimum-area
+factor grid for the cell, using the lexicographically first grid on ties.
+An explicit grid has three positive integer divisions, with x varying
+fastest. Directed traversal evaluates both centers. Unique traversal
+evaluates each pair once and returns the neighbor contribution. The halo
+reach is the outer pair-list distance in angstroms. The manifest records
+the resolved grid, traversal, transport, and reach under
+`effective.distribute`.
+
+The CPU path takes a fixed periodic orthorhombic cell, NVE velocity Verlet
+and finite-range pair kernels with real particle parameters. The state
+uses a positive skin. Reciprocal space needs a distributed mesh, bonded
+terms and exclusions need cross-domain partners, and constraints need a
+distributed constraint solve. Analytic EAM has an IR oracle in ML2
+Section 15.
