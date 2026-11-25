@@ -543,6 +543,10 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     ranks = mdrtMPISize();
     output.log.quiet = !writer;
     output.checkpointVote = mdrtMPIMax;
+    const auto &d = *control->distribution;
+    auto domains = d.domains ? d.domains : d.grid[0]*d.grid[1]*d.grid[2];
+    if (domains < ranks)
+      return writer ? refuse(*control, llvm::createStringError("each rank needs at least one domain")) : 1;
   }
 #endif
   Manifest manifest;
@@ -2128,7 +2132,13 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     const auto &g = program->domainGrid;
     distLog.emplace(output.log, manifest, distRank, distRanks, g[0]*g[1]*g[2],
                     firstStep, control->energyPeriod, control->pairlistDistance);
-    bool opened = distLog->open(std::getenv("MDIR_DIST_STEP_TRACE"), control->restartOutput);
+    const char *prefix = std::getenv("MDIR_DIST_STEP_TRACE");
+#ifdef MDIR_ENABLE_MPI
+    if (control->distribution->transport == "mpi" &&
+        mdrtMPIMax(prefix && *prefix) != mdrtMPIAllTrue(prefix && *prefix))
+      return fail("distributed step tracing must be enabled alike on every rank");
+#endif
+    bool opened = distLog->open(prefix, control->restartOutput);
 #ifdef MDIR_ENABLE_MPI
     if (control->distribution->transport == "mpi") {
       distLog->gather = mdrtMPIGatherTimes;

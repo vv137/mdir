@@ -1924,8 +1924,10 @@ static void writeState(int64_t step, void *positions, void *velocities,
   Output &output = *current;
   if (output.checkpointPath.empty()) {
     if (output.checkpointVote && step < output.endStep &&
-        output.checkpointVote(stopSignal))
+        output.checkpointVote(stopSignal)) {
+      if (output.finishDistribution) output.finishDistribution();
       std::exit(StoppedStatus);
+    }
     return;
   }
   ReturnMark returns;

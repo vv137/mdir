@@ -333,6 +333,14 @@ void _mlir_ciface_mdrtMPICollectRows(int64_t handle, struct Memref3D *field) {
   shareRows(layout, layout->rows, field);
 }
 
+void _mlir_ciface_mdrtMPICheckpointRows(int64_t handle, struct Memref3D *field) {
+  struct Layout *l = (struct Layout *)(intptr_t)handle;
+  for (int64_t d = 0; d < l->domains; ++d)
+    if (l->rows[d])
+      mdrtMPIRowsToRoot(at3(field, d, 0, 0), l->rows[d] * field->sizes[2],
+                        mdrtMPIOwner(l->domains, d));
+}
+
 void _mlir_ciface_mdrtMPISharePartials(struct Memref2D *partial) {
   for (int64_t d = 0; d < partial->sizes[0]; ++d)
     mdrtMPIBroadcast(at2(partial, d, 0), partial->sizes[1],
