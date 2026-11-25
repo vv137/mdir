@@ -1389,15 +1389,22 @@ void _mlir_ciface_mdrtDistConstraintRows(int64_t handle, struct Memref3D *positi
 
 /* Index the imported images by identity. An atom may have several images
    on one domain, including periodic images of a locally owned atom. */
-void _mlir_ciface_mdrtDistTupleRows(int64_t handle, struct Memref3D *positions,
-                                    struct Members *members, struct Memref2I *out) {
+static void tupleRows(int64_t handle, struct Memref3D *positions,
+                      struct Members *members, struct Memref2I *out, int local) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
   struct Layout *l = h->layout;
   int64_t count = members->sizes[0], arity = members->sizes[1];
   if (arity < 2 || out->sizes[0] != count || out->sizes[1] != 1 + arity)
     fail("invalid tuple ownership schedule shape");
   if (count == 0) return;
-  shareRows(l, l->rows, positions);
+  int64_t begin = 0, end = l->domains;
+#ifdef MDIR_ENABLE_MPI
+  if (local) {
+    begin = mdrtMPIDomainBound(l->domains,0);
+    end = mdrtMPIDomainBound(l->domains,1);
+
+  }
+#endif
   if (!h->firstGhost) {
     h->firstGhost = malloc(l->domains*l->count*sizeof *h->firstGhost);
     h->nextGhost = malloc(l->domains*h->capacity*sizeof *h->nextGhost);
@@ -1423,6 +1430,7 @@ void _mlir_ciface_mdrtDistTupleRows(int64_t handle, struct Memref3D *positions,
       if (ids[a] < 0 || ids[a] >= l->count) fail("tuple member outside particle set");
       if (ids[a] < anchor) anchor = ids[a];
     }
+    int64_t *record = out->aligned + out->offset + t*out->strides[0];
     int64_t d = 0;
     for (int k = 2; k >= 0; --k) {
       double origin = *at3(positions, l->owner[anchor], l->row[anchor], k);
@@ -1440,8 +1448,8 @@ void _mlir_ciface_mdrtDistTupleRows(int64_t handle, struct Memref3D *positions,
       for (int64_t a = 0; a < arity; ++a)
         image[a][k] -= (int64_t)translation;
     }
-    int64_t *record = out->aligned + out->offset + t*out->strides[0];
     record[0] = d;
+    if (d < begin || d >= end) continue;
     for (int64_t a = 0; a < arity; ++a) {
       int64_t j = ids[a], row = -1;
       if (l->owner[j] == d && !image[a][0] && !image[a][1] && !image[a][2])
@@ -1463,6 +1471,18 @@ void _mlir_ciface_mdrtDistTupleRows(int64_t handle, struct Memref3D *positions,
   free(image);
   free(ids);
 }
+
+void _mlir_ciface_mdrtDistTupleRows(int64_t handle, struct Memref3D *positions,
+                                    struct Members *members, struct Memref2I *out) {
+  tupleRows(handle,positions,members,out,0);
+}
+
+#ifdef MDIR_ENABLE_MPI
+void _mlir_ciface_mdrtDistLocalTupleRows(int64_t handle, struct Memref3D *positions,
+                                         struct Members *members, struct Memref2I *out) {
+  tupleRows(handle,positions,members,out,1);
+}
+#endif
 
 /* The ghost rows of each domain, and the particle each is an image of. */
 void _mlir_ciface_mdrtDistHaloRows(int64_t handle, struct Memref1I *rows,
