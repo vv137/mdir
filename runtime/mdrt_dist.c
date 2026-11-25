@@ -1116,7 +1116,7 @@ int64_t _mlir_ciface_mdrtDistCovered(int64_t handle,
    member. Verify the common owner again at the epoch of the solve. */
 void _mlir_ciface_mdrtDistConstraintRows(int64_t handle, struct Memref3D *positions,
                                          struct Members *members, struct Memref2I *out) {
-  const struct Layout *l = ((struct Halo *)(intptr_t)handle)->layout;
+  const struct Layout *l = (struct Layout *)(intptr_t)handle;
   (void)positions;
   for (int64_t t = 0; t < members->sizes[0]; ++t) {
     int64_t *record = out->aligned + out->offset + t*out->strides[0];
