@@ -186,7 +186,14 @@ private:
   Value quantize(OpBuilder &b, Value value, int fractionalBits);
   Value finish(OpBuilder &b, Value sum, int fractionalBits);
   Value add(OpBuilder &b, Value lhs, Value rhs);
-  llvm::DenseMap<Value, Value> imageShifts;
+  llvm::DenseMap<Value, Value> imageShifts, fieldWords;
+  llvm::DenseMap<Value, std::pair<Value, int>> observableWords;
+  Value decodeObservable(OpBuilder &b, Value sum, int bits);
+  bool needsWords(Value field) {
+    return fixedPoint && llvm::any_of(field.getUsers(), [](Operation *user) {
+      return user->hasAttr("md_dist.add_terms");
+    });
+  }
   /// A new buffer of `domains x rows x k` of f64, freed at the end.
   Value allocate(OpBuilder &b, Value rows, int64_t k);
   Value inputSnapshot(OpBuilder &b, md::FieldType type, Value field);
@@ -311,6 +318,12 @@ Value Lowering::finish(OpBuilder &b, Value sum, int fractionalBits) {
   }
   return arith::MulFOp::create(b, loc,
       arith::SIToFPOp::create(b, loc, type, sum), scale);
+}
+
+Value Lowering::decodeObservable(OpBuilder &b, Value sum, int bits) {
+  Value value = finish(b, sum, bits);
+  if (fixedPoint) observableWords[value] = {sum, bits};
+  return value;
 }
 
 Value Lowering::add(OpBuilder &b, Value lhs, Value rhs) {
@@ -762,7 +775,11 @@ LogicalResult Lowering::lowerHaloSum(HaloSumOp op) {
     auto sum = declare("mdrtDistHaloSumWords",
         b.getFunctionType({b.getI64Type(), owned.getType(), ghosts.getType(),
                            result.getType()}, {}), true);
-    func::CallOp::create(b, loc, sum, ValueRange{halo.handle, owned, ghosts, result});
+    auto type = cast<MemRefType>(owned.getType());
+    Value words = allocate(b, type, {index(b, domains), layout.capacity, index(b, k)});
+    memref::CopyOp::create(b, loc, owned, words);
+    func::CallOp::create(b, loc, sum, ValueRange{halo.handle, words, ghosts, result});
+    fieldWords[op.getResult()] = words;
     storage[op.getResult()].buffer = result;
     return success();
   }
@@ -1163,6 +1180,11 @@ LogicalResult Lowering::lowerGatherPairs(GatherPairsOp op) {
     return allocate(b, wordBuffer, {index(b, domains), rows, index(b, k)});
   };
   Value ownedOut = twoEnded ? allocateSums(layout.capacity) : allocate(b, layout.capacity, k);
+  Value raw;
+  if (!twoEnded && needsWords(op.getResults()[0])) {
+    raw = allocateSums(layout.capacity);
+    fieldWords[op.getResults()[0]] = raw;
+  }
   Value ghostOut;
   if (twoEnded) {
     fillZero(b, ownedOut);
@@ -1208,6 +1230,7 @@ LogicalResult Lowering::lowerGatherPairs(GatherPairsOp op) {
         return add(at, acc, quantize(at, fixedPoint ? scale(at, value, weight) : value, 40));
       },
       [&](OpBuilder &at, Value sum, Value d, Value i) {
+        if (raw) storeValue(at, sum, raw, d, i);
         if (twoEnded)
           addValue(at, fixedPoint ? sum : scale(at, sum, weight), ownedOut, d, i);
         else
@@ -1303,7 +1326,7 @@ void Lowering::lowerCollectedSum(md::SumParticlesOp op) {
         Value term = mapping.lookupOrDefault(kernel.getTerminator()->getOperand(0));
         scf::YieldOp::create(body, loc, add(body, acc[0], quantize(body, term, 32)));
       });
-  op.replaceAllUsesWith(finish(b, loop.getResult(0), 32));
+  op.replaceAllUsesWith(decodeObservable(b, loop.getResult(0), 32));
   op.erase();
 }
 
@@ -1312,6 +1335,13 @@ LogicalResult Lowering::lowerMapParticles(MapParticlesOp op) {
   FieldType resultType = op.getResult().getType();
   Storage &rows = rowsOf(op.getGathered()[0]);
   Value result = allocate(b, rows.capacity, resultType.getNumComponents());
+  bool combine = fixedPoint && op->hasAttr("md_dist.add_terms");
+  Value raw;
+  if (combine && needsWords(op.getResult())) {
+    raw = allocate(b, cast<MemRefType>(result.getType()).clone(b.getI64Type()),
+                   {index(b, domains), rows.capacity, index(b, resultType.getNumComponents())});
+    fieldWords[op.getResult()] = raw;
+  }
   scf::ForOp::create(
       b, loc, index(b, 0), index(b, domains), index(b, 1), ValueRange(),
       [&](OpBuilder &bd, Location, Value d, ValueRange) {
@@ -1321,12 +1351,25 @@ LogicalResult Lowering::lowerMapParticles(MapParticlesOp op) {
             bd, loc, index(bd, 0), count, index(bd, 1), ValueRange(),
             [&](OpBuilder &br, Location, Value r, ValueRange) {
               SmallVector<Value> arguments;
-              for (Value field : op.getGathered())
-                arguments.push_back(loadValue(
-                    br, storage[field].buffer, d, r,
-                    cast<FieldType>(field.getType()).getKernelValueType()));
-              Value value =
-                  inlineKernel(br, op.getKernel().front(), arguments);
+              Value sum;
+              for (Value field : op.getGathered()) {
+                Type type = cast<FieldType>(field.getType()).getKernelValueType();
+                Value words = fieldWords.lookup(field);
+                if (combine && words) {
+                  Value term = loadValue(br, words, d, r, sumType(type));
+                  sum = sum ? add(br, sum, term) : term;
+                } else {
+                  Value term = loadValue(br, storage[field].buffer, d, r, type);
+                  if (combine) {
+                    term = quantize(br, term, 40);
+                    sum = sum ? add(br, sum, term) : term;
+                  } else
+                    arguments.push_back(term);
+                }
+              }
+              if (raw) storeValue(br, sum, raw, d, r);
+              Value value = combine ? finish(br, sum, 40)
+                                    : inlineKernel(br, op.getKernel().front(), arguments);
               storeValue(br, value, result, d, r);
               scf::YieldOp::create(br, loc);
             });
@@ -1364,7 +1407,7 @@ LogicalResult Lowering::lowerAllReduce(AllReduceOp op) {
   if (auto pairs = op.getPartial().getDefiningOp<SumPairsOp>())
     if (pairs.getRelation().getType().getTraversal() == Traversal::Directed)
       ++bits;
-  op.getResult().replaceAllUsesWith(finish(b, loop.getResult(0), bits));
+  op.getResult().replaceAllUsesWith(decodeObservable(b, loop.getResult(0), bits));
   return success();
 }
 
@@ -2270,6 +2313,21 @@ LogicalResult Lowering::run(func::FuncOp function) {
   } else {
     function.walk([](scf::ForOp loop) { loop->removeAttr(kStepLoop); });
   }
+  // Distinct potential terms can produce separate reductions of the same
+  // observable. Add their words before the final conversion to binary64.
+  if (fixedPoint) {
+    function.walk([&](arith::AddFOp op) {
+      auto [a, aBits] = observableWords.lookup(op.getLhs());
+      auto [b, bBits] = observableWords.lookup(op.getRhs());
+      if (!a || !b) return;
+      OpBuilder at(op);
+      if (aBits < bBits) a = add(at, a, a);
+      if (bBits < aBits) b = add(at, b, b);
+      op.replaceAllUsesWith(decodeObservable(at, add(at, a, b), std::max(aBits, bBits)));
+    });
+  }
+  observableWords.clear();
+  fieldWords.clear();
   imageShifts.clear();
   storage.clear();
   relations.clear();
