@@ -18,3 +18,14 @@
 # EPOCH-DAG: llvm.call @mdrtDistDeviceEpochHalo(
 # EPOCH-DAG: llvm.call @mdrtDistDevicePositions(
 # EPOCH-DAG: llvm.call @mdrtDeviceRestoreDomainMatrix(
+
+# A narrow skin rebuilds the periodic self-images at both steps. Compare
+# the device face map with the host geometry for the same coordinates.
+# RUN: sed 's/pairlist_distance = 9.5/pairlist_distance = 8.501/' %t/run.toml > %t/faces.toml
+# RUN: sed -e 's/"GPU"/"CPU"/' -e 's/transport = "nccl"/transport = "mpi"/' -e '/placement = "node"/d' %t/faces.toml > %t/host-faces.toml
+# RUN: cd %t && mdir run faces.toml > faces.log && mdir run host-faces.toml > host-faces.log
+# RUN: FileCheck %s --check-prefix=REBUILD < %t/faces.log
+# REBUILD: neighbor structures were built 3 times
+# RUN: grep -E '^DIST: interval step [12] rank 0 domain 0 owned' %t/faces.log > %t/gpu-rows
+# RUN: grep -E '^DIST: interval step [12] rank 0 domain 0 owned' %t/host-faces.log > %t/cpu-rows
+# RUN: diff %t/cpu-rows %t/gpu-rows
