@@ -121,9 +121,10 @@ int mdrtMPIAllTrue(int predicate) {
   return result;
 }
 
-void mdrtMPIExchange(double *send, int *sendCounts, int *sendOffsets,
-                     double *recv, int *recvCounts, int *recvOffsets) {
+void mdrtMPIExchange(void *send, int *sendCounts, int *sendOffsets,
+                     void *recv, int *recvCounts, int *recvOffsets, int words) {
   arrival();
-  MPI_Alltoallv(send, sendCounts, sendOffsets, MPI_DOUBLE,
-                recv, recvCounts, recvOffsets, MPI_DOUBLE, comm);
+  MPI_Datatype type = words ? MPI_INT64_T : MPI_DOUBLE;
+  MPI_Alltoallv(send, sendCounts, sendOffsets, type,
+                recv, recvCounts, recvOffsets, type, comm);
 }
