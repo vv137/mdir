@@ -13,16 +13,26 @@ write disjoint rows and combine their convergence flags with bitwise OR.
 
 A snapshot used to distribute a field copies the particle identities of the
 local domains. A tuple parameter snapshot uses the same local tuple order
-as its kernel. Partitioning a replicated input still reads the complete
-position field. Distributed field copies and zero fills visit only the
-local domain range.
+as its kernel. MPI partitioning reads an identity interval and a disjoint
+interval of each constraint relation. The initial registration routes
+group assignments to identity intervals and then to spatial owners.
 
-During migration, each rank evaluates coordinates and constraint centers
-on their previous owners. Changed domain assignments update the replicated
-identity map. Field payloads travel to the receiving ranks. Each rank
-numbers its new local identities in ascending order using fixed-block
-counts and prefix offsets. Halo construction can request the remote row
-maps and positions after the migration.
+A migrating group carries its center, members and original topology index.
+Each rank merges incoming records with survivors in domain and identity
+order. Each new row refers to an old local field slot or a peer receive
+slot. Fields use the same permutation. Halo discovery distributes sites
+whose periodic images can enter the receiver's boxes. Receivers assign
+ghost rows in identity and image order, then send their requested source
+rows to the exporters. Cell bounds, domain counts and reporting summaries
+remain collective.
+
+The MPI driver evaluates disjoint intervals of bonded topology. A temporary
+directory partitions current site coordinates by identity. A topology
+interval requests its own member sites, computes the interaction midpoint
+and routes the tuple and its image shifts to the midpoint owner. Parameter
+lookup uses the original tuple index. Constraints instead enumerate group
+centers on their spatial owners. When the native integrator requests a
+complete field, identity intervals assemble consecutive output ranges.
 
 The halo plan stores the peer stream offset of each crossing row.
 Packing and forward delivery write disjoint rows. The transpose groups

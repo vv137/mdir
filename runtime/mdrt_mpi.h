@@ -26,7 +26,10 @@ void mdrtMPIShareBlocks(void *values, const int *counts, const int *offsets, int
 void mdrtMPIExchange(void *send, int *sendCounts, int *sendOffsets,
                      void *recv, int *recvCounts, int *recvOffsets, int words);
 int mdrtMPIShareDomainPartials(void *values, int64_t domains, int64_t width, int words);
+void mdrtMPICollectIntervals(void *data, int64_t count, int64_t width, int integer, int rootOnly);
+void mdrtMPIShareIndexRows(int64_t *rows, int64_t domains, int64_t width);
 void mdrtMPIShareDomainCounts(int64_t *rows, int64_t domains);
+void mdrtMPISumMigration(int64_t *counts, int64_t domains);
 void mdrtMPIExchangeCounts(const int *send, int *recv);
 void mdrtMPIExchangeRecords(void *send, int *ns, int *os, void *recv,
                             int *nr, int *recvOffsets, int bytes);

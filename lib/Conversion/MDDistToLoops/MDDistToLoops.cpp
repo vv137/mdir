@@ -155,6 +155,8 @@ private:
                                     ValueRange reduce, DenseF64ArrayAttr weights,
                                     bool atomic, double scale);
   llvm::DenseMap<Value, Value> trajectoryCaches;
+  llvm::DenseMap<std::pair<Block *,Value>,Value> topologyShards;
+  llvm::DenseMap<Value, Value> tupleSchedules;
   llvm::DenseSet<std::pair<Block *, Value>> sharedTuplePositions;
   LogicalResult lowerPartition(PartitionOp op);
   LogicalResult lowerMigrate(MigrateOp op);
@@ -602,7 +604,9 @@ Value Lowering::inputSnapshot(OpBuilder &b, md::FieldType type, Value field, Val
 std::pair<Value,Value> Lowering::rowViews(OpBuilder &b, Value handle, bool ghosts) {
   Type i64 = b.getI64Type();
   auto view = [&](StringRef name, ArrayRef<int64_t> shape) {
-    Type type = MemRefType::get(shape, i64);
+    constexpr int64_t dyn = ShapedType::kDynamic;
+    Type type = shape.size() == 1 ? MemRefType::get(shape,i64) :
+        MemRefType::get(shape,i64,StridedLayoutAttr::get(b.getContext(),dyn,{dyn,1}));
     auto fn = declare(name, b.getFunctionType({i64,i64}, {type}), true);
     return func::CallOp::create(b, loc, fn, ValueRange{
         handle, arith::ConstantIntOp::create(b, loc, ghosts, 64)}).getResult(0);
@@ -625,7 +629,15 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
   auto fieldType = cast<md::FieldType>(op.getPositions().getType());
   if (!fieldType.getElementType().isF64())
     return op.emitOpError() << "the reference executor runs f64 only";
-  Value positions = inputSnapshot(b, fieldType, op.getPositions());
+  Value positions;
+  if (mpi && module->hasAttr("md_dist.driver")) {
+    // Partition and group registration finish their reads in this block.
+    auto view = mdrt::ToBufferOp::create(b,loc,mdrt::getBufferType(fieldType),op.getPositions());
+    view->setAttr("mdrt.partition_view",b.getUnitAttr());
+    positions = view;
+  } else {
+    positions = inputSnapshot(b,fieldType,op.getPositions());
+  }
   if (fixedPoint) {
     Value count = memref::DimOp::create(b, loc, positions, 0);
     auto check = declare("mdrtDistCheckWordCount",
@@ -676,7 +688,7 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
   for (int64_t n : grid)
     args.push_back(arith::ConstantIntOp::create(b, loc, n, 64));
   llvm::append_range(args, edges);
-  StringRef name = mpi ? "mdrtDistMPIPartition" : "mdrtDistPartition";
+  StringRef name = mpi ? "mdrtDistStartPartition" : "mdrtDistPartition";
   if (cache) {
     name = "mdrtDistEpochPartition";
     args.append({cache, real(b, matrixSkin), arith::ConstantIntOp::create(b, loc, mpi, 64)});
@@ -691,6 +703,9 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
     auto apply = declare("mdrtDistGroupOwners", b.getFunctionType({i64, wide, dynamic}, {}), true);
     func::CallOp::create(b, loc, apply, ValueRange{handle, cast, view});
   }
+  if (mpi)
+    func::CallOp::create(b,loc,declare("mdrtDistEndPartition",
+        b.getFunctionType({i64}, {}),false),handle);
   Value count = memref::DimOp::create(b, loc, positions, 0);
   Value capacity = ownedCapacity(b, handle);
   auto [rows, ids] = rowViews(b, handle, false);
@@ -867,26 +882,23 @@ LogicalResult Lowering::lowerCollect(CollectOp op) {
     return call && call.getCallee() == "mdrtWriteCheckpoint";
   });
   Value limit = index(b, domains);
-  if (mpi) {
-    SmallVector<Type> args{b.getI64Type(), owned.getType()};
-    if (checkpointOnly) {
-      auto gather = declare("mdrtMPICheckpointRows",
-                            b.getFunctionType(args, {b.getI64Type()}), true);
-      Value count = func::CallOp::create(b, loc, gather,
-          ValueRange{layout.handle, owned}).getResult(0);
-      limit = toIndex(b, count);
-    } else {
-      auto share = declare("mdrtMPICollectRows", b.getFunctionType(args, {}), true);
-      func::CallOp::create(b, loc, share, ValueRange{layout.handle, owned});
-    }
-  }
+  Value ids = layout.ids;
   int64_t k = fieldType.getNumComponents();
   MemRefType type = mdrt::getBufferType(fieldType);
   // The buffer is handed to the program as a field, which owns it from
   // then on; it is not freed here.
   Value global =
       memref::AllocOp::create(b, loc, type, ValueRange{layout.count});
-  scf::ForOp::create(
+  if (mpi) {
+    Type i64 = b.getI64Type();
+    Value base = arith::IndexCastOp::create(b,loc,i64,
+        memref::ExtractAlignedPointerAsIndexOp::create(b,loc,global));
+    auto collect = declare("mdrtMPICollectField",
+        b.getFunctionType({i64,owned.getType(),i64,i64,i64}, {}), true);
+    func::CallOp::create(b,loc,collect,ValueRange{layout.handle,owned,base,
+        arith::ConstantIntOp::create(b,loc,fieldType.getElementType().isInteger(32),64),
+        arith::ConstantIntOp::create(b,loc,checkpointOnly,64)});
+  } else scf::ForOp::create(
       b, loc, index(b, 0), limit, index(b, 1), ValueRange(),
       [&](OpBuilder &bd, Location, Value d, ValueRange) {
         Value rows = toIndex(
@@ -895,7 +907,7 @@ LogicalResult Lowering::lowerCollect(CollectOp op) {
             bd, loc, index(bd, 0), rows, index(bd, 1), ValueRange(),
             [&](OpBuilder &br, Location, Value r, ValueRange) {
               Value j = toIndex(br, memref::LoadOp::create(
-                                        br, loc, layout.ids, ValueRange{d, r}));
+                                        br, loc, ids, ValueRange{d, r}));
               for (int64_t c = 0; c < k; ++c) {
                 Value v = memref::LoadOp::create(
                     br, loc, owned, ValueRange{d, r, index(br, c)});
@@ -982,14 +994,21 @@ LogicalResult Lowering::lowerHalo(HaloOp op) {
         auto n = dyn_cast<NeighborhoodOp>(user);
         return !n || n.getResult().getType().getTraversal() == Traversal::Midpoint;
       });
+  bool local = mpi && module->hasAttr("md_dist.driver") &&
+      llvm::all_of(op.getResult().getUsers(), [](Operation *user) {
+        auto rows = dyn_cast<TupleRowsOp>(user);
+        return !rows || llvm::all_of(rows.getRows().getUsers(),
+            [](Operation *use) { return isa<TupleKernelOp>(use); });
+      });
+  int64_t mode = midpoint + (local ? 2 : 0);
   StringRef name = midpoint ? "mdrtDistMidpointHalo" : "mdrtDistHalo";
   if (cache) {
     name = "mdrtDistEpochHalo";
-    args.push_back(arith::ConstantIntOp::create(b, loc, midpoint, 64));
+    args.push_back(arith::ConstantIntOp::create(b, loc, mode, 64));
   }
   Value handle;
   if (parallelDomains && !cache && domains > 1) {
-    args.push_back(arith::ConstantIntOp::create(b, loc, midpoint, 64));
+    args.push_back(arith::ConstantIntOp::create(b, loc, mode, 64));
     auto field = op.getPositions().getDefiningOp<RedistributeOp>();
     bool migrated = mpi && field && isMigrationPosition(field);
     args.push_back(arith::ConstantIntOp::create(b, loc, migrated, 64));
@@ -1004,6 +1023,10 @@ LogicalResult Lowering::lowerHalo(HaloOp op) {
     handle = func::CallOp::create(b, loc, declare("mdrtDistFinishHalo",
         b.getFunctionType({i64,positions.getType()}, {i64}), true), ValueRange{build,positions}).getResult(0);
   } else {
+    if (!cache && local) {
+      name = "mdrtDistDriverHalo";
+      args.push_back(arith::ConstantIntOp::create(b,loc,mode,64));
+    }
     handle = func::CallOp::create(b, loc,
         declare(name, b.getFunctionType(ValueRange(args).getTypes(), {i64}), true), args).getResult(0);
   }
@@ -1302,7 +1325,12 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
   SmallVector<Value> parameters;
   if (!op.getParameters().empty()) {
     Value ids;
-    if (indexed)
+    if (Value schedule = tupleSchedules.lookup(op.getRows())) {
+      ids = indices(localCount);
+      auto remap = declare("mdrtDistParameterOrder",
+          b.getFunctionType({b.getI64Type(),order.getType(),ids.getType()}, {}), true);
+      func::CallOp::create(b, loc, remap, ValueRange{schedule,order,ids});
+    } else if (indexed)
       ids = memref::ReinterpretCastOp::create(b, loc, cast<MemRefType>(order.getType()),
           order, b.getIndexAttr(0), ArrayRef<OpFoldResult>{localCount},
           ArrayRef<OpFoldResult>{b.getIndexAttr(1)});
@@ -1508,11 +1536,39 @@ LogicalResult Lowering::lowerTupleRows(TupleRowsOp op) {
     return MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, type);
   };
   Value count = memref::DimOp::create(b, loc, members, 0);
-  Value rows = allocate(b, op.getRows().getType(), {count});
   Value source = memref::CastOp::create(b, loc, dynamic(b.getI32Type()), members);
-  Value result = memref::CastOp::create(b, loc, dynamic(b.getI64Type()), rows);
   Value positions = storage[op.getPositions()].buffer;
   StringRef name = op.getGroup() ? "mdrtDistConstraintRows" : "mdrtDistTupleRows";
+  if (mpi && module->hasAttr("md_dist.driver") &&
+      llvm::all_of(op.getRows().getUsers(), [](Operation *u) { return isa<TupleKernelOp>(u); })) {
+    Type i64 = b.getI64Type();
+    Value handle = op.getGroup() ? storage[layoutOf(op.getHalo())].handle : storage[op.getHalo()].handle;
+    auto key = std::make_pair(op->getBlock(),op.getPositions());
+    Value &shard = topologyShards[key];
+    if (!op.getGroup() && !shard) {
+      auto gather = declare("mdrtDistTopologyShard",
+          b.getFunctionType({i64,positions.getType()}, {i64}), true);
+      shard = func::CallOp::create(b, loc, gather,
+          ValueRange{storage[layoutOf(op.getHalo())].handle,positions}).getResult(0);
+      OpBuilder cleanup(end);
+      func::CallOp::create(cleanup, loc, declare("mdrtDistReleaseShard",
+          b.getFunctionType({i64}, {}), false), shard);
+    }
+    auto build = declare("mdrtDistScheduleTuples",
+        b.getFunctionType({i64,i64,i64,positions.getType(),source.getType()}, {i64}), true);
+    Value schedule = func::CallOp::create(b, loc, build, ValueRange{handle,
+        arith::ConstantIntOp::create(b, loc, op.getGroup() ? 1 : 0, 64),op.getGroup() ? arith::ConstantIntOp::create(b,loc,0,64).getResult() : shard,positions,source}).getResult(0);
+    auto view = declare("mdrtDistScheduleView",
+        b.getFunctionType({i64}, {dynamic(i64)}), true);
+    Value table = func::CallOp::create(b, loc, view, schedule).getResult(0);
+    Value rows = memref::CastOp::create(b, loc, op.getRows().getType(), table);
+    tupleSchedules[rows] = schedule;
+    op.getRows().replaceAllUsesWith(rows);
+    OpBuilder cleanup(end);
+    func::CallOp::create(cleanup, loc, declare("mdrtDistReleaseSchedule",
+        b.getFunctionType({i64}, {}), false), schedule);
+    return success();
+  }
   if (mpi && !op.getGroup()) {
     // The field is immutable within its SSA lifetime. All tuple sets in
     // this block can read the same replicated coordinates.
@@ -1522,35 +1578,13 @@ LogicalResult Lowering::lowerTupleRows(TupleRowsOp op) {
           b.getFunctionType({b.getI64Type(),positions.getType()}, {}), true);
       func::CallOp::create(b, loc, share, ValueRange{layout,positions});
     }
-    if (matrixPairs && module->hasAttr("md_dist.driver") &&
-        llvm::all_of(op.getRows().getUsers(), [](Operation *u) { return isa<TupleKernelOp>(u); }))
-      name = "mdrtDistLocalTupleRows";
   }
-  if (parallelDomains && name == "mdrtDistLocalTupleRows") {
-    Value halo = storage[op.getHalo()].handle;
-    Type i64 = b.getI64Type();
-    auto prepare = declare("mdrtDistIndexTupleImages", b.getFunctionType({i64, i64}, {}), false);
-    func::CallOp::create(b, loc, prepare, ValueRange{halo,
-        arith::IndexCastOp::create(b, loc, i64, count)});
-    Value begin = arith::IndexCastOp::create(b, loc, i64, domainBound(b, false));
-    Value end = arith::IndexCastOp::create(b, loc, i64, domainBound(b, true));
-    Value chunk = index(b, 256);
-    auto fill = declare("mdrtDistTupleRowBlock", b.getFunctionType({i64, positions.getType(),
-        source.getType(), result.getType(), i64, i64, i64, i64}, {}), true);
-    scf::ParallelOp::create(b, loc, ValueRange{index(b, 0)}, ValueRange{count},
-        ValueRange{chunk}, [&](OpBuilder &at, Location, ValueRange ivs) {
-          Value past = arith::MinUIOp::create(at, loc, count,
-              arith::AddIOp::create(at, loc, ivs[0], chunk));
-          func::CallOp::create(at, loc, fill, ValueRange{halo, positions, source, result,
-              begin, end, arith::IndexCastOp::create(at, loc, i64, ivs[0]),
-              arith::IndexCastOp::create(at, loc, i64, past)});
-        });
-  } else {
-    auto fill = declare(name,
-        b.getFunctionType({b.getI64Type(), positions.getType(), source.getType(), result.getType()}, {}), true);
-    func::CallOp::create(b, loc, fill, ValueRange{op.getGroup() ? storage[layoutOf(op.getHalo())].handle
+  Value rows = allocate(b, op.getRows().getType(), {count});
+  Value result = memref::CastOp::create(b, loc, dynamic(b.getI64Type()), rows);
+  auto fill = declare(name,
+      b.getFunctionType({b.getI64Type(), positions.getType(), source.getType(), result.getType()}, {}), true);
+  func::CallOp::create(b, loc, fill, ValueRange{op.getGroup() ? storage[layoutOf(op.getHalo())].handle
                                  : storage[op.getHalo()].handle, positions, source, result});
-  }
   op.getRows().replaceAllUsesWith(rows);
   return success();
 }
@@ -1756,7 +1790,9 @@ void Lowering::emitPairs(
   if (midpoint) {
     // The neighborhood checked these cell operands when it was lowered.
     (void)getHaloEdges(op, haloValue, edges);
-    auto imageType = MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic, 3}, i64);
+    constexpr int64_t dyn = ShapedType::kDynamic;
+    auto imageType = MemRefType::get({dyn,dyn,3},i64,
+        StridedLayoutAttr::get(b.getContext(),dyn,{dyn,3,1}));
     auto view = declare("mdrtDistHaloImageWords", b.getFunctionType({i64}, {imageType}), true);
     images = func::CallOp::create(b, loc, view, halo.handle).getResult(0);
   }
@@ -3407,6 +3443,8 @@ LogicalResult Lowering::run(func::FuncOp function) {
   relations.clear();
   trajectoryCaches.clear();
   sharedTuplePositions.clear();
+  tupleSchedules.clear();
+  topologyShards.clear();
   ownedEpochs.clear();
   localEpochs.clear();
   decomposition = nullptr;

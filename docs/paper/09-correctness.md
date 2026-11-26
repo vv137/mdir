@@ -855,3 +855,15 @@ Likewise the observable partials occupy consecutive domain rows. Each
 rank contributes its interval to a single gather on all ranks, then adds
 the complete rows in increasing domain order. This combines the
 transfers while preserving the order of the numerical reduction.
+
+
+For the MPI layout in D[distribute-cpu-threads], each old owned row either
+survives on its rank or supplies one crossing record to its new rank.
+Sorting these disjoint records by domain and particle identity fixes the
+new row permutation. That permutation also indexes velocities and other
+carried fields. The center of a disjoint constraint group transfers the
+member identities and the original parameter index with it. For bonded
+terms, consecutive input intervals route records to the rank of the
+interaction midpoint. Concatenating source intervals in rank order
+preserves topology order. The receiving rank resolves periodic images
+against its own ghost rows before summing member forces.

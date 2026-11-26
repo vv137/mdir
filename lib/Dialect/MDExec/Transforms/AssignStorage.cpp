@@ -2076,6 +2076,15 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
           llvm::any_of(from.getBuffer().getUsers(), [&](Operation *user) {
             if (user == op)
               return false;
+            if (auto ptr = dyn_cast<memref::ExtractAlignedPointerAsIndexOp>(user)) {
+              if (!ptr->hasOneUse()) return true;
+              auto cast = dyn_cast<arith::IndexCastOp>(*ptr->user_begin());
+              if (!cast || !cast->hasOneUse()) return true;
+              auto call = dyn_cast<func::CallOp>(*cast->user_begin());
+              return !call || call.getCallee() != "mdrtMPICollectField" ||
+                     call.getNumOperands() != 5 || call.getOperand(2) != cast.getResult() ||
+                     call->getBlock() != op->getBlock() || !call->isBeforeInBlock(op);
+            }
             auto store = dyn_cast<memref::StoreOp>(user);
             if (!store || store.getMemRef() != from.getBuffer())
               return true;
@@ -2233,7 +2242,7 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     Value buffer;
     if (failed(getBuffer(to.getField(), scope, buffer)))
       return failure();
-    if (deviceResult) {
+    if (deviceResult || to->hasAttr("mdrt.partition_view")) {
       // The caller reads this storage directly. Keep it beyond the field's
       // last use, then let a loop return it to its pool at the yield.
       if (scope.owns(buffer))
