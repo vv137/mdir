@@ -1167,3 +1167,9 @@ Periodic copies can give a rank both ends of an edge of the communication
 graph. For such an edge the rank copies its packed send slice into its
 receive slice on the halo stream. The unpack kernel then applies the
 image shift or reverse force sum exactly as for a remote edge.
+
+The coverage predicate needs one integer per rank for the maximum local
+status. Its host read completes before the collective decision for the
+step. Reusing this result across steps removes a driver allocation and
+free per nonempty rank per step. The device row fields and generated
+temporaries retain their own activation or reference-counted lifetimes.

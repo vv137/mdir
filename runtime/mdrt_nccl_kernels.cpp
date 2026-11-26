@@ -425,18 +425,25 @@ extern "C" void mdrtNCCLAdvance(const double *x, const double *v,
   check(cuLaunchKernel(advance, (3*rows+255)/256,1,1,256,1,1,0,nullptr,args,nullptr));
 }
 
+static CUdeviceptr coverageFlag;
+
+extern "C" void mdrtNCCLReleaseCoverage() {
+  if (coverageFlag) {
+    check(cuMemFree(coverageFlag));
+    coverageFlag = 0;
+  }
+}
+
 extern "C" int mdrtNCCLCoverage(const double *x, const double *ref,
                                 long long rows, double limit) {
   if (!rows) return 0;
   if (!module) compile();
-  CUdeviceptr flag;
-  check(cuMemAlloc(&flag,sizeof(int)));
-  check(cuMemsetD32(flag,0,1));
-  void *args[] = {&x,&ref,&rows,&limit,&flag};
+  if (!coverageFlag) check(cuMemAlloc(&coverageFlag,sizeof(int)));
+  check(cuMemsetD32(coverageFlag,0,1));
+  void *args[] = {&x,&ref,&rows,&limit,&coverageFlag};
   check(cuLaunchKernel(coverage,(rows+255)/256,1,1,256,1,1,0,nullptr,args,nullptr));
   int value;
-  check(cuMemcpyDtoH(&value,flag,sizeof(value)));
-  check(cuMemFree(flag));
+  check(cuMemcpyDtoH(&value,coverageFlag,sizeof(value)));
   return value;
 }
 
