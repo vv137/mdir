@@ -791,6 +791,7 @@ compileEngine(const Control &control, const System &system,
         (void *)&_mlir_ciface_mdrtWriteTunableGradient);
     add("_mlir_ciface_mdrtWriteTunableGradientField",
         (void *)&_mlir_ciface_mdrtWriteTunableGradientField);
+    add("_mlir_ciface_mdrtScaleMasterEdge", (void *)&_mlir_ciface_mdrtScaleMasterEdge);
     add("_mlir_ciface_mdrtSetBox", (void *)&_mlir_ciface_mdrtSetBox);
     add("_mlir_ciface_mdrtSetTilt", (void *)&_mlir_ciface_mdrtSetTilt);
     add("_mlir_ciface_mdrtSetBarostatState",
@@ -950,6 +951,9 @@ Simulation::create(const model::PreparedModel &prepared, bool cache,
   output->timestep = control.timestep;
   output->couples = control.getCouplingPeriod() > 0 && !control.isLangevin();
   output->changesCell = control.barostat;
+  if (control.barostat && control.precision != Precision::Double)
+    output->checkpoint.masterCell.assign(system.inputMasterCell.begin(),
+                                         system.inputMasterCell.end());
   // Brownian dynamics has no momenta (D163b), and a Nose-Hoover chain
   // begins at rest (D163a), as in `mdir run` (D249).
   output->overdamped = control.isBrownian();
@@ -1548,6 +1552,7 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
 
   // What a failed part leaves besides the state (D196).
   std::array<double, 6> cellBefore = getCell();
+  const auto masterBefore = output->checkpoint.masterCell;
   double systemBoxBefore[3] = {system.box[0], system.box[1], system.box[2]};
   double bathBefore = out.bath;
   std::vector<double> chainBefore = out.chain;
@@ -1631,6 +1636,7 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
     // The cell with its tilts, as a commit that is undone restores it
     // (D238).
     setCell(cellBefore);
+    output->checkpoint.masterCell = masterBefore;
     for (int k = 0; k != 3; ++k)
       system.box[k] = systemBoxBefore[k];
     out.bath = bathBefore;
@@ -2440,7 +2446,17 @@ bool Simulation::hasTriclinicCell() const {
           compiledSystem.tilt[2] != 0.0);
 }
 
-void Simulation::setCell(const std::array<double, 6> &cell) {
+static std::array<double, 6> effectiveCell(const Control &control,
+                                           std::array<double, 6> cell) {
+  for (double &component : cell)
+    component = periodicComponent(control, component);
+  return cell;
+}
+
+void Simulation::setCell(const std::array<double, 6> &given) {
+  if (!output->checkpoint.masterCell.empty())
+    output->checkpoint.masterCell.assign(given.begin(), given.end());
+  auto cell = effectiveCell(prepared.control, given);
   for (int k = 0; k != 3; ++k) {
     system.box[k] = output->box[k] = output->checkpoint.box[k] = cell[k];
     system.tilt[k] = output->checkpoint.tilt[k] = cell[3 + k];
@@ -2456,11 +2472,14 @@ void Simulation::setCell(const std::array<double, 6> &cell) {
     }
     output->trajectory->setBox(edges);
     output->trajectory->setTilt(tilts);
+    output->trajectory->setExactEdges(system.box);
+    output->trajectory->setExactTilt(system.tilt);
   }
 }
 
 llvm::Error
-Simulation::checkCommittedCell(const std::array<double, 6> &cell) const {
+Simulation::checkCommittedCell(const std::array<double, 6> &given) const {
+  auto cell = effectiveCell(prepared.control, given);
   static const char *const names[6] = {"a_x", "b_y", "c_z",
                                        "b_x", "c_x", "c_y"};
   const Control &control = compiled->control;
@@ -2563,6 +2582,7 @@ llvm::Expected<std::vector<std::string>> Simulation::commitBorrow(
   unsigned written = borrowWritten;
   bool changesCell = false;
   const std::array<double, 6> cellBefore = getCell();
+  const auto masterBefore = output->checkpoint.masterCell;
   if (cell)
     changesCell = std::memcmp(cell->data(), cellBefore.data(),
                               sizeof cellBefore) != 0;
@@ -2653,6 +2673,7 @@ llvm::Expected<std::vector<std::string>> Simulation::commitBorrow(
     }
     if (changesCell) {
       setCell(cellBefore);
+      output->checkpoint.masterCell = masterBefore;
       for (int k = 0; k != 3; ++k)
         system.box[k] = systemBoxBefore[k];
     }
@@ -3126,6 +3147,7 @@ llvm::Error Simulation::checkFrame(
       return inputError("the position of particle " + llvm::Twine(i / 3) +
                         " of the input is not finite");
   const std::array<double, 6> cellBefore = getCell();
+
   changesCell = false;
   if (cell) {
     if (!prepared.control.periodic)
@@ -3275,6 +3297,7 @@ llvm::Error Simulation::evaluateFrames(const FrameBatch &batch) {
     ~RestoreStream() { restore(previous); }
   } stream{restore, use(batch.stream)};
   const auto cellBefore = getCell();
+  const auto masterBefore = output->checkpoint.masterCell;
   MdirDeviceCopyAudit copyAudit{};
   struct EndCopyAudit {
     void *(*restore)(void *);
@@ -3301,6 +3324,8 @@ llvm::Error Simulation::evaluateFrames(const FrameBatch &batch) {
   int64_t initialStatus = std::numeric_limits<int64_t>::max();
   std::string cellFailure;
   if (prepared.control.periodic) {
+    for (auto &cell : cells)
+      cell = effectiveCell(prepared.control, cell);
     for (auto [index, cell] : llvm::enumerate(cells))
       if (llvm::Error error = checkCommittedCell(cell)) {
         std::string message = llvm::toString(std::move(error));
@@ -3397,6 +3422,7 @@ llvm::Error Simulation::evaluateFrames(const FrameBatch &batch) {
   if (!error && !failure.empty()) error = simulationError(failure);
   if (error) {
     setCell(cellBefore);
+    output->checkpoint.masterCell = masterBefore;
     endActivation(Ended::UndoneFrame);
     failed = false;
     ended = Ended::UndoneFrame;
@@ -3420,6 +3446,7 @@ llvm::Expected<Simulation::FrameEvaluation> Simulation::evaluateFrame(
     return std::move(error);
   size_t count = system.getNumParticles();
   const std::array<double, 6> cellBefore = getCell();
+  const auto masterBefore = output->checkpoint.masterCell;
   if (!compiled->control.frames || compiled->control.frameProduct)
     return simulationError("frames are evaluated by the simulation of a "
                            "frame evaluator; this is a defect of mdir");
@@ -3514,6 +3541,7 @@ llvm::Expected<Simulation::FrameEvaluation> Simulation::evaluateFrame(
     // and the next frame begins one. The cell is that of before.
     if (changesCell) {
       setCell(cellBefore);
+      output->checkpoint.masterCell = masterBefore;
       for (int k = 0; k != 3; ++k)
         system.box[k] = systemBoxBefore[k];
     }
@@ -3561,6 +3589,7 @@ Simulation::evaluateFrameProduct(
                         "particle " + llvm::Twine(i / 3) +
                         " of the input is not finite");
   const std::array<double, 6> cellBefore = getCell();
+  const auto masterBefore = output->checkpoint.masterCell;
   if (!compiled->control.frames || !compiled->control.frameProduct)
     return simulationError("the product of a frame is evaluated by the "
                            "product program of a frame evaluator; this is a "
@@ -3680,6 +3709,7 @@ Simulation::evaluateFrameProduct(
   if (error) {
     if (changesCell) {
       setCell(cellBefore);
+      output->checkpoint.masterCell = masterBefore;
       for (int k = 0; k != 3; ++k)
         system.box[k] = systemBoxBefore[k];
     }
@@ -3720,6 +3750,7 @@ llvm::Expected<double> Simulation::evaluateFrameDirection(
                           "' is not finite");
   }
   const std::array<double, 6> cellBefore = getCell();
+  const auto masterBefore = output->checkpoint.masterCell;
   if (!compiled->control.frames || !compiled->control.frameProduct ||
       !compiled->control.frameProductDirection)
     return simulationError("forward mode in the tunables is evaluated by the "
@@ -3817,6 +3848,7 @@ llvm::Expected<double> Simulation::evaluateFrameDirection(
   if (error) {
     if (changesCell) {
       setCell(cellBefore);
+      output->checkpoint.masterCell = masterBefore;
       for (int k = 0; k != 3; ++k)
         system.box[k] = systemBoxBefore[k];
     }
@@ -4061,6 +4093,7 @@ llvm::Error Simulation::saveCheckpoint(const std::string &path,
     endActivation(Ended::Checkpoint);
   }
   Checkpoint checkpoint;
+  checkpoint.masterCell = output->checkpoint.masterCell;
   checkpoint.step = step;
   checkpoint.time = getTime();
   checkpoint.positions = system.positions;
@@ -4158,12 +4191,11 @@ Simulation::continueFrom(const Checkpoint &checkpoint, bool stage,
                         " has another type in the checkpoint than in the "
                         "program");
   auto takeCell = [&] {
-    for (int k = 0; k != 3; ++k) {
-      system.box[k] = output->box[k] = output->checkpoint.box[k] =
-          checkpoint.box[k];
-      system.tilt[k] = output->checkpoint.tilt[k] = checkpoint.tilt[k];
-    }
-    output->volume = output->box[0] * output->box[1] * output->box[2];
+    system.setInitialCell(control, checkpoint.box, checkpoint.tilt);
+    setCell({checkpoint.box[0], checkpoint.box[1], checkpoint.box[2],
+             checkpoint.tilt[0], checkpoint.tilt[1], checkpoint.tilt[2]});
+    if (!output->checkpoint.masterCell.empty() && !checkpoint.masterCell.empty())
+      output->checkpoint.masterCell = checkpoint.masterCell;
   };
   // A minimization takes the positions and the cell of any checkpoint, and
   // a run of dynamics those of a minimization, and begins anew (as
@@ -4262,6 +4294,11 @@ Simulation::continueFrom(const Checkpoint &checkpoint, bool stage,
   system.positions = checkpoint.positions;
   system.velocities = checkpoint.velocities;
   takeCell();
+  if (llvm::any_of(system.boxRounding, [](double d) { return d != 0; })) {
+    takesForces = false;
+    notes.push_back("the checkpoint cell was rounded to binary32; "
+                    "the simulation recomputes its forces and barostat state");
+  }
   // The chain of a Nose-Hoover thermostat continues where the checkpoint
   // left it; that of another thermostat or ensemble is not this one's, and
   // the chain begins at rest, as in `mdir run` (D163a, D172).

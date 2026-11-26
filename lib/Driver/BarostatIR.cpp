@@ -88,9 +88,33 @@ StrainIRResult mdir::driver::builder::buildBarostatStrain(
   for (size_t index = 0; index != edges.size(); ++index) {
     if (index < 3)
       scales[index] = k.extract(result.scale, index);
-    Value edge = k.mul(edges[index], scales[columns[index]]);
+    Value edge;
+    if (in.binary32Cell) {
+      Value slot = arith::ConstantIntOp::create(builder, loc, index, 64);
+      edge = k.call("mdrtScaleMasterEdge", {slot, scales[columns[index]]});
+      edge = arith::TruncFOp::create(builder, loc, builder.getF32Type(), edge);
+      edge = arith::ExtFOp::create(builder, loc, builder.getF64Type(), edge);
+    } else {
+      edge = k.mul(edges[index], scales[columns[index]]);
+    }
     result.edges.push_back(edge);
     memref::StoreOp::create(builder, loc, edge, in.boxMemory, ValueRange{in.edgeIndices[index]});
+  }
+  if (in.binary32Cell) {
+    result.scale = k.div(k.elements(ValueRange(result.edges).take_front(3)),
+                         k.elements(ValueRange(edges).take_front(3)));
+    result.inverse = k.div(in.unitVector, result.scale);
+    result.logScale = math::LogOp::create(builder, loc, result.scale);
+    if (edges.size() == 6) {
+      // Upper triangle of H_new H_old^{-1}, with lattice vectors as columns.
+      auto residual = [&](unsigned i) {
+        return k.sub(result.edges[i], k.mul(k.extract(result.scale, columns[i]), edges[i]));
+      };
+      Value xy = k.div(residual(3), edges[1]);
+      Value xz = k.div(k.sub(residual(4), k.mul(xy, edges[5])), edges[2]);
+      Value yz = k.div(residual(5), edges[2]);
+      result.shear = k.elements({xy, xz, yz});
+    }
   }
   func::CallOp::create(builder, loc, "mdrtSetBox", TypeRange{}, ValueRange(result.edges).take_front(3));
   if (edges.size() == 6)

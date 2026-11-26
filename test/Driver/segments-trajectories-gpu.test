@@ -7,7 +7,12 @@
 # times the largest difference of 5 general mixed runs from the double one,
 # recorded in Inputs/segments_trajectory_bounds.json, or 1e-5 of the scale;
 # Inputs/segments_trajectory.py), on three waters of OPC and of TIP3P. Each
-# case passed 10 of 10 runs at the head of the PR.
+# case passed 10 of 10 runs at the head of the PR. The NPT baselines were
+# recorded again (5 runs) after mixed precision began to round the step cell
+# to binary32 at each coupling (D[box-f32-exact]): with the old ones TIP3P
+# LEAPFROG NPT failed 10 of 10 runs at step 90 (projected v 6.18e-05 against
+# 5.89e-05) and passed 10 of 10 on main; with the new ones each NPT case
+# passed 10 of 10 runs on an RTX 4090.
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/segments_trajectory.py OPC VELOCITY_VERLET NVE %S/Inputs %t/1 | FileCheck %s -DCASE="OPC VELOCITY_VERLET NVE"

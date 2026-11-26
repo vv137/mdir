@@ -119,7 +119,12 @@ def failures():
         assert blown.failed and kept.step == 0 and kept.forces is None
         assert np.array_equal(kept.positions, start.positions)
         assert not kept.velocities.any()
-        assert np.array_equal(kept.cell.vectors, start.cell.vectors)
+        # The state it began from has the step cell, each component in nm
+        # rounded to binary32 in mixed precision (D[box-f32-exact]).
+        vectors = np.asarray(start.cell.vectors)
+        if precision != "Double":
+            vectors = vectors.astype(np.float32).astype(np.float64)
+        assert np.array_equal(kept.cell.vectors, vectors)
         print(f"{precision}: a first part that fails keeps the state it began from")
 
 

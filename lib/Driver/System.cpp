@@ -198,8 +198,24 @@ void mdir::driver::applyCharmmCell(Topology &topology, const Cell &cell) {
   }
 }
 
+void System::setInitialCell(const Control &control, const double edges[3],
+                            const double tilts[3]) {
+  for (unsigned k = 0; k != 3; ++k) {
+    inputMasterCell[k] = edges[k];
+    inputMasterCell[k + 3] = tilts[k];
+    box[k] = periodicComponent(control, edges[k]);
+    tilt[k] = periodicComponent(control, tilts[k]);
+    boxRounding[k] = box[k] - edges[k];
+    boxRounding[k + 3] = tilt[k] - tilts[k];
+  }
+}
+
 llvm::Expected<System> mdir::driver::prepareTopologySystem(
     const Control &control, Topology input, bool recognizeWaterResidues) {
+  System system = startSystem(control);
+  system.setInitialCell(control, input.box, input.tilt);
+  std::copy_n(system.box, 3, input.box);
+  std::copy_n(system.tilt, 3, input.tilt);
   if (llvm::Error error = validateTopology(input))
     return std::move(error);
   auto topology = std::make_unique<Topology>(std::move(input));
@@ -237,7 +253,6 @@ llvm::Expected<System> mdir::driver::prepareTopologySystem(
   if (llvm::Error error = validateTopology(*topology))
     return std::move(error);
 
-  System system = startSystem(control);
   // A step longer than 1 fs moves hydrogens too far unless their bonds are
   // constrained (D158).
   if (!control.minimize && control.timestep > 0.00101 &&
@@ -395,10 +410,6 @@ llvm::Expected<System> mdir::driver::prepareTopologySystem(
     system.numConstraints += shake.hydrogens.size();
   if (system.velocities.empty())
     system.velocities.assign(system.positions.size(), 0.0);
-  for (int i = 0; i != 3; ++i) {
-    system.box[i] = topology->box[i];
-    system.tilt[i] = topology->tilt[i];
-  }
 
   // The restraints: their constants add where their selections overlap.
   // Particles without mass, the virtual sites, are placed, not restrained.
@@ -1071,8 +1082,10 @@ llvm::Expected<System> mdir::driver::readSystem(const Control &control) {
                                    control.pdbFile.c_str());
 
   System system = startSystem(control);
+  double edges[3], tilts[3] = {};
   for (int i = 0; i != 3; ++i)
-    system.box[i] = control.box[i] * units::length;
+    edges[i] = control.box[i] * units::length;
+  system.setInitialCell(control, edges, tilts);
 
   unsigned number = 0;
   StringRef rest = (*file)->getBuffer();

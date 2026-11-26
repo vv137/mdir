@@ -1,0 +1,3 @@
+# REQUIRES: cuda
+# RUN: rm -rf %t
+# RUN: %python %S/Inputs/box_f32_loop.py mdir GPU %t

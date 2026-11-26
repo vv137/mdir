@@ -1,0 +1,3 @@
+# REQUIRES: hdf5, python-api
+# RUN: rm -rf %t
+# RUN: %mdir_python %S/Inputs/box_f32_restart.py mdir %S/mixture.toml %t

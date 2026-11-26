@@ -1,6 +1,8 @@
 # The anisotropic cell rescaling of barostat-aniso.test on a GPU, in mixed
 # precision (D163c): the host draws the strain of each axis from the
-# pressures that the device sums.
+# pressures that the device sums. The first volume is that of the binary32
+# step cell (D[box-f32-exact]): each edge of 2.32 nm rounds to
+# 2.3199999332 nm, and (23.199999332 Ang)^3 = 12487.16692 Ang^3.
 #
 # REQUIRES: cuda
 #
@@ -11,7 +13,7 @@
 # RUN: printf '[execution]\ntarget = "gpu"\nprecision = "mixed"\n' >> %t/run.toml
 # RUN: mdir run %t/run.toml | FileCheck %s
 
-# CHECK:      INFO:         0         0.0000 {{ *}}[[TOTAL:-[0-9.]+]] {{.*}} [[TOTAL]]     12487.1680
+# CHECK:      INFO:         0         0.0000 {{ *}}[[TOTAL:-[0-9.]+]] {{.*}} [[TOTAL]]     12487.1669
 # CHECK:      INFO:      2000 {{.*}} {{11[0-9]{3}\.[0-9]+}} {{[0-9.]+$}}
 # CHECK:      MDIR: the pressures of the barostat over 200 periods, in bar: x
 # CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value

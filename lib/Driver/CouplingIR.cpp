@@ -98,12 +98,25 @@ Value mdir::driver::builder::buildGroupScaling(
     OpBuilder &builder, const GroupScalingInputs &in) {
   auto loc = builder.getUnknownLoc();
   Kernel k(builder);
+  auto transform = [&](Value place, bool relative) {
+    Value diagonal = k.mul(relative ? in.oneMinusScale : in.scale, place);
+    if (!in.shear) return diagonal;
+    auto component = [&](Value v, int64_t i) {
+      return vector::ExtractOp::create(builder, loc, v, i);
+    };
+    Value y = component(place, 1), z = component(place, 2);
+    Value dx = k.add(k.mul(component(in.shear, 0), y), k.mul(component(in.shear, 1), z));
+    Value dy = k.mul(component(in.shear, 2), z);
+    Value shear = vector::FromElementsOp::create(builder, loc, place.getType(),
+        ValueRange{dx, dy, k.constant(0.0)});
+    return relative ? k.sub(diagonal, shear) : k.add(diagonal, shear);
+  };
   auto scaled = mdir::md::MapParticlesOp::create(
       builder, loc, in.positions.getType(), ValueRange{in.positions});
   {
     OpBuilder::InsertionGuard guard(builder);
     auto args = kernel(builder, scaled.getKernel(), 1, 0)->getArguments();
-    Value value = k.mul(in.scale, args[0]);
+    Value value = transform(args[0], false);
     mdir::md::YieldOp::create(builder, loc, ValueRange{value});
   }
   Value positions = scaled.getResult();
@@ -130,7 +143,7 @@ Value mdir::driver::builder::buildGroupScaling(
       SmallVector<Value> results;
       for (unsigned j = 0; j <= count; ++j) {
         Value place = j == 0 ? k.negate(center) : k.sub(args[j - 1], center);
-        results.push_back(k.mul(in.oneMinusScale, place));
+        results.push_back(transform(place, true));
       }
       mdir::md::YieldOp::create(builder, loc, results);
     }

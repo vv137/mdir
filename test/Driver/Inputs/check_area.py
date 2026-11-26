@@ -7,12 +7,26 @@ file must agree to their respective four and six decimal places.
 import math
 from pathlib import Path
 import re
+import struct
 import subprocess
 import sys
 
 source, scratch, target = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 mdir = sys.argv[4]
 scratch.mkdir(parents=True, exist_ok=True)
+
+
+def periodic(value_nm, precision):
+    """The component of the step cell in nm (D[box-f32-exact]): mixed
+    precision rounds each component of the supplied cell once to binary32."""
+    if precision == 'double':
+        return value_nm
+    return struct.unpack('f', struct.pack('f', value_nm))[0]
+
+
+def first_area(a_nm, b_nm, precision):
+    """The area of the first row, in Å², to the six decimals of the column."""
+    return round(periodic(a_nm, precision) * periodic(b_nm, precision) * 100.0, 6)
 
 
 def run(control, *options, status=0):
@@ -32,7 +46,7 @@ def columns(path):
     return rows
 
 
-def check(name, text, fixed_height=False):
+def check(name, text, fixed_height=None):
     rows = columns(scratch / (name + '.energy'))
     log = [[float(v) for v in line.split()[1:]]
            for line in text.splitlines()
@@ -52,9 +66,9 @@ def check(name, text, fixed_height=False):
     reference = math.sqrt(sum(v*v for v in cross)) * 100.0  # nm² to Å²
     difference = abs(rows[-1][-1] - reference)
     assert difference < 0.01, (name, rows[-1][-1], reference, difference)
-    if fixed_height:
+    if fixed_height is not None:
         assert box[2] == 2.32, box
-        assert max(abs(r[-2] / 23.2 - r[-1]) for r in rows) < 1e-6
+        assert max(abs(r[-2] / fixed_height - r[-1]) for r in rows) < 1e-6
     print(f'{name}: reference {reference:.6f} Å², difference {difference:.6f} Å² (tolerance 0.01)')
 
 
@@ -78,8 +92,10 @@ for precision in ['double', 'mixed']:
         control = scratch / (name + '.toml')
         control.write_text(text)
         log = run(control)
-        check(name, log, coupling == 'SEMI_ISOTROPIC')
-        assert columns(scratch / (name + '.energy'))[0][-1] == 538.24
+        # The height in Å that the semi-isotropic coupling keeps.
+        height = 10.0 * periodic(2.32, precision)
+        check(name, log, height if coupling == 'SEMI_ISOTROPIC' else None)
+        assert columns(scratch / (name + '.energy'))[0][-1] == first_area(2.32, 2.32, precision)
         if precision == 'mixed' and coupling == 'SEMI_ISOTROPIC':
             # Stop after step 10 and continue to 20; the area columns must
             # be identical to the uninterrupted run, including truncation.
@@ -113,5 +129,5 @@ for precision in ['double', 'mixed']:
     control = scratch / (name + '.toml')
     control.write_text(text)
     check(name, run(control))
-    assert columns(scratch / (name + '.energy'))[0][-1] == 676.0
+    assert columns(scratch / (name + '.energy'))[0][-1] == first_area(2.6, 2.6, precision)
 print('cell area, units, log agreement, and exact continuation: ok')

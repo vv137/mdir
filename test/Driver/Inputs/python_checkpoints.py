@@ -379,7 +379,11 @@ def stages():
     # Another precision is the same run, with a warning.
     other = "Mixed" if precision == "Double" else "Double"
     simulation, notes = continued(model(run_precision=other), start)
-    assert len(notes) == 1 and "[execution] precision" in notes[0], notes
+    assert "[execution] precision" in notes[0], notes
+    # A double checkpoint continued in mixed precision rounds its cell to
+    # binary32 (D[box-f32-exact]) and says so; the other way needs no rounding.
+    rounded = [note for note in notes[1:] if "rounded to binary32" in note]
+    assert len(notes) == 1 + (other == "Mixed") and len(rounded) == len(notes) - 1, notes
     simulation.run(10)
     # The same physics taken as a stage: the forces of the checkpoint, and
     # the run that did not stop.

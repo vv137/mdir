@@ -32,7 +32,7 @@ struct DescentSiteIR {
 };
 struct StepProgramIR {
   std::string name;
-  bool energy = false, virial = false, scales = false, measured = false, solvent = false;
+  bool energy = false, virial = false, scales = false, measured = false, solvent = false, shear = false, previousCell = false;
 };
 struct StepNoiseIR {
   bool active = false, brownian = false;

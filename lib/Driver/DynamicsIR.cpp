@@ -295,6 +295,10 @@ llvm::Expected<mdir::dyn::ProgramOp> mdir::driver::builder::buildNativeStep(
   auto real = mdir::md::FieldType::get(ctx, atoms, 1, f64);
   SmallVector<Type> inputs{vec, vec, vec, real, mdir::md::CellType::get(ctx), f64};
   if (scales) inputs.push_back(VectorType::get({3}, f64));
+  if (config.shear) inputs.push_back(VectorType::get({3}, f64));
+  unsigned previousCellSlot = inputs.size();
+  if (config.previousCell) inputs.push_back(mdir::md::CellType::get(ctx));
+  unsigned referenceSlot = inputs.size();
   if (referenceScale) inputs.push_back(VectorType::get({3}, f64));
   const unsigned parameterBase = inputs.size();
   llvm::append_range(inputs, parameters);
@@ -409,6 +413,8 @@ llvm::Expected<mdir::dyn::ProgramOp> mdir::driver::builder::buildNativeStep(
   Value positions, middleKinetic, sidePositions;
   Value reference = args[0], length = args[5];
   // Geodesic BAOAB uses projected half-drifts [Leimkuhler2016], D265.
+  Value scalingCell = config.previousCell ? args[previousCellSlot] : args[4];
+  Value shear = config.shear ? args[7] : Value{};
   if (geodesic) {
     kicked = project(args[0], kicked).velocities;
     Value drifted = buildDrift(builder, args[0], kicked, half);
@@ -420,7 +426,7 @@ llvm::Expected<mdir::dyn::ProgramOp> mdir::driver::builder::buildNativeStep(
     if (scales) {
       auto scale = buildDriftScale(builder, args[6]);
       reference = buildGroupScaling(builder,
-          {constrained, args[6], scale.oneMinus, args[4], args[3], rigidGroups});
+          {constrained, args[6], scale.oneMinus, scalingCell, args[3], rigidGroups, shear});
       middleKinetic = buildKineticVector(builder, kicked, args[3]);
       kicked = buildVelocityScaling(builder, kicked, scale.inverse);
     }
@@ -431,7 +437,7 @@ llvm::Expected<mdir::dyn::ProgramOp> mdir::driver::builder::buildNativeStep(
     auto scale = buildDriftScale(builder, args[6]);
     if (noise.active) kicked = applyNoise(kicked);
     Value scaled = buildGroupScaling(builder,
-        {middle, args[6], scale.oneMinus, args[4], args[3], rigidGroups});
+        {middle, args[6], scale.oneMinus, scalingCell, args[3], rigidGroups, shear});
     middleKinetic = buildKineticVector(builder, kicked, args[3]);
     kicked = buildVelocityScaling(builder, kicked, scale.inverse);
     positions = buildDrift(builder, scaled, kicked, half);
@@ -478,7 +484,7 @@ llvm::Expected<mdir::dyn::ProgramOp> mdir::driver::builder::buildNativeStep(
   if (complete)
     evaluation = complete(builder,
         {positions, args[4], ValueRange(args).slice(parameterBase, parameters.size()), time},
-        evaluation, referenceScale ? args[6 + unsigned(scales)] : Value{});
+        evaluation, referenceScale ? args[referenceSlot] : Value{});
   SmallVector<int> failureGroups;
   for (const auto &group : groups) failureGroups.push_back(group.water ? 0 : int(group.arity) - 1);
   if (constraints)

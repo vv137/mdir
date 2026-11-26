@@ -416,6 +416,7 @@ llvm::Error Builder::emitEntry() {
       }
       config.barostatState = slots;
     }
+    config.binary32Cell = control.precision != Precision::Double;
     config.strainCoupling = control.anisotropic ? StrainCoupling::Anisotropic
         : control.semiIsotropic ? StrainCoupling::SemiIsotropic : StrainCoupling::Isotropic;
     if (config.barostat) {

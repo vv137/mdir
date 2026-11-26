@@ -178,7 +178,10 @@ llvm::Error Builder::emitPrograms() {
         noise.parameters = {control.seed, damping, std::sqrt((1.0 - damping * damping) * kT)};
       }
       auto nativeProgram = buildNativeStep(
-          builder, {kind.name, withEnergy, withVirial, scales, measured, solvent}, types, leapfrog, control.usesTime,
+          builder, {kind.name, withEnergy, withVirial, scales, measured, solvent,
+                    scales && isTriclinic() && control.precision != Precision::Double,
+                    scales && !constraintGroups.empty() && control.precision != Precision::Double},
+          types, leapfrog, control.usesTime,
           siteSets, scalesReference(), hasHostEvaluation(),
           [&](mlir::OpBuilder &at, const PotentialStateIR &state, EnergyResults evaluation,
               mlir::Value scale) {

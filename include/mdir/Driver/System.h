@@ -35,6 +35,13 @@ constexpr double boltzmann = physical::molarGasConstant;
 constexpr double coulomb = physical::coulombControl;
 } // namespace units
 
+/// The period used by both the state and the pair kernels, in nm.
+inline double periodicComponent(const Control &control, double value) {
+  if (control.periodic && control.precision != Precision::Double)
+    return static_cast<float>(value);
+  return value;
+}
+
 class Expression;
 
 /// Whether the tail of the pair energy `expression` beyond `cutoff` (Å),
@@ -142,6 +149,11 @@ struct System {
   /// tilts b_x, c_x, c_y of a triclinic one (docs/triclinic.md).
   double box[3];
   double tilt[3] = {0.0, 0.0, 0.0};
+  /// Applied minus supplied, in nm, in diagonal then tilt order.
+  std::array<double, 6> boxRounding{};
+  std::array<double, 6> inputMasterCell{};
+  void setInitialCell(const Control &control, const double edges[3],
+                      const double tilts[3]);
   /// Those of the file of coordinates, where a run that continues with a
   /// barostat takes `box` from the checkpoint; 0 if they are those of
   /// `box`. The automatic grid of particle mesh Ewald follows them, so
