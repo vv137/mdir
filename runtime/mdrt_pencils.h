@@ -9,7 +9,7 @@ struct PmeBox {
 };
 struct PmePencils;
 struct PmePencils *mdrtPmePencils(int nx, int ny, int nz, int px, int py,
-                                  int order, int mpi);
+                                  int order, int mpi, int mixed);
 struct PmeBox mdrtPmeRealBox(const struct PmePencils *mesh);
 struct PmeBox mdrtPmeSpectrumBox(const struct PmePencils *mesh);
 void mdrtPmeForward(struct PmePencils *mesh, const double *real,

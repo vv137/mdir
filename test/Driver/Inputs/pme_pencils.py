@@ -14,7 +14,7 @@ class Box(c.Structure):
 
 
 lib = c.CDLL(sys.argv[1])
-lib.mdrtPmePencils.argtypes = [c.c_int] * 7
+lib.mdrtPmePencils.argtypes = [c.c_int] * 8
 lib.mdrtPmePencils.restype = c.c_void_p
 for func in (lib.mdrtPmeRealBox, lib.mdrtPmeSpectrumBox):
     func.argtypes = [c.c_void_p]
@@ -28,7 +28,7 @@ px, py, mpi = map(int, sys.argv[2:5])
 nx, ny = 9, 13
 for nz in (11, 12):
     shape = (nx, ny, nz)
-    mesh = lib.mdrtPmePencils(*shape, px, py, 4, mpi)
+    mesh = lib.mdrtPmePencils(*shape, px, py, 4, mpi, 0)
     rows = list(lib.mdrtPmeRealBox(mesh).points())
     modes = list(lib.mdrtPmeSpectrumBox(mesh).points())
     charges = {(8, 12, 7): -0.7, (0, 1, 0): 1.1, (4, 3, 1): 0.25}

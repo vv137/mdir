@@ -355,10 +355,11 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
      << "dyn-expand-couplings,md-bypass-updates,";
   if (control.distribution) {
     os << "md-dist-owner-computes,"
-       << (program.domainGroupSteps ? "" : control.deterministic
+       << (program.domainGroupSteps || program.pme ? "" : control.deterministic
            ? "md-distribute-driver-steps{wrap-drift=true}," : "md-distribute-driver-steps,")
        << "md-exec-assign-algebra,"
        << "convert-md-dist-to-loops{halo-events=true";
+    if (program.pme && control.precision == Precision::Mixed) os << " mesh-mixed=true";
     if (program.pme && control.distribution->pmeDecomposition[0])
       os << " mesh-x=" << control.distribution->pmeDecomposition[0]
          << " mesh-y=" << control.distribution->pmeDecomposition[1];

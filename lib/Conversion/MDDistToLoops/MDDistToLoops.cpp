@@ -93,6 +93,7 @@ public:
         throughExec(throughExec), width(width), cellsPerReach(cellsPerReach),
         haloEvents(haloEvents), mpi(mpi), parallelDomains(parallelDomains) {}
 
+  bool meshMixed = false;
   int64_t meshX = 1, meshY = 1;
   bool fixedPoint = false;
   bool matrixPairs = false;
@@ -814,7 +815,7 @@ LogicalResult Lowering::lowerMesh(MeshOp op) {
   llvm::append_range(args, edges);
   args.append({real(b,op.getBeta().convertToDouble()), real(b,op.getCoulomb().convertToDouble())});
   for (int64_t n : op.getGrid()) args.push_back(index(b,n));
-  for (int64_t n : {int64_t(op.getOrder()), meshX, meshY, int64_t(mpi), int64_t(fixedPoint)})
+  for (int64_t n : {int64_t(op.getOrder()), meshX, meshY, int64_t(mpi), int64_t(fixedPoint), int64_t(meshMixed)})
     args.push_back(index(b,n));
   auto solve = declare("mdrtDistPME",
       b.getFunctionType(ValueRange(args).getTypes(), {}), true);
@@ -3203,6 +3204,7 @@ public:
       return signalPassFailure();
     }
     lowering.matrixSkin = matrixSkin;
+    lowering.meshMixed = meshMixed;
     lowering.meshX = meshX;
     lowering.meshY = meshY;
     lowering.fixedPoint = fixedPoint;

@@ -1,0 +1,51 @@
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: sed -n '/^#--- control/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: cp %S/../../examples/ala3/ala3.prmtop %S/../../examples/ala3/ala3.inpcrd %t
+# RUN: cd %t && mdir run run.toml > out && FileCheck %s < out
+# CHECK: PME mesh 24 x 24 x 24, pencil decomposition 1 x 1, 1 mesh ranks
+# CHECK: pme_solve min/mean/max
+# RUN: sed '/^pme_ranks=/a pme_decomposition=[2, 2]' %t/run.toml > %t/bad.toml
+# RUN: cd %t && not mdir run bad.toml 2>&1 | FileCheck %s --check-prefix=COUNT
+# COUNT: pme_decomposition product must fit the rank count and agree with pme_ranks
+# RUN: sed 's/^pme_ranks=.*/pme_decomposition=[9, 1]/' %t/run.toml > %t/bad.toml
+# RUN: cd %t && not mdir emit bad.toml --stage=lowered 2>&1 | FileCheck %s --check-prefix=OVERLAP
+# OVERLAP: PME decomposition leaves an empty FFT pencil or a pencil smaller than the assignment overlap
+# RUN: sed 's/^pme_ranks=1/pme_ranks=2/' %t/run.toml > %t/bad.toml
+# RUN: cd %t && not mdir run bad.toml 2>&1 | FileCheck %s --check-prefix=RANKS
+# RANKS: pme_ranks exceeds the transport rank count
+
+#--- control
+[input]
+topology="ala3.prmtop"
+coordinates="ala3.inpcrd"
+[output]
+energy_interval=1
+[energy]
+cutoff=8
+pairlist_distance=10
+electrostatics="PME"
+[pme]
+grid=[24,24,24]
+kernel="PROLATE"
+basis_terms=8
+continuity=2
+order=4
+[dynamics]
+integrator="VELOCITY_VERLET"
+time_step=0.0005
+steps=1
+seed=4123
+[ensemble]
+ensemble="NVE"
+temperature=300
+[boundary]
+type="PERIODIC"
+[execution]
+target="CPU"
+threads=1
+precision="DOUBLE"
+[distribute]
+domains=2
+traversal="midpoint"
+pme_ranks=1
+#--- end

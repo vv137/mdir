@@ -86,27 +86,35 @@ static double series(const double *a, int n, double t) {
   }
   return (t * b - c) + a[0];
 }
-static void spline(double t, int order, double *w, double *dw) {
-  w[0] = 1 - t;
+static inline double precision(double x, int mixed) {
+  return mixed ? (double)(float)x : x;
+}
+
+static void spline(double t, int order, double *w, double *dw, int mixed) {
+  t = precision(t, mixed);
+  w[0] = precision(1 - t, mixed);
   w[1] = t;
   for (int k = 3; k <= order; ++k) {
     if (k == order) {
       dw[0] = -w[0];
       for (int j = 1; j < order; ++j)
-        dw[j] = w[j - 1] - w[j];
+        dw[j] = precision(w[j - 1] - w[j], mixed);
     }
-    double inv = 1.0 / (k - 1);
-    w[k - 1] = inv * t * w[k - 2];
+    double inv = precision(1.0 / (k - 1), mixed);
+    w[k - 1] = precision(precision(inv * t, mixed) * w[k - 2], mixed);
     for (int j = 1; j < k - 1; ++j) {
       int i = k - 1 - j;
-      w[i] = inv * ((t + j) * w[i - 1] + (k - j - t) * w[i]);
+      double lo = precision(precision(t + j, mixed) * w[i - 1], mixed);
+      double hi = precision(precision(k - j - t, mixed) * w[i], mixed);
+      w[i] = precision(inv * precision(lo + hi, mixed), mixed);
     }
-    w[0] *= inv * (1 - t);
+    w[0] = precision(precision(inv * precision(1 - t, mixed), mixed) * w[0],
+                     mixed);
   }
 }
 static void window(struct Window *w, const double *x, int stride,
                    const double box[3], const int n[3], int order,
-                   struct Table *t) {
+                   struct Table *t, int mixed) {
   for (int a = 0; a < 3; ++a) {
     double s = x[a * stride] / box[a], u = (s - floor(s)) * n[a];
     if (t->n[0] == 5) {
@@ -115,13 +123,15 @@ static void window(struct Window *w, const double *x, int stride,
       w->first[a] = ((int)f - order / 2 + 1) % n[a];
       int terms = (int)table(t, 4)[0];
       for (int k = 0; k < order; ++k) {
-        w->w[a][k] = series(table(t, 3) + k * terms, terms, v);
-        w->dw[a][k] = series(table(t, 3) + (order + k) * terms, terms, v);
+        w->w[a][k] =
+            precision(series(table(t, 3) + k * terms, terms, v), mixed);
+        w->dw[a][k] = precision(
+            series(table(t, 3) + (order + k) * terms, terms, v), mixed);
       }
     } else {
       double f = floor(u);
       w->first[a] = ((int)f + n[a] - order + 1) % n[a];
-      spline(u - f, order, w->w[a], w->dw[a]);
+      spline(u - f, order, w->w[a], w->dw[a], mixed);
     }
   }
 }
@@ -143,13 +153,19 @@ static void grow(struct Subgrid *g) {
   free(cells);
 }
 static void stencil(struct Subgrid *g, const struct Window *w, const int n[3],
-                    int order, double q, double gradient[3]) {
+                    int order, double q, double gradient[3], int mixed) {
   for (int j = 0; j < order; ++j) {
     int x = (w->first[0] + j) % n[0];
     for (int k = 0; k < order; ++k) {
       int y = (w->first[1] + k) % n[1];
       int64_t row = ((int64_t)x * n[1] + y) * n[2];
-      double xy = w->w[0][j] * w->w[1][k];
+      double xy = precision(w->w[0][j] * w->w[1][k], mixed);
+      double dx = precision(w->dw[0][j] * w->w[1][k], mixed);
+      double dy = precision(w->w[0][j] * w->dw[1][k], mixed);
+      double qxy = precision(
+          precision(precision(q, mixed) * 0x1p40 * w->w[0][j], mixed) *
+              w->w[1][k],
+          mixed);
       for (int l = 0; l < order; ++l) {
         int z = (w->first[2] + l) % n[2];
         int64_t key = row + z + 1;
@@ -158,16 +174,18 @@ static void stencil(struct Subgrid *g, const struct Window *w, const int n[3],
         struct Cell *c = lookup(g, key);
         if (gradient) {
           double v = c->potential;
-          gradient[0] += v * w->dw[0][j] * w->w[1][k] * w->w[2][l];
-          gradient[1] += v * w->w[0][j] * w->dw[1][k] * w->w[2][l];
-          gradient[2] += v * xy * w->dw[2][l];
+          double derivative[3] = {dx * w->w[2][l], dy * w->w[2][l],
+                                  xy * w->dw[2][l]};
+          for (int a = 0; a < 3; ++a) {
+            double term = precision(v * precision(derivative[a], mixed), mixed);
+            gradient[a] = precision(gradient[a] + term, mixed);
+          }
         } else {
           if (!c->key) {
             c->key = key;
             ++g->count;
           }
-          double word =
-              nearbyint(((q * 0x1p40 * w->w[0][j]) * w->w[1][k]) * w->w[2][l]);
+          double word = nearbyint(precision(qxy * w->w[2][l], mixed));
           if (!(word >= -0x1p63 && word < 0x1p63))
             fail("PME assignment outside signed Q40 range");
           c->charge += (int64_t)word;
@@ -276,7 +294,7 @@ static void polynomial(double k, const double *value, const double *slope,
 }
 static void spectrum(const int n[3], const double box[3], struct PmeBox b,
                      double *fft, struct Table *t, double beta, double coulomb,
-                     int fixed, double *sums, __int128 words[10]) {
+                     int fixed, int mixed, double *sums, __int128 words[10]) {
   const double pi = acos(-1),
                pref = coulomb / (pi * (box[0] * box[1] * box[2]));
   size_t i = 0;
@@ -313,11 +331,26 @@ static void spectrum(const int n[3], const double box[3], struct PmeBox b,
             dg = -2 * g * (1 / s + a);
           }
         }
+        if (mixed && t->n[0] == 3 && s > 0) {
+          int point[3] = {x, y, z};
+          float factor[3], square[3];
+          double exponent = pi * pi / (beta * beta);
+          for (int a = 0; a < 3; ++a) {
+            double m2 = m[a] * m[a];
+            square[a] = m2;
+            double axis = exp(-exponent * m2) * table(t, a)[point[a]];
+            factor[a] = a == 0 ? axis * pref : axis;
+          }
+          float inverse = 1.0f / (square[0] + square[1] + square[2]);
+          g = (factor[0] * factor[1] * factor[2]) * inverse;
+          dg = -2 * g * (inverse + (float)exponent);
+        }
+        g = precision(g, mixed);
         double re = fft[i], im = fft[i + 1];
         double power =
             (z == 0 || 2 * z == n[2] ? 0.5 : 1) * (re * re + im * im);
-        fft[i] = re * g;
-        fft[i + 1] = im * g;
+        fft[i] = precision(re * g, mixed);
+        fft[i + 1] = precision(im * g, mixed);
         double term[10] = {power * g};
         for (int a = 0; a < 3; ++a)
           for (int d = 0; d < 3; ++d)
@@ -336,9 +369,9 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
                               double lx, double ly, double lz, double beta,
                               double coulomb, int64_t nx, int64_t ny,
                               int64_t nz, int64_t order, int64_t px, int64_t py,
-                              int64_t mpi, int64_t fixed) {
-  if (nx > INT_MAX || ny > INT_MAX || nz > INT_MAX ||
-      nx * ny > INT64_MAX / nz || order < 3 || order > 8)
+                              int64_t mpi, int64_t fixed, int64_t mixed) {
+  if (nx < 1 || ny < 1 || nz < 1 || nx > INT_MAX || ny > INT_MAX ||
+      nz > INT_MAX || nx * ny > INT64_MAX / nz || order < 3 || order > 8)
     fail("unsupported PME mesh size or assignment order");
   const int n[3] = {nx, ny, nz};
   const double box[3] = {lx, ly, lz};
@@ -349,7 +382,8 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
     rank = mdrtMPIRank();
   }
 #endif
-  struct PmePencils *mesh = mdrtPmePencils(nx, ny, nz, px, py, order, mpi);
+  struct PmePencils *mesh =
+      mdrtPmePencils(nx, ny, nz, px, py, order, mpi, mixed);
   struct PmeBox realBox = mdrtPmeRealBox(mesh),
                 modes = mdrtPmeSpectrumBox(mesh);
   struct Subgrid local = {0};
@@ -360,8 +394,8 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
       if (!charge)
         continue;
       struct Window w = {0};
-      window(&w, field(x, d, r), x->s[2], box, n, order, t);
-      stencil(&local, &w, n, order, charge, NULL);
+      window(&w, field(x, d, r), x->s[2], box, n, order, t, mixed);
+      stencil(&local, &w, n, order, charge, NULL, mixed);
     }
   mdrtDistPhase(-DistSpread);
   mdrtDistPhase(DistOverlap);
@@ -375,7 +409,7 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
   }
   double *real = alloc(size, sizeof *real);
   for (size_t i = 0; i < size; ++i)
-    real[i] = mdrtDistNarrowWord(grid[i]) * 0x1p-40;
+    real[i] = precision(mdrtDistNarrowWord(grid[i]) * 0x1p-40, mixed);
   free(grid);
   free(e.send);
   free(e.recv);
@@ -387,7 +421,7 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
   mdrtDistPhase(DistSolve);
   double sums[10] = {0};
   __int128 words[10] = {0};
-  spectrum(n, box, modes, fft, t, beta, coulomb, fixed, sums, words);
+  spectrum(n, box, modes, fft, t, beta, coulomb, fixed, mixed, sums, words);
 #ifdef MDIR_ENABLE_MPI
   if (peers > 1) {
     int *counts = alloc(peers, 2 * sizeof(int)), *offsets = counts + peers;
@@ -439,11 +473,11 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
       double grad[3] = {0}, charge = *field(q, d, r);
       if (charge) {
         struct Window w = {0};
-        window(&w, field(x, d, r), x->s[2], box, n, order, t);
-        stencil(&local, &w, n, order, charge, grad);
+        window(&w, field(x, d, r), x->s[2], box, n, order, t, mixed);
+        stencil(&local, &w, n, order, charge, grad, mixed);
       }
       for (int a = 0; a < 3; ++a) {
-        double v = -charge * grad[a] * n[a] / box[a];
+        double v = precision((-charge * (n[a] / box[a])) * grad[a], mixed);
         field(f, d, r)[a * f->s[2]] =
             fixed ? mdrtDistWord(v, 0x1p40) * 0x1p-40 : v;
       }

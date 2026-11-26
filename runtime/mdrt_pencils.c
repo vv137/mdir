@@ -15,7 +15,7 @@ extern void mdrtDistPhase(int64_t);
 #include <string.h>
 
 struct PmePencils {
-  int n[3], px, py, rank, peers;
+  int n[3], px, py, rank, peers, mixed;
   rfft_plan rz;
   cfft_plan cy, cx;
   double *line, *a, *b, *send, *recv;
@@ -120,6 +120,7 @@ static void transpose(struct PmePencils *p, int from, int to, double *src,
     return;
   }
 #ifdef MDIR_ENABLE_MPI
+  mdrtDistPhase(DistTranspose);
   int *ns = p->schedule, *nr = ns + p->peers;
   int *os = nr + p->peers, *or = os + p->peers;
   int sent = 0, received = 0;
@@ -134,19 +135,19 @@ static void transpose(struct PmePencils *p, int from, int to, double *src,
     sent += ns[r];
     received += nr[r];
   }
-  mdrtDistPhase(DistTranspose);
   mdrtMPIExchange(p->send, ns, os, p->recv, nr, or, 0);
-  mdrtDistPhase(-DistTranspose);
   for (int r = 0; r < p->peers; ++r)
     transfer(next, intersect(next, bounds(p, from, r)), dst, p->recv + or[r],
              0);
+  mdrtDistPhase(-DistTranspose);
 #endif
 }
 
 struct PmePencils *mdrtPmePencils(int nx, int ny, int nz, int px, int py,
-                                  int order, int mpi) {
+                                  int order, int mpi, int mixed) {
   struct PmePencils *p = allocate(1, sizeof *p);
   p->peers = 1;
+  p->mixed = mixed;
 #ifdef MDIR_ENABLE_MPI
   if (mpi) {
     p->rank = mdrtMPIRank();
@@ -190,6 +191,14 @@ struct PmePencils *mdrtPmePencils(int nx, int ny, int nz, int px, int py,
   return p;
 }
 
+/* pocketfft performs a line in binary64. Ordinary CPU PME rounds on storing
+   each axis into its grid, including the real inverse. */
+static void roundLine(struct PmePencils *p, int count) {
+  if (p->mixed)
+    for (int i = 0; i < count; ++i)
+      p->line[i] = (float)p->line[i];
+}
+
 static void complexLines(struct PmePencils *p, int axis, double *data,
                          int forward) {
   struct PmeBox b = bounds(p, axis, p->rank);
@@ -208,6 +217,7 @@ static void complexLines(struct PmePencils *p, int axis, double *data,
       if (forward ? cfft_forward(plan, p->line, 1)
                   : cfft_backward(plan, p->line, 1))
         fail("pocketfft complex transform failed");
+      roundLine(p, 2 * len);
       for (int k = 0; k < len; ++k)
         memcpy(data + start + k * stride, p->line + 2 * k, 2 * sizeof(double));
     }
@@ -220,6 +230,7 @@ void mdrtPmeForward(struct PmePencils *p, const double *real,
     memcpy(p->line, real + (size_t)row * n, n * sizeof(double));
     if (rfft_forward(p->rz, p->line, 1))
       fail("pocketfft real transform failed");
+    roundLine(p, n);
     double *out = p->a + 2 * (size_t)row * h;
     out[0] = p->line[0];
     out[1] = 0;
@@ -252,6 +263,7 @@ void mdrtPmeBackward(struct PmePencils *p, const double *spectrum,
     }
     if (rfft_backward(p->rz, p->line, 1))
       fail("pocketfft real inverse failed");
+    roundLine(p, n);
     memcpy(real + (size_t)row * n, p->line, n * sizeof(double));
   }
 }
