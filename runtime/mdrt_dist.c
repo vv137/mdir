@@ -172,7 +172,7 @@ struct Halo {
 #ifdef MDIR_ENABLE_NCCL
   struct TuplePlan *tuplePlans;
   struct TupleDomainRows tupleDomainRows;
-  double *tupleCoordinates;
+  double *tupleCoordinates, *pairImageShifts;
   struct Memref3D tupleInput;
   struct NCCLPlan *ncclPlan;
   struct DistDeviceMatrix deviceMatrix;
@@ -3112,6 +3112,39 @@ void _mlir_ciface_mdrtDistWriteCenters(struct Memref3D *out, int64_t d,
   mdrtNCCLWriteCenters(deviceRows(out,d,n,1),forces->aligned,mask->aligned,n,stream);
 }
 
+/* Bonded kernels need unshifted ghosts, while the explicit pair list
+   needs the periodic translations. Use the same completed halo transfer. */
+void _mlir_ciface_mdrtDistPairImageShifts(struct Memref2D *out, int64_t handle) {
+  struct Halo *h = (void *)(intptr_t)handle;
+  int64_t d = mdrtMPIDomainBound(h->layout->domains,0);
+  int64_t n = h->layout->rows[d], g = h->rows[d];
+  if (!h->pairImageShifts) {
+    double *shifts = calloc((n+g ? n+g : 1)*3, sizeof(*shifts));
+    if (!shifts) fail("out of memory allocating periodic pair translations");
+    for (int64_t i=0; i<g; ++i)
+      for (int c=0; c<3; ++c)
+        shifts[3*(n+i)+c] = h->image[3*(d*h->capacity+i)+c]*h->layout->edges[c];
+    size_t bytes = 3*(size_t)(n+g)*sizeof(double);
+    h->pairImageShifts = mdrtNCCLAllocate(bytes);
+    mdrtNCCLUpload(h->pairImageShifts,shifts,bytes);
+    free(shifts);
+  }
+  *out = (struct Memref2D){h->pairImageShifts,h->pairImageShifts,0,{n+g,3},{3,1}};
+}
+
+void _mlir_ciface_mdrtDistImagedRows(struct Memref2D *out, int64_t handle,
+    struct Memref3D *owned, struct Memref3D *raw, struct Memref2D *shifts,
+    void *stream) {
+  struct Halo *h = (void *)(intptr_t)handle;
+  int64_t d = mdrtMPIDomainBound(h->layout->domains,0);
+  int64_t n = h->layout->rows[d], g = h->rows[d];
+  double *packed = mdrtNCCLAllocate((size_t)(n+g)*3*sizeof(double));
+  mdrtNCCLJoin(packed,deviceRows(owned,d,n,0),3*n,NULL,0);
+  mdrtNCCLAdvance(deviceRows(raw,d,g,0),shifts->aligned+3*n,NULL,packed+3*n,g,1.);
+  mdrtNCCLWaitForRows(stream);
+  *out = (struct Memref2D){packed,packed,0,{n+g,3},{3,1}};
+}
+
 void _mlir_ciface_mdrtDistReleaseDevicePositions(struct Memref2D *rows) {
   mdrtNCCLFreePositions(rows->allocated);
 }
@@ -3349,6 +3382,7 @@ void mdrtDistReleaseHalo(int64_t handle) {
   freeTupleDomainRows(&h->tupleDomainRows);
   if (h->tupleInput.allocated) _mlir_ciface_mdrtDistReleaseField(&h->tupleInput);
   if (h->tupleCoordinates) mdrtNCCLFreePositions(h->tupleCoordinates);
+  if (h->pairImageShifts) mdrtNCCLFreePositions(h->pairImageShifts);
   while (h->scalarFields) {
     struct ScalarHaloField *s = h->scalarFields;
     h->scalarFields = s->next;

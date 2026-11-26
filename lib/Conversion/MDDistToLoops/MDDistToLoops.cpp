@@ -240,7 +240,7 @@ void emitPairs(
   Value quantize(OpBuilder &b, Value value, int fractionalBits);
   Value finish(OpBuilder &b, Value sum, int fractionalBits);
   Value add(OpBuilder &b, Value lhs, Value rhs);
-  llvm::DenseMap<Value, Value> devicePositions, deviceScalars;
+  llvm::DenseMap<Value, Value> devicePositions, deviceScalars, deviceImageShifts;
   llvm::DenseMap<std::pair<Block *, Value>, Value> fieldSnapshots;
   int64_t scalarSite = 0;
   llvm::DenseMap<Value, Value> imageShifts, fieldWords, excludedPairs;
@@ -1137,7 +1137,16 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
       });
   Value image = arith::ConstantOp::create(
       b, loc, b.getI64IntegerAttr(op.getImage() && !separateImage ? 1 : 0));
-  if (op.getImage() && separateImage) {
+  // Bonded tuples and explicit pairs consume the same received coordinates.
+  // Only pairs apply the halo translation before searching neighbors.
+  bool packPairImages = sharedState() && !fixedPoint && matrixPairs && op.getImage() &&
+      op.getHalo().getDefiningOp<UnpackOp>() &&
+      llvm::any_of(op.getResult().getUsers(), [](Operation *u) { return isa<TupleKernelOp>(u); }) &&
+      llvm::any_of(op.getResult().getUsers(), [](Operation *u) { return isa<NeighborhoodOp>(u); }) &&
+      llvm::all_of(op.getResult().getUsers(), [](Operation *u) {
+        return isa<TupleKernelOp, NeighborhoodOp, SumPairsOp, GatherPairsOp>(u);
+      });
+  if (op.getImage() && separateImage && !packPairImages) {
     Value shifts = allocate(b, halo.capacity, 3);
     auto fill = declare("mdrtDistImageShifts",
         b.getFunctionType({i64, shifts.getType()}, {}), true);
@@ -1221,6 +1230,20 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
     func::CallOp::create(b, loc, copy,
                          ValueRange{halo.handle, owned, ghosts, image});
     storage[op.getResult()].buffer = ghosts;
+  }
+  if (packPairImages) {
+    auto type = MemRefType::get({ShapedType::kDynamic,3}, b.getF64Type(),
+                                MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
+    auto images = declare("mdrtDistPairImageShifts", b.getFunctionType({i64},{type}),true);
+    Value shifts = func::CallOp::create(b,loc,images,halo.handle).getResult(0);
+    deviceImageShifts[op.getResult()] = shifts;
+    SmallVector<Value> args{halo.handle,owned,ghosts,shifts,externalStream(b)};
+    auto pack = declare("mdrtDistImagedRows",b.getFunctionType(ValueRange(args).getTypes(),{type}),true);
+    Value positions = func::CallOp::create(b,loc,pack,args).getResult(0);
+    devicePositions[op.getResult()] = positions;
+    OpBuilder cleanup(end);
+    auto release = declare("mdrtDistReleaseDevicePositions", b.getFunctionType({type},{}),true);
+    func::CallOp::create(cleanup,loc,release,positions);
   }
   return success();
 }
@@ -3124,7 +3147,10 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
   // Match the CPU MATRIX image arithmetic. Gather translations in the
   // same order as the full-precision, imaged search positions.
   Value shifts;
-  if (gpuImageGeometry && !periodicOwned)
+  if (gpuImageGeometry && !periodicOwned && deviceImageShifts.count(op.getGhosts())) {
+    auto type = md::FieldType::get(context,set,3,b.getF64Type());
+    shifts = mdrt::FromBufferOp::create(b,loc,type,deviceImageShifts.lookup(op.getGhosts()));
+  } else if (gpuImageGeometry && !periodicOwned)
     shifts = makeField(b, set, 3, b.getF64Type(), d,
         {Value(), imageShifts.lookup(op.getGhosts())}, {nOwned, nGhosts});
   return {positions, structure, nOwned, relation.cell, periodicOwned ? Value() : nOwned, shifts, periodicOwned};
@@ -4090,6 +4116,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
   fieldWords.clear();
   excludedPairs.clear();
   imageShifts.clear();
+  deviceImageShifts.clear();
   storage.clear();
   grouped.clear();
   sharedPartialOffsets.clear();

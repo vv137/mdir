@@ -1323,3 +1323,10 @@ With one domain, the periodic displacement can be computed from the
 two owned positions. Removing an unused copy of the imaged coordinates
 reduced the Factor IX double mean from 13.039 to 12.030 ms/step and
 the JAC-RF mean from 6.007 to 5.893 in the alternating runs.
+
+For multiple domains, the bonded calculation needs the received particle
+positions and the explicit pair list needs their periodic images. The
+image translation depends on the halo geometry, so it can be stored for
+the epoch and applied on the device after each exchange. Sharing the
+received coordinates reduced the four-device double means from 23.199
+to 19.420 ms/step for Factor IX and from 13.744 to 10.922 for JAC-RF.

@@ -475,3 +475,8 @@ A stationary packed layout can reuse the local tuple numbering after
 migration when every particle retains its owner. If all consumers of an
 imaged coordinate use owned positions and periodic bond or pair geometry,
 the lowered program omits that halo copy entirely.
+
+Where tuples and explicit MATRIX pairs share positions, both consumers
+read one completed exchange. The halo owns the periodic translations.
+A device kernel adds these translations to raw ghost coordinates for the
+pair list, while tuple kernels read the raw coordinates.
