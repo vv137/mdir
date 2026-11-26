@@ -821,3 +821,13 @@ sequence of contributions to each owner, including those on the same rank.
 For a disjoint constraint group the partition places every member at one
 owner. The verified tuple schedule then contains only owned row indices,
 so its calculation needs no forward ghost payload.
+
+The parallel tuple traversal preserves the topology index when it buckets
+local tuples by domain (D[distribute-cpu-threads]). A tuple therefore
+reads the same parameters after grouping. Within each domain, fixed chunks
+sum the energies in topology order, and the domain combines the chunks in
+order. For a force, the traversal stores one contribution per tuple member.
+Each destination row gathers its contributions in the original order,
+including repeated occurrences of a member. Disjoint constraint groups
+can update their members concurrently. A bitwise OR combines their
+failure flags independently of evaluation order.

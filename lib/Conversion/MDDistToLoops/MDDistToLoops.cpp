@@ -1188,11 +1188,6 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
     storage[op.getResult(0)].buffer = ownedOut;
     storage[op.getResult(1)].buffer = ghostOut;
   }
-  Value failureFlag;
-  if (hasFlag) {
-    failureFlag = allocate(b, MemRefType::get({1}, b.getI32Type()), {});
-    fillZero(b, failureFlag);
-  }
   SmallVector<Value> parameters;
   for (Value field : op.getParameters()) {
     auto type = cast<md::FieldType>(field.getType());
@@ -1200,17 +1195,45 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
   }
   Value count = memref::DimOp::create(b, loc, op.getRows(), 0);
   Value first = domainBound(b, false), past = domainBound(b, true);
-  scf::ForOp::create(b, loc, index(b, 0), count, index(b, 1), ValueRange(),
-      [&](OpBuilder &at, Location, Value t, ValueRange) {
-        auto row = [&](OpBuilder &builder, int64_t column) {
-          return toIndex(builder, memref::LoadOp::create(builder, loc, op.getRows(),
-                                                ValueRange{t, index(builder, column)}));
-        };
-        Value d = row(at, 0);
-        Value mine = arith::AndIOp::create(at, loc,
-            arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ule, first, d),
-            arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, d, past));
-        scf::IfOp::create(at, loc, mine, [&](OpBuilder &k, Location) {
+  auto indices = [&](Value size) {
+    return allocate(b, MemRefType::get({dyn}, b.getIndexType()), {size});
+  };
+  auto callIndex = [&](StringRef name, ValueRange args) -> Value {
+    auto fn = declare(name, b.getFunctionType(args.getTypes(), {b.getIndexType()}), true);
+    return func::CallOp::create(b, loc, fn, args).getResult(0);
+  };
+  Value z = index(b, 0), one = index(b, 1);
+  Value order = indices(count);
+  Value starts = indices(arith::AddIOp::create(b, loc, count, one));
+  Value records = memref::CastOp::create(b, loc, MemRefType::get({dyn, dyn}, b.getI64Type()), op.getRows());
+  Value chunks = callIndex("mdrtDistTupleChunks", {records, first, past,
+      index(b, 128), order, starts});
+  Value localCount = memref::LoadOp::create(b, loc, starts, chunks);
+  Value energies, flags, contributions;
+  if (reduce)
+    energies = buffer({dyn, dyn}, {chunks, index(b, width)});
+  if (hasFlag) {
+    flags = allocate(b, MemRefType::get({dyn}, b.getI32Type()), {chunks});
+    fillZero(b, flags);
+  }
+  if (!reduce && !solve)
+    contributions = allocate(b, MemRefType::get({dyn, dyn, dyn}, scalar),
+                             {localCount, index(b, arity), index(b, 3)});
+  auto tupleColumn = [&](OpBuilder &at, Value tuple, Value col) {
+    return toIndex(at, memref::LoadOp::create(at, loc, op.getRows(), ValueRange{tuple, col}));
+  };
+  scf::ParallelOp::create(b, loc, ValueRange{z}, ValueRange{chunks}, ValueRange{one},
+      [&](OpBuilder &at, Location, ValueRange iv) {
+        Value chunk = iv[0];
+        Value begin = memref::LoadOp::create(at, loc, starts, chunk);
+        Value end = memref::LoadOp::create(at, loc, starts, arith::AddIOp::create(at, loc, chunk, one).getResult());
+        scf::ForOp::create(at, loc, begin, end, one, ValueRange(),
+            [&](OpBuilder &k, Location, Value pos, ValueRange) {
+          Value t = memref::LoadOp::create(k, loc, order, pos);
+          auto row = [&](OpBuilder &at, int64_t column) {
+            return tupleColumn(at, t, index(at, column));
+          };
+          Value d = row(k, 0);
           Value n = toIndex(k, memref::LoadOp::create(k, loc, layout.rows, d));
           SmallVector<Value> localRows, isOwned, ghostRows, positions, args;
           for (int64_t a = 0; a < arity; ++a) {
@@ -1269,37 +1292,87 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
             Value word = quantize(k, map.lookupOrDefault(yielded.front()), pairEnergy);
             for (int64_t c = 0; c < width; ++c) {
               Value component = vector ? Value(vector::ExtractOp::create(k, loc, word, c)) : word;
-              SmallVector<Value, 2> place{d, index(k, c)};
-              Value old = memref::LoadOp::create(k, loc, partial, place);
-              memref::StoreOp::create(k, loc, add(k, old, component), partial, place);
+              SmallVector<Value, 2> place{chunk, index(k, c)};
+              Value old = memref::LoadOp::create(k, loc, energies, place);
+              memref::StoreOp::create(k, loc, add(k, old, component), energies, place);
             }
           } else if (solve) {
             for (int64_t a = 0; a < arity; ++a)
               storeValue(k, map.lookupOrDefault(yielded[a]), ownedOut, d, localRows[a]);
             if (hasFlag) {
-              Value zero = index(k, 0);
-              Value old = memref::LoadOp::create(k, loc, failureFlag, zero);
+              Value old = memref::LoadOp::create(k, loc, flags, chunk);
               Value flagged = arith::ExtUIOp::create(k, loc, k.getI32Type(), map.lookupOrDefault(yielded.back()));
-              memref::StoreOp::create(k, loc, arith::OrIOp::create(k, loc, old, flagged), failureFlag, zero);
+              memref::StoreOp::create(k, loc, arith::OrIOp::create(k, loc, old, flagged), flags, chunk);
             }
           } else {
             for (int64_t a = 0; a < arity; ++a) {
-              Value word = quantize(k, map.lookupOrDefault(yielded[a]), pairForce);
-              scf::IfOp::create(k, loc, isOwned[a], [&](OpBuilder &yes, Location) {
-                addValue(yes, word, ownedOut, d, localRows[a]);
-                scf::YieldOp::create(yes, loc);
-              }, [&](OpBuilder &no, Location) {
-                addValue(no, word, ghostOut, d, ghostRows[a]);
-                scf::YieldOp::create(no, loc);
-              });
+              Value word = quantize(k, map.lookupOrDefault(yielded[a]), 40);
+              storeValue(k, word, contributions, pos, index(k, a));
             }
           }
           scf::YieldOp::create(k, loc);
         });
-        scf::YieldOp::create(at, loc);
       });
+  if (reduce)
+    scf::ForOp::create(b, loc, z, chunks, one, ValueRange(),
+        [&](OpBuilder &at, Location, Value chunk, ValueRange) {
+          Value pos = memref::LoadOp::create(at, loc, starts, chunk);
+          Value t = memref::LoadOp::create(at, loc, order, pos);
+          Value d = tupleColumn(at, t, z);
+          for (int64_t c = 0; c < width; ++c) {
+            Value col = index(at, c);
+            Value old = memref::LoadOp::create(at, loc, partial, ValueRange{d, col});
+            Value term = memref::LoadOp::create(at, loc, energies, ValueRange{chunk, col});
+            memref::StoreOp::create(at, loc, add(at, old, term), partial, ValueRange{d, col});
+          }
+          scf::YieldOp::create(at, loc);
+        });
+  if (contributions) {
+    Value members = index(b, arity);
+    Value size = arith::MulIOp::create(b, loc, localCount, members);
+    Value entries = indices(size);
+    Value offsets = indices(arith::AddIOp::create(b, loc, size, one));
+    Value stride = arith::AddIOp::create(b, loc, layout.capacity, halo.capacity);
+    Value active = callIndex("mdrtDistTupleIncidence", {records, order, localCount,
+        first, past, stride, entries, offsets});
+    auto sumVec = VectorType::get({3}, scalar);
+    scf::ParallelOp::create(b, loc, ValueRange{z}, ValueRange{active}, ValueRange{one},
+        [&](OpBuilder &at, Location, ValueRange iv) {
+          Value begin = memref::LoadOp::create(at, loc, offsets, iv[0]);
+          Value end = memref::LoadOp::create(at, loc, offsets, arith::AddIOp::create(at, loc, iv[0], one).getResult());
+          auto member = [&](OpBuilder &at, Value i) {
+            Value e = memref::LoadOp::create(at, loc, entries, i);
+            return std::pair<Value,Value>{arith::DivUIOp::create(at, loc, e, members),
+                                          arith::RemUIOp::create(at, loc, e, members)};
+          };
+          auto [p, a] = member(at, begin);
+          Value t = memref::LoadOp::create(at, loc, order, p);
+          Value d = tupleColumn(at, t, z);
+          Value r = tupleColumn(at, t, arith::AddIOp::create(at, loc, a, one));
+          Value n = toIndex(at, memref::LoadOp::create(at, loc, layout.rows, d));
+          auto sum = scf::ForOp::create(at, loc, begin, end, one, ValueRange{zero(at, sumVec)},
+              [&](OpBuilder &body, Location, Value i, ValueRange acc) {
+                auto [p, a] = member(body, i);
+                Value value = loadValue(body, contributions, p, a, sumVec);
+                scf::YieldOp::create(body, loc, add(body, acc[0], value));
+              }).getResult(0);
+          scf::IfOp::create(at, loc, arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, r, n),
+              [&](OpBuilder &yes, Location) {
+                storeValue(yes, sum, ownedOut, d, r);
+                scf::YieldOp::create(yes, loc);
+              }, [&](OpBuilder &no, Location) {
+                storeValue(no, sum, ghostOut, d, arith::SubIOp::create(no, loc, r, n));
+                scf::YieldOp::create(no, loc);
+              });
+        });
+  }
   if (hasFlag) {
-    Value flag = memref::LoadOp::create(b, loc, failureFlag, index(b, 0));
+    Value init = arith::ConstantIntOp::create(b, loc, 0, 32);
+    Value flag = scf::ForOp::create(b, loc, z, chunks, one, ValueRange{init},
+        [&](OpBuilder &at, Location, Value chunk, ValueRange acc) {
+          Value term = memref::LoadOp::create(at, loc, flags, chunk);
+          scf::YieldOp::create(at, loc, arith::OrIOp::create(at, loc, acc[0], term).getResult());
+        }).getResult(0);
     if (mpi) {
       auto maximum = declare("mdrtMPIMax", b.getFunctionType({b.getI32Type()}, {b.getI32Type()}), false);
       flag = func::CallOp::create(b, loc, maximum, flag).getResult(0);

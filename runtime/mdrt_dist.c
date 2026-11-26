@@ -1446,6 +1446,63 @@ void mdrtDistIndexTupleImages(int64_t handle, int64_t count) {
   }
 }
 
+/* Keep the topology index for parameter lookup. Counting sort is stable
+   within each domain, so chunk boundaries are independent of the team. */
+int64_t _mlir_ciface_mdrtDistTupleChunks(struct Memref2I *rows, int64_t first,
+    int64_t past, int64_t width, struct Memref1I *order, struct Memref1I *starts) {
+  int64_t domains = past - first;
+  int64_t *offsets = calloc(domains + 1, sizeof *offsets);
+  if (!offsets) fail("out of memory sorting local tuple rows");
+  for (int64_t t = 0; t < rows->sizes[0]; ++t) {
+    int64_t d = rows->aligned[rows->offset + t * rows->strides[0]];
+    if (d >= first && d < past) ++offsets[d - first + 1];
+  }
+  int64_t chunks = 0;
+  for (int64_t d = 0; d < domains; ++d) {
+    offsets[d+1] += offsets[d];
+    for (int64_t t = offsets[d]; t < offsets[d+1]; t += width)
+      starts->aligned[chunks++] = t;
+  }
+  starts->aligned[chunks] = offsets[domains];
+  for (int64_t t = 0; t < rows->sizes[0]; ++t) {
+    int64_t d = rows->aligned[rows->offset + t * rows->strides[0]];
+    if (d >= first && d < past) order->aligned[offsets[d-first]++] = t;
+  }
+  free(offsets);
+  return chunks;
+}
+
+/* List tuple-member contributions by destination. Within a destination the
+   entries follow topology order, including repeated members of a tuple. */
+int64_t _mlir_ciface_mdrtDistTupleIncidence(struct Memref2I *rows,
+    struct Memref1I *order, int64_t count, int64_t first, int64_t past,
+    int64_t stride, struct Memref1I *entries, struct Memref1I *starts) {
+  int64_t slots = (past - first) * stride, arity = rows->sizes[1] - 1;
+  int64_t *cursor = calloc(slots + 1, sizeof *cursor);
+  if (!cursor) fail("out of memory indexing tuple forces");
+  int64_t active = 0;
+  for (int pass = 0; pass < 2; ++pass) {
+    for (int64_t p = 0; p < count; ++p) {
+      int64_t t = order->aligned[p];
+      const int64_t *row = rows->aligned + rows->offset + t * rows->strides[0];
+      for (int64_t a = 0; a < arity; ++a) {
+        int64_t dest = (row[0] - first) * stride + row[(a+1)*rows->strides[1]];
+        if (pass) entries->aligned[cursor[dest]++] = p * arity + a;
+        else ++cursor[dest+1];
+      }
+    }
+    if (pass == 0) {
+      for (int64_t i = 0; i < slots; ++i) {
+        if (cursor[i+1]) starts->aligned[active++] = cursor[i];
+        cursor[i+1] += cursor[i];
+      }
+      starts->aligned[active] = cursor[slots];
+    }
+  }
+  free(cursor);
+  return active;
+}
+
 static void tupleRows(int64_t handle, struct Memref3D *positions,
                       struct Members *members, struct Memref2I *out, int64_t begin, int64_t end,
                       int64_t firstTuple, int64_t pastTuple) {
