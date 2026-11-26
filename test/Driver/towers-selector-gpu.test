@@ -1,3 +1,3 @@
-# REQUIRES: cuda
+# REQUIRES: cuda, towers-mma
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %python %S/Inputs/check_towers_selector.py mdir %S/../../examples/argon %t

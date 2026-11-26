@@ -1,4 +1,4 @@
-# REQUIRES: cuda
+# REQUIRES: cuda, towers-mma
 # RUN: rm -rf %t && mkdir %t
 # RUN: cp %S/Inputs/towers-one-step.toml %S/../../examples/argon/argon.pdb %t/
 # RUN: mdir run %t/towers-one-step.toml | FileCheck %s

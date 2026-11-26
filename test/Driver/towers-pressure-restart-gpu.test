@@ -1,4 +1,4 @@
-# REQUIRES: cuda, hdf5
+# REQUIRES: cuda, towers-mma, hdf5
 # Changing traversal at restart discards the saved barostat state. The
 # first evaluation must supply all nine pressure-tensor components.
 # RUN: rm -rf %t && mkdir %t

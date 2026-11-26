@@ -13,8 +13,8 @@
 # RUN: cd %t && env MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_121a mdir emit run.toml --stage=pipeline | FileCheck %s --check-prefix=SM121A
 # RUN: cd %t && env MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 mdir emit run.toml --stage=pipeline | FileCheck %s --check-prefix=SM89
 # RUN: cd %t && env MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_80 mdir emit run.toml --stage=pipeline | FileCheck %s --check-prefix=SM80
-# RUN: cd %t && env MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH= mdir emit run.toml --stage=pipeline | FileCheck %s --check-prefix=NOARCH
-# RUN: cd %t && env MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH= mdir emit run.toml --stage=pipeline | not grep -q 'arch='
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH= mdir emit run.toml --stage=pipeline | FileCheck %s --check-prefix=NOARCH
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH= mdir emit run.toml --stage=pipeline | not grep -q 'arch='
 #
 # The overrides keep their effect over the entries.
 # RUN: cd %t && env MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_120 MDIR_FUSED_PRUNE=always mdir emit run.toml --stage=pipeline | FileCheck %s --check-prefix=ALWAYS

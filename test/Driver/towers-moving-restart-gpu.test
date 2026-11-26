@@ -1,4 +1,4 @@
-# REQUIRES: cuda, hdf5
+# REQUIRES: cuda, towers-mma, hdf5
 # RUN: rm -rf %t && mkdir %t
 # RUN: cp %S/../../examples/argon/argon.pdb %t/
 # RUN: sed -e '/^trajectory/d' -e '/^\[output\]/a checkpoint = "continuous.h5"\ncheckpoint_interval = 10' -e 's/^energy_interval.*/energy_interval = 5/' -e 's/^steps .*/steps = 20/' -e 's/"CPU"/"GPU"/' -e 's/"DOUBLE"/"MIXED"/' %S/../../examples/argon/argon.toml > %t/continuous.toml
