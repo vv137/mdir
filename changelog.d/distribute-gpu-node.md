@@ -13,3 +13,5 @@
 - Joint submission of intra-node and inter-node halo messages, sparse
   updates to retired host rebuild snapshots, and a single collective for
   eligible fused particle observables.
+- Constrained multi-device halos enclose periodic groups separately, and
+  independent floating-point tuple observables share reductions.

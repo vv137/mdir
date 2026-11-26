@@ -613,6 +613,9 @@ values across kicks. When every domain is wider than twice the reach,
 the GPU reports changes in ownership and face membership, including
 rows that leave a neighboring halo.
 Only crossing rows of unshifted fields are exchanged between owners.
+For constrained NCCL systems on multiple GPUs, halo construction
+encloses owned sites on opposite sides of a periodic seam separately.
+The reported domain box is their outer enclosure.
 For directed multi-GPU runs of at least 32 steps, `pair_overlap = "auto"`
 times the split and unsplit traversals on the allocated layout. A short
 run uses the unsplit path. The values `"split"` and `"unsplit"` override

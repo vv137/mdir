@@ -325,4 +325,6 @@ incident halo routes on the device from changed face records. Eligible runs can 
 Retired epochs apply sparse face changes to host arrays for the next rebuild. The GPU
 classifier reuses its record storage, and independent particle observables
 from one traversal can share their domain rows in one collective.
+Constrained NCCL runs filter periodic ghosts against separate group
+boxes. Independent tuple observables can share a collective.
 Midpoint GPU pair traversal and reproducible integer GPU sums remain open.

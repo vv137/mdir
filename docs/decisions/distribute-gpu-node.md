@@ -411,3 +411,30 @@ field output and the host fallback request those rows before reading
 them. A checkpoint needs them only on its writer.
 
 On four V100 devices the fixed-skin liquid rebuilt 19 times in 102 steps. The rank-local numbering gave 8.627 ms per rebuild, 3.593 ms per covered interval including final output, and 3.525 ms per production step. A 204-step checkpoint comparison agreed exactly in identities, positions, velocities and forces.
+
+For constrained multi-device NCCL halos, enclose the physical domain in
+the central box and group its owned sites by their nearest periodic
+image relative to the domain center. Each axis has three possible
+classifications, giving at most 27 boxes. An image is a ghost candidate
+if its distance from any box is less than the halo reach. The original
+identity and image ordering determines all surviving rows. Domain
+diagnostics still report the outer enclosing box.
+
+In the floating-point distributed GPU executor with tuple terms, delay
+an observable reduction and its scalar arithmetic until their first
+uses in the same block. At a reduction, pack independent partials that
+are already available on that rank into a row. One collective shares
+all components. Each observable then adds its own column in the
+original domain order. The fixed-point executor keeps its word sums.
+
+On the 23,558-site JAC-RF case, two 2 fs runs on each layout averaged
+24.532 ms/step on four V100 devices and 21.802 on eight. The respective
+matched controls were 28.354 and 33.454 ms/step. The return traffic
+across nodes fell from 34.763 to 13.882 MB/step.
+
+The 90,906-atom Factor IX benchmark used the same 2 fs finite-range
+controls. The two-run means in ms/step were 2.098 for ordinary MATRIX
+and 76.287, 61.760, 54.835, and 50.320 at one, two, four, and eight
+distributed GPUs, respectively. Both repetitions at every layout
+agreed with the ordinary potential energy and scalar virial across all
+205 frames within $2\times10^{-4}$ and $2\times10^{-3}$ kcal/mol.

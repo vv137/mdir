@@ -196,6 +196,7 @@ void emitPairs(
   void lowerCollectedSum(md::SumParticlesOp op);
   LogicalResult lowerMapParticles(MapParticlesOp op);
   LogicalResult lowerAllReduce(AllReduceOp op);
+  void shareReadyPartials(AllReduceOp first, OpBuilder &b);
   LogicalResult lowerPack(PackOp op);
   LogicalResult lowerUnpack(UnpackOp op);
   /// The tuple a state value lowers to.
@@ -205,6 +206,7 @@ void emitPairs(
   Value ownedCapacity(OpBuilder &b, Value handle);
   llvm::SmallPtrSet<Operation *, 8> constraintKernels;
   Value copyForState(OpBuilder &b, Value buffer);
+  bool batchObservables = false;
   bool sharedState() const { return gpuPairs && mpi; }
   void releaseField(OpBuilder &b, Value field);
   void hostRows(OpBuilder &b, Value field);
@@ -2476,6 +2478,92 @@ LogicalResult Lowering::lowerMapParticles(MapParticlesOp op) {
   return success();
 }
 
+// Delay scalar reporting arithmetic and its collective until the first use
+// in the same block. Independent tuple partials can then share one message.
+static void bringReductionsTogether(ArrayRef<Operation *> ops) {
+  llvm::SetVector<Operation *> dependent;
+  for (Operation *op : ops)
+    if (isa<AllReduceOp>(op)) dependent.insert(op);
+  for (unsigned i = 0; i < dependent.size(); ++i) {
+    Operation *op = dependent[i];
+    for (Operation *user : op->getUsers())
+      if (user->getBlock() == op->getBlock() &&
+          user->getDialect() == op->getContext()->getLoadedDialect<arith::ArithDialect>() &&
+          user->getNumResults() == 1)
+        dependent.insert(user);
+  }
+  llvm::SetVector<Block *> blocks;
+  for (Operation *op : dependent) blocks.insert(op->getBlock());
+  for (Block *block : blocks) {
+    SmallVector<Operation *> ordered;
+    for (Operation &op : *block)
+      if (dependent.contains(&op)) ordered.push_back(&op);
+    for (Operation *op : llvm::reverse(ordered)) {
+      Operation *first = nullptr;
+      for (Operation *use : op->getUsers()) {
+        if (use->getBlock() != block) {
+          first = nullptr;
+          break;
+        }
+        if (!first || use->isBeforeInBlock(first)) first = use;
+      }
+      if (first) op->moveBefore(first);
+    }
+  }
+}
+
+// Pack independent partials already available at the first reduction.
+void Lowering::shareReadyPartials(AllReduceOp first, OpBuilder &b) {
+  struct Column {
+    Value partial;
+    int64_t width;
+  };
+  SmallVector<Column> columns;
+  int64_t width = 0;
+  for (Operation *next = first; next; next = next->getNextNode()) {
+    auto sum = dyn_cast<AllReduceOp>(next);
+    if (!sum) continue;
+    Value partial = sum.getPartial();
+    Operation *producer = partial.getDefiningOp();
+    if (!partial.hasOneUse() || sharedPartialOffsets.count(partial) ||
+        !producer || producer->getBlock() != first->getBlock() ||
+        !producer->isBeforeInBlock(first) || !storage.lookup(partial).buffer)
+      continue;
+    Type type = sum.getResult().getType();
+    auto vector = dyn_cast<VectorType>(type);
+    if (!(vector ? vector.getElementType() : type).isF64()) continue;
+    int64_t length = vector ? vector.getNumElements() : 1;
+    columns.push_back({partial, length});
+    width += length;
+  }
+  if (columns.size() < 2) return;
+
+  constexpr int64_t dyn = ShapedType::kDynamic;
+  auto type = MemRefType::get({dyn, dyn}, b.getF64Type());
+  Value packed = allocate(b, type, {index(b, domains), index(b, width)});
+  scf::ForOp::create(b, loc, domainBound(b, false), domainBound(b, true),
+      index(b, 1), ValueRange(), [&](OpBuilder &body, Location, Value d, ValueRange) {
+        int64_t offset = 0;
+        for (const Column &col : columns) {
+          Value input = storage[col.partial].buffer;
+          for (int64_t c = 0; c < col.width; ++c) {
+            Value part = memref::LoadOp::create(body, loc, input, ValueRange{d, index(body, c)});
+            memref::StoreOp::create(body, loc, part, packed, ValueRange{d, index(body, offset+c)});
+          }
+          offset += col.width;
+        }
+        scf::YieldOp::create(body, loc);
+      });
+  auto share = declare("mdrtMPISharePartials", b.getFunctionType({type}, {}), true);
+  func::CallOp::create(b, loc, share, ValueRange{packed});
+  int64_t offset = 0;
+  for (const Column &col : columns) {
+    sharedPartialOffsets[col.partial] = offset;
+    storage[col.partial].buffer = packed;
+    offset += col.width;
+  }
+}
+
 LogicalResult Lowering::lowerAllReduce(AllReduceOp op) {
   if (failed(checkAlgebra(op)))
     return failure();
@@ -2483,6 +2571,8 @@ LogicalResult Lowering::lowerAllReduce(AllReduceOp op) {
   Type type = op.getResult().getType();
   auto vector = dyn_cast<VectorType>(type);
   int64_t length = vector ? vector.getNumElements() : 1;
+  if (batchObservables && !sharedPartialOffsets.count(op.getPartial()))
+    shareReadyPartials(op, b);
   Value partial = storage[op.getPartial()].buffer;
   int64_t offset = sharedPartialOffsets.lookup(op.getPartial());
   if (mpi && !sharedPartialOffsets.count(op.getPartial()))
@@ -3688,6 +3778,13 @@ LogicalResult Lowering::run(func::FuncOp function) {
     return ops.front()->emitOpError()
            << "has no layout from md_dist.partition to run";
   domains = decomposition.getNumDomains();
+  batchObservables = sharedState() && domains > 1 && !fixedPoint &&
+      module->hasAttr("md_dist.driver") &&
+      llvm::any_of(ops, [](Operation *op) { return isa<TupleKernelOp>(op); });
+  if (batchObservables) {
+    bringReductionsTogether(ops);
+    collect();
+  }
   devicePairFaces = sharedState() && matrixPairs && !fixedPoint &&
       !gpuImageGeometry && module->hasAttr("md_dist.driver") &&
       llvm::all_of(ops, [](Operation *op) {

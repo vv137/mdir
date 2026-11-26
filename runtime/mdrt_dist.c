@@ -1875,10 +1875,64 @@ struct GhostBin { double lo[3], hi[3]; };
 struct GhostRow { int64_t id, image[3]; };
 struct GhostList { struct GhostRow *data; size_t size, capacity; double lo[3], hi[3]; };
 
+/* Constrained sites can belong to a domain across the periodic seam.
+   Keep the grid cell for midpoint-owned tuples, and enclose every owned
+   site for owner-centered pairs. Splitting at the nearest periodic image
+   avoids importing the empty space between those two regions. */
+#ifdef MDIR_ENABLE_NCCL
+static int groupBoxes(struct Layout *l, const double (*points)[3], int64_t d,
+                      struct GhostBin boxes[27]) {
+  double low[3], high[3], center[3];
+  domainBox(l, points, d, low, high, 1);
+  // A ternary key records below, central or above along each axis.
+  // Key 13 is central in all three axes. Slots store box index plus one.
+  int slots[27] = {0};
+  slots[13] = 1;
+  for (int k = 0; k < 3; ++k) {
+    boxes[0].lo[k] = low[k];
+    boxes[0].hi[k] = high[k];
+    center[k] = 0.5 * (low[k] + high[k]);
+  }
+  int count = 1;
+  for (int64_t r = 0; r < l->rows[d]; ++r) {
+    const double *x = points[l->ids[d*l->stride+r]];
+    int key = 0;
+    for (int k = 0; k < 3; ++k) {
+      double delta = x[k] - center[k], half = 0.5 * l->edges[k];
+      key = 3*key + (delta < -half ? 0 : delta > half ? 2 : 1);
+    }
+    if (!slots[key]) {
+      slots[key] = ++count;
+      for (int k = 0; k < 3; ++k)
+        boxes[count-1].lo[k] = boxes[count-1].hi[k] = x[k];
+    } else {
+      struct GhostBin *box = &boxes[slots[key]-1];
+      for (int k = 0; k < 3; ++k) {
+        if (x[k] < box->lo[k]) box->lo[k] = x[k];
+        if (x[k] > box->hi[k]) box->hi[k] = x[k];
+      }
+    }
+  }
+  return count;
+}
+
+#endif
+
+static int nearGroupBox(const struct GhostBin *boxes, int count,
+                        double x, double y, double z, double reach2) {
+  for (int i = 0; i < count; ++i) {
+    double dx = outsideBox(x, boxes[i].lo[0], boxes[i].hi[0]);
+    double dy = outsideBox(y, boxes[i].lo[1], boxes[i].hi[1]);
+    double dz = outsideBox(z, boxes[i].lo[2], boxes[i].hi[2]);
+    if (dx*dx + dy*dy + dz*dz < reach2) return 1;
+  }
+  return 0;
+}
+
 static void visitGhosts(struct Halo *h, const double (*points)[3],
                         const struct GhostBin *bins, int64_t d,
                         const double lo[3], const double hi[3],
-                        struct GhostList *list) {
+                        struct GhostList *list, const struct GhostBin *boxes, int count) {
   struct Layout *l = h->layout;
   const double reach2 = h->reach*h->reach;
   int64_t span[3];
@@ -1914,6 +1968,8 @@ static void visitGhosts(struct Halo *h, const double (*points)[3],
             if (l->owner[j] == d && a == 0 && b == 0 && z == 0) continue;
             double dz = outsideBox(x[2]+z*l->edges[2],lo[2],hi[2]);
             if (!(dxy2+dz*dz < reach2)) continue;
+            if (count > 1 && !nearGroupBox(boxes, count, x[0]+a*l->edges[0],
+                    x[1]+b*l->edges[1], x[2]+z*l->edges[2], reach2)) continue;
             if (list->size == list->capacity) {
               list->capacity = list->capacity ? 2*list->capacity : 64;
               list->data = realloc(list->data,list->capacity*sizeof *list->data);
@@ -1978,7 +2034,14 @@ void _mlir_ciface_mdrtDistVisitHalo(int64_t handle, int64_t domain, struct Memre
   struct Halo *h = build->halo;
   double *lo = build->lists[domain].lo, *hi = build->lists[domain].hi;
   domainBox(h->layout,build->points,domain,lo,hi,build->midpoint);
-  visitGhosts(h,build->points,build->bins,domain,lo,hi,&build->lists[domain]);
+  struct GhostBin boxes[27];
+  int count = 0;
+#ifdef MDIR_ENABLE_NCCL
+  if (mdrtNCCLActive() && !build->midpoint && h->layout->domains > 1 &&
+      h->layout->groupCount)
+    count = groupBoxes(h->layout, build->points, domain, boxes);
+#endif
+  visitGhosts(h,build->points,build->bins,domain,lo,hi,&build->lists[domain],boxes,count);
   h->rows[domain] = build->lists[domain].size;
 }
 

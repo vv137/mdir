@@ -1233,3 +1233,49 @@ local identity list. The owner table determines the ascending identity
 order for every other domain. A full field collection, checkpoint on
 the writing rank, or host geometry fallback materializes those rows.
 The two-run means were 8.627 ms per rebuild and 3.593 ms per covered interval including output. Covered intervals before final output averaged 2.014 ms.
+
+For the 23,558-atom JAC-RF system, the original constrained halo used
+one box enclosing the domain and its owned sites. A site belonging to
+a group across a periodic seam could extend that box across nearly the
+entire cell. On four and eight V100s, rank zero ended with 54,465 and
+57,350 ghost rows for 5,866 and 2,974 owned rows. The two-node return
+of ghost contributions sent 34.763 MB across nodes per production step.
+Over 20 profiled intervals, each layout issued 475.1 CUDA launches,
+35 MPI all-gathers, six MPI all-reduces, and nine peer send/receive
+kernels per step. The latter occupied 1.399 ms on four devices and
+4.532 ms on eight. Rank-zero MPI all-gather host time was 5.445 and
+4.097 ms, respectively. Host and device times overlap.
+
+The constrained halo partitions owned sites by the direction of their
+nearest periodic image relative to the center of the domain. A box
+encloses each nonempty group, and the central box also contains the
+domain itself. Every site within reach of an owned site is within
+reach of its group's box. The central box also covers interaction
+centers assigned by midpoint. Taking the union therefore preserves
+the required rows across a periodic seam. Filtering in the original
+identity and image order preserves the ordering of retained rows.
+
+In the same executor, a rank can share several observable partials
+once their local values are available. Each observable keeps its
+component order and the same sequence of additions over domains.
+With the grouped halos and the packed reductions, the four- and
+eight-device JAC-RF pilot means fell to 24.532 and 21.802 ms/step.
+The eight-device return sent 13.882 MB/step across nodes.
+
+The mid-size Factor IX system contains 90,906 atoms. We used the same
+finite-range protocol as for JAC-RF, with an 8 Å reaction-field cutoff,
+a 10 Å pair list, rigid water, analytical constraints on bonds to hydrogen, and
+double-precision NVE integration at 2 fs. The table gives two-run means
+over steps 103–204, with energy and virial reported each step. On the
+rebased distributed executor the four-device run was the fastest
+distributed layout. The ordinary one-device MATRIX run took 2.091 ms/step.
+
+| Factor IX, ms/step | Ordinary | 1 GPU | 2 GPUs | 4 GPUs | 8 GPUs |
+|---|---:|---:|---:|---:|---:|
+| Before grouped-halo changes | 2.091 | 76.886 | 74.876 | 73.135 | 77.153 |
+| Grouped halos and packed observables | 2.098 | 76.287 | 61.760 | 54.835 | 50.320 |
+
+Across all 205 output frames in each repetition and all four
+decompositions, the maximum potential-energy difference from ordinary was below
+$1.01\times10^{-6}$ kcal/mol, and the maximum scalar-virial difference
+was below $2.01\times10^{-6}$ kcal/mol.
