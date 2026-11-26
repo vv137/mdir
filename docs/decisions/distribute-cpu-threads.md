@@ -174,3 +174,9 @@ test still chooses the owner of the pair. Constraint projections retain the
 group ownership layout across a fixed-cell integration segment. Each solve
 wraps current coordinates on that layout, so updated positions do not require
 a fresh ownership exchange between projections.
+
+A group layout retains the stable topology order, parameter indices, and
+owned member rows for each disjoint constraint relation. Every projection
+holds a reference while it uses this schedule. On a single MPI rank the
+native and spatial permutations copy directly between row views, including
+integer conversion or position wrapping when required.

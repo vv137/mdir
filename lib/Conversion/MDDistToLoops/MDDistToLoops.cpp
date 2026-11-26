@@ -646,12 +646,11 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
     positions = inputSnapshot(b,fieldType,op.getPositions());
   }
   if (fixedPoint) {
-    Value count = memref::DimOp::create(b, loc, positions, 0);
-    auto check = declare("mdrtDistCheckWordCount",
-                         b.getFunctionType({b.getI64Type()}, {}), false);
-    func::CallOp::create(
-        b, loc, check,
-        ValueRange{arith::IndexCastOp::create(b, loc, b.getI64Type(), count)});
+    Value count = shardExtent.lookup(op);
+    if (!count) count = memref::DimOp::create(b, loc, positions, 0);
+    auto check = declare("mdrtDistCheckWordCount", b.getFunctionType({b.getI64Type()}, {}), false);
+    func::CallOp::create(b, loc, check, ValueRange{
+        arith::IndexCastOp::create(b, loc, b.getI64Type(), count)});
   }
   auto wide = MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
                               b.getF64Type());
@@ -3488,8 +3487,19 @@ LogicalResult Lowering::run(func::FuncOp function) {
     });
   };
   collect();
-  if (ops.empty())
+  shardExtent.clear();
+  auto lowerNativeSums = [&] {
+    if (!module->hasAttr("md_dist.driver")) return;
+    SmallVector<md::SumParticlesOp> sums;
+    function.walk([&](md::SumParticlesOp sum) {
+      if (fixedPoint || shardExtent.count(sum)) sums.push_back(sum);
+    });
+    for (auto sum : sums) lowerCollectedSum(sum);
+  };
+  if (ops.empty()) {
+    lowerNativeSums();
     return success();
+  }
   for (BlockArgument argument : function.getArguments())
     if (isDistributedType(argument.getType()))
       return function.emitOpError()
@@ -3551,13 +3561,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
     }
     collect();
   }
-  if (module->hasAttr("md_dist.driver")) {
-    SmallVector<md::SumParticlesOp> sums;
-    function.walk([&](md::SumParticlesOp sum) {
-      if (fixedPoint || shardExtent.count(sum)) sums.push_back(sum);
-    });
-    for (auto sum : sums) lowerCollectedSum(sum);
-  }
+  lowerNativeSums();
   if (throughExec)
     declareSets();
   bool statistics = module->hasAttr("md_dist.driver");

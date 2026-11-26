@@ -105,6 +105,7 @@ struct Layout {
 #ifdef MDIR_ENABLE_MPI
   struct InitialAtom *initial;
   struct Collection *collection;
+  struct TupleSchedule *groupSchedules;
   int *migrationCounts; /* Send/receive counts, then displacements. */
   int64_t *sendSlots, *sourceSlots;
 #endif
@@ -878,6 +879,9 @@ static void materializeRows(struct Layout *l);
 static void releaseCollection(struct Collection *p);
 #endif
 
+#ifdef MDIR_ENABLE_MPI
+static void releaseGroupSchedules(struct TupleSchedule *head);
+#endif
 void mdrtDistReleaseLayout(int64_t handle);
 
 #ifdef MDIR_ENABLE_MPI
@@ -1199,6 +1203,7 @@ void mdrtDistReleaseLayout(int64_t handle) {
 #ifdef MDIR_ENABLE_MPI
   free(l->initial);
   releaseCollection(l->collection);
+  releaseGroupSchedules(l->groupSchedules);
   free(l->migrationCounts);
   free(l->sendSlots);
   free(l->sourceSlots);
@@ -2132,6 +2137,18 @@ void _mlir_ciface_mdrtMPICollectField(int64_t layout, struct Memref3D *source,
   int64_t width = source->sizes[2];
   int64_t first = destination == 2 ? mdrtMPIIdentityBound(l->count,0) : 0;
   void *global = (void *)(intptr_t)address;
+  if (mdrtMPISize() == 1) {
+    #pragma omp parallel for schedule(static) if(r->sends > 1024)
+    for (int i = 0; i < r->sends; ++i) {
+      int64_t slot = p->sources[i], id = p->ids[i];
+      for (int64_t k = 0; k < width; ++k) {
+        double value = *at3(source,slot/l->stride,slot%l->stride,k);
+        if (integer) ((int32_t *)global)[id*width+k] = (int32_t)value;
+        else ((double *)global)[id*width+k] = value;
+      }
+    }
+    return;
+  }
   double *out = malloc((r->sends ? (size_t)r->sends : 1)*width*sizeof *out);
   double *in = malloc((r->receives ? (size_t)r->receives : 1)*width*sizeof *in);
   if (!out || !in) fail("out of memory collecting fields");
@@ -2160,6 +2177,19 @@ void _mlir_ciface_mdrtDistDistributeShard(int64_t layout, int64_t base,
   struct Collection *p = collection(l);
   struct Route *r = &p->route;
   int64_t width = dest->sizes[2], first = mdrtMPIIdentityBound(l->count,0);
+  if (mdrtMPISize() == 1) {
+    #pragma omp parallel for schedule(static) if(r->sends > 1024)
+    for (int i = 0; i < r->sends; ++i) {
+      int64_t slot = p->sources[i], id = p->ids[i];
+      for (int64_t k = 0; k < width; ++k) {
+        int64_t j = id*width+k;
+        double v = integer ? ((int32_t *)(intptr_t)base)[j] : ((double *)(intptr_t)base)[j];
+        if (image) v -= l->edges[k]*floor(v/l->edges[k]);
+        *at3(dest,slot/l->stride,slot%l->stride,k) = v;
+      }
+    }
+    return;
+  }
   double *out = malloc((r->receives ? (size_t)r->receives : 1)*width*sizeof *out);
   double *in = malloc((r->sends ? (size_t)r->sends : 1)*width*sizeof *in);
   if (!out || !in) fail("out of memory distributing native rows");
@@ -2963,6 +2993,8 @@ void _mlir_ciface_mdrtDistTupleRows(int64_t handle, struct Memref3D *positions,
 
 #ifdef MDIR_ENABLE_MPI
 struct TupleSchedule {
+  struct TupleSchedule *next;
+  int references, relation;
   int64_t count, width;
   int64_t *rows, *indices;
 };
@@ -2980,11 +3012,16 @@ static int compareGroupTuple(const void *a, const void *b) {
 static int64_t groupSchedule(struct Layout *l, struct Members *m) {
   int64_t first = mdrtMPIDomainBound(l->domains,0), past = mdrtMPIDomainBound(l->domains,1);
   int64_t cap = (past-first)*l->stride, n = 0, width = m->sizes[1]+1;
-  struct GroupTuple *tuples = malloc(cap*sizeof *tuples);
+  int relation = m->sizes[0] ? m->aligned[m->offset] : -1;
+  for (struct TupleSchedule *s = l->groupSchedules; s; s = s->next)
+    if (s->width == width && s->relation == relation) {
+      ++s->references;
+      return (int64_t)(intptr_t)s;
+    }
+  struct GroupTuple *tuples = malloc((cap ? cap : 1)*sizeof *tuples);
   struct TupleSchedule *s = calloc(1,sizeof *s);
   if (!tuples || !s) fail("out of memory scheduling owned constraint groups");
   if (m->sizes[0]) {
-    int32_t relation = m->aligned[m->offset];
     for (int64_t d = first; d < past; ++d)
       for (int64_t r = 0; r < l->rows[d]; ++r) {
         struct ConstraintGroup g = rowGroup(l,d,r,domainIds(l,d)[r]);
@@ -3007,6 +3044,10 @@ static int64_t groupSchedule(struct Layout *l, struct Members *m) {
     memcpy(s->rows+i*width+1,tuples[i].rows,(width-1)*sizeof *s->rows);
   }
   free(tuples);
+  s->relation = relation;
+  s->references = 2; /* The layout and the returned schedule. */
+  s->next = l->groupSchedules;
+  l->groupSchedules = s;
   return (int64_t)(intptr_t)s;
 }
 
@@ -3043,6 +3084,7 @@ int64_t _mlir_ciface_mdrtDistScheduleTuples(int64_t handle, int64_t groups, int6
   free(sites);
   struct TupleSchedule *schedule = calloc(1,sizeof *schedule);
   if (!schedule) fail("out of memory creating tuple schedule");
+  schedule->references = 1;
   schedule->width = width;
   if (peers == 1) {
     schedule->rows = rows;
@@ -3100,9 +3142,19 @@ int64_t _mlir_ciface_mdrtDistScheduleTuples(int64_t handle, int64_t groups, int6
 
 void mdrtDistReleaseSchedule(int64_t handle) {
   struct TupleSchedule *s = (struct TupleSchedule *)(intptr_t)handle;
-  free(s->rows);
-  free(s->indices);
-  free(s);
+  if (--s->references == 0) {
+    free(s->rows);
+    free(s->indices);
+    free(s);
+  }
+}
+
+static void releaseGroupSchedules(struct TupleSchedule *head) {
+  while (head) {
+    struct TupleSchedule *next = head->next;
+    mdrtDistReleaseSchedule((int64_t)(intptr_t)head);
+    head = next;
+  }
 }
 
 void _mlir_ciface_mdrtDistScheduleView(struct Memref2I *out, int64_t handle) {

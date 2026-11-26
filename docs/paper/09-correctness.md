@@ -906,3 +906,10 @@ constraint projection the unique requirement on ownership is that the
 members of a group reside together. Holding their initial assignment fixed
 across successive projections preserves that property as their coordinates
 evolve.
+
+Within a retained constraint layout, the first center identifies the
+disjoint relation, and the topology index orders its tuples. Reusing those
+indices and member rows preserves the association between parameters and
+groups at every projection. A native interval occupying the entire particle
+set can apply the spatial permutation directly since every source and
+destination belongs to the same rank.
