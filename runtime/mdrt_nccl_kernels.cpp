@@ -425,9 +425,15 @@ extern "C" void mdrtNCCLAdvance(const double *x, const double *v,
   check(cuLaunchKernel(advance, (3*rows+255)/256,1,1,256,1,1,0,nullptr,args,nullptr));
 }
 
-static CUdeviceptr coverageFlag;
+static CUdeviceptr coverageFlag, faceRecordBuffer;
+static size_t faceRecordCapacity;
 
-extern "C" void mdrtNCCLReleaseCoverage() {
+extern "C" void mdrtNCCLReleaseScratch() {
+  if (faceRecordBuffer) {
+    check(cuMemFree(faceRecordBuffer));
+    faceRecordBuffer = 0;
+    faceRecordCapacity = 0;
+  }
   if (coverageFlag) {
     check(cuMemFree(coverageFlag));
     coverageFlag = 0;
@@ -515,9 +521,16 @@ extern "C" int64_t *mdrtNCCLFaceRecords(const double *positions, long long rows,
     box.length[k]=length[k];
     box.grid[k]=grid[k];
   }
-  CUdeviceptr deviceCount, records;
-  check(cuMemAlloc(&deviceCount,sizeof(int)));
-  check(cuMemAlloc(&records,2*rows*sizeof(int64_t)));
+  // The count and its records belong to one synchronous classification.
+  // Reserve both together, rounding capacity up to a whole launch tile.
+  if ((size_t)rows > faceRecordCapacity) {
+    if (faceRecordBuffer) check(cuMemFree(faceRecordBuffer));
+    faceRecordCapacity = ((size_t)rows + 255) / 256 * 256;
+    check(cuMemAlloc(&faceRecordBuffer,
+                     (2 * faceRecordCapacity + 1) * sizeof(int64_t)));
+  }
+  CUdeviceptr deviceCount = faceRecordBuffer;
+  CUdeviceptr records = faceRecordBuffer + sizeof(int64_t);
   check(cuMemsetD32(deviceCount,0,1));
   void *args[]={&positions,&rows,&box,&domain,&reach,&previous,&deviceCount,&records};
   check(cuLaunchKernel(faceRecords,(rows+255)/256,1,1,256,1,1,0,nullptr,args,nullptr));
@@ -527,8 +540,6 @@ extern "C" int64_t *mdrtNCCLFaceRecords(const double *positions, long long rows,
   auto *host=static_cast<int64_t *>(std::malloc(bytes ? bytes : sizeof(int64_t)));
   if (!host) mdrtMPIAbort("out of memory collecting face records");
   if (bytes) check(cuMemcpyDtoH(host,records,bytes));
-  check(cuMemFree(records));
-  check(cuMemFree(deviceCount));
   *size=count;
   return host;
 }

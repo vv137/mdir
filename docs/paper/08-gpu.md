@@ -1187,3 +1187,10 @@ The interior pair stream can proceed from owned coordinates when split
 traversal is selected. Only the boundary traversal needs the halo event.
 The interval clock gather precedes formatting so the other ranks can
 advance while the writer emits the rank and domain statistics.
+
+Owner and face classifications are immutable within an epoch. Consequently
+the next epoch can copy part of its host snapshot before the displacement
+test triggers a rebuild. Four coverage calls suffice to copy both arrays.
+An earlier rebuild copies the remaining suffix before applying the face
+deltas. Classification scratch grows in blocks of 256 records and is reused
+on subsequent rebuilds.

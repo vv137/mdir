@@ -376,3 +376,10 @@ when the plan uses both link classes. Each peer still receives one
 contiguous slice per field. The joint launch is charged to the outer
 halo phase. Gather interval clocks before formatting the replicated
 counts. The writer emits the complete interval in one log call.
+
+Before a distributed pair-only rebuild, coverage calls prepare private
+copies of the previous owner and face-mask arrays, up to one quarter per
+call. A rebuild consumes the prepared prefix and copies any remaining
+rows. The old layout keeps its original arrays for outstanding fields.
+The device classifier reuses its count and record storage across rebuilds
+and frees the allocation at transport shutdown.

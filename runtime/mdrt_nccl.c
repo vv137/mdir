@@ -658,11 +658,11 @@ void mdrtNCCLRowsReady(void) {
   checkCuda(cudaStreamSynchronize(0));
 }
 
-extern void mdrtNCCLReleaseCoverage(void);
+extern void mdrtNCCLReleaseScratch(void);
 
 void mdrtNCCLFinish(void) {
   if (!peers) return;
-  mdrtNCCLReleaseCoverage();
+  mdrtNCCLReleaseScratch();
   checkNCCL(ncclCommDestroy(peers));
   checkCuda(cudaFree(ownedField));
   checkCuda(cudaFree(ghostField));
