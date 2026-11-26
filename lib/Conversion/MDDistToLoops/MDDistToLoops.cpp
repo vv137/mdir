@@ -113,7 +113,8 @@ private:
   LogicalResult lowerPairGroup(Operation *anchor, DominanceInfo &dominance);
   scf::ForOp domainLoop;
   llvm::DenseSet<Value> overlapPositions;
-  llvm::DenseMap<Value, Value> scheduledMembers, tupleParameters, exclusionTables;
+  llvm::DenseMap<Value, Value> scheduledMembers, tupleParameters;
+  llvm::DenseMap<std::pair<Value, Block *>, Value> exclusionTables;
   Value deviceTupleParameter(Value field);
   Value pairPhase, centerMask, computeStream;
   DomainRelation domainRelation;
@@ -1750,12 +1751,18 @@ LogicalResult Lowering::lowerNeighborhood(NeighborhoodOp op) {
   if (Value excluded = op.getExcluded()) {
     Type i64 = b.getI64Type();
     auto type = mdrt::getMembersType(cast<md::RelationType>(excluded.getType()));
-    Value handle = exclusionTables.lookup(excluded);
+    Block *definition = excluded.getParentBlock();
+    Block *scope = definition->findAncestorOpInBlock(*op) ? definition : op->getBlock();
+    auto key = std::make_pair(excluded, scope);
+    Value handle = exclusionTables.lookup(key);
     if (!handle) {
       // The relation is an SSA value. Its sorted identities can be shared
       // by all the neighborhoods in the defining block and its children.
       OpBuilder setup(module.getContext());
-      setup.setInsertionPointAfterValue(excluded);
+      if (scope == definition)
+        setup.setInsertionPointAfterValue(excluded);
+      else
+        setup.setInsertionPointToStart(scope);
       Value members = mdrt::ToBufferOp::create(setup, loc, type, excluded);
       auto build = declare("mdrtDistExclusions", b.getFunctionType({type}, {i64}), true);
       build.setArgAttr(0, "mdrt.read_only", b.getUnitAttr());
@@ -1763,7 +1770,7 @@ LogicalResult Lowering::lowerNeighborhood(NeighborhoodOp op) {
       OpBuilder cleanup(handle.getParentBlock()->getTerminator());
       auto release = declare("mdrtDistFreeExclusions", b.getFunctionType({i64}, {}), false);
       func::CallOp::create(cleanup, loc, release, handle);
-      exclusionTables[excluded] = handle;
+      exclusionTables[key] = handle;
     }
     excludedPairs[op.getResult()] = handle;
   }

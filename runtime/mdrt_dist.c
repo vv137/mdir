@@ -167,6 +167,7 @@ struct Halo {
    symmetric key removes both orientations from the cutoff relation. */
 struct Exclusions {
   size_t references, count;
+  int live;
   uint64_t pairs[];
 };
 
@@ -187,6 +188,7 @@ int64_t _mlir_ciface_mdrtDistExclusions(struct Members *members) {
   struct Exclusions *e = malloc(sizeof *e + count * sizeof *e->pairs);
   if (!e) fail("out of memory building exclusions");
   e->references = 1;
+  e->live = 1;
   e->count = count;
   for (size_t r = 0; r < count; ++r) {
     const int32_t *row = members->aligned + members->offset + r * members->strides[0];
@@ -204,6 +206,18 @@ struct ExclusionMap {
   struct Members pairs;
 };
 
+static void releaseExclusionReference(struct Exclusions *table) {
+  if (--table->references == 0) free(table);
+}
+
+static void removeExclusionMap(struct ExclusionMap **link) {
+  struct ExclusionMap *map = *link;
+  *link = map->next;
+  free(map->pairs.allocated);
+  releaseExclusionReference(map->table);
+  free(map);
+}
+
 /* Map both ends of each excluded pair to the packed owned/image rows.
    An identity can have several images in a thin domain. */
 void _mlir_ciface_mdrtDistLocalExclusions(struct Members *result, int64_t halo,
@@ -211,11 +225,20 @@ void _mlir_ciface_mdrtDistLocalExclusions(struct Members *result, int64_t halo,
   struct Halo *h = (struct Halo *)(intptr_t)halo;
   const struct Layout *l = h->layout;
   struct Exclusions *e = (struct Exclusions *)(intptr_t)exclusions;
-  for (struct ExclusionMap *map = h->exclusionMaps; map; map = map->next)
+  // A loop may create a new exclusion relation without rebuilding the halo.
+  // Discard maps whose last generated consumer has left the relation's scope.
+  for (struct ExclusionMap **link = &h->exclusionMaps; *link;) {
+    struct ExclusionMap *map = *link;
+    if (!map->table->live) {
+      removeExclusionMap(link);
+      continue;
+    }
     if (map->table == e && map->domain == domain) {
       *result = map->pairs;
       return;
     }
+    link = &map->next;
+  }
   int64_t owned = l->rows[domain], rows = owned + h->rows[domain];
   if (rows > INT32_MAX) fail("too many local MATRIX rows");
   int32_t *head = malloc((l->count + 1) * sizeof(*head));
@@ -265,7 +288,8 @@ int64_t mdrtDistPairAllowed(int64_t handle, int64_t i, int64_t j) {
 
 void mdrtDistFreeExclusions(int64_t handle) {
   struct Exclusions *e = (void *)(intptr_t)handle;
-  if (--e->references == 0) free(e);
+  e->live = 0;
+  releaseExclusionReference(e);
 }
 
 /* Word conversion is defined even for a singular pair or huge finite input. */
@@ -2845,13 +2869,8 @@ void mdrtDistReleaseHalo(int64_t handle) {
   if (--h->references > 0)
     return;
   mdrtDistReleaseLayout((int64_t)(intptr_t)h->layout);
-  while (h->exclusionMaps) {
-    struct ExclusionMap *map = h->exclusionMaps;
-    h->exclusionMaps = map->next;
-    free(map->pairs.allocated);
-    mdrtDistFreeExclusions((int64_t)(intptr_t)map->table);
-    free(map);
-  }
+  while (h->exclusionMaps)
+    removeExclusionMap(&h->exclusionMaps);
   while (h->matrices) {
     struct DomainMatrix *m = h->matrices;
     h->matrices = m->next;

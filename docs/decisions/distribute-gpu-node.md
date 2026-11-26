@@ -289,3 +289,22 @@ Owned observable fields and imported force slices use the executor's
 compute stream. An event orders the producer before the consumer.
 The synchronous packed-halo path also orders the halo stream after the
 position update through an event.
+
+A relation used in a successor block creates its table in the consumer's
+scope. When a loop replaces a relation between halo rebuilds, its expired
+maps are reclaimed on lookup or at halo release.
+
+Two independent V100 allocations per layout gave the following double-precision
+means in ms/step for production steps 103 through 204.
+
+| Workload | One GPU | Two GPUs | Four GPUs | Two nodes of four GPUs |
+|---|---:|---:|---:|---:|
+| Charged liquid, 1,048,576 particles | 8.347 | 9.257 | 7.521 | 9.053 |
+| JAC-RF | 28.335 | 29.328 | 29.578 | 37.812 |
+
+Ordinary one-device liquid MATRIX measured 5.845 ms/step. One distributed
+device took 1.428 times as long. Four devices gave a 1.110-fold
+speedup over one distributed device. The eight-device time was 1.204
+times the four-device time. All 16 original precision and layout
+comparisons and all four mixed cross-backend comparisons passed at
+their original bounds. The 53 focused regressions passed.

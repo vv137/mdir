@@ -1126,3 +1126,18 @@ A borrowed observable field is ready when its producing stream reaches
 the recorded event. The reduction stream waits for that event on the
 device. A force import copies on the producer stream and orders the next
 integration update after the copy, preserving the arithmetic order.
+
+An exclusion mapping is valid while both its relation and halo are live.
+A changing relation can therefore release its mapped rows between halo
+rebuilds.
+
+In a 20-step V100 timeline before these changes, the million-particle
+liquid used 5.545 ms/step of kernel time on one ordinary device and
+9.389 ms/step on one distributed device. The pair walk accounted for
+2.058 ms/step of the difference. On four ranks the pair walk took only
+1.499 ms/step. A separate trace found 1.037 ms/step of idle time on
+rank zero during halo construction, 0.854 during the layout rebuild
+and 0.785 during global row numbering. After the changes, the clean
+wall times averaged 8.347, 7.521 and 9.053 ms/step on one, four and
+eight devices. The rebuild still scans global identities when ownership
+changes.
