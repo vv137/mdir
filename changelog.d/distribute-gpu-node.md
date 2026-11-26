@@ -10,3 +10,6 @@
   exchange of migrating field rows on eligible GPU runs.
 
 - Measured halo skins for directed NCCL runs with an automatic pair-list reach.
+- Joint submission of intra-node and inter-node halo messages, incremental
+  preparation of host rebuild snapshots, and a single collective for
+  eligible fused particle observables.

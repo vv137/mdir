@@ -1813,7 +1813,10 @@ reach. The search precedes automatic selection of pair overlap.
 
 Node placement groups neighboring domains by periodic face area. At each
 report the intra-node and inter-node byte totals count directed logical
-payloads crossing ranks. Self-images stay local. Device kernels pack local rows, translate ghost images, and sum reverse
+payloads crossing ranks. When both link classes occur, one NCCL group
+submits their peer messages. The link clocks measure enqueue time and the
+outer halo clock includes the joint submission. These clocks include host
+work and cannot independently measure time on the network. Self-images stay local. Device kernels pack local rows, translate ghost images, and sum reverse
 contributions. The unconstrained Verlet path retains owned state on the
 device between kicks. A pair-only position halo feeds device MATRIX
 directly. For an unconstrained grid with cells wider than twice the halo

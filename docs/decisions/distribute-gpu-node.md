@@ -383,3 +383,15 @@ call. A rebuild consumes the prepared prefix and copies any remaining
 rows. The old layout keeps its original arrays for outstanding fields.
 The device classifier reuses its count and record storage across rebuilds
 and frees the allocation at transport shutdown.
+
+With multiple domains, when fused particle observables each feed one reduction in the same
+block, store their components in adjacent columns of a single partial
+row per domain. Share the rows once. Each reduction reads its own
+columns and accumulates in the original domain order. The fixed-point
+path retains its word representation and communication sequence.
+
+At a 0.15 Å skin, four V100 devices rebuilt the liquid halo 19 times
+in 102 steps at 2 fs. The rebuild change lowered the ratio of mean
+rebuild to covered time from 4.59 to 2.82 against its immediate parent
+in the same allocation. The means include final output in its measured
+interval. The full production step improved by 6.5 percent.

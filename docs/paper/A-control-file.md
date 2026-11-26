@@ -616,7 +616,9 @@ Only crossing rows of unshifted fields are exchanged between owners.
 For directed multi-GPU runs of at least 32 steps, `pair_overlap = "auto"`
 times the split and unsplit traversals on the allocated layout. A short
 run uses the unsplit path. The values `"split"` and `"unsplit"` override
-selection. The run log records the choice.
+selection. The run log records the choice. Both modes pack contiguous
+messages by peer. With split traversal, the boundary pass waits for the
+position halo and the interior pass uses owned positions.
 
 A numeric `[energy] pairlist_distance` fixes the halo reach. For directed
 NCCL runs without topology, `"AUTO"` can measure that reach on the allocated

@@ -322,4 +322,7 @@ path keeps integration and force combination on the device. Eligible directed ru
 layout. The split overlaps interior MATRIX rows with the position exchange.
 For eligible directed double-precision liquid runs each rank builds its
 incident halo routes on the device from changed face records. Eligible runs can measure the halo skin on their allocated layout.
+Coverage calls can prepare the next epoch's host face snapshot. The GPU
+classifier reuses its record storage, and independent particle observables
+from one traversal can share their domain rows in one collective.
 Midpoint GPU pair traversal and reproducible integer GPU sums remain open.

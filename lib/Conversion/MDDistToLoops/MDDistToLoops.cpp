@@ -120,6 +120,7 @@ private:
   DomainRelation domainRelation;
   md_exec::PairForOp lastPair;
   llvm::DenseSet<Operation *> grouped;
+  llvm::DenseMap<Value, int64_t> sharedPartialOffsets;
   llvm::DenseMap<std::pair<Value, Value>, Value> domainFields;
   LogicalResult lowerSumPairsExec(SumPairsOp op);
   LogicalResult lowerGatherPairsExec(GatherPairsOp op);
@@ -2483,7 +2484,8 @@ LogicalResult Lowering::lowerAllReduce(AllReduceOp op) {
   auto vector = dyn_cast<VectorType>(type);
   int64_t length = vector ? vector.getNumElements() : 1;
   Value partial = storage[op.getPartial()].buffer;
-  if (mpi)
+  int64_t offset = sharedPartialOffsets.lookup(op.getPartial());
+  if (mpi && !sharedPartialOffsets.count(op.getPartial()))
     func::CallOp::create(b, loc,
         declare(fixedPoint ? "mdrtMPIShareWords" : "mdrtMPISharePartials", b.getFunctionType({partial.getType()}, {}), true),
         ValueRange{partial});
@@ -2495,7 +2497,7 @@ LogicalResult Lowering::lowerAllReduce(AllReduceOp op) {
         SmallVector<Value> parts;
         for (int64_t c = 0; c < length; ++c)
           parts.push_back(memref::LoadOp::create(
-              bd, loc, partial, ValueRange{d, index(bd, c)}));
+              bd, loc, partial, ValueRange{d, index(bd, offset + c)}));
         Value value =
             vector ? Value(vector::FromElementsOp::create(bd, loc, cast<VectorType>(sumType(type)),
                                                           parts))
@@ -3247,13 +3249,33 @@ LogicalResult Lowering::lowerSumParticlesExec(ArrayRef<SumParticlesOp> sums) {
   llvm::SetVector<Value> fields;
   auto partialType = MemRefType::get(
       {ShapedType::kDynamic, ShapedType::kDynamic}, sumType(b.getF64Type()));
+  // Fused particle observables from one block can travel as one row per
+  // domain. Each reduction still folds its own components in domain order.
+  bool share = mpi && domains > 1 && !fixedPoint && sums.size() > 1 &&
+      llvm::all_of(sums, [&](SumParticlesOp sum) {
+        if (!sum.getResult().hasOneUse()) return false;
+        Operation *use = *sum.getResult().getUsers().begin();
+        return isa<AllReduceOp>(use) && use->getBlock() == sum->getBlock();
+      });
+  int64_t width = 0;
+  SmallVector<int64_t> offsets;
+  for (auto sum : sums) {
+    offsets.push_back(share ? width : 0);
+    auto vector = dyn_cast<VectorType>(sum.getResult().getType().getValueType());
+    width += vector ? vector.getNumElements() : 1;
+  }
+  Value shared;
+  if (share)
+    shared = allocate(b, partialType, {index(b, domains), index(b, width)});
   for (auto sum : sums) {
     if (failed(checkOwnedRows(sum, sum.getGathered()))) return failure();
     Type type = sum.getResult().getType().getValueType();
     auto vector = dyn_cast<VectorType>(type);
     int64_t length = vector ? vector.getNumElements() : 1;
     types.push_back(type);
-    Value partial = allocate(b, partialType, {index(b, domains), index(b, length)});
+    Value partial = share ? shared :
+        allocate(b, partialType, {index(b, domains), index(b, length)});
+    if (share) sharedPartialOffsets[sum.getResult()] = offsets[partials.size()];
     partials.push_back(partial);
     storage[sum.getResult()].buffer = partial;
     fields.insert(sum.getGathered().begin(), sum.getGathered().end());
@@ -3297,12 +3319,12 @@ LogicalResult Lowering::lowerSumParticlesExec(ArrayRef<SumParticlesOp> sums) {
       contributions.push_back(map.lookupOrDefault(source.getTerminator()->getOperand(0)));
     }
     md_exec::YieldOp::create(kernel, loc, contributions);
-    for (auto [sum, partial] : llvm::zip(loop.getResults(), partials)) {
+    for (auto [sum, partial, offset] : llvm::zip(loop.getResults(), partials, offsets)) {
       auto vector = dyn_cast<VectorType>(sum.getType());
       int64_t length = vector ? vector.getNumElements() : 1;
       for (int64_t c = 0; c < length; ++c) {
         Value part = vector ? Value(vector::ExtractOp::create(b, loc, sum, c)) : sum;
-        memref::StoreOp::create(b, loc, part, partial, ValueRange{d, index(b, c)});
+        memref::StoreOp::create(b, loc, part, partial, ValueRange{d, index(b, offset + c)});
       }
     }
   };
@@ -3319,6 +3341,9 @@ LogicalResult Lowering::lowerSumParticlesExec(ArrayRef<SumParticlesOp> sums) {
   } else {
     for (int64_t d = 0; d < domains; ++d) emit(b,index(b,d),getSet(d,false,epoch));
   }
+  if (share)
+    func::CallOp::create(b, loc, declare("mdrtMPISharePartials",
+        b.getFunctionType({shared.getType()}, {}), true), ValueRange{shared});
   return success();
 }
 
@@ -3823,6 +3848,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
   imageShifts.clear();
   storage.clear();
   grouped.clear();
+  sharedPartialOffsets.clear();
   relations.clear();
   trajectoryCaches.clear();
   sharedTuplePositions.clear();

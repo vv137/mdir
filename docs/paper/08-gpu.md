@@ -1194,3 +1194,27 @@ test triggers a rebuild. Four coverage calls suffice to copy both arrays.
 An earlier rebuild copies the remaining suffix before applying the face
 deltas. Classification scratch grows in blocks of 256 records and is reused
 on subsequent rebuilds.
+
+Across multiple domains, particle observables evaluated in one traversal can use one
+collective. Each domain concatenates its partial sums into one row,
+including every vector component. Gathering the rows leaves the
+domain order for each individual sum intact. This removes repeated
+collective startup from energy and virial reporting at a fixed output
+cadence. In a 20-step constrained-system trace at eight ranks, the
+previous executor issued 39 MPI all-gathers and six MPI all-reduces
+per step, taking 2.783 and 1.481 ms of rank-zero host time respectively.
+
+In paired 2 fs liquid runs at a fixed 0.15 Å skin on four V100 devices,
+both implementations rebuilt 19 times in 102 production steps. Relative
+to the parent with grouped halo transfers, preparing the host snapshots
+and reusing the classifier storage reduced mean rebuild time from 15.423
+to 11.080 ms. The covered mean increased from 3.362 to 3.927 ms as those
+steps took on snapshot work. These class means include final output. The
+independent production timer decreased from 4.810 to 4.495 ms/step.
+
+With joint halo submission and batched interval reporting, automatic
+selection gave mean liquid production times of 2.979 ms on four V100
+devices and 2.611 ms on eight across two nodes. Each layout was measured
+twice at 2 fs. Both eight-device trials selected unsplit traversal.
+Grouping peer calls alone gave 3.452 and 3.561 ms on the two layouts.
+The measured speedup therefore includes the interval-reporting change.
