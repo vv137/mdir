@@ -206,6 +206,7 @@ private:
   /// A copy of `buffer`, a buffer of all domains, that the state owns: not
   /// freed at the end of the block.
   Value ownedCapacity(OpBuilder &b, Value handle);
+  std::pair<Value,Value> rowViews(OpBuilder &b, Value handle, bool ghosts);
   llvm::SmallPtrSet<Operation *, 8> constraintKernels;
   Value copyForState(OpBuilder &b, Value buffer);
 
@@ -598,6 +599,18 @@ Value Lowering::inputSnapshot(OpBuilder &b, md::FieldType type, Value field, Val
   return snapshot.getResult();
 }
 
+std::pair<Value,Value> Lowering::rowViews(OpBuilder &b, Value handle, bool ghosts) {
+  Type i64 = b.getI64Type();
+  auto view = [&](StringRef name, ArrayRef<int64_t> shape) {
+    Type type = MemRefType::get(shape, i64);
+    auto fn = declare(name, b.getFunctionType({i64,i64}, {type}), true);
+    return func::CallOp::create(b, loc, fn, ValueRange{
+        handle, arith::ConstantIntOp::create(b, loc, ghosts, 64)}).getResult(0);
+  };
+  constexpr int64_t dyn = ShapedType::kDynamic;
+  return {view("mdrtDistRowView", {dyn}), view("mdrtDistIdView", {dyn,dyn})};
+}
+
 Value Lowering::ownedCapacity(OpBuilder &b, Value handle) {
   Type i64 = b.getI64Type();
   auto capacity = declare("mdrtDistOwnedCapacity", b.getFunctionType({i64}, {i64}), false);
@@ -680,15 +693,7 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
   }
   Value count = memref::DimOp::create(b, loc, positions, 0);
   Value capacity = ownedCapacity(b, handle);
-  auto rowsType = MemRefType::get({ShapedType::kDynamic}, i64);
-  auto idsType =
-      MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, i64);
-  Value rows = allocate(b, rowsType, {index(b, domains)});
-  Value ids = allocate(b, idsType, {index(b, domains), capacity});
-  func::FuncOp fill = declare(
-      "mdrtDistLayoutRows", b.getFunctionType({i64, rowsType, idsType}, {}),
-      true);
-  func::CallOp::create(b, loc, fill, ValueRange{handle, rows, ids});
+  auto [rows, ids] = rowViews(b, handle, false);
   OpBuilder atEnd(end);
   func::CallOp::create(
       atEnd, loc,
@@ -726,17 +731,8 @@ LogicalResult Lowering::lowerMigrate(MigrateOp op) {
                      ValueRange{old.handle, positions, edges[0], edges[1],
                                 edges[2]})
                      .getResult(0);
-  auto rowsType = MemRefType::get({ShapedType::kDynamic}, i64);
-  auto idsType =
-      MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, i64);
-  Value rows = allocate(b, rowsType, {index(b, domains)});
   Value capacity = ownedCapacity(b, handle);
-  Value ids = allocate(b, idsType, {index(b, domains), capacity});
-  func::CallOp::create(
-      b, loc,
-      declare("mdrtDistLayoutRows", b.getFunctionType({i64, rowsType, idsType},
-                                                       {}), true),
-      ValueRange{handle, rows, ids});
+  auto [rows, ids] = rowViews(b, handle, false);
   OpBuilder atEnd(end);
   func::CallOp::create(
       atEnd, loc,
@@ -1018,16 +1014,7 @@ LogicalResult Lowering::lowerHalo(HaloOp op) {
                      false),
              ValueRange{handle})
              .getResult(0));
-  auto rowsType = MemRefType::get({ShapedType::kDynamic}, i64);
-  auto idsType =
-      MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, i64);
-  Value rows = allocate(b, rowsType, {index(b, domains)});
-  Value ids = allocate(b, idsType, {index(b, domains), capacity});
-  func::CallOp::create(
-      b, loc,
-      declare("mdrtDistHaloRows",
-              b.getFunctionType({i64, rowsType, idsType}, {}), true),
-      ValueRange{handle, rows, ids});
+  auto [rows, ids] = rowViews(b, handle, true);
   OpBuilder atEnd(end);
   func::CallOp::create(
       atEnd, loc,
@@ -2438,9 +2425,6 @@ LogicalResult Lowering::lowerUnpack(UnpackOp op) {
       declare("mdrtDistCheckHaloCell",
               b.getFunctionType({i64, f64, f64, f64}, {}), false),
       ValueRange{haloHandle, edges[0], edges[1], edges[2]});
-  auto rowsType = MemRefType::get({ShapedType::kDynamic}, i64);
-  auto idsType =
-      MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, i64);
   // The layout: the unpack takes over the state's reference to it, and
   // releases it at the end of its block.
   Value count = toIndex(
@@ -2451,13 +2435,7 @@ LogicalResult Lowering::lowerUnpack(UnpackOp op) {
              ValueRange{layoutHandle})
              .getResult(0));
   Value capacity = ownedCapacity(b, layoutHandle);
-  auto view = [&](StringRef name, Type type, Value handle, bool ghosts) {
-    auto fn = declare(name, b.getFunctionType({i64,i64}, {type}), true);
-    return func::CallOp::create(b, loc, fn, ValueRange{
-        handle, arith::ConstantIntOp::create(b, loc, ghosts, 64)}).getResult(0);
-  };
-  Value rows = view("mdrtDistRowView", rowsType, layoutHandle, false);
-  Value ids = view("mdrtDistIdView", idsType, layoutHandle, false);
+  auto [rows, ids] = rowViews(b, layoutHandle, false);
   // The halo, likewise.
   Value haloCapacity = toIndex(
       b, func::CallOp::create(
@@ -2466,8 +2444,7 @@ LogicalResult Lowering::lowerUnpack(UnpackOp op) {
                      false),
              ValueRange{haloHandle})
              .getResult(0));
-  Value haloRows = view("mdrtDistRowView", rowsType, haloHandle, true);
-  Value haloIds = view("mdrtDistIdView", idsType, haloHandle, true);
+  auto [haloRows, haloIds] = rowViews(b, haloHandle, true);
   OpBuilder atEnd(end);
   func::CallOp::create(
       atEnd, loc,

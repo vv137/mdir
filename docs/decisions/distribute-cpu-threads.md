@@ -92,3 +92,11 @@ of each field in program order at each scheduled row.
 Return packets can span independent tuple-force producers until a result
 is first read. Every component still gathers the original stream for its
 owned row, including checked wide-word additions in deterministic mode.
+
+
+Layout and halo handles own their row-count and identity arrays. Lowered
+epochs borrow views of these arrays for the lifetime of the handles.
+A migrated layout can share frozen constraint membership until a caller
+adds a group. Each rank materializes image translations only for its own
+ghost rows. With one local domain, surviving identities are already in
+order, so the rank sorts only incoming identities and merges the two runs.

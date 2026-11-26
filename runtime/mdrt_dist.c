@@ -94,6 +94,7 @@ struct Layout {
   } *groups;
   size_t groupCount;
   int groupsFrozen;
+  struct Layout *groupSource;
   int64_t *centerGroup; /* Group index plus one at each center. */
   double (*migratedPositions)[3];
   int32_t *groupCenters; /* center + 1; zero for a free atom */
@@ -358,15 +359,24 @@ void _mlir_ciface_mdrtDistImageShifts(int64_t handle, struct Memref3D *shifts) {
   if (!h || !shifts || shifts->sizes[0] != h->layout->domains ||
       shifts->sizes[2] != 3)
     fail("deterministic pair geometry requires a complete halo image field");
-  for (int64_t d = 0; d < h->layout->domains; ++d)
+  int64_t first = 0, past = h->layout->domains;
+#ifdef MDIR_ENABLE_MPI
+  if (h->layout->mpi) {
+    first = mdrtMPIDomainBound(h->layout->domains,0);
+    past = mdrtMPIDomainBound(h->layout->domains,1);
+  }
+#endif
+  for (int64_t d = first; d < past; ++d)
     if (shifts->sizes[1] < h->rows[d])
       fail("missing halo rows for deterministic pair geometry");
-  for (int64_t d = 0; d < h->layout->domains; ++d)
-    for (int64_t g = 0; g < h->rows[d]; ++g)
+  #pragma omp parallel for collapse(2) schedule(static) if((past-first)*h->capacity > 512)
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t g = 0; g < h->capacity; ++g) {
+      if (g >= h->rows[d]) continue;
       for (int c = 0; c < 3; ++c)
-        *at3(shifts, d, g, c) =
-            (double)h->image[3 * (d * h->capacity + g) + c] *
-            h->layout->edges[c];
+        *at3(shifts,d,g,c) =
+            (double)h->image[3*(d*h->capacity+g)+c] * h->layout->edges[c];
+    }
 }
 
 struct Memref3W {
@@ -687,6 +697,8 @@ static void numberRows(struct Layout *l, const int64_t *ids, int64_t count) {
   free(offset);
 }
 
+void mdrtDistReleaseLayout(int64_t handle);
+
 void _mlir_ciface_mdrtDistGroupOwners(int64_t handle, struct Memref2D *positions,
                                       struct Members *members) {
   struct Layout *l = (struct Layout *)(intptr_t)handle;
@@ -696,6 +708,19 @@ void _mlir_ciface_mdrtDistGroupOwners(int64_t handle, struct Memref2D *positions
   if (size < 2 || size > 4 || count > (size_t)l->count ||
       count > SIZE_MAX / sizeof *l->groups - l->groupCount)
     fail("invalid constraint group dimensions");
+  if (l->groupSource) {
+    struct Layout *source = l->groupSource;
+    l->groups = malloc(l->groupCount*sizeof *l->groups);
+    l->centerGroup = malloc(l->count*sizeof *l->centerGroup);
+    l->groupCenters = malloc(l->count*sizeof *l->groupCenters);
+    if (!l->groups || !l->centerGroup || !l->groupCenters)
+      fail("out of memory extending migrated constraint groups");
+    memcpy(l->groups,source->groups,l->groupCount*sizeof *l->groups);
+    memcpy(l->centerGroup,source->centerGroup,l->count*sizeof *l->centerGroup);
+    memcpy(l->groupCenters,source->groupCenters,l->count*sizeof *l->groupCenters);
+    l->groupSource = NULL;
+    mdrtDistReleaseLayout((int64_t)(intptr_t)source);
+  }
   if (!l->groupCenters)
     l->groupCenters = calloc(l->count, sizeof *l->groupCenters);
   if (!l->centerGroup) l->centerGroup = calloc(l->count, sizeof *l->centerGroup);
@@ -933,9 +958,13 @@ void mdrtDistReleaseLayout(int64_t handle) {
   free(l->migrantIds);
 #endif
   free(l->migratedPositions);
-  free(l->groups);
-  free(l->groupCenters);
-  free(l->centerGroup);
+  if (l->groupSource) {
+    mdrtDistReleaseLayout((int64_t)(intptr_t)l->groupSource);
+  } else {
+    free(l->groups);
+    free(l->groupCenters);
+    free(l->centerGroup);
+  }
   free(l->owner);
   free(l->row);
   free(l->rows);
@@ -1098,6 +1127,7 @@ static void numberMigratedRows(struct Layout *old, struct Layout *next, int64_t 
       int64_t j = old->ids[d*old->stride+r];
       if (next->owner[j] >= first && next->owner[j] < past) ids[n++] = j;
     }
+  int64_t survivors = n;
   for (int p = 0; p < peers; ++p) {
     if (rank == p) continue;
     for (int64_t i = next->migrantOffsets[p]; i < next->migrantOffsets[p+1]; ++i) {
@@ -1105,7 +1135,21 @@ static void numberMigratedRows(struct Layout *old, struct Layout *next, int64_t 
       if (next->owner[j] >= first && next->owner[j] < past) ids[n++] = j;
     }
   }
-  qsort(ids,n,sizeof *ids,compareIdentity);
+  if (past-first == 1 && survivors) {
+    int64_t incoming = n-survivors;
+    if (incoming) {
+      int64_t *extra = malloc(incoming*sizeof *extra);
+      if (!extra) fail("out of memory merging received identities");
+      memcpy(extra,ids+survivors,incoming*sizeof *extra);
+      qsort(extra,incoming,sizeof *extra,compareIdentity);
+      for (int64_t end = n; incoming; )
+        ids[--end] = survivors && ids[survivors-1] > extra[incoming-1] ?
+                     ids[--survivors] : extra[--incoming];
+      free(extra);
+    }
+  } else {
+    qsort(ids,n,sizeof *ids,compareIdentity);
+  }
   numberRows(next,ids,n);
   free(ids);
   for (int64_t d = 0; d < next->domains; ++d) {
@@ -1208,7 +1252,14 @@ static int64_t migrate(int64_t oldHandle, struct Memref3D *positions,
     next->migratedPositions = malloc(cap*sizeof *next->migratedPositions);
     if (!next->migratedPositions) fail("out of memory retaining migrated positions");
   }
-  if (old->groupCount) {
+  if (old->groupCount && (old->groupsFrozen || old->groupSource)) {
+    next->groupSource = old->groupSource ? old->groupSource : old;
+    mdrtDistRetainLayout((int64_t)(intptr_t)next->groupSource);
+    next->groupCount = old->groupCount;
+    next->groups = old->groups;
+    next->centerGroup = old->centerGroup;
+    next->groupCenters = old->groupCenters;
+  } else if (old->groupCount) {
     next->groupCount = old->groupCount;
     next->groups = malloc(old->groupCount*sizeof *next->groups);
     next->centerGroup = malloc(cap*sizeof *next->centerGroup);
@@ -1220,12 +1271,12 @@ static int64_t migrate(int64_t oldHandle, struct Memref3D *positions,
   #pragma omp parallel if(n > 1024) reduction(|:invalid)
   {
     #pragma omp for schedule(static) nowait
-    for (size_t g = 0; g < old->groupCount; ++g)
+    for (size_t g = 0; g < (next->groupSource ? 0 : old->groupCount); ++g)
       next->groups[g] = old->groups[g];
     #pragma omp for schedule(static)
     for (int64_t j = 0; j < n; ++j) {
       next->owner[j] = old->owner[j];
-      if (old->groupCount) {
+      if (!next->groupSource && old->groupCount) {
         next->centerGroup[j] = old->centerGroup[j];
         next->groupCenters[j] = old->groupCenters[j];
       }
@@ -2469,8 +2520,10 @@ void _mlir_ciface_mdrtDistEpochImages(int64_t cache, int64_t layout,
     past = mdrtMPIDomainBound(l->domains, 1);
   }
 #endif
+  #pragma omp parallel for collapse(2) schedule(static) if((past-first)*l->stride > 512)
   for (int64_t d = first; d < past; ++d)
-    for (int64_t r = 0; r < l->rows[d]; ++r) {
+    for (int64_t r = 0; r < l->stride; ++r) {
+      if (r >= l->rows[d]) continue;
       int64_t j = l->ids[d*l->stride+r];
       for (int c = 0; c < 3; ++c) {
         double len = l->edges[c], ref = e->reference[3*j+c];
