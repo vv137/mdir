@@ -348,7 +348,7 @@ _An independent host copy of the field for a domain partition_
 Syntax:
 
 ```
-operation ::= `mdrt.snapshot` $field attr-dict `:` qualified(type($field)) `to` type($result)
+operation ::= `mdrt.snapshot` $field (`[` $indices^ `:` type($indices) `]`)? attr-dict `:` qualified(type($field)) `to` type($result)
 ```
 
 Interfaces: `MemoryEffectOpInterface (MemoryEffectOpInterface)`
@@ -360,6 +360,7 @@ Effects: `MemoryEffects::Effect{MemoryEffects::Allocate on ::mlir::SideEffects::
 | Operand | Description |
 | :-----: | ----------- |
 | `field` | A per-particle field |
+| `indices` | 1D memref of index values |
 
 #### Results:
 

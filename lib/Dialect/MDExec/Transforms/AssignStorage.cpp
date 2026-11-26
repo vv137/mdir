@@ -2164,12 +2164,33 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
       return failure();
     auto type = cast<MemRefType>(snapshot.getResult().getType());
     if (type != mdrt::getBufferType(snapshot.getField().getType()))
-      return snapshot.emitOpError(
-          "requires the buffer shape and type of its field");
-    Value size = memref::DimOp::create(builder, op->getLoc(), buffer, 0);
-    auto copy =
-        memref::AllocOp::create(builder, op->getLoc(), type, ValueRange{size});
-    memref::CopyOp::create(builder, op->getLoc(), buffer, copy);
+      return snapshot.emitOpError("requires the buffer shape and type of its field");
+    Value rows = mapping.lookupOrNull(snapshot.getIndices());
+    Value size = memref::DimOp::create(builder, op->getLoc(), rows ? rows : buffer, 0);
+    auto copy = memref::AllocOp::create(builder, op->getLoc(), type, ValueRange{size});
+    Location loc = op->getLoc();
+    Value z = arith::ConstantIndexOp::create(builder, loc, 0);
+    Value one = arith::ConstantIndexOp::create(builder, loc, 1);
+    scf::ParallelOp::create(builder, loc, ValueRange{z}, ValueRange{size}, ValueRange{one},
+        [&](OpBuilder &at, Location, ValueRange row) {
+          SmallVector<Value> indices(row);
+          Value sourceRow = rows ? Value(memref::LoadOp::create(at, loc, rows, row)) : row[0];
+          auto copyElement = [&]() {
+            indices[0] = sourceRow;
+            auto value = memref::LoadOp::create(at, loc, buffer, indices);
+            indices[0] = row[0];
+            memref::StoreOp::create(at, loc, value, copy, indices);
+          };
+          if (type.getRank() == 1) {
+            copyElement();
+          } else {
+            indices.push_back(z);
+            for (int64_t c = 0; c < type.getDimSize(1); ++c) {
+              indices.back() = arith::ConstantIndexOp::create(at, loc, c);
+              copyElement();
+            }
+          }
+        });
     mapping.map(snapshot.getResult(), copy.getResult());
     return success();
   }

@@ -94,9 +94,9 @@ def MDRT_DomainMatrixOp : MDRT_Op<"domain_matrix"> {
 
 def MDRT_SnapshotOp : MDRT_Op<"snapshot", [MemoryEffects<[MemAlloc, MemRead]>]> {
   let summary = "An independent host copy of the field for a domain partition";
-  let arguments = (ins MD_FieldType:$field);
+  let arguments = (ins MD_FieldType:$field, Optional<MemRefRankOf<[Index], [1]>>:$indices);
   let results = (outs AnyMemRef:$result);
-  let assemblyFormat = "$field attr-dict `:` qualified(type($field)) `to` type($result)";
+  let assemblyFormat = "$field (`[` $indices^ `:` type($indices) `]`)? attr-dict `:` qualified(type($field)) `to` type($result)";
 }
 
 def MDRT_ToBufferOp : MDRT_Op<"to_buffer", [Pure]> {

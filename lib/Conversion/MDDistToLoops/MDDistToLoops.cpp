@@ -247,10 +247,10 @@ private:
   }
   /// A new buffer of `domains x rows x k` of f64, freed at the end.
   Value allocate(OpBuilder &b, Value rows, int64_t k);
-  Value inputSnapshot(OpBuilder &b, md::FieldType type, Value field);
+  Value inputSnapshot(OpBuilder &b, md::FieldType type, Value field, Value indices = {});
   /// A new buffer of the given type and sizes, freed at the end.
   Value allocate(OpBuilder &b, MemRefType type, ValueRange sizes);
-  void fillZero(OpBuilder &b, Value buffer);
+  void initializeBuffer(OpBuilder &b, Value buffer, bool domainRows, Value source = {});
   /// Loads the value of row `row` of domain `domain` of `buffer`: an f64,
   /// or a vector<3xf64> for three components.
   Value loadValue(OpBuilder &b, Value buffer, Value domain, Value row,
@@ -480,30 +480,24 @@ Value Lowering::allocate(OpBuilder &b, Value rows, int64_t k) {
   return allocate(b, type, {index(b, domains), rows, index(b, k)});
 }
 
-void Lowering::fillZero(OpBuilder &b, Value buffer) {
+// Field descriptors retain global domain indices for transport. Touch only
+// the local slabs; collective consumers fill remote rows on demand.
+void Lowering::initializeBuffer(OpBuilder &b, Value buffer, bool domainRows, Value source) {
   auto type = cast<MemRefType>(buffer.getType());
-  SmallVector<Value> sizes;
-  for (int64_t i = 0; i < type.getRank(); ++i)
-    sizes.push_back(memref::DimOp::create(b, loc, buffer, i));
-  Value zeroValue = zero(b, type.getElementType());
-  std::function<void(OpBuilder &, SmallVector<Value> &)> nest =
-      [&](OpBuilder &at, SmallVector<Value> &indices) {
-        if (indices.size() == sizes.size()) {
-          memref::StoreOp::create(at, loc, zeroValue, buffer, indices);
-          return;
-        }
-        scf::ForOp::create(at, loc, index(at, 0), sizes[indices.size()],
-                           index(at, 1), ValueRange(),
-                           [&](OpBuilder &body, Location, Value i,
-                               ValueRange) {
-                             indices.push_back(i);
-                             nest(body, indices);
-                             indices.pop_back();
-                             scf::YieldOp::create(body, loc);
-                           });
-      };
-  SmallVector<Value> indices;
-  nest(b, indices);
+  Value z = index(b, 0), one = index(b, 1);
+  SmallVector<Value> lower, upper, steps;
+  for (int64_t i = 0; i < type.getRank(); ++i) {
+    lower.push_back(domainRows && i == 0 ? domainBound(b, false) : z);
+    upper.push_back(domainRows && i == 0 ? domainBound(b, true) :
+                    Value(memref::DimOp::create(b, loc, buffer, i)));
+    steps.push_back(one);
+  }
+  Value init = source ? Value() : zero(b, type.getElementType());
+  scf::ParallelOp::create(b, loc, lower, upper, steps,
+      [&](OpBuilder &at, Location, ValueRange indices) {
+        Value v = source ? Value(memref::LoadOp::create(at, loc, source, indices)) : init;
+        memref::StoreOp::create(at, loc, v, buffer, indices);
+      });
 }
 
 Value Lowering::loadValue(OpBuilder &b, Value buffer, Value domain, Value row,
@@ -586,11 +580,10 @@ Storage &Lowering::rowsOf(Value field) {
 // Partition and distribution read the input while the ordinary step still
 // owns it. A snapshot gives those reads block lifetime, even when a later
 // kick or drift reuses the field's storage.
-Value Lowering::inputSnapshot(OpBuilder &b, md::FieldType type, Value field) {
+Value Lowering::inputSnapshot(OpBuilder &b, md::FieldType type, Value field, Value indices) {
   if (!module->hasAttr("md_dist.driver"))
     return mdrt::ToBufferOp::create(b, loc, mdrt::getBufferType(type), field);
-  auto snapshot =
-      mdrt::SnapshotOp::create(b, loc, mdrt::getBufferType(type), field);
+  auto snapshot = mdrt::SnapshotOp::create(b, loc, mdrt::getBufferType(type), field, indices);
   OpBuilder atEnd(end);
   memref::DeallocOp::create(atEnd, loc, snapshot.getResult());
   return snapshot.getResult();
@@ -755,19 +748,44 @@ LogicalResult Lowering::lowerDistribute(DistributeOp op) {
     return failure();
   Storage &layout = storage[op.getLayout()];
   int64_t k = fieldType.getNumComponents();
-  Value global = inputSnapshot(b, fieldType, op.getField());
+  Value first = domainBound(b, false), past = domainBound(b, true);
+  Value z = index(b, 0), one = index(b, 1), offsets, ids;
+  if (mpi && module->hasAttr("md_dist.driver")) {
+    auto indexRows = MemRefType::get({ShapedType::kDynamic}, b.getIndexType());
+    offsets = allocate(b, indexRows, {index(b, domains)});
+    Value total = scf::ForOp::create(b, loc, first, past, one, ValueRange{z},
+        [&](OpBuilder &at, Location, Value d, ValueRange acc) {
+          memref::StoreOp::create(at, loc, acc[0], offsets, d);
+          Value n = toIndex(at, memref::LoadOp::create(at, loc, layout.rows, d));
+          scf::YieldOp::create(at, loc, arith::AddIOp::create(at, loc, acc[0], n).getResult());
+        }).getResult(0);
+    ids = allocate(b, indexRows, {total});
+    scf::ForOp::create(b, loc, first, past, one, ValueRange(),
+        [&](OpBuilder &at, Location, Value d, ValueRange) {
+          Value base = memref::LoadOp::create(at, loc, offsets, d);
+          Value n = toIndex(at, memref::LoadOp::create(at, loc, layout.rows, d));
+          scf::ParallelOp::create(at, loc, ValueRange{z}, ValueRange{n}, ValueRange{one},
+              [&](OpBuilder &body, Location, ValueRange r) {
+                Value id = toIndex(body, memref::LoadOp::create(body, loc, layout.ids, ValueRange{d,r[0]}));
+                memref::StoreOp::create(body, loc, id, ids, arith::AddIOp::create(body, loc, base, r[0]).getResult());
+              });
+          scf::YieldOp::create(at, loc);
+        });
+  }
+  Value global = inputSnapshot(b, fieldType, op.getField(), ids);
   Value owned = allocate(b, layout.capacity, k);
   // owned[d][r] = field[ids[d][r]], wrapped into the cell with `image`.
   scf::ForOp::create(
-      b, loc, domainBound(b, false), domainBound(b, true), index(b, 1), ValueRange(),
+      b, loc, first, past, index(b, 1), ValueRange(),
       [&](OpBuilder &bd, Location, Value d, ValueRange) {
         Value count = toIndex(
             bd, memref::LoadOp::create(bd, loc, layout.rows, ValueRange{d}));
-        scf::ForOp::create(
-            bd, loc, index(bd, 0), count, index(bd, 1), ValueRange(),
-            [&](OpBuilder &br, Location, Value r, ValueRange) {
-              Value j = toIndex(br, memref::LoadOp::create(
-                                        br, loc, layout.ids, ValueRange{d, r}));
+        Value base = ids ? Value(memref::LoadOp::create(bd, loc, offsets, d)) : Value();
+        scf::ParallelOp::create(bd, loc, ValueRange{z}, ValueRange{count}, ValueRange{one},
+            [&](OpBuilder &br, Location, ValueRange iv) {
+              Value r = iv[0];
+              Value j = ids ? Value(arith::AddIOp::create(br, loc, base, r)) :
+                  toIndex(br, memref::LoadOp::create(br, loc, layout.ids, ValueRange{d, r}));
               for (int64_t c = 0; c < k; ++c) {
                 Value v =
                     k == 1 ? Value(memref::LoadOp::create(br, loc, global,
@@ -787,7 +805,6 @@ LogicalResult Lowering::lowerDistribute(DistributeOp op) {
                 memref::StoreOp::create(br, loc, v, owned,
                                         ValueRange{d, r, index(br, c)});
               }
-              scf::YieldOp::create(br, loc);
             });
         scf::YieldOp::create(bd, loc);
       });
@@ -1110,16 +1127,14 @@ LogicalResult Lowering::lowerHaloSum(HaloSumOp op) {
                                          {}),
                        true);
     auto type = cast<MemRefType>(owned.getType());
-    Value words =
-        allocate(b, type, {index(b, domains), layout.capacity, index(b, k)});
-    memref::CopyOp::create(b, loc, owned, words);
-    func::CallOp::create(b, loc, sum,
-                         ValueRange{halo.handle, words, ghosts, result});
+    Value words = allocate(b, type, {index(b, domains), layout.capacity, index(b, k)});
+    initializeBuffer(b, words, true, owned);
+    func::CallOp::create(b, loc, sum, ValueRange{halo.handle, words, ghosts, result});
     fieldWords[op.getResult()] = words;
     storage[op.getResult()].buffer = result;
     return success();
   }
-  memref::CopyOp::create(b, loc, owned, result);
+  initializeBuffer(b, result, true, owned);
   if (haloEvents) {
     auto start = mdrt::HaloSumStartOp::create(
         b, loc, mdrt::EventType::get(module.getContext()), halo.handle, ghosts,
@@ -1145,7 +1160,7 @@ LogicalResult Lowering::lowerZeros(ZerosOp op) {
   Storage &rows = storage[op.getRows()];
   Value buffer =
       allocate(b, rows.capacity, op.getResult().getType().getNumComponents());
-  fillZero(b, buffer);
+  initializeBuffer(b, buffer, true);
   storage[op.getResult()].buffer = buffer;
   return success();
 }
@@ -1168,9 +1183,9 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
   Type scalar = sumType(b.getF64Type());
   Storage halo = storage[op.getHalo()];
   Storage layout = storage[layoutOf(op.getHalo())];
-  auto buffer = [&](ArrayRef<int64_t> shape, ValueRange sizes) {
+  auto buffer = [&](ArrayRef<int64_t> shape, ValueRange sizes, bool domainRows = true) {
     Value value = allocate(b, MemRefType::get(shape, scalar), sizes);
-    fillZero(b, value);
+    initializeBuffer(b, value, domainRows);
     return value;
   };
   constexpr int64_t dyn = ShapedType::kDynamic;
@@ -1180,18 +1195,13 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
     storage[op.getResult(0)].buffer = partial;
   } else if (solve) {
     ownedOut = allocate(b, layout.capacity, 3);
-    fillZero(b, ownedOut);
+    initializeBuffer(b, ownedOut, true);
     storage[op.getResult(0)].buffer = ownedOut;
   } else {
     ownedOut = buffer({dyn, dyn, dyn}, {index(b, domains), layout.capacity, index(b, 3)});
     ghostOut = buffer({dyn, dyn, dyn}, {index(b, domains), halo.capacity, index(b, 3)});
     storage[op.getResult(0)].buffer = ownedOut;
     storage[op.getResult(1)].buffer = ghostOut;
-  }
-  SmallVector<Value> parameters;
-  for (Value field : op.getParameters()) {
-    auto type = cast<md::FieldType>(field.getType());
-    parameters.push_back(inputSnapshot(b, type, field));
   }
   Value count = memref::DimOp::create(b, loc, op.getRows(), 0);
   Value first = domainBound(b, false), past = domainBound(b, true);
@@ -1209,12 +1219,23 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
   Value chunks = callIndex("mdrtDistTupleChunks", {records, first, past,
       index(b, 128), order, starts});
   Value localCount = memref::LoadOp::create(b, loc, starts, chunks);
+  bool indexed = module->hasAttr("md_dist.driver");
+  SmallVector<Value> parameters;
+  if (!op.getParameters().empty()) {
+    Value ids;
+    if (indexed)
+      ids = memref::ReinterpretCastOp::create(b, loc, cast<MemRefType>(order.getType()),
+          order, b.getIndexAttr(0), ArrayRef<OpFoldResult>{localCount},
+          ArrayRef<OpFoldResult>{b.getIndexAttr(1)});
+    for (Value field : op.getParameters())
+      parameters.push_back(inputSnapshot(b, cast<md::FieldType>(field.getType()), field, ids));
+  }
   Value energies, flags, contributions;
   if (reduce)
-    energies = buffer({dyn, dyn}, {chunks, index(b, width)});
+    energies = buffer({dyn, dyn}, {chunks, index(b, width)}, false);
   if (hasFlag) {
     flags = allocate(b, MemRefType::get({dyn}, b.getI32Type()), {chunks});
-    fillZero(b, flags);
+    initializeBuffer(b, flags, false);
   }
   if (!reduce && !solve)
     contributions = allocate(b, MemRefType::get({dyn, dyn, dyn}, scalar),
@@ -1273,11 +1294,11 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
           for (auto [field, values] : llvm::zip(op.getParameters(), parameters)) {
             auto type = cast<md::FieldType>(field.getType());
             if (type.getNumComponents() == 1)
-              args.push_back(memref::LoadOp::create(k, loc, values, t));
+              args.push_back(memref::LoadOp::create(k, loc, values, indexed ? pos : t));
             else {
               SmallVector<Value> components;
               for (unsigned c = 0; c < type.getNumComponents(); ++c)
-                components.push_back(memref::LoadOp::create(k, loc, values, ValueRange{t, index(k, c)}));
+                components.push_back(memref::LoadOp::create(k, loc, values, ValueRange{indexed ? pos : t, index(k, c)}));
               args.push_back(vector::FromElementsOp::create(k, loc,
                   cast<VectorType>(type.getKernelValueType()), components));
             }
@@ -1928,9 +1949,9 @@ LogicalResult Lowering::lowerGatherPairs(GatherPairsOp op) {
   }
   Value ghostOut;
   if (twoEnded) {
-    fillZero(b, ownedOut);
+    initializeBuffer(b, ownedOut, true);
     ghostOut = allocateSums(halo.capacity);
-    fillZero(b, ghostOut);
+    initializeBuffer(b, ghostOut, true);
   }
   // The value at the second particle of a pair computed once: the
   // kernel's value under exchange, which the verifier proved.
@@ -2211,12 +2232,7 @@ Value Lowering::copyForState(OpBuilder &b, Value buffer) {
   for (int64_t i = 0; i < type.getRank(); ++i)
     sizes.push_back(memref::DimOp::create(b, loc, buffer, i));
   Value copy = memref::AllocOp::create(b, loc, type, sizes);
-  if (mpi) {
-    auto fn = declare("mdrtMPICopyState", b.getFunctionType({type, type}, {}), true);
-    func::CallOp::create(b, loc, fn, ValueRange{buffer, copy});
-  } else {
-    memref::CopyOp::create(b, loc, buffer, copy);
-  }
+  initializeBuffer(b, copy, true, buffer);
   return copy;
 }
 
