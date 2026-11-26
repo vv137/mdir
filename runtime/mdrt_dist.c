@@ -94,6 +94,7 @@ struct Layout {
   } *groups;
   size_t groupCount;
   int groupsFrozen;
+  int64_t *centerGroup; /* Group index plus one at each center. */
   double (*migratedPositions)[3];
   int32_t *groupCenters; /* center + 1; zero for a free atom */
 #ifdef MDIR_ENABLE_MPI
@@ -600,23 +601,58 @@ static int64_t groupOwner(const struct Layout *l, const struct ConstraintGroup *
   return owner;
 }
 
-static void numberOwnedRows(struct Layout *l) {
-  memset(l->rows,0,l->domains*sizeof *l->rows);
-  for (int64_t j = 0; j < l->count; ++j) ++l->rows[l->owner[j]];
+static void numberRows(struct Layout *l, const int64_t *ids, int64_t count) {
+  /* Each block owns its counters. The scan assigns disjoint ranges of
+     each domain in global identity order, independent of thread count. */
+  const int64_t width = l->domains > 2048 ? l->domains : 2048;
+  const int64_t blocks = (count + width - 1) / width;
+  int64_t *offset = calloc((size_t)(blocks ? blocks : 1), l->domains * sizeof *offset);
+  if (!offset) fail("out of memory numbering owned rows");
+  #pragma omp parallel for schedule(static) if(blocks > 1)
+  for (int64_t b = 0; b < blocks; ++b) {
+    int64_t end = (b+1)*width < count ? (b+1)*width : count;
+    for (int64_t j = b*width; j < end; ++j)
+      ++offset[b*l->domains + l->owner[ids ? ids[j] : j]];
+  }
   int64_t cap = 1;
-  for (int64_t d = 0; d < l->domains; ++d)
-    if (l->rows[d] > cap) cap = l->rows[d];
+  for (int64_t d = 0; d < l->domains; ++d) {
+    int64_t sum = 0;
+    for (int64_t b = 0; b < blocks; ++b) {
+      int64_t *v = &offset[b*l->domains+d], count = *v;
+      *v = sum;
+      sum += count;
+    }
+    l->rows[d] = sum;
+    if (sum > cap) cap = sum;
+  }
+#ifdef MDIR_ENABLE_MPI
+  if (ids) {
+    for (int p = 0; p < mdrtMPISize(); ++p) {
+      int64_t q = l->domains/mdrtMPISize(), rem = l->domains%mdrtMPISize();
+      int64_t first = p*q + (p < rem ? p : rem);
+      int64_t past = first + q + (p < rem);
+      mdrtMPIBroadcastIndices(l->rows+first, past-first, p);
+    }
+    for (int64_t d = 0; d < l->domains; ++d)
+      if (l->rows[d] > cap) cap = l->rows[d];
+  }
+#endif
   if (l->stride != cap) {
     l->ids = realloc(l->ids,l->domains*cap*sizeof *l->ids);
     if (!l->ids) fail("out of memory indexing owned rows");
     l->stride = cap;
   }
-  memset(l->rows,0,l->domains*sizeof *l->rows);
-  for (int64_t j = 0; j < l->count; ++j) {
-    int64_t d = l->owner[j], r = l->rows[d]++;
-    l->ids[d * cap + r] = j;
-    l->row[j] = r;
+  #pragma omp parallel for schedule(static) if(blocks > 1)
+  for (int64_t b = 0; b < blocks; ++b) {
+    int64_t end = (b+1)*width < count ? (b+1)*width : count;
+    for (int64_t j = b*width; j < end; ++j) {
+      int64_t id = ids ? ids[j] : j;
+      int64_t d = l->owner[id], r = offset[b*l->domains+d]++;
+      l->ids[d * cap + r] = id;
+      l->row[id] = r;
+    }
   }
+  free(offset);
 }
 
 void _mlir_ciface_mdrtDistGroupOwners(int64_t handle, struct Memref2D *positions,
@@ -630,12 +666,12 @@ void _mlir_ciface_mdrtDistGroupOwners(int64_t handle, struct Memref2D *positions
     fail("invalid constraint group dimensions");
   if (!l->groupCenters)
     l->groupCenters = calloc(l->count, sizeof *l->groupCenters);
+  if (!l->centerGroup) l->centerGroup = calloc(l->count, sizeof *l->centerGroup);
   l->groups = realloc(l->groups, (l->groupCount + count) * sizeof *l->groups);
-  if (!l->groupCenters || !l->groups) fail("out of memory partitioning constraint groups");
+  if (!l->groupCenters || !l->centerGroup || !l->groups) fail("out of memory partitioning constraint groups");
   for (size_t row = 0; row < count; ++row) {
     struct ConstraintGroup *g = &l->groups[l->groupCount++];
     g->size = size;
-    double points[4][3];
     for (int a = 0; a < size; ++a) {
       int32_t atom = members->aligned[members->offset + row * members->strides[0] + a * members->strides[1]];
       if (atom < 0 || atom >= l->count) fail("invalid atom in constraint group");
@@ -647,14 +683,21 @@ void _mlir_ciface_mdrtDistGroupOwners(int64_t handle, struct Memref2D *positions
         fail(message);
       }
       l->groupCenters[atom] = g->atoms[0] + 1;
-      for (int k = 0; k < 3; ++k)
-        points[a][k] = *at2(positions, atom, k);
     }
+    l->centerGroup[g->atoms[0]] = l->groupCount;
+  }
+  #pragma omp parallel for schedule(static) if(count > 256)
+  for (size_t row = 0; row < count; ++row) {
+    struct ConstraintGroup *g = &l->groups[l->groupCount-count+row];
+    double points[4][3];
+    for (int a = 0; a < size; ++a)
+      for (int k = 0; k < 3; ++k)
+        points[a][k] = *at2(positions, g->atoms[a], k);
     int64_t owner = groupOwner(l, g, points);
     for (int a = 0; a < size; ++a)
       l->owner[g->atoms[a]] = owner;
   }
-  numberOwnedRows(l);
+  numberRows(l, NULL, l->count);
 }
 
 int64_t _mlir_ciface_mdrtDistPartition(struct Memref2D *x, int64_t gx,
@@ -687,7 +730,7 @@ int64_t _mlir_ciface_mdrtDistPartition(struct Memref2D *x, int64_t gx,
     int64_t d = cell[0] + gx * (cell[1] + gy * cell[2]);
     l->owner[j] = d;
   }
-  numberOwnedRows(l);
+  numberRows(l, NULL, l->count);
   return (int64_t)(intptr_t)l;
 }
 
@@ -852,6 +895,7 @@ void mdrtDistReleaseLayout(int64_t handle) {
   free(l->migratedPositions);
   free(l->groups);
   free(l->groupCenters);
+  free(l->centerGroup);
   free(l->owner);
   free(l->row);
   free(l->rows);
@@ -862,27 +906,29 @@ void mdrtDistReleaseLayout(int64_t handle) {
 /* A migration is a new ownership epoch. Prove that the source's identity
    table is a bijection before any field can be copied into that epoch. */
 static void checkIdentities(struct Layout *l) {
-  int64_t n = l->count, cap = n > 0 ? n : 1;
-  unsigned char *seen = calloc((size_t)cap, 1);
-  if (!seen)
-    fail("out of memory");
-  int64_t visited = 0;
-  for (int64_t d = 0; d < l->domains; ++d) {
-    if (l->rows[d] < 0 || l->rows[d] > n)
-      fail("invalid number of owned rows in a layout");
-    for (int64_t r = 0; r < l->rows[d]; ++r) {
-      int64_t j = l->ids[d * l->stride + r];
-      if (j < 0 || j >= n || seen[j])
-        fail("duplicate or invalid global particle identity in a layout");
-      if (l->owner[j] != d || l->row[j] != r)
-        fail("layout identity and owner/row tables disagree");
-      seen[j] = 1;
-      ++visited;
-    }
+  int64_t visited = 0, first = 0, past = l->domains;
+#ifdef MDIR_ENABLE_MPI
+  if (l->mpi) {
+    first = mdrtMPIDomainBound(l->domains, 0);
+    past = mdrtMPIDomainBound(l->domains, 1);
   }
-  if (visited != n)
-    fail("missing global particle identity in a layout");
-  free(seen);
+#endif
+  for (int64_t d = 0; d < l->domains; ++d) {
+    if (l->rows[d] < 0 || l->rows[d] > l->stride)
+      fail("invalid number of owned rows in a layout");
+    visited += l->rows[d];
+  }
+  if (visited != l->count) fail("missing global particle identity in a layout");
+  // The inverse map proves uniqueness. Each rank checks its own interval.
+  int invalid = 0;
+  #pragma omp parallel for collapse(2) reduction(|:invalid) schedule(static) if(l->count > 1024)
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < l->stride; ++r) {
+      if (r >= l->rows[d]) continue;
+      int64_t j = l->ids[d*l->stride+r];
+      invalid |= j < 0 || j >= l->count || l->owner[j] != d || l->row[j] != r;
+    }
+  if (invalid) fail("layout identity and owner/row tables disagree");
 }
 
 /* The particles whose owner changes, by the number of axes of the grid
@@ -917,55 +963,143 @@ static void traceMigration(struct Layout *old, struct Layout *next) {
 #ifdef MDIR_ENABLE_MPI
 /* Redistribute is verified against the migration that produced its new
    layout. All fields in that migration have the same crossing identities. */
-static void indexMigrants(struct Layout *old, struct Layout *next) {
-  int peers = mdrtMPISize();
-  int *owners = malloc(old->domains*sizeof *owners);
-  int64_t *offsets = calloc((size_t)peers+1,sizeof *offsets);
-  int64_t *cursor = malloc(peers*sizeof *cursor);
-  if (!owners || !offsets || !cursor) fail("out of memory indexing migration");
-  for (int64_t d = 0; d < old->domains; ++d) owners[d] = mdrtMPIOwner(old->domains,d);
-  for (int64_t j = 0; j < old->count; ++j) {
-    int from = owners[old->owner[j]];
-    if (from != owners[next->owner[j]]) ++offsets[from+1];
+static void shareOwnership(struct Layout *old, struct Layout *next, int64_t first, int64_t past) {
+  int peers = mdrtMPISize(), rank = mdrtMPIRank();
+  next->migrantOffsets = calloc((size_t)peers+1, sizeof(int64_t));
+  if (!next->migrantOffsets) fail("out of memory indexing migrants");
+  if (peers == 1) return;
+  struct Move { int64_t id, domain; };
+  int64_t count = 0;
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < old->rows[d]; ++r)
+      count += next->owner[old->ids[d*old->stride+r]] != d;
+  int64_t *counts = malloc(peers*sizeof *counts);
+  if (!counts) fail("out of memory counting migration records");
+  mdrtMPIGatherMetrics(&count, counts, sizeof count);
+  int64_t total = 0, largest = 1;
+  for (int p = 0; p < peers; ++p) {
+    total += counts[p];
+    if (counts[p] > largest) largest = counts[p];
   }
-  for (int p = 0; p < peers; ++p) offsets[p+1] += offsets[p];
-  next->migrantOffsets = offsets;
-  if (offsets[peers]) {
-    next->migrantIds = malloc(offsets[peers]*sizeof *next->migrantIds);
-    if (!next->migrantIds) fail("out of memory recording migrating rows");
-    memcpy(cursor,offsets,peers*sizeof *cursor);
-    for (int64_t j = 0; j < old->count; ++j) {
-      int from = owners[old->owner[j]];
-      if (from != owners[next->owner[j]]) next->migrantIds[cursor[from]++] = j;
+  struct Move *moves = malloc(largest * sizeof *moves);
+  next->migrantIds = malloc((total ? total : 1)*sizeof *next->migrantIds);
+  if (!moves || !next->migrantIds) fail("out of memory sharing migration records");
+  int64_t crossing = 0;
+  for (int p = 0; p < peers; ++p) {
+    next->migrantOffsets[p] = crossing;
+    if (!counts[p]) continue;
+    if (rank == p) {
+      int64_t i = 0;
+      for (int64_t d = first; d < past; ++d)
+        for (int64_t r = 0; r < old->rows[d]; ++r) {
+          int64_t j = old->ids[d*old->stride+r];
+          if (next->owner[j] != d) moves[i++] = (struct Move){j, next->owner[j]};
+        }
+    }
+    for (int64_t i = 0; i < counts[p]; i += INT_MAX) {
+      int64_t n = counts[p]-i;
+      mdrtMPIBroadcastWords(moves+i, n < INT_MAX ? n : INT_MAX, p);
+    }
+    for (int64_t i = 0; i < counts[p]; ++i) {
+      struct Move m = moves[i];
+      next->owner[m.id] = m.domain;
+      if (mdrtMPIOwner(old->domains,m.domain) != p)
+        next->migrantIds[crossing++] = m.id;
     }
   }
-  free(owners);
-  free(cursor);
+  next->migrantOffsets[peers] = crossing;
+  free(moves);
+  free(counts);
+}
+
+/* The old interval and incoming records enumerate exactly the local
+   candidates. Restore identity order before the fixed-block scan. Remote
+   row maps are mirrors used by the explicit-image and topology schedules. */
+static int compareIdentity(const void *lhs, const void *rhs) {
+  int64_t a = *(const int64_t *)lhs, b = *(const int64_t *)rhs;
+  return (a>b)-(a<b);
+}
+
+static void numberMigratedRows(struct Layout *old, struct Layout *next, int64_t first, int64_t past) {
+  int peers = mdrtMPISize(), rank = mdrtMPIRank();
+  int64_t cap = next->migrantOffsets[peers] + 1;
+  for (int64_t d = first; d < past; ++d) cap += old->rows[d];
+  int64_t *ids = malloc(cap*sizeof *ids);
+  if (!ids) fail("out of memory numbering local migrants");
+  int64_t n = 0;
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < old->rows[d]; ++r) {
+      int64_t j = old->ids[d*old->stride+r];
+      if (next->owner[j] >= first && next->owner[j] < past) ids[n++] = j;
+    }
+  for (int p = 0; p < peers; ++p) {
+    if (rank == p) continue;
+    for (int64_t i = next->migrantOffsets[p]; i < next->migrantOffsets[p+1]; ++i) {
+      int64_t j = next->migrantIds[i];
+      if (next->owner[j] >= first && next->owner[j] < past) ids[n++] = j;
+    }
+  }
+  qsort(ids,n,sizeof *ids,compareIdentity);
+  numberRows(next,ids,n);
+  free(ids);
+  for (int64_t d = 0; d < next->domains; ++d) {
+    int owner = mdrtMPIOwner(next->domains,d);
+    int64_t *rows = next->ids+d*next->stride;
+    mdrtMPIBroadcastIndices(rows,next->rows[d],owner);
+    if (owner != rank) {
+      #pragma omp parallel for schedule(static) if(next->rows[d] > 2048)
+      for (int64_t r = 0; r < next->rows[d]; ++r) next->row[rows[r]] = r;
+    }
+  }
 }
 
 static void shareMigrants(struct Layout *old, struct Layout *next, struct Memref3D *source) {
   int peers = mdrtMPISize(), rank = mdrtMPIRank();
   int64_t width = source->sizes[2], *offsets = next->migrantOffsets;
-  for (int p = 0; p < peers; ++p) {
-    int64_t rows = offsets[p+1]-offsets[p];
-    if (!rows) continue;
-    double *payload = malloc(rows*width*sizeof *payload);
-    if (!payload) fail("out of memory sharing migration payload");
-    if (p == rank)
-      for (int64_t r = 0; r < rows; ++r) {
-        int64_t j = next->migrantIds[offsets[p]+r];
-        for (int64_t c = 0; c < width; ++c)
-          payload[r*width+c] = *at3(source,old->owner[j],old->row[j],c);
+  if (!offsets[peers]) return;
+  // A bounded batch keeps the MPI displacements representable, including
+  // for a migration with more than INT_MAX scalar components in total.
+  int *counts = calloc(5*(size_t)peers,sizeof *counts);
+  if (!counts) fail("out of memory counting migration payloads");
+  int *ns = counts, *nr = ns+peers, *os = nr+peers, *or = os+peers, *cursor = or+peers;
+  if (width <= 0 || width > INT_MAX) fail("invalid migration field width");
+  int64_t batch = INT_MAX/width;
+  for (int64_t begin = 0; begin < offsets[peers]; begin += batch) {
+    int64_t end = begin+batch < offsets[peers] ? begin+batch : offsets[peers];
+    memset(counts,0,5*peers*sizeof *counts);
+    for (int p = 0; p < peers; ++p)
+      for (int64_t i = offsets[p] > begin ? offsets[p] : begin; i < offsets[p+1] && i < end; ++i) {
+        int to = mdrtMPIOwner(next->domains,next->owner[next->migrantIds[i]]);
+        if (rank == p) ns[to] += width;
+        if (rank == to) nr[p] += width;
       }
-    mdrtMPIBroadcast(payload,rows*width,p);
-    if (p != rank)
-      for (int64_t r = 0; r < rows; ++r) {
-        int64_t j = next->migrantIds[offsets[p]+r];
+    for (int p = 1; p < peers; ++p) {
+      os[p] = os[p-1]+ns[p-1];
+      or[p] = or[p-1]+nr[p-1];
+    }
+    size_t sends = os[peers-1]+ns[peers-1], receives = or[peers-1]+nr[peers-1];
+    double *send = malloc((sends ? sends : 1)*sizeof *send);
+    double *recv = malloc((receives ? receives : 1)*sizeof *recv);
+    if (!send || !recv) fail("out of memory exchanging migrants");
+    memcpy(cursor,os,peers*sizeof *os);
+    for (int64_t i = offsets[rank] > begin ? offsets[rank] : begin; i < offsets[rank+1] && i < end; ++i) {
+      int64_t j = next->migrantIds[i];
+      int to = mdrtMPIOwner(next->domains,next->owner[j]);
+      for (int64_t c = 0; c < width; ++c)
+        send[cursor[to]++] = *at3(source,old->owner[j],old->row[j],c);
+    }
+    mdrtMPIExchange(send,ns,os,recv,nr,or,0);
+    for (int p = 0; p < peers; ++p)
+      for (int64_t i = offsets[p] > begin ? offsets[p] : begin; i < offsets[p+1] && i < end; ++i) {
+        int64_t j = next->migrantIds[i];
+        if (mdrtMPIOwner(next->domains,next->owner[j]) != rank) continue;
         for (int64_t c = 0; c < width; ++c)
-          *at3(source,old->owner[j],old->row[j],c) = payload[r*width+c];
+          *at3(source,old->owner[j],old->row[j],c) = recv[or[p]++];
       }
-    free(payload);
+    free(send);
+    free(recv);
   }
+  free(counts);
 }
 #endif
 
@@ -976,7 +1110,13 @@ static int64_t migrate(int64_t oldHandle, struct Memref3D *positions,
       positions->sizes[1] < ownedCapacity(old) || positions->sizes[2] != 3)
     fail("migration positions do not cover the old layout");
   checkIdentities(old);
-  shareRows(old, old->rows, positions);
+  int64_t first = 0, past = old->domains;
+#ifdef MDIR_ENABLE_MPI
+  if (old->mpi) {
+    first = mdrtMPIDomainBound(old->domains, 0);
+    past = mdrtMPIDomainBound(old->domains, 1);
+  }
+#endif
   double edges[3] = {lx, ly, lz};
   for (int k = 0; k < 3; ++k)
     if (!(isfinite(edges[k]) && edges[k] > 0.0))
@@ -1002,45 +1142,73 @@ static int64_t migrate(int64_t oldHandle, struct Memref3D *positions,
     next->migratedPositions = malloc(cap*sizeof *next->migratedPositions);
     if (!next->migratedPositions) fail("out of memory retaining migrated positions");
   }
-  for (int64_t j = 0; j < n; ++j) {
-    int64_t cell[3];
-    for (int k = 0; k < 3; ++k) {
-      double coordinate = *at3(positions, old->owner[j], old->row[j], k);
-      if (!isfinite(coordinate))
-        fail("migration requires finite positions");
-      double u = coordinate / edges[k];
-      if (!isfinite(u))
-        fail("migration coordinate exceeds cell range");
-      double image = floor(u);
-      cell[k] = division(u - image, next->grid[k]);
-      if (keepPositions) next->migratedPositions[j][k] = coordinate - edges[k]*image;
-    }
-    int64_t d = cell[0] + next->grid[0] *
-                            (cell[1] + next->grid[1] * cell[2]);
-    next->owner[j] = d;
-  }
+  memcpy(next->owner, old->owner, n*sizeof *next->owner);
   if (old->groupCount) {
-    next->groups = malloc(old->groupCount * sizeof *next->groups);
-    if (!next->groups) fail("out of memory migrating constraint groups");
     next->groupCount = old->groupCount;
-    for (size_t r = 0; r < old->groupCount; ++r) {
-      struct ConstraintGroup *g = &next->groups[r];
-      *g = old->groups[r];
-      double points[4][3];
-      for (int a = 0; a < g->size; ++a) {
-        int32_t j = g->atoms[a];
-        for (int k = 0; k < 3; ++k)
-          points[a][k] = *at3(positions, old->owner[j], old->row[j], k);
+    next->groups = malloc(old->groupCount*sizeof *next->groups);
+    next->centerGroup = malloc(cap*sizeof *next->centerGroup);
+    next->groupCenters = malloc(cap*sizeof *next->groupCenters);
+    if (!next->groups || !next->centerGroup || !next->groupCenters)
+      fail("out of memory migrating constraint groups");
+    memcpy(next->groups,old->groups,old->groupCount*sizeof *next->groups);
+    memcpy(next->centerGroup,old->centerGroup,n*sizeof *next->centerGroup);
+    memcpy(next->groupCenters,old->groupCenters,n*sizeof *next->groupCenters);
+  }
+  int invalid = 0;
+  #pragma omp parallel for collapse(2) schedule(static) reduction(|:invalid) if(n > 1024)
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < old->stride; ++r) {
+      if (r >= old->rows[d]) continue;
+      int64_t j = old->ids[d*old->stride+r], cell[3];
+      for (int k = 0; k < 3; ++k) {
+        double coordinate = *at3(positions,d,r,k), u = coordinate/edges[k];
+        if (!isfinite(u)) { invalid = 1; u = 0; }
+        double image = floor(u);
+        cell[k] = division(u-image,next->grid[k]);
+        if (keepPositions) next->migratedPositions[j][k] = coordinate-edges[k]*image;
       }
-      int64_t owner = groupOwner(next, g, points);
-      for (int a = 0; a < g->size; ++a)
-        next->owner[g->atoms[a]] = owner;
+      if (!old->groupCenters || !old->groupCenters[j]) {
+        next->owner[j] = cell[0] + next->grid[0]*(cell[1] + next->grid[1]*cell[2]);
+      } else if (old->centerGroup[j]) {
+        struct ConstraintGroup *g = &old->groups[old->centerGroup[j]-1];
+        double points[4][3];
+        for (int a = 0; a < g->size; ++a)
+          for (int k = 0; k < 3; ++k)
+            points[a][k] = *at3(positions,d,old->row[g->atoms[a]],k);
+        int finite = 1;
+        for (int a = 0; a < g->size; ++a)
+          for (int k = 0; k < 3; ++k) finite &= isfinite(points[a][k]/edges[k]);
+        if (!finite) { invalid = 1; continue; }
+        int64_t owner = groupOwner(next,g,points);
+        for (int a = 0; a < g->size; ++a) next->owner[g->atoms[a]] = owner;
+      }
+    }
+  if (invalid) fail("migration requires finite positions within cell range");
+#ifdef MDIR_ENABLE_MPI
+  if (next->mpi) {
+    shareOwnership(old,next,first,past);
+    if (keepPositions) {
+      shareMigrants(old,next,positions);
+      int rank = mdrtMPIRank();
+      for (int p = 0; p < mdrtMPISize(); ++p) {
+        if (p == rank) continue;
+        for (int64_t i = next->migrantOffsets[p]; i < next->migrantOffsets[p+1]; ++i) {
+          int64_t j = next->migrantIds[i];
+          if (next->owner[j] < first || next->owner[j] >= past) continue;
+          for (int k = 0; k < 3; ++k) {
+            double x = *at3(positions,old->owner[j],old->row[j],k);
+            next->migratedPositions[j][k] = x - edges[k]*floor(x/edges[k]);
+          }
+        }
+      }
     }
   }
-  numberOwnedRows(next);
-#ifdef MDIR_ENABLE_MPI
-  if (next->mpi) indexMigrants(old,next);
 #endif
+#ifdef MDIR_ENABLE_MPI
+  if (next->mpi && mdrtMPISize() > 1) numberMigratedRows(old,next,first,past);
+  else
+#endif
+    numberRows(next,NULL,next->count);
   if (observer)
     for (int64_t j = 0; j < n; ++j)
       if (old->owner[j] != next->owner[j])
@@ -1221,6 +1389,9 @@ int64_t _mlir_ciface_mdrtDistBeginHalo(int64_t layout, struct Memref3D *x,
   h->layout = (struct Layout *)(intptr_t)layout;
   mdrtDistRetainLayout(layout);
   h->reach = reach;
+#ifdef MDIR_ENABLE_MPI
+  if (h->layout->mpi && mdrtMPISize() > 1) migrated = 0;
+#endif
   if (!migrated) shareRows(h->layout, h->layout->rows, x);
   int64_t domains = h->layout->domains;
   h->rows = calloc(domains, sizeof(int64_t));

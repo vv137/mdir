@@ -14,3 +14,10 @@ local domains. A tuple parameter snapshot uses the same local tuple order
 as its kernel. Partitioning a replicated input still reads the complete
 position field. Distributed field copies and zero fills visit only the
 local domain range.
+
+During migration, each rank evaluates coordinates and constraint centers
+on their previous owners. Changed domain assignments update the replicated
+identity map. Field payloads travel to the receiving ranks. Each rank
+numbers its new local identities in ascending order using fixed-block
+counts and prefix offsets. Halo construction can request the remote row
+maps and positions after the migration.
