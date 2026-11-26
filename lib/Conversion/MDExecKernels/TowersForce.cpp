@@ -38,8 +38,8 @@ public:
         stripe(shape.stripe), workers(shape.workers), recordCap(shape.records),
         residency(shape.residency), groups(panel / 32),
         packedChargeType(shape.packedChargeType), certified(shape.certified),
-        movingDispatch(shape.movingDispatch), probe(probe),
-        keepForceWords(shape.keepForceWords),
+        movingDispatch(shape.movingDispatch), scalarScreen(shape.scalarScreen),
+        probe(probe), keepForceWords(shape.keepForceWords),
         indexedExclusions(shape.indexedExclusions),
         cartesianPositions(shape.cartesianPositions),
         typeCount(shape.typeCount), emitRetryCounter(shape.emitRetryCounter),
@@ -90,8 +90,8 @@ private:
   void exclusion(Value row);
 
   int panel, stripe, workers, recordCap, residency, groups;
-  bool packedChargeType, certified, movingDispatch, probe, keepForceWords,
-      indexedExclusions;
+  bool packedChargeType, certified, movingDispatch, scalarScreen, probe,
+      keepForceWords, indexedExclusions;
   Type cartesianPositions;
   int64_t typeCount;
   bool emitRetryCounter, counting = false;
@@ -160,6 +160,7 @@ private:
   void stage(ArrayRef<Value> starts, ArrayRef<Value> counts, Value begin,
              Value size, bool source);
   Value screenOperand(Value x, Value z);
+  Values unpackFeatures(Value pair);
   Values targetOperands(Value target);
   Value mask(ValueRange operands, Value group, Value sourceCount);
   Value indexed(Value v, Value from) {
@@ -1204,12 +1205,13 @@ void Force::stage(ArrayRef<Value> starts, ArrayRef<Value> counts, Value begin,
         v = mulf(cf(-2), v);
     } else
       store(norm, bias, {subi(slot, cx(panel))});
-    auto halfPair = [&](Value a, Value c) {
-      return LLVM::InlineAsmOp::create(b, loc, TypeRange{i32}, ValueRange{a, c},
-                                       "cvt.rn.f16x2.f32 $0, $2, $1;", "=r,f,f",
-                                       false, false, LLVM::TailCallKind::None,
-                                       LLVM::AsmDialectAttr(), ArrayAttr())
-          .getResult(0);
+    auto halfPair = [&](Value a, Value c) -> Value {
+      // Vector truncation selects packed conversion when the target has it.
+      Value floats = vector::FromElementsOp::create(
+          b, loc, VectorType::get({2}, f32), ValueRange{a, c});
+      Value halves = arith::TruncFOp::create(
+          b, loc, VectorType::get({2}, b.getF16Type()), floats);
+      return LLVM::BitcastOp::create(b, loc, i32, halves);
     };
     Value words[] = {halfPair(q[0], q[1]), halfPair(q[2], fourth)};
     store(vector::FromElementsOp::create(b, loc, VectorType::get({2}, i32),
@@ -1234,10 +1236,26 @@ Value Force::screenOperand(Value x, Value z) {
                 select(cmpi(CmpIPredicate::eq, k, ci(1)), z, ci(0)));
 }
 
+Values Force::unpackFeatures(Value pair) {
+  Values result;
+  for (int j = 0; j < 2; ++j) {
+    Value halves = LLVM::BitcastOp::create(
+        b, loc, VectorType::get({2}, b.getF16Type()), extract(pair, j));
+    for (int k : {0, 1})
+      result.push_back(arith::ExtFOp::create(b, loc, f32, extract(halves, k)));
+  }
+  return result;
+}
+
 Values Force::targetOperands(Value target) {
   Value pair = load(features, {addi(cx(panel), target)});
-  Value tx = extract(pair, 0), tz = extract(pair, 1);
   Value c = subf(load(bias, {target}), limit);
+  if (scalarScreen) {
+    Values operands = unpackFeatures(pair);
+    operands.push_back(c);
+    return operands;
+  }
+  Value tx = extract(pair, 0), tz = extract(pair, 1);
   Values operands;
   for (int j = 0; j < 4; ++j) {
     Value col = addi(andi(lane, ci(-4)), ci(j));
@@ -1248,6 +1266,18 @@ Values Force::targetOperands(Value target) {
 }
 
 Value Force::mask(ValueRange operands, Value group, Value sc) {
+  if (scalarScreen) {
+    Value n = minui(cx(32), subi(sc, group));
+    return forLoop(cx(0), n, cx(1), {ci(0)}, [&](Value j, ValueRange mask) {
+      Values source = unpackFeatures(load(features, {addi(group, j)}));
+      Value residual = operands[4];
+      for (int a = 0; a < 4; ++a)
+        residual = math::FmaOp::create(b, loc, operands[a], source[a], residual);
+      Value bit = shli(ci(1), indexCast(i32, j));
+      Value inside = cmpf(CmpFPredicate::OLT, residual, cf(0));
+      return Values{ori(mask[0], select(inside, bit, ci(0)))};
+    })[0];
+  }
   Value row = shrui(lane, ci(2)), bits = ci(0);
   auto resultTy =
       LLVM::LLVMStructType::getLiteral(context, {f32, f32, f32, f32});
@@ -2169,12 +2199,8 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
   if (certified && !recovering) {
     Value count = load(localVotes, {});
     if (shortVote()) {
-      Value sum =
-          LLVM::InlineAsmOp::create(
-              b, loc, TypeRange{i32}, ValueRange{count},
-              "redux.sync.add.s32 $0,$1,0xffffffff;", "=r,r", false, false,
-              LLVM::TailCallKind::None, LLVM::AsmDialectAttr(), ArrayAttr())
-              .getResult(0);
+      Value sum = gpu::SubgroupReduceOp::create(
+          b, loc, count, gpu::AllReduceOperation::ADD, true);
       count = arith::ExtSIOp::create(
           b, loc, i64,
           select(cmpi(CmpIPredicate::eq, lane, ci(0)), sum, ci(0)));

@@ -222,6 +222,7 @@ struct TowersShape {
           split = 0;
   std::string cellHeight;
   std::string pack;
+  std::string screen = "AUTO";
 };
 
 /// Resolved once on the device, before compiling the simulation.

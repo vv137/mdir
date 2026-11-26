@@ -2,12 +2,12 @@
 # RUN: rm -rf %t && mkdir %t
 # RUN: sh -c 'cc -shared -fPIC -I"$CUDA_ROOT/include" "$1" -o "$2"' sh %S/Inputs/towers_sm70.c %t/libcuda.so.1
 # RUN: cp %S/../../examples/argon/argon.pdb %t
-# RUN: sed -e 's/"CPU"/"GPU"/' -e 's/"DOUBLE"/"MIXED"/' %S/../../examples/argon/argon.toml > %t/auto.toml
-# RUN: cp %t/auto.toml %t/towers.toml
-# RUN: echo 'neighbor_structure = "TOWERS"' >> %t/towers.toml
-# RUN: not sh -c 'LD_LIBRARY_PATH="$1:$LD_LIBRARY_PATH" exec mdir check --json "$2"' sh %t %t/towers.toml | FileCheck %s --check-prefix=REFUSE
-# RUN: sh -c 'LD_LIBRARY_PATH="$1:$LD_LIBRARY_PATH" exec mdir check --json "$2"' sh %t %t/auto.toml | FileCheck %s --check-prefix=AUTO
-# RUN: echo 'towers_shape = "AUTO"' >> %t/auto.toml
-# RUN: sh -c 'LD_LIBRARY_PATH="$1:$LD_LIBRARY_PATH" exec mdir check --json "$2"' sh %t %t/auto.toml | FileCheck %s --check-prefix=AUTO
-# REFUSE: TOWERS requires mma.sync m16n8k8 f16 (sm_75 or newer)
-# AUTO: "structure": "{{(matrix|groups|MATRIX|GROUPS)}}"
+# RUN: sed -e 's/"CPU"/"GPU"/' -e 's/"DOUBLE"/"MIXED"/' -e 's/steps      = 2000/steps = 1/' -e 's/energy_interval     = 100/energy_interval = 1/' -e '/^trajectory/d' %S/../../examples/argon/argon.toml > %t/auto.toml
+# RUN: echo 'neighbor_structure = "TOWERS"' >> %t/auto.toml
+# RUN: echo 'towers_shape = {threads=128, blocks_per_sm=1, stripe=64, panel=64, records=64, split=1}' >> %t/auto.toml
+# RUN: mdir run %t/auto.toml > %t/setup.log 2>&1
+# RUN: FileCheck %s --check-prefix=AUTO < %t/setup.log
+# RUN: sed 's/{threads=/{screen="MMA", threads=/' %t/auto.toml > %t/mma.toml
+# RUN: not sh -c 'LD_LIBRARY_PATH="$1:$LD_LIBRARY_PATH" exec mdir check --json "$2"' sh %t %t/mma.toml | FileCheck %s --check-prefix=REFUSE
+# REFUSE: screen MMA requires mma.sync m16n8k8 f16 (sm_75 or newer)
+# AUTO: "screen_reason":"device {{supports|lacks}} m16n8k8"

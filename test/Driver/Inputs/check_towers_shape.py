@@ -24,6 +24,12 @@ def check(shape, reason="", text=template):
     return report["run"]["neighbors"]["towers_shape"]
 
 
+sys.path.insert(0, str(root.parents[1] / "test" / "Runtime" / "Inputs"))
+from towers_rebuild import device_capability
+
+check('{screen="OTHER"}', "screen")
+scalar = check('{screen="SCALAR", threads=128, blocks_per_sm=1}')
+assert scalar["effective"]["screen"] == "SCALAR" and scalar["screen_reason"] == "control"
 for field in ("panel", "stripe"):
     check("{" + field + " = 33}", "multiple")
 check('{threads=512, blocks_per_sm=1, panel=512, stripe=480, records=7680, cell_height="FULL"}',
@@ -33,6 +39,8 @@ check('{threads=512, blocks_per_sm=2, panel=320, stripe=352, records=3520, cell_
 check('{cell_height="FULL"}', "cell height",
       template.replace("34.7786, 34.7786, 34.7786", "34.7786, 34.7786, 21.0"))
 shape = check('{threads=512, blocks_per_sm=2, panel=352, stripe=384, records=1536, split=1, pack="COMPACT", cell_height="HALF"}')
+assert shape["source"].pop("screen") == shape["requested"].pop("screen") == "AUTO"
+assert shape["effective"].pop("screen") == ("MMA" if device_capability() >= 75 else "SCALAR")
 assert shape["requested"] == shape["effective"]
 assert set(shape["source"].values()) == {"control"}
 diagnostic = check('{threads=384, blocks_per_sm=4, panel=32, stripe=32, records=1, cell_height="FULL"}',
@@ -48,7 +56,6 @@ assert partial["effective"]["threads"] == 512 and partial["effective"]["split"] 
 assert partial["source"]["threads"] == "AUTO" and partial["source"]["split"] == "control"
 
 # Feed the two explicit preflight layouts to the generated rectangular entry.
-sys.path.insert(0, str(root.parents[1] / "test" / "Runtime" / "Inputs"))
 from towers_exclusions import evaluate
 import towers_rebuild
 

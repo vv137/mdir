@@ -1356,7 +1356,35 @@ same launch remains valid as atoms move between cells.
 The rectangular force entry realizes the screen in the owning box's image.
 It rounds the scaled positions to a lattice and rounds the encoded source
 squared norm downward. A padded distance threshold accounts for the endpoint
-rounding. Each surviving record holds a source mask and a header identifying
+rounding.
+
+For the scalar evaluation (D[towers-scalar-screen]), let $s$ be the
+power-of-two scale, $u,v$ the rounded target and source triples, and $B$ the
+Cartesian extent used to choose $s$. Each endpoint contributes at most half
+a lattice unit per coordinate. Including the common-image staging allowance
+$e$ ($2^{-18}B$ for rectangular cells and $2^{-15}B$ for triclinic cells),
+the triangle inequality gives $\lVert u-v\rVert\le s(r_c+e)+\sqrt{3}$ for
+a physical pair within $r_c$. Both screens use the integer threshold $L$
+formed by squaring the padded radius $s r_c+1.733+s e$, rounding up, and
+adding one. The excess of $1.733$ over $\sqrt{3}$ covers binary32 rounding
+of the radius and its square at this scale ($s r_c\le1024$).
+
+Let $b=64\,\mathrm{floor}_{16}(\lVert v\rVert^2/64)$, where the floor
+denotes conversion to binary16 toward negative infinity. Each lane starts at
+$\lVert u\rVert^2-L$, accumulates the three products $u_a(-2v_a)$ by
+binary32 FMA, then adds $64(b/64)$ by FMA. The coordinates have magnitude
+at most 1024, so the coordinate operands are exactly representable in
+binary16. The restored $b$ is integral: scaling the integral norm by a
+power of two and rounding down can only discard low integer bits. Every
+partial sum is an integer of magnitude below $2^{24}$, since both norms
+are at most $3\cdot1024^2$, the three cross terms total at most
+$6\cdot1024^2$ in absolute value, and $L<(1027)^2$. Thus each FMA is exact.
+The final residual is $\lVert u-v\rVert^2-L+b-\lVert v\rVert^2$, strictly
+negative for every in-cutoff pair. Its sign sets the source bit just as in
+the matrix evaluation. The subsequent physical cutoff and force computation
+use the original staged coordinates.
+
+Each surviving record holds a source mask and a header identifying
 the target, source group and candidate prefix. Dividing the prefix range
 among workers assigns each set bit to one worker. Bits in one record share
 the target coordinates, parameters and partial force. On advancing to another

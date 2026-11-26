@@ -1,0 +1,9 @@
+# RUN: mdir-opt %S/../Runtime/Inputs/towers-force.mlir --add-towers-build='atoms=64 compact=true force-body=spring certify-force=true scalar-screen=true' --symbol-dce --canonicalize --cse | mdir-opt --mdir-gpu-lower-to-nvvm='cubin-format=isa cubin-chip=sm_70 kernel-bare-ptr-calling-convention=true' | FileCheck %s --check-prefix=VOLTA --implicit-check-not=mma.sync --implicit-check-not=redux.sync
+# RUN: mdir-opt %S/../Runtime/Inputs/towers-force.mlir --add-towers-build='atoms=64 compact=true force-body=spring certify-force=true' --symbol-dce --canonicalize --cse > %t.mlir
+# RUN: mdir-opt %t.mlir --mdir-gpu-lower-to-nvvm='cubin-format=isa cubin-chip=sm_75 kernel-bare-ptr-calling-convention=true' | FileCheck %s --check-prefix=TURING --implicit-check-not=redux.sync --implicit-check-not=cvt.rn.f16x2
+# RUN: mdir-opt %t.mlir --mdir-gpu-lower-to-nvvm='cubin-format=isa cubin-chip=sm_80 kernel-bare-ptr-calling-convention=true' | FileCheck %s --check-prefix=AMPERE
+# VOLTA: shfl.sync.bfly
+# TURING: .version 6.5
+# TURING: mma.sync.aligned.m16n8k8
+# TURING: shfl.sync.bfly
+# AMPERE: redux.sync.add

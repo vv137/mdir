@@ -42,7 +42,7 @@ def check(directory, gpu, reach):
         # The 128-slot panel has four 32-source groups, eight MMA operations
         # each. Streaming and overflow retry must share that screen body.
         entry = image.split(b".entry towers_force(", 1)[1].split(b"\n}", 1)[0]
-        assert entry.count(b"mma.sync.aligned.m16n8k8") == 32
+        assert entry.count(b"mma.sync.aligned.m16n8k8") == (32 if rebuild.device_capability() >= 75 else 0)
         assert b"cvt.rm.f16.f32" in entry
     entries = rebuild.Entries(image, gpu)
     r = rebuild.Rebuild(entries, dims, reach, n, 192, True)
