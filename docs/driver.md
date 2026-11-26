@@ -1802,6 +1802,15 @@ split and unsplit traversal on the allocated layout for runs of at least
 32 steps. Short runs use the unsplit path. Set `pair_overlap = "split"`
 or `"unsplit"` to override selection. The log records the choice.
 
+A numeric `[energy] pairlist_distance` fixes the halo reach. For directed
+NCCL runs without topology, `"AUTO"` can measure that reach on the allocated
+layout. An explicit request searches for runs of at least 204 steps. An
+omitted reach searches for runs of at least 4,080 steps. Each candidate
+uses a disposable 204-step trajectory with the production energy cadence,
+capped at 102 steps between reports. The run log gives each skin and its
+measured time, and the manifest records the candidate times and selected
+reach. The search precedes automatic selection of pair overlap.
+
 Node placement groups neighboring domains by periodic face area. At each
 report the intra-node and inter-node byte totals count directed logical
 payloads crossing ranks. Self-images stay local. Device kernels pack local rows, translate ghost images, and sum reverse

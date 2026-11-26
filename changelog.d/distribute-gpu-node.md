@@ -8,3 +8,5 @@
   distributed `pair_overlap` control.
 - Incremental face records, rank-local halo route maps, and device-to-device
   exchange of migrating field rows on eligible GPU runs.
+
+- Measured halo skins for directed NCCL runs with an automatic pair-list reach.

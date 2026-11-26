@@ -457,15 +457,16 @@ struct StepGraphTrial {
   }
 };
 
-struct PairOverlapTrial {
+struct DistributedTrial {
   StringRef mode, restart;
   int64_t steps;
   double milliseconds = 0;
+  double reach = 0;
 };
 
 static int runControlImpl(StringRef controlFile, Emit emit,
                            const char *argv0, const RunOptions &options, StepGraphTrial *trial,
-                           PairOverlapTrial *pairTrial = nullptr) {
+                           DistributedTrial *distributedTrial = nullptr) {
   auto began = std::chrono::steady_clock::now();
 
   //===--------------------------------------------------------------------===//
@@ -550,10 +551,10 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       return writer ? refuse(*control, llvm::createStringError("each rank needs at least one domain")) : 1;
   }
 #endif
-  if (trial || pairTrial) {
+  if (trial || distributedTrial) {
     // Each trial has disposable state and never opens production outputs.
     output.log.quiet = true;
-    control->restartInput = (trial ? trial->restart : pairTrial->restart).str();
+    control->restartInput = (trial ? trial->restart : distributedTrial->restart).str();
     for (auto *file : {&control->restartOutput, &control->energyFile,
                        &control->trajectoryFile, &control->manifestFile, &control->logFile,
                        &control->profileMapFile, &control->freeEnergyFile, &control->pullFile,
@@ -561,11 +562,16 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       file->clear();
     control->framePeriod = control->checkpointPeriod = 0;
   }
-  if (pairTrial) {
-    control->distribution->pairOverlap = pairTrial->mode.str();
-    control->numSteps = pairTrial->steps;
-    if (control->energyPeriod <= 0 || control->energyPeriod > pairTrial->steps / 2)
-      control->energyPeriod = pairTrial->steps / 2;
+  if (distributedTrial) {
+    control->distribution->pairOverlap = distributedTrial->mode.str();
+    if (distributedTrial->reach > 0) {
+      control->pairlistDistance = distributedTrial->reach;
+      control->pairlistDistanceAuto = false;
+      control->pairlistDistanceGiven = true;
+    }
+    control->numSteps = distributedTrial->steps;
+    if (control->energyPeriod <= 0 || control->energyPeriod > distributedTrial->steps / 2)
+      control->energyPeriod = distributedTrial->steps / 2;
   }
   if (trial) {
     control->stepGraph = trial->path.str();
@@ -1029,15 +1035,59 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // (#568, the equivalence check of the builder).
   if (options.segments)
     *control = compiler::getSegmentsControl(*control);
+  llvm::json::Array distributedSkinTrials;
+  double distributedSkinSeconds = 0;
   double pairTimes[2] = {};
   bool requestedAutoOverlap = control->distribution && control->distribution->pairOverlap == "auto";
 #ifdef MDIR_ENABLE_MPI
+  // Replay the same initial state and user energy cadence for each
+  // halo reach. The second half of each disposable run includes both
+  // covered steps and rebuilds. All ranks use the writer's measurements.
+  const char *policy = std::getenv("MDIR_SKIN_SEARCH");
+  StringRef skinPolicy = policy ? policy : "auto";
+  constexpr int64_t skinSteps = 204;
+  if (!distributedTrial && !trial && emit == Emit::Run && control->distribution &&
+      control->distribution->transport == "nccl" &&
+      control->distribution->traversal == "directed" && control->pairlistDistanceAuto &&
+      !control->hasTopology() && !control->minimize && !control->rebuildPeriod &&
+      !fromPositions && !options.segments && (skinPolicy == "auto" || skinPolicy == "always") &&
+      (skinPolicy == "always" || (control->numSteps >= skinSteps &&
+       (control->skinsRequested || control->numSteps >= 20*skinSteps)))) {
+    auto searchBegan = std::chrono::steady_clock::now();
+    double original = control->pairlistDistance;
+    double best = 0;
+    StringRef mode = requestedAutoOverlap ? StringRef("unsplit") : StringRef(control->distribution->pairOverlap);
+    llvm::raw_string_ostream lines(skinLines);
+    for (double skin : {original-control->cutoffDistance, 0.15, 0.30, 0.60, 1.20}) {
+      double reach = control->cutoffDistance + skin;
+      if (reach > original || skin <= 0) continue;
+      DistributedTrial sample{mode, control->restartInput, skinSteps};
+      sample.reach = reach;
+      if (runControlImpl(controlFile, Emit::Run, argv0, {}, nullptr, &sample))
+        return fail("could not time the distributed halo reach");
+      mdrtMPIBroadcast(&sample.milliseconds, 1, 0);
+      distributedSkinTrials.emplace_back(llvm::json::Object{
+          {"skin_angstrom", skin}, {"pairlist_distance_angstrom", reach},
+          {"milliseconds_per_step", sample.milliseconds}, {"steps", skinSteps}});
+      lines << llvm::formatv("MDIR: distributed skin {0:f3} Ang, {1:f3} ms per step\n",
+                             skin, sample.milliseconds);
+      if (!best || sample.milliseconds < best) {
+        best = sample.milliseconds;
+        control->pairlistDistance = reach;
+      }
+    }
+    control->skinSource = "measured";
+    control->skinReason = "the fastest measured distributed Verlet step";
+    distributedSkinSeconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now()-searchBegan).count();
+  }
   if (requestedAutoOverlap && emit == Emit::Run && ranks > 1 &&
       control->distribution->transport == "nccl" &&
       control->distribution->traversal == "directed" && !control->hasTopology() &&
       !control->minimize && control->numSteps >= 32) {
     for (unsigned i = 0; i < 2; ++i) {
-      PairOverlapTrial sample{i ? "split" : "unsplit", control->restartInput, 32};
+      DistributedTrial sample{i ? "split" : "unsplit", control->restartInput, 32};
+      sample.reach = control->pairlistDistance;
       if (runControlImpl(controlFile, Emit::Run, argv0, {}, nullptr, &sample))
         return fail("could not time the distributed pair traversal");
       pairTimes[i] = sample.milliseconds;
@@ -1653,7 +1703,12 @@ static int runControlImpl(StringRef controlFile, Emit emit,
          control->getSkinSource(/*outer=*/true)},
         {"pruned_distance_source",
          control->getSkinSource(/*outer=*/false)},
-        {"skin_search", control->isSkinAuto()
+        {"skin_search", !distributedSkinTrials.empty()
+             ? llvm::json::Value(llvm::json::Object{
+                   {"source", "measured"}, {"searched", true},
+                   {"reason", control->skinReason}, {"seconds", distributedSkinSeconds},
+                   {"candidates", std::move(distributedSkinTrials)}})
+             : control->isSkinAuto()
              ? skinChoice.toJSON(*control) : llvm::json::Value(nullptr)},
         {"neighbor_structures", std::move(neighbors)},
         // The policy each md_alg op was lowered with (D408): a
@@ -2186,7 +2241,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     const auto &g = program->domainGrid;
     distLog.emplace(output.log, manifest, distRank, distRanks, g[0]*g[1]*g[2],
                     firstStep, control->energyPeriod, domainReach);
-    const char *prefix = pairTrial ? nullptr : std::getenv("MDIR_DIST_STEP_TRACE");
+    const char *prefix = distributedTrial ? nullptr : std::getenv("MDIR_DIST_STEP_TRACE");
 #ifdef MDIR_ENABLE_MPI
     if (control->distribution->transport != "local") {
       bool any = mdrtMPIMax(prefix && *prefix);
@@ -2264,10 +2319,10 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       reinterpret_cast<void (*)()>(reset)();
     setOutput(nullptr);
   }
-  if (pairTrial) {
-    pairTrial->milliseconds = 1000 * runTime / control->numSteps;
+  if (distributedTrial) {
+    distributedTrial->milliseconds = 1000 * runTime / control->numSteps;
     if (output.rateFrom && output.rateLast.first > output.rateFrom->first)
-      pairTrial->milliseconds = 1000 * (output.rateLast.second - output.rateFrom->second) /
+      distributedTrial->milliseconds = 1000 * (output.rateLast.second - output.rateFrom->second) /
                                 (output.rateLast.first - output.rateFrom->first);
     if (auto reset = findRuntime("mdrtResetCounts", "mdrtResetCounts"))
       reinterpret_cast<void (*)()>(reset)();

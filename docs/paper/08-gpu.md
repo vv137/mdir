@@ -1155,3 +1155,10 @@ The owned-row scan also writes the next reference mask in local order.
 This construction transfers the changed face records and small peer
 descriptors between host and device at rebuild. Each rank still holds
 an identity-indexed device snapshot and scans it in parallel.
+
+For the million-particle liquid on one V100, skins of 0.15, 0.30,
+0.60 and 1.20 Å gave mean gaps of 5.22, 10.33, 20.25 and 41 steps
+between rebuilds. Their two-run mean step times were 8.424, 7.649,
+7.625 and 9.050 ms. In two independent trials choosing the reach on the
+allocated layout, both selected 0.60 Å. Production then took 7.525 and
+7.545 ms/step. The ordinary force cutoff was 9 Å throughout.

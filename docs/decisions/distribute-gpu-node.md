@@ -334,3 +334,21 @@ the send indices, receive indices, and periodic shifts directly. It also
 writes the next face classification in local owned order. Device message
 slots preserve the destination's identity and image order even when
 physical rank placement permutes the geometric domains.
+
+### Measured halo reach
+
+A numeric `[energy] pairlist_distance` fixes the halo reach. For directed
+NCCL runs without topology, `"AUTO"` can measure that reach on the allocated
+layout. An explicit request searches for runs of at least 204 steps. An
+omitted reach searches for runs of at least 4,080 steps. Each candidate
+uses a disposable 204-step trajectory with the production energy cadence,
+capped at 102 steps between reports. The run log gives each skin and its
+measured time, and the manifest records the candidate times and selected
+reach. The search precedes automatic selection of pair overlap.
+
+In two one-device liquid runs, increasing the skin from 0.15 to 0.60 Å
+increased the mean gap between successive rebuilds from 5.22 to 20.25
+steps. The 0.60 Å runs took 7.552 and 7.697 ms/step. A further increase
+to 1.20 Å gave 9.049 and 9.050 ms/step. The wider list costs time on
+every covered step. The search measures the entire distributed step so
+that this cost enters the choice alongside the cost of rebuilding.

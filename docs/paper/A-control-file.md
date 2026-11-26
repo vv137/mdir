@@ -617,3 +617,12 @@ For directed multi-GPU runs of at least 32 steps, `pair_overlap = "auto"`
 times the split and unsplit traversals on the allocated layout. A short
 run uses the unsplit path. The values `"split"` and `"unsplit"` override
 selection. The run log records the choice.
+
+A numeric `[energy] pairlist_distance` fixes the halo reach. For directed
+NCCL runs without topology, `"AUTO"` can measure that reach on the allocated
+layout. An explicit request searches for runs of at least 204 steps. An
+omitted reach searches for runs of at least 4,080 steps. Each candidate
+uses a disposable 204-step trajectory with the production energy cadence,
+capped at 102 steps between reports. The run log gives each skin and its
+measured time, and the manifest records the candidate times and selected
+reach. The search precedes automatic selection of pair overlap.
