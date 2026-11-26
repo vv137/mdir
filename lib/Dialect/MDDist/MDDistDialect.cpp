@@ -311,6 +311,8 @@ Value mdir::md_dist::layoutOf(Value value) {
   }
   if (!field)
     return {};
+  if (auto op = dyn_cast<MeshOp>(def))
+    return op.getLayout();
   if (auto op = dyn_cast<TupleKernelOp>(def))
     return layoutOf(op.getHalo());
   if (auto op = dyn_cast<DistributeOp>(def))

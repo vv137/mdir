@@ -140,10 +140,13 @@ LogicalResult Distributor::check() {
       return op.emitOpError()
              << "cannot be distributed: a sum over tuples needs the topology "
                 "across domains (stage 2 of #31)";
-    if (isa<ReciprocalOp>(op))
+    if (auto mesh = dyn_cast<ReciprocalOp>(op)) {
+      if (isa<FunctionOp>(potential.getOperation()) && !mesh.getDispersion() &&
+          !mesh.getP3m() && !mesh.getPotential()) continue;
       return op.emitOpError()
              << "cannot be distributed: a reciprocal sum needs a "
                 "decomposition of its grid (stage 3 of #31)";
+    }
     // Any other op computes numbers from numbers: the sums of the domains
     // after md_dist.all_reduce. An op of md, or one that takes or gives a
     // field or a relation, is not known to the pass.
@@ -496,7 +499,19 @@ LogicalResult Distributor::run() {
       status = rewriteTuple(o);
     else if (auto o = dyn_cast<GatherTuplesOp>(op))
       status = rewriteTuple(o);
-    else if (auto o = dyn_cast<SumParticlesOp>(op))
+    else if (auto mesh = dyn_cast<ReciprocalOp>(op)) {
+      Value charges = ownedOf(mesh, mesh.getCharges());
+      if (!charges) return failure();
+      builder.setInsertionPoint(mesh);
+      auto sum = md_dist::MeshOp::create(builder, mesh.getLoc(),
+          mesh.getEnergy().getType(), ownedType(mesh.getForces().getType()),
+          mesh.getVirial().getType(), layout, ownedPositions, charges, cell,
+          mesh.getModuli(), mesh.getGridAttr(), mesh.getOrderAttr(),
+          mesh.getBetaAttr(), mesh.getCoulombAttr());
+      owned[mesh.getForces()] = sum.getForces();
+      mesh.getEnergy().replaceAllUsesWith(sum.getEnergy());
+      mesh.getVirial().replaceAllUsesWith(sum.getVirial());
+    } else if (auto o = dyn_cast<SumParticlesOp>(op))
       status = rewrite(o);
     else if (auto o = dyn_cast<MapParticlesOp>(op))
       status = rewrite(o);
@@ -688,7 +703,7 @@ public:
           return fn.getSymName().starts_with((p.getSymName() + ".").str());
         });
         if (!derived || !llvm::any_of(fn.getBody().front(), [](Operation &op) {
-              return isa<NeighborhoodOp, SumTuplesOp, GatherTuplesOp>(op);
+              return isa<NeighborhoodOp, SumTuplesOp, GatherTuplesOp, ReciprocalOp>(op);
             })) continue;
         if (failed(Distributor(fn, divisions, kind, reach).run()))
           return signalPassFailure();

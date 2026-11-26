@@ -39,7 +39,8 @@ class DistributionLog {
   std::array<Clock::time_point, DistPhaseCount> starts;
   static constexpr const char *names[] = {"wall", "pairs", "other_terms",
       "halo_copy", "halo_sum", "all_reduce", "migration", "wait", "list_build",
-      "halo_pack", "halo_intra", "halo_inter", "integration", "output", "state", "halo_build"};
+      "halo_pack", "halo_intra", "halo_inter", "integration", "output", "state", "halo_build",
+      "pme_spread", "pme_overlap", "pme_fft", "pme_transpose", "pme_solve", "pme_gather"};
   int owner(int64_t d) const {
     auto q = domains / ranks, r = domains % ranks;
     return d < r * (q + 1) ? d / (q + 1) : r + (d - r * (q + 1)) / q;

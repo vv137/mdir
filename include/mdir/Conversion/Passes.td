@@ -820,6 +820,8 @@ def ConvertMDDistToLoops
                            "::mlir::scf::SCFDialect",
                            "::mlir::vector::VectorDialect"];
   let options = [
+    Option<"meshX", "mesh-x", "int64_t", "1", "First mesh-rank dimension">,
+    Option<"meshY", "mesh-y", "int64_t", "1", "Second mesh-rank dimension">,
     Option<"matrixSkin", "matrix-skin", "double", "0",
            "Verlet skin for the domain candidate rows">,
     Option<"matrixWidth", "matrix-width", "int64_t", "64",

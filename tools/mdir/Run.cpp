@@ -1088,7 +1088,35 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     return refuse(*control, std::move(error));
   auto program = buildProgram(*control, *system);
   if (!program)
-    return fail(program.takeError());
+    return control->distribution ? refuse(*control, program.takeError()) : fail(program.takeError());
+  if (control->distribution && program->pme) {
+    auto &dist = *control->distribution;
+    int64_t count = dist.pmeRanks ? dist.pmeRanks : ranks;
+    if (count > ranks && emit == Emit::Run)
+      return refuse(*control, llvm::createStringError("pme_ranks exceeds the transport rank count"));
+    auto &shape = dist.pmeDecomposition;
+    auto valid = [&](int64_t a, int64_t b) {
+      return program->pmeGrid[0]/a >= program->pmeOrder-1 &&
+             program->pmeGrid[1]/b >= program->pmeOrder-1 &&
+             program->pmeGrid[1] >= a && program->pmeGrid[2]/2+1 >= b;
+    };
+    if (!shape[0]) {
+      int64_t best = INT64_MAX;
+      for (int64_t d=1; d<=count/d; ++d) {
+        if (count%d) continue;
+        for (auto a : {d,count/d}) {
+          auto b = count/a;
+          int64_t cost = a*program->pmeGrid[1] + b*program->pmeGrid[0];
+          if (valid(a,b) && cost < best) { best=cost; shape={a,b}; }
+        }
+      }
+    }
+    if (!shape[0] || !valid(shape[0],shape[1]))
+      return refuse(*control, llvm::createStringError("PME decomposition leaves an empty FFT pencil or a pencil smaller than the assignment overlap"));
+    output.log.print("MDIR: PME mesh %lld x %lld x %lld, pencil decomposition %lld x %lld, %lld mesh ranks\n",
+      (long long)program->pmeGrid[0],(long long)program->pmeGrid[1],(long long)program->pmeGrid[2],
+      (long long)shape[0],(long long)shape[1],(long long)count);
+  }
   if (emit == Emit::Module) {
     llvm::outs() << printModuleForReading(*program);
     // The profile map is of the lowered program (D398).

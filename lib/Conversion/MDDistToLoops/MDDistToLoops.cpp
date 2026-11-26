@@ -93,6 +93,7 @@ public:
         throughExec(throughExec), width(width), cellsPerReach(cellsPerReach),
         haloEvents(haloEvents), mpi(mpi), parallelDomains(parallelDomains) {}
 
+  int64_t meshX = 1, meshY = 1;
   bool fixedPoint = false;
   bool matrixPairs = false;
   double matrixSkin = 0;
@@ -157,6 +158,7 @@ private:
   LogicalResult lowerPartition(PartitionOp op);
   LogicalResult lowerMigrate(MigrateOp op);
   LogicalResult lowerDistribute(DistributeOp op);
+  LogicalResult lowerMesh(MeshOp op);
   LogicalResult lowerCollect(CollectOp op);
   LogicalResult lowerRedistribute(RedistributeOp op);
   LogicalResult lowerHalo(HaloOp op);
@@ -794,6 +796,38 @@ LogicalResult Lowering::lowerDistribute(DistributeOp op) {
         b.getFunctionType(ValueRange(args).getTypes(), {}), true), args);
   }
   storage[op.getResult()].buffer = owned;
+  return success();
+}
+
+LogicalResult Lowering::lowerMesh(MeshOp op) {
+  OpBuilder b(op);
+  Value edges[3];
+  if (failed(getEdges(op, op.getCell(), edges))) return failure();
+  Storage &layout = storage[op.getLayout()];
+  Value forces = allocate(b, layout.capacity, 3);
+  auto sumsType = MemRefType::get({10}, b.getF64Type());
+  Value sums = allocate(b, sumsType, {});
+  Value table = mdrt::ToBufferOp::create(b, loc,
+      mdrt::getTableBufferType(cast<md::TableType>(op.getModuli().getType())), op.getModuli());
+  SmallVector<Value> args{layout.rows, domainBound(b, false), domainBound(b, true),
+      storage[op.getPositions()].buffer, storage[op.getCharges()].buffer, table, forces, sums};
+  llvm::append_range(args, edges);
+  args.append({real(b,op.getBeta().convertToDouble()), real(b,op.getCoulomb().convertToDouble())});
+  for (int64_t n : op.getGrid()) args.push_back(index(b,n));
+  for (int64_t n : {int64_t(op.getOrder()), meshX, meshY, int64_t(mpi), int64_t(fixedPoint)})
+    args.push_back(index(b,n));
+  auto solve = declare("mdrtDistPME",
+      b.getFunctionType(ValueRange(args).getTypes(), {}), true);
+  for (unsigned i : {0u, 3u, 4u, 5u})
+    solve.setArgAttr(i, "mdrt.read_only", b.getUnitAttr());
+  func::CallOp::create(b, loc, solve, args);
+  storage[op.getForces()].buffer = forces;
+  op.getEnergy().replaceAllUsesWith(memref::LoadOp::create(b,loc,sums,ValueRange{index(b,0)}));
+  SmallVector<Value> virial;
+  for (int i=1; i<=9; ++i)
+    virial.push_back(memref::LoadOp::create(b,loc,sums,ValueRange{index(b,i)}));
+  op.getVirial().replaceAllUsesWith(vector::FromElementsOp::create(b,loc,
+      op.getVirial().getType(), virial));
   return success();
 }
 
@@ -2767,6 +2801,7 @@ LogicalResult Lowering::lower(Operation *op) {
       .Case([&](PartitionOp o) { return lowerPartition(o); })
       .Case([&](MigrateOp o) { return lowerMigrate(o); })
       .Case([&](DistributeOp o) { return lowerDistribute(o); })
+      .Case([&](MeshOp o) { return lowerMesh(o); })
       .Case([&](CollectOp o) { return lowerCollect(o); })
       .Case([&](RedistributeOp o) { return lowerRedistribute(o); })
       .Case([&](HaloOp o) { return lowerHalo(o); })
@@ -3168,6 +3203,8 @@ public:
       return signalPassFailure();
     }
     lowering.matrixSkin = matrixSkin;
+    lowering.meshX = meshX;
+    lowering.meshY = meshY;
     lowering.fixedPoint = fixedPoint;
     lowering.matrixPairs = matrixPairs && !fixedPoint;
     SmallVector<func::FuncOp> functions(module.getOps<func::FuncOp>());

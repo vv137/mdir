@@ -359,6 +359,9 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
            ? "md-distribute-driver-steps{wrap-drift=true}," : "md-distribute-driver-steps,")
        << "md-exec-assign-algebra,"
        << "convert-md-dist-to-loops{halo-events=true";
+    if (program.pme && control.distribution->pmeDecomposition[0])
+      os << " mesh-x=" << control.distribution->pmeDecomposition[0]
+         << " mesh-y=" << control.distribution->pmeDecomposition[1];
     if (control.deterministic)
       os << " fixed-point=true";
     else

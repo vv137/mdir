@@ -2,6 +2,8 @@
    moves the intersections of two partitions. Keeping global x,y,z order
    inside every message makes packing and unpacking exact inverses. */
 #include "mdrt_pencils.h"
+#include "mdrt_dist_stats.h"
+extern void mdrtDistPhase(int64_t);
 #include "pocketfft.h"
 #ifdef MDIR_ENABLE_MPI
 #include "mdrt_mpi.h"
@@ -120,7 +122,9 @@ static void transpose(struct PmePencils *p, int from, int to,
     sent += ns[r];
     received += nr[r];
   }
+  mdrtDistPhase(DistTranspose);
   mdrtMPIExchange(p->send,ns,os,p->recv,nr,or,0);
+  mdrtDistPhase(-DistTranspose);
   for (int r = 0; r < p->peers; ++r)
     transfer(next,intersect(next,bounds(p,from,r)),dst,p->recv+or[r],0);
 #endif

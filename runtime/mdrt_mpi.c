@@ -199,3 +199,18 @@ void mdrtMPIForwardHalo(double *send, int *ns, int *os, double *recv, int *nr, i
     mdrtDistPhase(-DistInter);
   }
 }
+
+void mdrtMPIExchangeCounts(const int *send, int *recv) {
+  arrival();
+  MPI_Alltoall(send, 1, MPI_INT, recv, 1, MPI_INT, comm);
+}
+
+void mdrtMPIExchangeRecords(void *send, int *ns, int *os, void *recv,
+                            int *nr, int *or, int bytes) {
+  MPI_Datatype record;
+  MPI_Type_contiguous(bytes, MPI_BYTE, &record);
+  MPI_Type_commit(&record);
+  arrival();
+  MPI_Alltoallv(send, ns, os, record, recv, nr, or, record, comm);
+  MPI_Type_free(&record);
+}

@@ -240,6 +240,20 @@ struct TowersSetup {
 /// What a control file says. Lengths are in Å, energies in kcal/mol, times
 /// in ps, masses in amu, and temperatures in K.
 struct Control {
+  struct Distribution {
+    std::array<int64_t, 3> grid{1, 1, 1};
+    bool gridGiven = false, transportGiven = false, traversalGiven = false;
+    int64_t pmeRanks = 0;
+    std::array<int64_t, 2> pmeDecomposition{};
+    int64_t domains = 0; // Nonzero when the cell chooses the factorization.
+    std::string traversal = "directed";
+    std::string transport = "local";
+  };
+  std::optional<Distribution> distribution;
+  double getDistributionReach() const {
+    return distribution && distribution->traversal == "midpoint"
+               ? pairlistDistance - 0.5 * cutoffDistance : pairlistDistance;
+  }
   // [input]
   std::string pdbFile;
   /// A topology and the coordinates of Amber, in place of `pdbFile` and the
