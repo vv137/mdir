@@ -180,3 +180,8 @@ owned member rows for each disjoint constraint relation. Every projection
 holds a reference while it uses this schedule. On a single MPI rank the
 native and spatial permutations copy directly between row views, including
 integer conversion or position wrapping when required.
+
+The checkpoint execution fingerprint retains the configured
+`[execution] threads` value by maintainer decision. Changing the configured
+count changes that fingerprint and its dependent checksum. The physical
+checkpoint datasets remain bitwise equal across team sizes.
