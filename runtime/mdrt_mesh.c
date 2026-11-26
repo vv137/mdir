@@ -159,55 +159,61 @@ static struct Subgrid footprint(struct Particle *p, size_t count,
   size_t width = extent > 1024 ? extent : 1024;
   size_t blocks = count ? 1+(count-1)/width : 1;
   char *occupied = alloc(blocks,extent);
-  #pragma omp parallel for schedule(static) if(threaded && blocks > 1)
-  for (size_t b = 0; b < blocks; ++b) {
-    size_t end = (b+1)*width < count ? (b+1)*width : count;
-    for (size_t i = b*width; i < end; ++i) {
-      if (!p[i].q) continue;
-      size_t base = b*extent;
-      for (int a = 0; a < 3; ++a) {
-        occupied[base+p[i].first[a]] = 1;
-        base += n[a];
-      }
-    }
-  }
-  #pragma omp parallel for schedule(static) if(threaded && blocks > 1)
-  for (size_t j = 0; j < extent; ++j)
-    for (size_t b = 1; b < blocks; ++b) occupied[j] |= occupied[b*extent+j];
-  size_t base = 0;
-  for (int a = 0; a < 3; ++a) {
-    const char *used = occupied+base;
-    base += n[a];
-    int last = -1, first = -1, gap = 0;
-    for (int j = 0; j < n[a]; ++j)
-      if (used[j]) {
-        if (first < 0)
-          first = j;
-        else if (j - last - 1 > gap) {
-          gap = j - last - 1;
-          g.start[a] = j;
+  #pragma omp parallel if(threaded && count > 512)
+  {
+    #pragma omp for schedule(static)
+    for (size_t b = 0; b < blocks; ++b) {
+      size_t end = (b+1)*width < count ? (b+1)*width : count;
+      for (size_t i = b*width; i < end; ++i) {
+        if (!p[i].q) continue;
+        size_t base = b*extent;
+        for (int a = 0; a < 3; ++a) {
+          occupied[base+p[i].first[a]] = 1;
+          base += n[a];
         }
-        last = j;
       }
-    if (first < 0)
-      continue;
-    int cyclic = (n[a] - 1 - last) + first;
-    if (cyclic >= gap) {
-      gap = cyclic;
-      g.start[a] = first;
     }
-    g.len[a] = n[a] - (gap >= order ? gap - order + 1 : 0);
-    if (g.len[a] == n[a])
-      g.start[a] = 0;
+    #pragma omp for schedule(static)
+    for (size_t j = 0; j < extent; ++j)
+      for (size_t b = 1; b < blocks; ++b) occupied[j] |= occupied[b*extent+j];
+    #pragma omp single
+    {
+      size_t base = 0;
+      for (int a = 0; a < 3; ++a) {
+        const char *used = occupied+base;
+        base += n[a];
+        int last = -1, first = -1, gap = 0;
+        for (int j = 0; j < n[a]; ++j)
+          if (used[j]) {
+            if (first < 0)
+              first = j;
+            else if (j - last - 1 > gap) {
+              gap = j - last - 1;
+              g.start[a] = j;
+            }
+            last = j;
+          }
+        if (first < 0)
+          continue;
+        int cyclic = (n[a] - 1 - last) + first;
+        if (cyclic >= gap) {
+          gap = cyclic;
+          g.start[a] = first;
+        }
+        g.len[a] = n[a] - (gap >= order ? gap - order + 1 : 0);
+        if (g.len[a] == n[a])
+          g.start[a] = 0;
+      }
+    }
+    #pragma omp for schedule(static) nowait
+    for (size_t i = 0; i < count; ++i)
+      if (p[i].q)
+        for (int a = 0; a < 3; ++a) {
+          int x = p[i].first[a] - g.start[a];
+          p[i].first[a] = x < 0 ? x + n[a] : x;
+        }
   }
   free(occupied);
-  #pragma omp parallel for schedule(static) if(threaded && count > 512)
-  for (size_t i = 0; i < count; ++i)
-    if (p[i].q)
-      for (int a = 0; a < 3; ++a) {
-        int x = p[i].first[a] - g.start[a];
-        p[i].first[a] = x < 0 ? x + n[a] : x;
-      }
   return g;
 }
 
@@ -258,31 +264,37 @@ static void spreadFixed(const struct DomainMesh *local, size_t count,
   size_t width = nx > 512 ? (size_t)nx : 512;
   size_t blocks = count ? 1+(count-1)/width : 1;
   size_t *next = alloc(blocks,(size_t)nx*sizeof *next), *ids = alloc(count,sizeof *ids);
-  #pragma omp parallel for schedule(static) if(threaded && blocks > 1)
-  for (size_t b = 0; b < blocks; ++b) {
-    size_t end = (b+1)*width < count ? (b+1)*width : count;
-    for (size_t i = b*width; i < end; ++i)
-      if (p[i].q) ++next[b*nx+p[i].first[0]];
-  }
-  for (int x = 0; x < nx; ++x) {
-    size_t pos = offset[x];
+  #pragma omp parallel if(threaded && count > 512)
+  {
+    #pragma omp for schedule(static)
     for (size_t b = 0; b < blocks; ++b) {
-      size_t n = next[b*nx+x];
-      next[b*nx+x] = pos;
-      pos += n;
+      size_t end = (b+1)*width < count ? (b+1)*width : count;
+      for (size_t i = b*width; i < end; ++i)
+        if (p[i].q) ++next[b*nx+p[i].first[0]];
     }
-    offset[x+1] = pos;
-  }
-  #pragma omp parallel for schedule(static) if(threaded && blocks > 1)
-  for (size_t b = 0; b < blocks; ++b) {
-    size_t end = (b+1)*width < count ? (b+1)*width : count;
-    for (size_t i = b*width; i < end; ++i)
-      if (p[i].q) ids[next[b*nx+p[i].first[0]]++] = i;
+    #pragma omp single
+    {
+      for (int x = 0; x < nx; ++x) {
+        size_t pos = offset[x];
+        for (size_t b = 0; b < blocks; ++b) {
+          size_t n = next[b*nx+x];
+          next[b*nx+x] = pos;
+          pos += n;
+        }
+        offset[x+1] = pos;
+      }
+    }
+    #pragma omp for schedule(static)
+    for (size_t b = 0; b < blocks; ++b) {
+      size_t end = (b+1)*width < count ? (b+1)*width : count;
+      for (size_t i = b*width; i < end; ++i)
+        if (p[i].q) ids[next[b*nx+p[i].first[0]]++] = i;
+    }
+    #pragma omp for schedule(static) nowait
+    for (int x = 0; x < nx; ++x)
+      spreadFixedPlane(local, g, x, order, mixed, grid, offset, ids);
   }
   free(next);
-#pragma omp parallel for schedule(static) if (threaded)
-  for (int x = 0; x < nx; ++x)
-    spreadFixedPlane(local, g, x, order, mixed, grid, offset, ids);
   free(offset);
   free(ids);
 }
@@ -340,6 +352,50 @@ static void sumRow(int64_t *to, size_t dst, const int64_t *from,
   for (int k = 0; k < len; ++k)
     addCharge(to + dst + k, from[src + k]);
 }
+static inline void transferRow(struct Subgrid g, struct PmeBox b, const int n[3],
+    enum Move op, void *field, void *packet, struct Segment span[3][2],
+    const int parts[3], size_t base[2][2][2], int row, int col) {
+  const size_t width = sizeof(int64_t);
+  int i = row >= span[0][0].len, j = col >= span[1][0].len;
+  int u = row - (i ? span[0][0].len : 0), v = col - (j ? span[1][0].len : 0);
+  for (int k = 0; k < parts[2]; ++k) {
+    struct Segment x = span[0][i], y = span[1][j], z = span[2][k];
+    size_t local =
+        ((size_t)(x.local + u) * g.len[1] + y.local + v) * g.len[2] +
+        z.local;
+    size_t pencil =
+        ((size_t)(x.global + u - b.lo[0]) * (b.hi[1] - b.lo[1]) +
+         y.global + v - b.lo[1]) *
+            n[2] +
+        z.global;
+    size_t atPacket = base[i][j][k] + ((size_t)u * y.len + v) * z.len;
+    switch (op) {
+    case PackCharge:
+    case PackPotential: {
+      size_t at = op == PackCharge ? local : pencil;
+      memcpy((char *)packet + atPacket * width,
+             (char *)field + at * width, z.len * width);
+      break;
+    }
+    case SumCharge:
+      sumRow(field, pencil, packet, atPacket, z.len);
+      break;
+    case AddLocalCharge:
+      sumRow(packet, pencil, field, local, z.len);
+      break;
+    case UnpackPotential:
+    case CopyLocalPotential: {
+      size_t at = op == CopyLocalPotential ? pencil : atPacket;
+      memcpy((double *)field + local, (double *)packet + at,
+             z.len * sizeof(double));
+      break;
+    }
+    case Count:
+      break;
+    }
+  }
+}
+
 static size_t transfer(struct Subgrid g, struct PmeBox b, const int n[3],
                        enum Move op, void *field, void *packet,
                        int threaded) {
@@ -354,7 +410,6 @@ static size_t transfer(struct Subgrid g, struct PmeBox b, const int n[3],
   }
   if (op == Count)
     return count;
-  size_t width = sizeof(int64_t);
   size_t offset = 0, base[2][2][2];
   for (int i = 0; i < parts[0]; ++i)
     for (int j = 0; j < parts[1]; ++j)
@@ -364,48 +419,16 @@ static size_t transfer(struct Subgrid g, struct PmeBox b, const int n[3],
       }
   int nx = span[0][0].len + (parts[0] == 2 ? span[0][1].len : 0);
   int ny = span[1][0].len + (parts[1] == 2 ? span[1][1].len : 0);
-  #pragma omp parallel for collapse(2) schedule(static) if(threaded && count >= 2048)
-  for (int row = 0; row < nx; ++row)
-    for (int col = 0; col < ny; ++col) {
-      int i = row >= span[0][0].len, j = col >= span[1][0].len;
-      int u = row - (i ? span[0][0].len : 0), v = col - (j ? span[1][0].len : 0);
-      for (int k = 0; k < parts[2]; ++k) {
-        struct Segment x = span[0][i], y = span[1][j], z = span[2][k];
-        size_t local =
-            ((size_t)(x.local + u) * g.len[1] + y.local + v) * g.len[2] +
-            z.local;
-        size_t pencil =
-            ((size_t)(x.global + u - b.lo[0]) * (b.hi[1] - b.lo[1]) +
-             y.global + v - b.lo[1]) *
-                n[2] +
-            z.global;
-        size_t atPacket = base[i][j][k] + ((size_t)u * y.len + v) * z.len;
-        switch (op) {
-        case PackCharge:
-        case PackPotential: {
-          size_t at = op == PackCharge ? local : pencil;
-          memcpy((char *)packet + atPacket * width,
-                 (char *)field + at * width, z.len * width);
-          break;
-        }
-        case SumCharge:
-          sumRow(field, pencil, packet, atPacket, z.len);
-          break;
-        case AddLocalCharge:
-          sumRow(packet, pencil, field, local, z.len);
-          break;
-        case UnpackPotential:
-        case CopyLocalPotential: {
-          size_t at = op == CopyLocalPotential ? pencil : atPacket;
-          memcpy((double *)field + local, (double *)packet + at,
-                 z.len * sizeof(double));
-          break;
-        }
-        case Count:
-          break;
-        }
-      }
-    }
+  if (threaded && (size_t)nx * ny >= 128) {
+    #pragma omp parallel for collapse(2) schedule(static)
+    for (int row = 0; row < nx; ++row)
+      for (int col = 0; col < ny; ++col)
+        transferRow(g, b, n, op, field, packet, span, parts, base, row, col);
+  } else {
+    for (int row = 0; row < nx; ++row)
+      for (int col = 0; col < ny; ++col)
+        transferRow(g, b, n, op, field, packet, span, parts, base, row, col);
+  }
   return count;
 }
 static int append(size_t *total, size_t count) {

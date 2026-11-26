@@ -1376,3 +1376,10 @@ subtotal and the rank adds the planes in order. In deterministic mode each
 mode contributes a rounded word before that sum. A change of pencil
 layout can therefore regroup these words without changing their total
 (D[distribute-cpu-threads]).
+
+In the distributed CPU spread, a team marks occupied grid indices in
+block-private storage, combines the marks by grid index, and translates
+particle stencil starts into the compact footprint. A second team counts
+and scatters particles by starting plane and computes the output planes.
+The prefix scan visits blocks in particle order, so changing the team size
+preserves the incident-particle order within each plane.

@@ -71,3 +71,9 @@ The launcher determines process placement. For threaded PME the launch
 recommendation is one rank per NUMA node, with its OpenMP threads bound
 within the node. An explicit domain count or factor grid overrides the
 particle grid independently of the mesh pencil count.
+
+For distributed PME, each domain uses one OpenMP team to find its charge
+footprint and another to bin particles and spread charge. A single worker
+scans the block counts in order. Each output plane has one writer. Both
+teams use a particle-row threshold of 512. Mesh overlap transfers execute
+serially below 128 intersecting rows.
