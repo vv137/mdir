@@ -511,3 +511,53 @@ field, the single-domain MATRIX can search at the epoch reference
 coordinates. The candidate radius is the cutoff plus the halo margin.
 The pair evaluation uses current positions. For other cached layouts the
 search still uses current positions with twice that margin.
+
+### Mixed trajectory acceptance
+
+For each protein, fix two ordinary mixed runs $O_1,O_2$ with identical
+coordinates, velocities, seed, reaction-field parameters and 2 fs step.
+For potential energy and scalar virial separately, define the scale
+$S_Q=\max_{0\le t\le204}|O_{1,Q}(t)-O_{2,Q}(t)|$, where $t$ indexes
+the frame. On Factor IX the scales were 0.596020 and 3.772862 kcal/mol.
+Another ordinary run differed from the first reference by 0.639589 and
+4.957110 kcal/mol. Using the reference pair alone as the acceptance
+limit would reject this ordinary control.
+
+Run 19 additional pairs through the ordinary executor. For each pair
+$C$ compute the single score
+$M(C)=\max_{j,Q,t}|C_{j,Q}(t)-O_{j,Q}(t)|/S_Q$. The maximum includes
+the initial frame, all 204 subsequent frames, both repetitions and both
+quantities. Fix the acceptance multiplier $K$ at the largest of the 19
+ordinary scores. If ordinary blocks are exchangeable, a new block has
+probability at most $1/20$ of exceeding all 19 calibration scores.
+This is a prediction threshold for one layout. It does not require
+independent frames. Candidate results have no role in setting $K$.
+
+Two distributed repetitions $D_1,D_2$ pass a layout together when
+$M(D)\le K$. Equivalently, the potential and virial maxima must each
+lie within $K S_Q$. The script in
+`scripts/validation/distributed/trajectory.py` checks the frame indices,
+times, and both traces and reports the frame and repetition of each peak.
+For the frozen Factor IX gate, run the following command with the two
+new distributed files in repetition order.
+
+```sh
+python scripts/validation/distributed/trajectory.py --system factorix distributed1.dat distributed2.dat
+```
+
+Use `--system jac-rf` for JAC-RF. The two accompanying data files hold
+the ordinary potential and virial at each frame. Passing the original
+energy files with `--reference` also verifies their hashes and order.
+The checker exits with status 1 when either quantity
+exceeds its limit. Supplying 19 ordinary pairs with `--control`
+reproduces the calibration for a specified reference pair.
+
+| System | Ordinary spread, potential / virial (kcal/mol) | $K$ | Limits, potential / virial (kcal/mol) |
+|---|---:|---:|---:|
+| Factor IX | 0.596020 / 3.772862 | 2.052090 | 1.223086 / 7.742251 |
+| JAC-RF | 0.057902 / 0.630265 | 1.742703 | 0.100906 / 1.098365 |
+
+The single-domain reference-list implementation exceeded both Factor IX
+limits at one, two, four and eight domains. Its two-domain peaks were
+2.958531 and 9.855857 kcal/mol. On JAC-RF the one-domain virial reached
+1.522593 kcal/mol. Both quantities passed on two, four and eight domains.

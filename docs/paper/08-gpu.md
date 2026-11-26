@@ -1372,3 +1372,20 @@ sides of that evaluation. The force and energy kernels use current
 coordinates in either case. On the same allocation the reference search
 reduced Factor IX double from 6.014 to 5.625 ms/step and JAC-RF double
 from 3.455 to 3.346 ms/step.
+
+For mixed trajectories we measure the ordinary repetition spread for
+potential and virial separately. Each spread is the largest absolute
+difference between two ordinary repetitions over frames 0 through 204
+at 2 fs. We compare 19 more ordinary pairs against those same references.
+For each pair we take the largest difference divided by the corresponding
+spread over both quantities, both repetitions and all frames. The largest
+of these 19 scores sets the limit for one new pair. This gives joint
+coverage of at least 19/20 for a new ordinary pair if the pairs are
+exchangeable. Distributed trajectories are scored against the same
+references in repetition order.
+
+The Factor IX potential and virial limits were 1.223086 and 7.742251
+kcal/mol. All four layouts exceeded both limits. At two domains the
+maxima were 2.958531 and 9.855857 kcal/mol. The JAC-RF limits were
+0.100906 and 1.098365 kcal/mol. The single-domain virial reached
+1.522593 kcal/mol. Both quantities passed on two, four and eight domains.
