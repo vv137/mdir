@@ -1732,8 +1732,8 @@ Distributed velocity Verlet requires a fixed periodic orthorhombic cell
 and positive skin. For topology inputs, unique and midpoint traversal
 support NVE and NVT with the V-rescale thermostat. Midpoint schedules bonded
 interactions and 1–4 corrections by topology row and filters exclusions by
-atom identity. Hydrogen groups and rigid waters migrate together. Reciprocal
-space needs a distributed mesh. Analytic EAM has an IR oracle in ML2
+atom identity. Hydrogen groups and rigid waters migrate together.
+Electrostatic PME uses the distributed mesh described below. Analytic EAM has an IR oracle in ML2
 Section 15.
 
 The setup log and the manifest start event give the requested domain count,

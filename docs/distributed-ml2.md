@@ -1131,7 +1131,7 @@ pass refuses, naming the reason, what it cannot distribute:
 | Refused | Why |
 |---|---|
 | `exclude(...)`, `md.sum_tuples`, `md.gather_tuples` | Tuples need the topology across domains (stage 2 of #31) |
-| `md.reciprocal` | It needs a decomposition of its grid (stage 3) |
+| `md.reciprocal` | The CPU electrostatic solve on differentiated topology functions uses `md_dist.mesh` (D[distribute-pme]). |
 | A sum or map that reads the positions as a field | The owned positions are wrapped into the cell, so a term of the absolute positions would change |
 | A contract that rests on an assertion and cannot be proven | `md_dist` proves every contract (V8) |
 | A gather without a contract, on `unique` | The value at the second particle comes from the contract |

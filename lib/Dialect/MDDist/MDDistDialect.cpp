@@ -638,6 +638,28 @@ LogicalResult DecompositionOp::verify() {
   return success();
 }
 
+LogicalResult MeshOp::verify() {
+  auto x = getPositions().getType(), q = getCharges().getType();
+  if (!x.isOwned() || x.getPartial() || x.getNumComponents() != 3 ||
+      !x.getElementType().isF64() || getForces().getType() != x)
+    return emitOpError("expected complete owned three-component positions and forces");
+  if (!q.isOwned() || q.getPartial() || q.getNumComponents() != 1 ||
+      !q.getElementType().isF64() ||
+      x.getDecomposition() != getLayout().getType().getDecomposition() ||
+      q.getDecomposition() != x.getDecomposition())
+    return emitOpError("charges and positions must belong to the mesh input layout");
+  if ((layoutOf(getCharges()) && layoutOf(getCharges()) != getLayout()) ||
+      (layoutOf(getPositions()) && layoutOf(getPositions()) != getLayout()))
+    return emitOpError("charge and position rows must come from the same layout epoch");
+  auto table = getModuli().getType();
+  if (table.getRank() != 2 || !table.getElementType().isF64())
+    return emitOpError("expected a rank-two f64 table of influence factors");
+  if (getOrder() < 3 || getOrder() > 8 || getGrid().size() != 3 ||
+      llvm::any_of(getGrid(), [&](int64_t n) { return n < int64_t(getOrder()) || n > INT32_MAX; }))
+    return emitOpError("expected three mesh lengths covering the assignment window");
+  return success();
+}
+
 int64_t DecompositionOp::getNumDomains() {
   int64_t count = 1;
   for (int64_t n : getGrid())

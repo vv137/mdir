@@ -1299,11 +1299,11 @@ The u-series gives a different smooth decomposition using Gaussians
 ### Distributed electrostatic PME (D[distribute-pme])
 
 In a fixed periodic cell the reciprocal electrostatic energy is the
-quadratic form $U=\tfrac12(TSq)^*G(TSq)$ on the full spectrum. Here
+quadratic form $U=\tfrac12\langle\mathcal F Sq,G\mathcal F Sq\rangle_\mathrm H$ on the half-spectrum. Here
 $S_{ji}$ is the product of the three assignment weights at mesh point
 $j$ for charge $q_i$. Differentiation with respect to the charge grid
-gives the potential $T^*GTSq$. Differentiation with respect to particle
-position gives $\mathbf F_i=-q_i\sum_j (T^*GTSq)_j\nabla_i S_{ji}$.
+gives the potential $\mathcal F^\dagger G\mathcal F Sq$. Differentiation with respect to particle
+position gives $\mathbf F_i=-q_i\sum_j (\mathcal F^\dagger G\mathcal F Sq)_j\nabla_i S_{ji}$.
 The inverse transform in this convention is unnormalized. The
 strain derivative at fixed fractional coordinates differentiates the
 volume and wave vectors in $G$, giving the mode virial of Section 5.
@@ -1324,7 +1324,7 @@ for the $x$ transform. Each message contains the intersection of a
 source and a destination box. This partitions every coefficient exactly
 once even for unequal pencil widths. Multiplying by $G$ in this layout
 avoids a third forward transpose. Interior $z$ frequencies have
-multiplicity two in the quadratic form; zero and an even grid's Nyquist
+multiplicity two in the quadratic form. Zero and an even grid's Nyquist
 plane have multiplicity one. Reversing the two transposes and three
 transforms reconstructs the real potential.
 
