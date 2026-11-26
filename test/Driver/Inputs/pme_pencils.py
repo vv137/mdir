@@ -24,6 +24,38 @@ for func in (lib.mdrtPmeForward, lib.mdrtPmeBackward):
     func.restype = None
 lib.mdrtPmeFreePencils.argtypes = [c.c_void_p]
 lib.mdrtPmeFreePencils.restype = None
+class FloatBuffer(c.Structure):
+    _fields_ = [("allocated", c.POINTER(c.c_float)), ("aligned", c.POINTER(c.c_float)),
+                ("offset", c.c_int64), ("size", c.c_int64), ("stride", c.c_int64)]
+
+    @classmethod
+    def wrap(cls, array):
+        return cls(array, array, 0, len(array), 1)
+
+
+def mixed_inverse(shape, px, py, mpi):
+    # Compare at binary32 storage precision after each inverse axis.
+    nx, ny, nz = shape
+    half = nz // 2 + 1
+    packed = (c.c_float * (2 * nx * ny * half))(
+        *(math.sin(i * 0.31) for i in range(2 * nx * ny * half)))
+    ref = (c.c_float * (nx * ny * nz))()
+    mesh = lib.mdrtPmePencils(*shape, px, py, 4, mpi, 1)
+    modes = lib.mdrtPmeSpectrumBox(mesh).points()
+    pairs = [packed[2*((x*ny + y)*half + z) + k]
+             for x, y, z in modes for k in range(2)]
+    local = (c.c_double * len(pairs))(*pairs)
+    rows = list(lib.mdrtPmeRealBox(mesh).points())
+    result = (c.c_double * len(rows))()
+    ordinary = lib._mlir_ciface_mdrtFFT32Backward3D
+    ordinary.argtypes = [c.POINTER(FloatBuffer)] * 2 + [c.c_int64] * 3
+    ordinary.restype = None
+    ordinary(c.byref(FloatBuffer.wrap(packed)), c.byref(FloatBuffer.wrap(ref)), *shape)
+    lib.mdrtPmeBackward(mesh, local, result)
+    assert list(result) == [ref[(x*ny + y)*nz + z] for x, y, z in rows]
+    lib.mdrtPmeFreePencils(mesh)
+
+
 px, py, mpi = map(int, sys.argv[2:5])
 nx, ny = 9, 13
 for nz in (11, 12):
@@ -48,3 +80,4 @@ for nz in (11, 12):
     assert inverse_error < 8e-16, inverse_error
     print(f"{shape} {px}x{py} modes={len(modes)} DFT={error:.8g} inverse={inverse_error:.8g}")
     lib.mdrtPmeFreePencils(mesh)
+    mixed_inverse(shape, px, py, mpi)

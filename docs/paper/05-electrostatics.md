@@ -1325,8 +1325,11 @@ source and a destination box. This partitions every coefficient exactly
 once even for unequal pencil widths. Multiplying by $G$ in this layout
 avoids a third forward transpose. Interior $z$ frequencies have
 multiplicity two in the quadratic form. Zero and an even grid's Nyquist
-plane have multiplicity one. Reversing the two transposes and three
-transforms reconstructs the real potential.
+plane have multiplicity one. In double precision the inverse reverses the two transposes and three
+transforms. The mixed inverse redistributes the spectrum to $y$ pencils
+first, then transforms along $y$, $x$ and $z$. These transforms commute
+in exact arithmetic. The ordinary CPU path rounds after each axis in
+this order, so exchanging the inverse axes changes the rounded potential.
 
 Each particle-to-point contribution is quantized once at $2^{-40}$ e.
 Integer summation at the owner bounds the point's quantization error by

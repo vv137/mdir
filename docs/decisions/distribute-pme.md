@@ -24,9 +24,13 @@ preserve cancellation.
 Forward transforms run along $z$, then $y$, then $x$. Two all-to-all
 transposes deliver complete pencils to the next axis. The influence,
 energy and virial use the resulting $x$ pencils, including the Hermitian
-multiplicity. The inverse reverses these stages. Returning the potential
-along the reversed subgrid exchange supplies every stencil of an owned
-particle. Only pencil data and overlap points move between mesh owners.
+multiplicity. The double inverse reverses these stages. Mixed precision
+transforms $y$, then $x$, then $z$ on the inverse, redistributing the
+spectrum first so each axis rounds in ordinary CPU order. Returning the
+potential along the reversed subgrid exchange supplies every stencil of
+an owned particle. Mixed assignment computes the fractional coordinate from
+the input image, avoiding a second periodic subtraction at a binary32
+rounding boundary. Only pencil data and overlap points move between mesh owners.
 
 In deterministic mode each Fourier mode contributes a Q32 energy and
 virial word per observable component. Mesh ranks sum in signed 128-bit

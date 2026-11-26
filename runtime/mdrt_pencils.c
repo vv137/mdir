@@ -248,13 +248,22 @@ void mdrtPmeForward(struct PmePencils *p, const double *real,
 void mdrtPmeBackward(struct PmePencils *p, const double *spectrum,
                      double *real) {
   memcpy(p->a, spectrum, 2 * volume(bounds(p, 0, p->rank)) * sizeof(double));
-  complexLines(p, 0, p->a, 0);
-  transpose(p, 0, 1, p->a, p->b);
-  complexLines(p, 1, p->b, 0);
-  transpose(p, 1, 2, p->b, p->a);
+  /* The ordinary mixed inverse rounds after y, then x, then z.  Matching
+     that order requires one redistribution before the first inverse line. */
+  int first = p->mixed ? 1 : 0, second = 1 - first;
+  double *src = p->a, *dst = p->b;
+  if (p->mixed) {
+    transpose(p, 0, 1, src, dst);
+    src = p->b;
+    dst = p->a;
+  }
+  complexLines(p, first, src, 0);
+  transpose(p, first, second, src, dst);
+  complexLines(p, second, dst, 0);
+  transpose(p, second, 2, dst, src);
   int n = p->n[2], h = n / 2 + 1, rows = volume(bounds(p, 2, p->rank)) / h;
   for (int row = 0; row < rows; ++row) {
-    const double *in = p->a + 2 * (size_t)row * h;
+    const double *in = src + 2 * (size_t)row * h;
     p->line[0] = in[0];
     for (int z = 1; z < h; ++z) {
       p->line[2 * z - 1] = in[2 * z];
