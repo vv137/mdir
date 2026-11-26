@@ -1113,9 +1113,12 @@ $n$ and the factor $\prod_a\hat U^{-2}(k_a/K_a)$ that this window takes.
 Let $\mathcal G(\mathbf m) = \hat\chi(2\pi r_c\lvert\mathbf m\rvert)/m^2$, the
 reciprocal kernel $C(\mathbf m)$ of Section 5.6 without $f/\pi V$, and let
 $\varrho_\mathbf J(\mathbf k) = \prod_a\hat U(\nu_a/K_a)/\hat U(k_a/K_a)
-= \prod_a\big(k_a/(k_a + J_aK_a)\big)^n$ be the ratio of the window's
-transforms at alias $\mathbf J$ and at the point itself, so that
-$\varrho_\mathbf 0 = 1$. Poisson summation writes the transform of the
+= \prod_a(-1)^{J_an}\big(k_a/(k_a + J_aK_a)\big)^n$ be the ratio of the
+window's transforms at alias $\mathbf J$ and at the point itself, so that
+$\varrho_\mathbf 0 = 1$. The sign $(-1)^{J_an}$, from
+$\sin(\pi k_a/K_a + \pi J_a) = (-1)^{J_a}\sin(\pi k_a/K_a)$, is $+1$ at
+the even orders and drops in any case: only $\varrho_\mathbf J^2$ enters
+$Q$ below. Poisson summation writes the transform of the
 spread charges at $\mathbf k$ as $\sum_\mathbf J\hat U(\boldsymbol\nu)
 S(\tilde{\mathbf m}_\mathbf J)$, with $S$ the structure factor of the
 charges. The forces are the gradient of the mesh energy, so the force that
@@ -1206,8 +1209,7 @@ $\eta$. For the prolate density with this window the bound is $\eta/2$,
 since the cut of $\hat\chi$ at the band leaves the floor of 0.6 to
 $0.9\,\eta$ that $E_A$'s bound also allows for. The grid is found by
 bisection in the spacing, with each size the smallest even 7-smooth number
-at or above $L_a/h$, as for every automatic grid. Every such size up to 488
-also meets the factor rule of the axis transform (D435). A bound not met at
+at or above $L_a/h$, as for every automatic grid. A bound not met at
 eight times the grid of eq. 15 is refused with what to do. The estimate is
 recorded for every grid of this window, given or chosen. The log gives it
 with the bound and the source of the grid. The manifest records it as

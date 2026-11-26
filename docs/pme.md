@@ -1454,7 +1454,9 @@ $\eta = 10^{-5}$ the grid of JAC is 216³, and that of Cellulose 882 × 420 ×
 the measurement, and gives the reference value of $E_B$ that
 `test/Driver/prolate-function.test` checks;
 `test/Driver/prolate-bspline-grid*.test` checks the rule on uncorrelated
-charges.
+charges, the error against the tolerance and against the $E_B$ of the
+manifest, and `test/Driver/prolate-bspline-manifest.test` the fields of the
+manifest and the log.
 
 ### Prototype measurements
 

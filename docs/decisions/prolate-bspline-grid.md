@@ -45,7 +45,14 @@ the error of the reciprocal force is 1.10 to 1.19 times $E_B$ at $c$ =
 `prolate-bspline-grid.test` and `prolate-bspline-grid-gpu.test` check
 on 400 such charges at $10^{-3}$ and $10^{-4}$, in mixed and double
 precision, that the grid of eq. 15 misses the tolerance (8.1 and 7.3 ×
-10⁻³) and that the automatic grid meets it (0.77 and 1.12 times it). On
+10⁻³) and that the automatic grid meets it (0.77 and 1.12 times it, in
+0.7 to 1.3), with an error 1.29 and 1.35 times the $E_B$ of the manifest
+(in 1.1 to 1.55; the excess is larger on fewer charges). An $E_B$ doubled
+in the driver fails both (0.52 and 0.58 times $\eta$, 0.66 and 0.69 times
+the doubled $E_B$). `prolate-bspline-manifest.test` checks the three
+fields of the manifest and the log for the automatic grid, a given grid,
+and `max_spacing`, and the bound $\eta/2$ for continuity 0 with this
+window; `prolate-control.test` that a given grid at $10^{-9}$ runs. On
 the Coulomb forces of TIP3P water (9,989 atoms), JAC, Factor IX, and
 Cellulose, against the Gaussian kernel in double precision at
 $\mathrm{erfc}(\beta r_c) = 10^{-10}$, order 8, and 0.5 Å (which agrees with

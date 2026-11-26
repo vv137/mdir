@@ -156,7 +156,8 @@ double evaluatePolynomialInfluence(const Influence &influence, double k);
 /// this scheme [Ballenegger2012], and R the mean square of the exact
 /// reciprocal force between them. With k_j = (n + jK)/L the images of the
 /// mode n of the grid (j = 0 the mode itself), ρ_j = Π_a (n_a/(n_a +
-/// j_a K_a))^p the ratio of the window's transforms, and G(k) =
+/// j_a K_a))^p the ratio of the window's transforms (up to the sign
+/// (−1)^{j_a p}, which ρ² drops), and G(k) =
 /// χ̂(2π r_c |k|)/|k|²,
 ///   Q = Σ_n [Σ_{j≠0} (ρ_j² G(n) − G(k_j))² |k_j|²
 ///            + G(n)² Σ_{j≠l} ρ_j² ρ_l² |k_l|²],
