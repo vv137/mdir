@@ -1101,5 +1101,152 @@ the inverse transform. The Gaussian product in the inverse-load callback
 reciprocal force for this split. Both prolate windows therefore use the
 separate radial product, including under automatic FFT selection.
 
+**The grid of the B-spline window (D[prolate-bspline-grid]).** The
+estimate $E_A$ of the prolate window covers neither this window nor the
+constrained density, whose transform the reciprocal sum takes at every
+wave vector. Without a rule of its own the automatic grid stayed at the
+spacing of eq. 15, and $\Delta$ stayed at 1.7 to 3.6 × 10⁻³ for every
+$\eta$ (#985). The estimate below follows the derivation of the influence
+function optimal for the forces (Section 5.2), with the B-spline of order
+$n$ and the factor $\prod_a\hat U^{-2}(k_a/K_a)$ that this window takes.
+
+Let $\mathcal G(\mathbf m) = \hat\chi(2\pi r_c\lvert\mathbf m\rvert)/m^2$, the
+reciprocal kernel $C(\mathbf m)$ of Section 5.6 without $f/\pi V$, and let
+$\varrho_\mathbf J(\mathbf k) = \prod_a\hat U(\nu_a/K_a)/\hat U(k_a/K_a)
+= \prod_a\big(k_a/(k_a + J_aK_a)\big)^n$ be the ratio of the window's
+transforms at alias $\mathbf J$ and at the point itself, so that
+$\varrho_\mathbf 0 = 1$. Poisson summation writes the transform of the
+spread charges at $\mathbf k$ as $\sum_\mathbf J\hat U(\boldsymbol\nu)
+S(\tilde{\mathbf m}_\mathbf J)$, with $S$ the structure factor of the
+charges. The forces are the gradient of the mesh energy, so the force that
+charge $j$ exerts on charge $i$ is a sum over $\mathbf k$, $\mathbf J$
+(from $i$) and $\mathbf J'$ (from $j$) of
+$\mathcal G(\tilde{\mathbf m}_\mathbf 0)\varrho_\mathbf J\varrho_{\mathbf J'}
+\,2\pi i\tilde{\mathbf m}_\mathbf J\,e^{2\pi i(\tilde{\mathbf m}_\mathbf J\cdot
+\mathbf x_i - \tilde{\mathbf m}_{\mathbf J'}\cdot\mathbf x_j)}$. Hold the
+separation $\mathbf r = \mathbf x_i - \mathbf x_j$ fixed and average over
+the place of the pair in a cell of the grid. A term with $\mathbf J =
+\mathbf J'$ depends on $\mathbf r$ alone: it is the mean force, whose
+transform at $\tilde{\mathbf m}_\mathbf J$ is
+$\varrho_\mathbf J^2\mathcal G(\tilde{\mathbf m}_\mathbf 0)$ in place of
+$\mathcal G(\tilde{\mathbf m}_\mathbf J)$. A term with $\mathbf J \ne
+\mathbf J'$ carries the phase $e^{2\pi i(\tilde{\mathbf m}_\mathbf J -
+\tilde{\mathbf m}_{\mathbf J'})\cdot\mathbf x_i}$ on top. Its wave vector
+$(\mathbf J - \mathbf J')\odot\mathbf K\oslash\mathbf L$ is one of the
+reciprocal lattice of the grid, so its mean over a cell of the grid is
+zero, and two such terms of different $\mathbf J - \mathbf J'$ are
+orthogonal there. Parseval's identity
+over $\mathbf r$ then gives the mean-square error of the pair force,
+integrated over the separation, [[HockneyEastwood1988]](references.md#hockneyeastwood1988)
+[[Ballenegger2012]](references.md#ballenegger2012):
+
+$$
+Q = \sum_\mathbf k\Big[\sum_{\mathbf J\ne\mathbf 0}
+\big(\varrho_\mathbf J^2\mathcal G(\tilde{\mathbf m}_\mathbf 0) - \mathcal G(\tilde{\mathbf m}_\mathbf J)\big)^2
+\tilde m_\mathbf J^2
++ \mathcal G(\tilde{\mathbf m}_\mathbf 0)^2\sum_{\mathbf J\ne\mathbf J'}
+\varrho_\mathbf J^2\varrho_{\mathbf J'}^2\tilde m_\mathbf J^2\Big],
+\qquad
+R = \sum_\mathbf k\sum_\mathbf J\mathcal G(\tilde{\mathbf m}_\mathbf J)^2\tilde m_\mathbf J^2 ,
+$$
+
+where $R$ is the same integral of the exact reciprocal pair force. The
+first sum vanishes at $\mathbf J = \mathbf 0$, where the factor
+$\hat U^{-2}$ restores the mean force exactly. It holds the force of the
+wave vectors beyond the grid, which the mesh replaces by
+$\varrho_\mathbf J^2\mathcal G(\tilde{\mathbf m}_\mathbf 0)$. Near the
+Nyquist point the mirror alias has $\varrho \to 1$ and nearly the same
+$\mathcal G$, so that most of that force is kept. The second sum holds the
+fluctuations. Its terms with $\mathbf J' = \mathbf 0$, the gradient at an
+alias times the charges at $\mathbf k$, dominate: along an axis with
+$J_a \ne 0$, $\varrho^2\tilde m^2 \approx k_a^{2n}(J_aK_a)^{2-2n}/L_a^2$,
+which at a fixed wave vector falls as $h^{2n-2}$, $h$ the spacing.
+The estimate is
+
+$$
+E_B = \sqrt{Q/R},
+$$
+
+the expected error of the reciprocal force between two charges at
+uncorrelated places, relative to that force. In a cell of edges $L_a$,
+$\tilde m_{a,J} = (k_a + J_aK_a)/L_a$; a tilted cell takes the lengths of
+its vectors, as $E_A$ does. The builder sums $\lvert J_a\rvert \le 1$ over
+$0 \le k_a \le K_a/2$, since the summand is even in each $k_a$ when $J_a$
+changes sign; $\lvert J_a\rvert \le 2$ changes $E_B$ by 0.3 to 0.6% (JAC,
+$c$ = 9.5392, 24³ to 120³). $\hat\chi$ is the one the kernels take: the transform
+of the constrained density in full (its Hermite table below $k = 512$ and
+its endpoint expansion beyond), or, for the prolate density with this
+window, $\lambda_0\psi_0^c(k/c)/(2C_0)$ within the band and 0 beyond. The
+sum is checked against a NumPy sum over the whole grid with its own
+density and quadrature to $10^{-6}$ (`test/Driver/prolate-function.test`).
+On 1200 charges $\pm1$ at uncorrelated places in a cube of 40 Å
+($r_c$ = 9 Å, $c$ = 9.5392 and 14.471, one to three times the grid of eq.
+15), the error of the reciprocal force, measured against a grid six times
+that of eq. 15, is 1.10 to 1.19 times $E_B$.
+
+The charges of a molecular system are correlated. The charges of a
+neutral molecule cancel at small wave vectors, which shrinks the dominant
+fluctuations, the gradient at an alias times the charges at the point
+$\mathbf k$ itself. $\Delta$ is also measured against the Coulomb forces of
+the topology rather than the reciprocal forces. Over grids of one to three
+times eq. 15 (TIP3P water of 9,989 atoms, JAC, Factor IX, Cellulose; $\eta$
+from $10^{-3}$ to $10^{-5}$), $\Delta/E_B$ ranges from 0.2 to 1.7. As the
+grid is refined it grows at $c = 9.5392$, where the tail
+$\propto\chi''(1)/k^3$ of $\hat\chi$ makes the force beyond the grid a
+larger part of the error, and falls at $c = 14.471$.
+
+The automatic grid is the coarsest at one spacing for the three edges,
+between that of eq. 15 and eight times finer, whose $E_B$ is at most
+$\eta$. For the prolate density with this window the bound is $\eta/2$,
+since the cut of $\hat\chi$ at the band leaves the floor of 0.6 to
+$0.9\,\eta$ that $E_A$'s bound also allows for. The grid is found by
+bisection in the spacing, with each size the smallest even 7-smooth number
+at or above $L_a/h$, as for every automatic grid. Every such size up to 488
+also meets the factor rule of the axis transform (D435). A bound not met at
+eight times the grid of eq. 15 is refused with what to do. The estimate is
+recorded for every grid of this window, given or chosen. The log gives it
+with the bound and the source of the grid. The manifest records it as
+`aliasing_estimate`, with `aliasing_bound` and `grid_source`.
+
+| System ($r_c$) | $\eta$ | Eq. 15: grid, $\Delta$ | Automatic: grid, $E_B$, $\Delta$ | $\Delta/\eta$ |
+|---|---|---|---|---|
+| TIP3P 9,989 atoms (9 Å) | $10^{-3}$ | 16³, 2.05e-3 | 30³, 1.0e-3, 6.57e-4 | 0.66 |
+| | $10^{-4}$ | 20³, 2.34e-3 | 70³, 9.1e-5, 3.12e-5 | 0.31 |
+| | $10^{-5}$ | 24³, 1.68e-3 | 144 × 150 × 144, 1.0e-5, 2.70e-6 | 0.27 |
+| JAC (8 Å) | $10^{-3}$ | 24³, 2.81e-3 | 48³, 7.7e-4, 6.63e-4 | 0.66 |
+| | $10^{-4}$ | 30³, 3.31e-3 | 108³, 7.9e-5, 3.06e-5 | 0.31 |
+| | $10^{-5}$ | 36³, 2.18e-3 | 216³, 9.8e-6, 3.16e-6 | 0.32 |
+| Factor IX (8 Å) | $10^{-3}$ | 54 × 32 × 30, 2.90e-3 | 98 × 60 × 56, 9.6e-4, 7.54e-4 | 0.75 |
+| | $10^{-4}$ | 70 × 40 × 40, 3.17e-3 | 224 × 140 × 126, 9.4e-5, 3.84e-5 | 0.38 |
+| | $10^{-5}$ | 84 × 48 × 48, 2.00e-3 | 480 × 288 × 270, 9.8e-6, 3.26e-6 | 0.33 |
+| Cellulose (8 Å) | $10^{-3}$ | 100 × 48 × 48, 2.96e-3 | 180 × 90 × 84, 9.7e-4, 7.74e-4 | 0.77 |
+| | $10^{-4}$ | 126 × 60 × 60, 3.60e-3 | 420 × 196 × 192, 9.8e-5, 4.14e-5 | 0.41 |
+| | $10^{-5}$ | 150 × 72 × 72, 2.17e-3 | 882 × 420 × 420, 9.8e-6, 3.40e-6 | 0.34 |
+
+Continuity 2, eight terms, $c$ from $\eta$. $\Delta$ is over the Coulomb
+forces of the topology (a copy of it with every other term set to zero),
+on a GPU in double precision, against MDIR's Gaussian kernel in double
+precision at $\mathrm{erfc}(\beta r_c) = 10^{-10}$, order 8, and 0.5 Å.
+That reference agrees with OpenMM's PME in double precision at an Ewald
+tolerance of $10^{-6}$ to 1.7 to $2.1\times10^{-6}$ on the water, JAC and
+Cellulose; on Factor IX the two differ by $2.8\times10^{-5}$, the error of
+OpenMM's setting there, which every grid finer than about 2.5 times eq. 15
+reached as a floor against it. The CPU in double gives the same $\Delta$
+to $10^{-10}$ of its value; mixed precision changes $\Delta$ by less than
+$1.5\times10^{-7}$ at $10^{-3}$ and $10^{-4}$, and raises it by 0.1 to
+$1.4\times10^{-6}$ at $10^{-5}$ ($\Delta/\eta$ up to 0.46). For the prolate density with the B-spline
+window ($\eta/2$): JAC at $10^{-3}$, 54³, $\Delta = 5.30\times10^{-4}$, and
+at $10^{-4}$, 126³, $5.53\times10^{-5}$; the water at $10^{-3}$, 36 × 40
+× 36, $4.66\times10^{-4}$, and at $10^{-4}$, 84 × 90 × 84,
+$4.89\times10^{-5}$. The prolate window's automatic grid is unchanged
+(JAC at the default: 50³, $\Delta = 1.05\times10^{-5}$).
+
+The bound errs to the safe side by a factor that grows as $\eta$ falls.
+At $\eta = 10^{-4}$ JAC reaches $\Delta = 7.7\times10^{-5}$ on 80³, 0.41
+times the points of the automatic 108³. The default $\eta = 10^{-5}$ makes
+the grid of Cellulose 156 million points. A bound fitted to $\Delta$
+rather than to $E_B$ would need the charge correlations of the system,
+which the builder does not model.
+
 The u-series gives a different smooth decomposition using Gaussians
 [[Predescu2020]](references.md#predescu2020).
