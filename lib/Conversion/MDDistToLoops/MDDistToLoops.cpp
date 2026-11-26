@@ -2182,42 +2182,53 @@ LogicalResult Lowering::lowerMapParticles(MapParticlesOp op) {
                   index(b, resultType.getNumComponents())});
     fieldWords[op.getResult()] = raw;
   }
-  scf::ForOp::create(
-      b, loc, domainBound(b, false), domainBound(b, true), index(b, 1), ValueRange(),
-      [&](OpBuilder &bd, Location, Value d, ValueRange) {
-        Value count = toIndex(
-            bd, memref::LoadOp::create(bd, loc, rows.rows, ValueRange{d}));
-        scf::ForOp::create(
-            bd, loc, index(bd, 0), count, index(bd, 1), ValueRange(),
-            [&](OpBuilder &br, Location, Value r, ValueRange) {
-              SmallVector<Value> arguments;
-              Value sum;
-              for (Value field : op.getGathered()) {
-                Type type =
-                    cast<FieldType>(field.getType()).getKernelValueType();
-                Value words = fieldWords.lookup(field);
-                if (combine && words) {
-                  Value term = loadValue(br, words, d, r, sumType(type));
-                  sum = sum ? add(br, sum, term) : term;
-                } else {
-                  Value term = loadValue(br, storage[field].buffer, d, r, type);
-                  if (combine) {
-                    term = quantize(br, term, pairForce);
-                    sum = sum ? add(br, sum, term) : term;
-                  } else
-                    arguments.push_back(term);
-                }
-              }
-              if (raw)
-                storeValue(br, sum, raw, d, r);
-              Value value =
-                  combine ? finish(br, sum, pairForce)
+  auto mapRow = [&](OpBuilder &br, Value d, Value r) {
+    SmallVector<Value> arguments;
+    Value sum;
+    for (Value field : op.getGathered()) {
+      Type type = cast<FieldType>(field.getType()).getKernelValueType();
+      Value words = fieldWords.lookup(field);
+      if (combine && words) {
+        Value term = loadValue(br, words, d, r, sumType(type));
+        sum = sum ? add(br, sum, term) : term;
+      } else {
+        Value term = loadValue(br, storage[field].buffer, d, r, type);
+        if (combine) {
+          term = quantize(br, term, 40);
+          sum = sum ? add(br, sum, term) : term;
+        } else
+          arguments.push_back(term);
+      }
+    }
+    if (raw) storeValue(br, sum, raw, d, r);
+    Value value = combine ? finish(br, sum, 40)
                           : inlineKernel(br, op.getKernel().front(), arguments);
-              storeValue(br, value, result, d, r);
-              scf::YieldOp::create(br, loc);
-            });
-        scf::YieldOp::create(bd, loc);
-      });
+    storeValue(br, value, result, d, r);
+  };
+  Value first = domainBound(b, false), past = domainBound(b, true);
+  Value z = index(b, 0), one = index(b, 1);
+  if (parallelDomains) {
+    scf::ParallelOp::create(b, loc, ValueRange{first, z}, ValueRange{past, rows.capacity},
+        ValueRange{one, one}, [&](OpBuilder &at, Location, ValueRange iv) {
+          Value count = toIndex(at, memref::LoadOp::create(at, loc, rows.rows, iv[0]));
+          Value live = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, iv[1], count);
+          scf::IfOp::create(at, loc, live, [&](OpBuilder &br, Location) {
+            mapRow(br, iv[0], iv[1]);
+            scf::YieldOp::create(br, loc);
+          });
+        });
+  } else {
+    scf::ForOp::create(b, loc, first, past, one, ValueRange{},
+        [&](OpBuilder &at, Location, Value d, ValueRange) {
+          Value count = toIndex(at, memref::LoadOp::create(at, loc, rows.rows, d));
+          scf::ForOp::create(at, loc, z, count, one, ValueRange{},
+              [&](OpBuilder &br, Location, Value r, ValueRange) {
+                mapRow(br, d, r);
+                scf::YieldOp::create(br, loc);
+              });
+          scf::YieldOp::create(at, loc);
+        });
+  }
   storage[op.getResult()].buffer = result;
   return success();
 }

@@ -1178,7 +1178,6 @@ static int64_t migrate(int64_t oldHandle, struct Memref3D *positions,
     next->migratedPositions = malloc(cap*sizeof *next->migratedPositions);
     if (!next->migratedPositions) fail("out of memory retaining migrated positions");
   }
-  memcpy(next->owner, old->owner, n*sizeof *next->owner);
   if (old->groupCount) {
     next->groupCount = old->groupCount;
     next->groups = malloc(old->groupCount*sizeof *next->groups);
@@ -1186,39 +1185,50 @@ static int64_t migrate(int64_t oldHandle, struct Memref3D *positions,
     next->groupCenters = malloc(cap*sizeof *next->groupCenters);
     if (!next->groups || !next->centerGroup || !next->groupCenters)
       fail("out of memory migrating constraint groups");
-    memcpy(next->groups,old->groups,old->groupCount*sizeof *next->groups);
-    memcpy(next->centerGroup,old->centerGroup,n*sizeof *next->centerGroup);
-    memcpy(next->groupCenters,old->groupCenters,n*sizeof *next->groupCenters);
   }
   int invalid = 0;
-  #pragma omp parallel for collapse(2) schedule(static) reduction(|:invalid) if(n > 1024)
-  for (int64_t d = first; d < past; ++d)
-    for (int64_t r = 0; r < old->stride; ++r) {
-      if (r >= old->rows[d]) continue;
-      int64_t j = old->ids[d*old->stride+r], cell[3];
-      for (int k = 0; k < 3; ++k) {
-        double coordinate = *at3(positions,d,r,k), u = coordinate/edges[k];
-        if (!isfinite(u)) { invalid = 1; u = 0; }
-        double image = floor(u);
-        cell[k] = division(u-image,next->grid[k]);
-        if (keepPositions) next->migratedPositions[j][k] = coordinate-edges[k]*image;
-      }
-      if (!old->groupCenters || !old->groupCenters[j]) {
-        next->owner[j] = cell[0] + next->grid[0]*(cell[1] + next->grid[1]*cell[2]);
-      } else if (old->centerGroup[j]) {
-        struct ConstraintGroup *g = &old->groups[old->centerGroup[j]-1];
-        double points[4][3];
-        for (int a = 0; a < g->size; ++a)
-          for (int k = 0; k < 3; ++k)
-            points[a][k] = *at3(positions,d,old->row[g->atoms[a]],k);
-        int finite = 1;
-        for (int a = 0; a < g->size; ++a)
-          for (int k = 0; k < 3; ++k) finite &= isfinite(points[a][k]/edges[k]);
-        if (!finite) { invalid = 1; continue; }
-        int64_t owner = groupOwner(next,g,points);
-        for (int a = 0; a < g->size; ++a) next->owner[g->atoms[a]] = owner;
+  #pragma omp parallel if(n > 1024) reduction(|:invalid)
+  {
+    #pragma omp for schedule(static) nowait
+    for (size_t g = 0; g < old->groupCount; ++g)
+      next->groups[g] = old->groups[g];
+    #pragma omp for schedule(static)
+    for (int64_t j = 0; j < n; ++j) {
+      next->owner[j] = old->owner[j];
+      if (old->groupCount) {
+        next->centerGroup[j] = old->centerGroup[j];
+        next->groupCenters[j] = old->groupCenters[j];
       }
     }
+    #pragma omp for collapse(2) schedule(static)
+    for (int64_t d = first; d < past; ++d)
+      for (int64_t r = 0; r < old->stride; ++r) {
+        if (r >= old->rows[d]) continue;
+        int64_t j = old->ids[d*old->stride+r], cell[3];
+        for (int k = 0; k < 3; ++k) {
+          double coordinate = *at3(positions,d,r,k), u = coordinate/edges[k];
+          if (!isfinite(u)) { invalid = 1; u = 0; }
+          double image = floor(u);
+          cell[k] = division(u-image,next->grid[k]);
+          if (keepPositions) next->migratedPositions[j][k] = coordinate-edges[k]*image;
+        }
+        if (!old->groupCenters || !old->groupCenters[j]) {
+          next->owner[j] = cell[0] + next->grid[0]*(cell[1] + next->grid[1]*cell[2]);
+        } else if (old->centerGroup[j]) {
+          struct ConstraintGroup *g = &old->groups[old->centerGroup[j]-1];
+          double points[4][3];
+          for (int a = 0; a < g->size; ++a)
+            for (int k = 0; k < 3; ++k)
+              points[a][k] = *at3(positions,d,old->row[g->atoms[a]],k);
+          int finite = 1;
+          for (int a = 0; a < g->size; ++a)
+            for (int k = 0; k < 3; ++k) finite &= isfinite(points[a][k]/edges[k]);
+          if (!finite) { invalid = 1; continue; }
+          int64_t owner = groupOwner(next,g,points);
+          for (int a = 0; a < g->size; ++a) next->owner[g->atoms[a]] = owner;
+        }
+      }
+  }
   if (invalid) fail("migration requires finite positions within cell range");
 #ifdef MDIR_ENABLE_MPI
   if (next->mpi) {
@@ -1269,8 +1279,10 @@ int64_t _mlir_ciface_mdrtDistMigratePositions(int64_t old, struct Memref3D *x, d
 void _mlir_ciface_mdrtDistMigratedPositions(int64_t handle, struct Memref3D *dest) {
   struct Layout *l = (struct Layout *)(intptr_t)handle;
   int64_t first = mdrtMPIDomainBound(l->domains,0), past = mdrtMPIDomainBound(l->domains,1);
+  #pragma omp parallel for collapse(2) schedule(static) if(l->count > 1024)
   for (int64_t d = first; d < past; ++d)
-    for (int64_t r = 0; r < l->rows[d]; ++r) {
+    for (int64_t r = 0; r < l->stride; ++r) {
+      if (r >= l->rows[d]) continue;
       int64_t j = l->ids[d*l->stride+r];
       for (int c = 0; c < 3; ++c) *at3(dest,d,r,c) = l->migratedPositions[j][c];
     }
@@ -1305,8 +1317,10 @@ void _mlir_ciface_mdrtDistRedistribute(int64_t oldHandle, int64_t newHandle,
     past = mdrtMPIDomainBound(next->domains, 1);
   }
 #endif
+  #pragma omp parallel for collapse(2) schedule(static) if(next->count > 1024)
   for (int64_t d = first; d < past; ++d)
-    for (int64_t r = 0; r < next->rows[d]; ++r) {
+    for (int64_t r = 0; r < next->stride; ++r) {
+      if (r >= next->rows[d]) continue;
       int64_t j = next->ids[d*next->stride+r];
       for (int64_t k = 0; k < components; ++k) {
         double value = *at3(source, old->owner[j], old->row[j], k);
@@ -1618,6 +1632,7 @@ void _mlir_ciface_mdrtDistConstraintRows(int64_t handle, struct Memref3D *positi
                                          struct Members *members, struct Memref2I *out) {
   const struct Layout *l = (struct Layout *)(intptr_t)handle;
   (void)positions;
+  #pragma omp parallel for schedule(static) if(members->sizes[0] > 512)
   for (int64_t t = 0; t < members->sizes[0]; ++t) {
     int64_t *record = out->aligned + out->offset + t*out->strides[0];
     for (int64_t a = 0; a < members->sizes[1]; ++a) {
@@ -1640,6 +1655,7 @@ void mdrtDistIndexTupleImages(int64_t handle, int64_t count) {
     h->firstGhost = malloc(l->domains*l->count*sizeof *h->firstGhost);
     h->nextGhost = malloc(l->domains*h->capacity*sizeof *h->nextGhost);
     if (!h->firstGhost || !h->nextGhost) fail("out of memory indexing tuple images");
+    #pragma omp parallel for schedule(static) if(l->domains > 1 && l->count > 1024)
     for (int64_t d = 0; d < l->domains; ++d) {
       int64_t *heads = &h->firstGhost[d*l->count];
       for (int64_t j = 0; j < l->count; ++j) heads[j] = -1;
@@ -1684,29 +1700,62 @@ int64_t _mlir_ciface_mdrtDistTupleChunks(struct Memref2I *rows, int64_t first,
 int64_t _mlir_ciface_mdrtDistTupleIncidence(struct Memref2I *rows,
     struct Memref1I *order, int64_t count, int64_t first, int64_t past,
     int64_t stride, struct Memref1I *entries, struct Memref1I *starts) {
-  int64_t slots = (past - first) * stride, arity = rows->sizes[1] - 1;
-  int64_t *cursor = calloc(slots + 1, sizeof *cursor);
-  if (!cursor) fail("out of memory indexing tuple forces");
-  int64_t active = 0;
-  for (int pass = 0; pass < 2; ++pass) {
-    for (int64_t p = 0; p < count; ++p) {
-      int64_t t = order->aligned[p];
-      const int64_t *row = rows->aligned + rows->offset + t * rows->strides[0];
-      for (int64_t a = 0; a < arity; ++a) {
-        int64_t dest = (row[0] - first) * stride + row[(a+1)*rows->strides[1]];
-        if (pass) entries->aligned[cursor[dest]++] = p * arity + a;
-        else ++cursor[dest+1];
-      }
+  int64_t domains = past - first, arity = rows->sizes[1] - 1;
+  int64_t *ranges = calloc(domains + 1, sizeof *ranges);
+  int64_t *used = calloc(domains, sizeof *used);
+  if (!ranges || !used) fail("out of memory indexing tuple domains");
+  ranges[domains] = count;
+  // The chunk builder has already put the topology indices in domain order.
+  for (int64_t d = 1; d < domains; ++d) {
+    int64_t lo = ranges[d-1], hi = count;
+    while (lo < hi) {
+      int64_t mid = lo + (hi-lo)/2;
+      int64_t tuple = order->aligned[mid];
+      int64_t owner = rows->aligned[rows->offset + tuple*rows->strides[0]];
+      if (owner < first+d) lo = mid+1;
+      else hi = mid;
     }
-    if (pass == 0) {
-      for (int64_t i = 0; i < slots; ++i) {
-        if (cursor[i+1]) starts->aligned[active++] = cursor[i];
-        cursor[i+1] += cursor[i];
-      }
-      starts->aligned[active] = cursor[slots];
-    }
+    ranges[d] = lo;
   }
-  free(cursor);
+  #pragma omp parallel for schedule(static) if(domains > 1 && count > 1024)
+  for (int64_t d = 0; d < domains; ++d) {
+    if (ranges[d] == ranges[d+1]) continue;
+    int64_t *cursor = calloc(stride, sizeof *cursor);
+    if (!cursor) fail("out of memory indexing tuple forces");
+    int64_t base = ranges[d]*arity;
+    for (int pass = 0; pass < 2; ++pass) {
+      for (int64_t p = ranges[d]; p < ranges[d+1]; ++p) {
+        int64_t t = order->aligned[p];
+        const int64_t *row = rows->aligned + rows->offset + t*rows->strides[0];
+        for (int64_t a = 0; a < arity; ++a) {
+          int64_t dest = row[(a+1)*rows->strides[1]];
+          if (pass) entries->aligned[cursor[dest]++] = p*arity + a;
+          else ++cursor[dest];
+        }
+      }
+      if (!pass) {
+        int64_t next = base, active = 0;
+        for (int64_t i = 0; i < stride; ++i) {
+          int64_t n = cursor[i];
+          if (n) starts->aligned[base+active++] = next;
+          cursor[i] = next;
+          next += n;
+        }
+        used[d] = active;
+      }
+    }
+    free(cursor);
+  }
+  int64_t active = 0;
+  for (int64_t d = 0; d < domains; ++d) {
+    int64_t base = ranges[d]*arity;
+    if (active != base && used[d])
+      memmove(starts->aligned+active, starts->aligned+base, used[d]*sizeof(int64_t));
+    active += used[d];
+  }
+  starts->aligned[active] = count*arity;
+  free(used);
+  free(ranges);
   return active;
 }
 
@@ -1731,21 +1780,40 @@ static void tupleRows(int64_t handle, struct Memref3D *positions,
     }
     int64_t *record = out->aligned + out->offset + t*out->strides[0];
     int64_t d = 0;
-    for (int k = 2; k >= 0; --k) {
-      double origin = *at3(positions, l->owner[anchor], l->row[anchor], k);
-      double lo = 0, hi = 0, length = l->edges[k];
-      for (int64_t a = 0; a < arity; ++a) {
-        double delta = *at3(positions, l->owner[ids[a]], l->row[ids[a]], k) - origin;
-        image[a][k] = -(int64_t)floor(delta / length + 0.5);
-        delta += (double)image[a][k] * length;
-        lo = fmin(lo, delta);
-        hi = fmax(hi, delta);
+    if (arity == 2) {
+      int first = ids[0] == anchor ? 0 : 1, other = 1 - first;
+      const double *origin = at3(positions, l->owner[anchor], l->row[anchor], 0);
+      int64_t j = ids[other];
+      const double *point = at3(positions, l->owner[j], l->row[j], 0);
+      for (int k = 2; k >= 0; --k) {
+        int64_t c = k * positions->strides[2];
+        double length = l->edges[k];
+        double delta = point[c] - origin[c];
+        int64_t shift = -(int64_t)floor(delta / length + 0.5);
+        delta += (double)shift * length;
+        double u = (origin[c] + 0.5 * delta) / length;
+        double cell = floor(u);
+        image[first][k] = -(int64_t)cell;
+        image[other][k] = shift - (int64_t)cell;
+        d = d*l->grid[k] + division(u - cell, l->grid[k]);
       }
-      double u = (origin + 0.5*(lo + hi)) / length;
-      double translation = floor(u);
-      d = d*l->grid[k] + division(u - translation, l->grid[k]);
-      for (int64_t a = 0; a < arity; ++a)
-        image[a][k] -= (int64_t)translation;
+    } else {
+      for (int k = 2; k >= 0; --k) {
+        double origin = *at3(positions, l->owner[anchor], l->row[anchor], k);
+        double lo = 0, hi = 0, length = l->edges[k];
+        for (int64_t a = 0; a < arity; ++a) {
+          double delta = *at3(positions, l->owner[ids[a]], l->row[ids[a]], k) - origin;
+          image[a][k] = -(int64_t)floor(delta / length + 0.5);
+          delta += (double)image[a][k] * length;
+          lo = fmin(lo, delta);
+          hi = fmax(hi, delta);
+        }
+        double u = (origin + 0.5*(lo + hi)) / length;
+        double translation = floor(u);
+        d = d*l->grid[k] + division(u - translation, l->grid[k]);
+        for (int64_t a = 0; a < arity; ++a)
+          image[a][k] -= (int64_t)translation;
+      }
     }
     record[0] = d;
     if (d < begin || d >= end) continue;
@@ -1855,21 +1923,28 @@ static void gatherHalo(struct Halo *h, int64_t first, int64_t past,
   int64_t components = ownedWords ? ownedWords->sizes[2] : owned->sizes[2];
   #pragma omp parallel for schedule(static) if(h->gatherSlots > 512)
   for (int64_t i = 0; i < h->gatherSlots; ++i) {
+    size_t begin = h->gatherOffsets[i], end = h->gatherOffsets[i+1];
+    if (begin == end) continue;
     int64_t d = first+i/stride, row = i%stride;
-    for (size_t k = h->gatherOffsets[i]; k < h->gatherOffsets[i+1]; ++k) {
-      struct GatherRow term = h->gatherRows[k];
-      int64_t dom = term.slot/h->capacity, ghost = term.slot%h->capacity;
-      for (int64_t c = 0; c < components; ++c) {
-        if (ownedWords) {
-          DistWide v = term.offset < 0 ? *wordAt(ghostWords,dom,ghost,c) :
-                       ((const DistWide *)recv)[term.offset*components+c];
-          DistWide *to = wordAt(ownedWords,d,row,c);
-          *to = mdrtDistAddWide(*to,v);
-        } else {
-          double v = term.offset < 0 ? *at3(ghosts,dom,ghost,c) :
-                     ((const double *)recv)[term.offset*components+c];
-          *at3(owned,d,row,c) += v;
+    for (int64_t c = 0; c < components; ++c) {
+      if (ownedWords) {
+        DistWide sum = *wordAt(ownedWords,d,row,c);
+        for (size_t k = begin; k < end; ++k) {
+          struct GatherRow t = h->gatherRows[k];
+          DistWide v = t.offset < 0 ? *wordAt(ghostWords,t.slot/h->capacity,t.slot%h->capacity,c) :
+                       ((const DistWide *)recv)[t.offset*components+c];
+          sum = mdrtDistAddWide(sum,v);
         }
+        *wordAt(ownedWords,d,row,c) = sum;
+      } else {
+        double sum = *at3(owned,d,row,c);
+        for (size_t k = begin; k < end; ++k) {
+          struct GatherRow t = h->gatherRows[k];
+          double v = t.offset < 0 ? *at3(ghosts,t.slot/h->capacity,t.slot%h->capacity,c) :
+                     ((const double *)recv)[t.offset*components+c];
+          sum += v;
+        }
+        *at3(owned,d,row,c) = sum;
       }
     }
   }

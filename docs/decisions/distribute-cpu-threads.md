@@ -46,3 +46,14 @@ packets have prescribed offsets for their periodic intersections. Fourier
 lines have private work buffers and reuse pocketfft plans of the same
 dimensions. Spectrum planes form separate energy and virial subtotals,
 which the rank combines in increasing plane order.
+
+Migration initializes owner and constraint metadata by contiguous blocks
+within the same parallel region that assigns the new owners. Each worker
+first writes the output pages of its block. Redistribution and particle
+maps assign independent domain rows to workers, including the kick and
+drift maps. Each domain builds its own tuple-force incidence lists in
+topology order. The rank compacts their destination offsets in domain order.
+For a two-member tuple the owner midpoint uses the minimum-image distance
+from the lower identity, which also determines both periodic images.
+A transpose gather writes each active destination component
+once after summing its incident ghost entries in stream order.

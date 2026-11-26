@@ -833,3 +833,15 @@ directly to the row, skipping the incidence index and the member-force
 buffer. Disjoint constraint groups
 can update their members concurrently. A bitwise OR combines their
 failure flags independently of evaluation order.
+
+A domain fills the force-incidence interval for its own tuples independently.
+Concatenating the active row offsets in domain order preserves the member
+order in every destination. For a pair, one minimum-image separation
+from the lower identity supplies both the midpoint and the image shifts.
+
+A particle map, including a kick or drift, reads the input fields and
+writes a distinct result row. The CPU traversal can therefore distribute
+the local domain and row indices together. The capacity bounds define a
+rectangular iteration space, and the live row count excludes padding.
+During redistribution the new owner similarly writes each destination
+row once, using the old owner and inverse row map to find its source.
