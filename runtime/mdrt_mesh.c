@@ -1,7 +1,4 @@
-/* Distributed electrostatic PME [Essmann1995, Liang2026]. Each rank stores
-   the union of the assignment stencils of its owned particles, including
-   the order-1 overlap. Indexing this subgrid sparsely also covers particles
-   owned with a constraint group on the far side of a periodic face. */
+/* Distributed electrostatic PME [Essmann1995, Liang2026]. */
 #include "../include/mdir/Driver/ProlateSpectrum.h"
 #include "mdrt_dist_stats.h"
 #include "mdrt_pencils.h"
@@ -34,27 +31,29 @@ struct Results {
   int64_t offset, n, s;
 };
 struct Window {
-  int first[3];
-  double w[3][8], dw[3][8];
+  int64_t *first;
+  double *w[3], *dw[3];
 };
-struct Cell {
-  int64_t key;
-  __int128 charge;
-  double potential;
-};
+/* A periodic box is stored contiguously starting at its lower corner.
+   Constraint groups can straddle a periodic face, so the lower corner is
+   chosen from the occupied stencils each step. */
 struct Subgrid {
-  struct Cell *cells;
-  size_t count, capacity;
+  int start[3], len[3];
 };
-struct Packet {
-  int64_t key;
-  __int128 charge;
+struct Particle {
+  int64_t first[3];
+  double q;
+};
+struct DomainMesh {
+  struct Subgrid box;
+  struct Particle *atoms;
+  double *weights, *derivatives;
+  void *points;
 };
 struct Exchange {
-  int peers, *ns, *nr, *os, *or;
-  int sent, received;
-  struct Packet *send, *recv;
-  struct Cell **source;
+  int *counts, *ns, *nr, *os, *or;
+  int *domains;
+  size_t sent, received;
 };
 
 static void fail(const char *s) {
@@ -135,132 +134,326 @@ static void window(struct Window *w, const double *x, int stride,
     }
   }
 }
-static struct Cell *lookup(struct Subgrid *g, int64_t key) {
-  uint64_t h = (uint64_t)key * UINT64_C(11400714819323198485);
-  size_t i = (h ^ (h >> 32)) & (g->capacity - 1);
-  while (g->cells[i].key && g->cells[i].key != key)
-    i = (i + 1) & (g->capacity - 1);
-  return g->cells + i;
+static struct Window particleWindow(struct DomainMesh *local, size_t i,
+                                    int order) {
+  struct Window w = {.first = local->atoms[i].first};
+  for (int a = 0; a < 3; ++a) {
+    size_t offset = (3 * i + a) * order;
+    w.w[a] = local->weights + offset;
+    w.dw[a] = local->derivatives + offset;
+  }
+  return w;
 }
-static void grow(struct Subgrid *g) {
-  size_t old = g->capacity;
-  struct Cell *cells = g->cells;
-  g->capacity = old ? old * 2 : 256;
-  g->cells = alloc(g->capacity, sizeof *cells);
-  for (size_t i = 0; i < old; ++i)
-    if (cells[i].key)
-      *lookup(g, cells[i].key) = cells[i];
-  free(cells);
+static int wrap(int64_t x, int n) { return x >= n ? x - n : x; }
+static size_t volume(struct Subgrid g) {
+  return (size_t)g.len[0] * g.len[1] * g.len[2];
 }
-static void stencil(struct Subgrid *g, const struct Window *w, const int n[3],
-                    int order, double q, double gradient[3], int mixed) {
+
+/* Remove the largest empty cyclic interval on each axis. */
+static struct Subgrid footprint(struct Particle *p, size_t count,
+                                const int n[3], int order) {
+  struct Subgrid g = {0};
+  char *occupied[3];
+  for (int a = 0; a < 3; ++a)
+    occupied[a] = alloc(n[a], 1);
+  for (size_t i = 0; i < count; ++i)
+    if (p[i].q)
+      for (int a = 0; a < 3; ++a)
+        occupied[a][p[i].first[a]] = 1;
+  for (int a = 0; a < 3; ++a) {
+    const char *used = occupied[a];
+    int last = -1, first = -1, gap = 0;
+    for (int j = 0; j < n[a]; ++j)
+      if (used[j]) {
+        if (first < 0)
+          first = j;
+        else if (j - last - 1 > gap) {
+          gap = j - last - 1;
+          g.start[a] = j;
+        }
+        last = j;
+      }
+    free(occupied[a]);
+    if (first < 0)
+      continue;
+    int cyclic = (n[a] - 1 - last) + first;
+    if (cyclic >= gap) {
+      gap = cyclic;
+      g.start[a] = first;
+    }
+    g.len[a] = n[a] - (gap >= order ? gap - order + 1 : 0);
+    if (g.len[a] == n[a])
+      g.start[a] = 0;
+  }
+  for (size_t i = 0; i < count; ++i)
+    if (p[i].q)
+      for (int a = 0; a < 3; ++a) {
+        int x = p[i].first[a] - g.start[a];
+        p[i].first[a] = x < 0 ? x + n[a] : x;
+      }
+  return g;
+}
+
+static inline void spreadFixedPlane(const struct DomainMesh *local,
+                                    struct Subgrid g, int x, int order,
+                                    int mixed, __int128 *grid,
+                                    const size_t *offset, const size_t *ids) {
+  int nx = g.len[0], ny = g.len[1], nz = g.len[2];
   for (int j = 0; j < order; ++j) {
-    int x = (w->first[0] + j) % n[0];
-    for (int k = 0; k < order; ++k) {
-      int y = (w->first[1] + k) % n[1];
-      int64_t row = ((int64_t)x * n[1] + y) * n[2];
-      double xy = precision(w->w[0][j] * w->w[1][k], mixed);
-      double dx = precision(w->dw[0][j] * w->w[1][k], mixed);
-      double dy = precision(w->w[0][j] * w->dw[1][k], mixed);
-      double qxy = precision(
-          precision(precision(q, mixed) * 0x1p40 * w->w[0][j], mixed) *
-              w->w[1][k],
-          mixed);
-      for (int l = 0; l < order; ++l) {
-        int z = (w->first[2] + l) % n[2];
-        int64_t key = row + z + 1;
-        if (!gradient && g->count * 2 >= g->capacity)
-          grow(g);
-        struct Cell *c = lookup(g, key);
-        if (gradient) {
-          double v = c->potential;
-          double derivative[3] = {dx * w->w[2][l], dy * w->w[2][l],
-                                  xy * w->dw[2][l]};
-          for (int a = 0; a < 3; ++a) {
-            double term = precision(v * precision(derivative[a], mixed), mixed);
-            gradient[a] = precision(gradient[a] + term, mixed);
-          }
-        } else {
-          if (!c->key) {
-            c->key = key;
-            ++g->count;
-          }
-          double word = nearbyint(precision(qxy * w->w[2][l], mixed));
+    int start = x - j;
+    if (start < 0)
+      start += nx;
+    for (size_t h = offset[start]; h < offset[start + 1]; ++h) {
+      size_t id = ids[h];
+      const struct Particle *atom = local->atoms + id;
+      const double *w = local->weights + id * (3 * order);
+      double qx = precision(precision(atom->q, mixed) * 0x1p40 * w[j], mixed);
+      for (int k = 0; k < order; ++k) {
+        int y = wrap((int64_t)atom->first[1] + k, ny);
+        size_t row = ((size_t)x * ny + y) * nz;
+        double qxy = precision(qx * w[order + k], mixed);
+        for (int l = 0; l < order; ++l) {
+          size_t at = row + wrap((int64_t)atom->first[2] + l, nz);
+          double v = precision(qxy * w[2 * order + l], mixed);
+          double word = nearbyint(v);
           if (!(word >= -0x1p63 && word < 0x1p63))
             fail("PME assignment outside signed Q40 range");
-          c->charge += (int64_t)word;
+          grid[at] += (int64_t)word;
         }
       }
     }
   }
 }
-static int owner(int64_t key, const int n[3], int px, int py) {
-  int64_t row = (key - 1) / n[2];
-  int64_t x = row / n[1], y = row % n[1];
-  return ((x + 1) * px - 1) / n[0] * py + ((y + 1) * py - 1) / n[1];
-}
-static int prefix(int *counts, int *offsets, int size) {
-  int total = 0;
-  for (int r = 0; r < size; ++r) {
-    if (counts[r] > INT_MAX - total)
-      fail("PME overlap exceeds MPI count range");
-    offsets[r] = total;
-    total += counts[r];
+/* Group the starts by x. A thread owns an output plane and visits the
+   order incident bins, avoiding atomics and private copies of the mesh. */
+static void spreadFixed(const struct DomainMesh *local, size_t count,
+                        struct Subgrid g, int order, int mixed, int threaded,
+                        __int128 *grid) {
+  const struct Particle *p = local->atoms;
+  int nx = g.len[0];
+  size_t *offset = alloc((size_t)nx + 1, sizeof *offset);
+  size_t *next = alloc(nx, sizeof *next), *ids = alloc(count, sizeof *ids);
+  for (size_t i = 0; i < count; ++i)
+    if (p[i].q)
+      ++offset[p[i].first[0] + 1];
+  for (int x = 0; x < nx; ++x) {
+    offset[x + 1] += offset[x];
+    next[x] = offset[x];
   }
-  return total;
+  for (size_t i = 0; i < count; ++i)
+    if (p[i].q)
+      ids[next[p[i].first[0]]++] = i;
+  free(next);
+#pragma omp parallel for schedule(static) if (threaded)
+  for (int x = 0; x < nx; ++x)
+    spreadFixedPlane(local, g, x, order, mixed, grid, offset, ids);
+  free(offset);
+  free(ids);
 }
-static struct Exchange exchange(struct Subgrid *g, const int n[3], int px,
-                                int py, int peers) {
-  struct Exchange e = {.peers = peers};
-  e.ns = alloc(peers, 4 * sizeof(int));
+static void gather(const struct Window *w, struct Subgrid g, int order,
+                   const double *potential, int mixed, double grad[3]) {
+  for (int j = 0; j < order; ++j) {
+    int x = wrap((int64_t)w->first[0] + j, g.len[0]);
+    for (int k = 0; k < order; ++k) {
+      int y = wrap((int64_t)w->first[1] + k, g.len[1]);
+      size_t row = ((size_t)x * g.len[1] + y) * g.len[2];
+      double xy = precision(w->w[0][j] * w->w[1][k], mixed);
+      double dx = precision(w->dw[0][j] * w->w[1][k], mixed);
+      double dy = precision(w->w[0][j] * w->dw[1][k], mixed);
+      for (int l = 0; l < order; ++l) {
+        double v = potential[row + wrap((int64_t)w->first[2] + l, g.len[2])];
+        double deriv[3] = {dx * w->w[2][l], dy * w->w[2][l], xy * w->dw[2][l]};
+        for (int a = 0; a < 3; ++a)
+          grad[a] = precision(
+              grad[a] + precision(v * precision(deriv[a], mixed), mixed),
+              mixed);
+      }
+    }
+  }
+}
+
+enum Move {
+  Count,
+  PackCharge,
+  SumCharge,
+  PackPotential,
+  UnpackPotential,
+  AddLocalCharge,
+  CopyLocalPotential
+};
+
+struct Segment {
+  int local, global, len;
+};
+/* Cut a periodic interval at the cell boundary and clip both pieces to
+   the mesh owner's interval. The partitions may be unequal in width. */
+static int segments(int start, int len, int period, int lo, int hi,
+                    struct Segment parts[2]) {
+  int count = 0;
+  for (int pass = 0; pass < 2; ++pass) {
+    int64_t origin = (int64_t)start - (pass ? period : 0);
+    int64_t left = origin > lo ? origin : lo;
+    int64_t right = origin + len < hi ? origin + len : hi;
+    if (right > left)
+      parts[count++] = (struct Segment){left - origin, left, right - left};
+  }
+  return count;
+}
+static void sumRow(void *to, size_t dst, const void *from, size_t src, int len,
+                   int fixed) {
+  if (fixed) {
+    for (int k = 0; k < len; ++k)
+      ((__int128 *)to)[dst + k] += ((const __int128 *)from)[src + k];
+  } else {
+    for (int k = 0; k < len; ++k)
+      ((double *)to)[dst + k] += ((const double *)from)[src + k];
+  }
+}
+static size_t transfer(struct Subgrid g, struct PmeBox b, const int n[3],
+                       enum Move op, int fixed, void *field, void *packet,
+                       int threaded) {
+  struct Segment span[3][2];
+  int parts[3];
+  size_t count = 1;
+  for (int a = 0; a < 3; ++a) {
+    parts[a] = segments(g.start[a], g.len[a], n[a], b.lo[a], b.hi[a], span[a]);
+    if (!parts[a])
+      return 0;
+    count *= span[a][0].len + (parts[a] == 2 ? span[a][1].len : 0);
+  }
+  if (op == Count)
+    return count;
+  size_t width = fixed ? sizeof(__int128) : sizeof(double);
+  size_t offset = 0;
+  for (int i = 0; i < parts[0]; ++i)
+    for (int j = 0; j < parts[1]; ++j)
+      for (int k = 0; k < parts[2]; ++k) {
+        struct Segment x = span[0][i], y = span[1][j], z = span[2][k];
+#pragma omp parallel for collapse(2)                                           \
+    schedule(static) if (threaded && (size_t)x.len * y.len * z.len >= 32768)
+        for (int u = 0; u < x.len; ++u)
+          for (int v = 0; v < y.len; ++v) {
+            size_t local =
+                ((size_t)(x.local + u) * g.len[1] + y.local + v) * g.len[2] +
+                z.local;
+            size_t pencil =
+                ((size_t)(x.global + u - b.lo[0]) * (b.hi[1] - b.lo[1]) +
+                 y.global + v - b.lo[1]) *
+                    n[2] +
+                z.global;
+            size_t atPacket = offset + ((size_t)u * y.len + v) * z.len;
+            switch (op) {
+            case PackCharge:
+            case PackPotential: {
+              size_t at = op == PackCharge ? local : pencil;
+              memcpy((char *)packet + atPacket * width,
+                     (char *)field + at * width, z.len * width);
+              break;
+            }
+            case SumCharge:
+              sumRow(field, pencil, packet, atPacket, z.len, fixed);
+              break;
+            case AddLocalCharge:
+              sumRow(packet, pencil, field, local, z.len, fixed);
+              break;
+            case UnpackPotential:
+            case CopyLocalPotential: {
+              size_t at = op == CopyLocalPotential ? pencil : atPacket;
+              memcpy((double *)field + local, (double *)packet + at,
+                     z.len * sizeof(double));
+              break;
+            }
+            case Count:
+              break;
+            }
+          }
+        offset += (size_t)x.len * y.len * z.len;
+      }
+  return count;
+}
+static int append(size_t *total, size_t count) {
+  if (count > INT_MAX - *total)
+    fail("PME overlap exceeds MPI count range");
+  *total += count;
+  return (int)count;
+}
+/* A rank can own several particle domains. Keep each subgrid compact,
+   concatenate its rows with the other domains destined for this pencil. */
+static size_t moveDomains(struct DomainMesh *domains, int first, int past,
+                          struct PmeBox pencil, const int n[3], enum Move op,
+                          int fixed, void *mesh, void *packet, int threaded) {
+  size_t count = 0, width = fixed ? sizeof(__int128) : sizeof(double);
+  for (int d = first; d < past; ++d) {
+    void *field =
+        op == PackCharge || op == UnpackPotential ? domains[d].points : mesh;
+    count += transfer(domains[d].box, pencil, n, op, fixed, field,
+                      packet ? (char *)packet + count * width : NULL, threaded);
+  }
+  return count;
+}
+static struct Exchange schedule(struct DomainMesh *domains, int nd, int first,
+                                int past, const int n[3],
+                                struct PmePencils *mesh, int peers, int rank) {
+  struct Exchange e = {0};
+  e.counts = alloc(peers, 4 * sizeof(int));
+  e.ns = e.counts;
   e.nr = e.ns + peers;
   e.os = e.nr + peers;
   e.or = e.os + peers;
-  if (g->count > INT_MAX)
-    fail("PME overlap exceeds MPI count range");
-  for (size_t i = 0; i < g->capacity; ++i)
-    if (g->cells[i].key)
-      ++e.ns[owner(g->cells[i].key, n, px, py)];
-  if (peers == 1)
-    e.nr[0] = e.ns[0];
+  e.domains = alloc((size_t)peers + 1, sizeof *e.domains);
+  for (int r = 0; r < peers; ++r)
+    e.domains[r + 1] = e.domains[r] + nd / peers + (r < nd % peers);
 #ifdef MDIR_ENABLE_MPI
-  else
-    mdrtMPIExchangeCounts(e.ns, e.nr);
-#endif
-  e.sent = prefix(e.ns, e.os, peers);
-  e.received = prefix(e.nr, e.or, peers);
-  e.send = alloc(e.sent, sizeof *e.send);
-  e.recv = alloc(e.received, sizeof *e.recv);
-  e.source = alloc(e.sent, sizeof *e.source);
-  int *next = alloc(peers, sizeof(int));
-  memcpy(next, e.os, peers * sizeof(int));
-  for (size_t i = 0; i < g->capacity; ++i) {
-    struct Cell *c = g->cells + i;
-    if (!c->key)
-      continue;
-    int at = next[owner(c->key, n, px, py)]++;
-    e.send[at] = (struct Packet){c->key, c->charge};
-    e.source[at] = c;
+  if (peers > 1) {
+    double *metadata = alloc(nd, 6 * sizeof(double));
+    for (int d = first; d < past; ++d)
+      for (int a = 0; a < 3; ++a) {
+        metadata[6 * d + a] = domains[d].box.start[a];
+        metadata[6 * d + a + 3] = domains[d].box.len[a];
+      }
+    for (int r = 0; r < peers; ++r) {
+      e.ns[r] = (e.domains[r + 1] - e.domains[r]) * 6;
+      e.os[r] = e.domains[r] * 6;
+    }
+    mdrtMPIShareBlocks(metadata, e.ns, e.os, 0);
+    for (int d = 0; d < nd; ++d)
+      for (int a = 0; a < 3; ++a) {
+        domains[d].box.start[a] = metadata[6 * d + a];
+        domains[d].box.len[a] = metadata[6 * d + a + 3];
+      }
+    free(metadata);
   }
-  free(next);
-  if (peers == 1)
-    memcpy(e.recv, e.send, e.sent * sizeof *e.recv);
-#ifdef MDIR_ENABLE_MPI
-  else
-    mdrtMPIExchangeRecords(e.send, e.ns, e.os, e.recv, e.nr, e.or,
-                           sizeof *e.send);
 #endif
+  for (int r = 0; r < peers; ++r) {
+    e.os[r] = e.sent;
+    e.or[r] = e.received;
+    if (r == rank) {
+      e.ns[r] = e.nr[r] = 0;
+      continue;
+    }
+    e.ns[r] = append(&e.sent, moveDomains(domains, first, past,
+                                          mdrtPmeRealBoxAt(mesh, r), n, Count,
+                                          0, NULL, NULL, 0));
+    e.nr[r] =
+        append(&e.received,
+               moveDomains(domains, e.domains[r], e.domains[r + 1],
+                           mdrtPmeRealBox(mesh), n, Count, 0, NULL, NULL, 0));
+  }
   return e;
+}
+static void communicate(void *send, int *ns, int *os, void *recv, int *nr,
+                        int *or, int peers, int fixed) {
+#ifdef MDIR_ENABLE_MPI
+  if (peers > 1) {
+    mdrtMPIExchange(send, ns, os, recv, nr, or, fixed);
+    return;
+  }
+#endif
+  memcpy(recv, send, ns[0] * (fixed ? sizeof(__int128) : sizeof(double)));
 }
 static size_t boxSize(struct PmeBox b) {
   return (size_t)(b.hi[0] - b.lo[0]) * (b.hi[1] - b.lo[1]) *
          (b.hi[2] - b.lo[2]);
-}
-static size_t localIndex(struct PmeBox b, int64_t key, const int n[3]) {
-  int64_t row = (key - 1) / n[2];
-  return ((row / n[1] - b.lo[0]) * (b.hi[1] - b.lo[1]) + row % n[1] - b.lo[1]) *
-             n[2] +
-         (key - 1) % n[2];
 }
 /* D440. Hermite interpolation of the cosine transform below the transition.
    The endpoint expansion above it is exact for the finite polynomial. */
@@ -363,13 +556,34 @@ static void spectrum(const int n[3], const double box[3], struct PmeBox b,
         }
       }
 }
+/* Unranked memrefs cross the compiled CPU function boundary as a rank
+   and a pointer to a ranked descriptor. The indices and charges are
+   strided particle fields. The weights and the output grid are contiguous. */
+typedef void (*SpreadKernel)(int64_t, const void *, int64_t, const void *,
+                             int64_t, const void *, int64_t, const void *,
+                             int64_t, int64_t, int64_t);
+static void spreadFloating(struct DomainMesh *local, int64_t num, int order,
+                           SpreadKernel kernel) {
+  struct Particle *p = local->atoms;
+  struct {
+    int64_t *base, *data, offset, n[2], s[2];
+  } start = {p->first, p->first, 0, {num, 3}, {sizeof *p / sizeof(int64_t), 1}};
+  double *w = local->weights;
+  struct Table weights = {w, w, 0, {num, 3 * order}, {3 * order, 1}};
+  struct Results charges = {&p->q, &p->q, 0, num, sizeof *p / sizeof(double)};
+  struct Results grid = {local->points, local->points, 0, volume(local->box),
+                         1};
+  kernel(2, &start, 2, &weights, 1, &charges, 1, &grid, local->box.len[0],
+         local->box.len[1], local->box.len[2]);
+}
 void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
                               struct Field *x, struct Field *q, struct Table *t,
                               struct Field *f, struct Results *result,
                               double lx, double ly, double lz, double beta,
                               double coulomb, int64_t nx, int64_t ny,
                               int64_t nz, int64_t order, int64_t px, int64_t py,
-                              int64_t mpi, int64_t fixed, int64_t mixed) {
+                              int64_t mpi, int64_t fixed, int64_t mixed,
+                              int64_t threaded, SpreadKernel compiledSpread) {
   if (nx < 1 || ny < 1 || nz < 1 || nx > INT_MAX || ny > INT_MAX ||
       nz > INT_MAX || nx * ny > INT64_MAX / nz || order < 3 || order > 8)
     fail("unsupported PME mesh size or assignment order");
@@ -386,33 +600,64 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
       mdrtPmePencils(nx, ny, nz, px, py, order, mpi, mixed);
   struct PmeBox realBox = mdrtPmeRealBox(mesh),
                 modes = mdrtPmeSpectrumBox(mesh);
-  struct Subgrid local = {0};
   mdrtDistPhase(DistSpread);
-  for (int64_t d = first; d < past; ++d)
-    for (int64_t r = 0; r < rows->data[rows->offset + d * rows->stride]; ++r) {
-      double charge = *field(q, d, r);
-      if (!charge)
-        continue;
-      struct Window w = {0};
-      window(&w, field(x, d, r), x->s[2], box, n, order, t, mixed);
-      stencil(&local, &w, n, order, charge, NULL, mixed);
+  if (rows->size > INT_MAX / 6)
+    fail("PME domain count exceeds MPI metadata range");
+  struct DomainMesh *domains = alloc(rows->size, sizeof *domains);
+  size_t width = fixed ? sizeof(__int128) : sizeof(double);
+  for (int64_t d = first; d < past; ++d) {
+    int64_t num = rows->data[rows->offset + d * rows->stride];
+    struct DomainMesh *local = domains + d;
+    local->atoms = alloc(num, sizeof *local->atoms);
+    local->weights = alloc(num, 3 * order * sizeof(double));
+    local->derivatives = alloc(num, 3 * order * sizeof(double));
+#pragma omp parallel for schedule(static) if (threaded)
+    for (int64_t r = 0; r < num; ++r) {
+      struct Particle *p = local->atoms + r;
+      p->q = *field(q, d, r);
+      if (p->q) {
+        struct Window w = particleWindow(local, r, order);
+        window(&w, field(x, d, r), x->s[2], box, n, order, t, mixed);
+      }
     }
+    local->box = footprint(local->atoms, num, n, order);
+    local->points = alloc(volume(local->box), width);
+    if (fixed)
+      spreadFixed(local, num, local->box, order, mixed, threaded,
+                  local->points);
+    else if (num)
+      spreadFloating(local, num, order, compiledSpread);
+  }
   mdrtDistPhase(-DistSpread);
   mdrtDistPhase(DistOverlap);
-  struct Exchange e = exchange(&local, n, px, py, peers);
+  struct Exchange e =
+      schedule(domains, rows->size, first, past, n, mesh, peers, rank);
+  void *send = alloc(e.sent, width), *recv = alloc(e.received, width);
+  for (int r = 0; r < peers; ++r)
+    if (r != rank)
+      moveDomains(domains, first, past, mdrtPmeRealBoxAt(mesh, r), n,
+                  PackCharge, fixed, NULL, (char *)send + width * e.os[r],
+                  threaded);
+
+  communicate(send, e.ns, e.os, recv, e.nr, e.or, peers, fixed);
   size_t size = boxSize(realBox);
-  __int128 *grid = alloc(size, sizeof *grid);
-  size_t *indices = alloc(e.received, sizeof *indices);
-  for (int i = 0; i < e.received; ++i) {
-    indices[i] = localIndex(realBox, e.recv[i].key, n);
-    grid[indices[i]] += e.recv[i].charge;
-  }
   double *real = alloc(size, sizeof *real);
+  void *grid = fixed ? alloc(size, width) : real;
+  for (int r = 0; r < peers; ++r)
+    if (r != rank)
+      moveDomains(domains, e.domains[r], e.domains[r + 1], realBox, n,
+                  SumCharge, fixed, grid, (char *)recv + width * e.or[r],
+                  threaded);
+  for (int d = first; d < past; ++d)
+    transfer(domains[d].box, realBox, n, AddLocalCharge, fixed,
+             domains[d].points, grid, threaded);
+#pragma omp parallel for schedule(static) if (threaded)
   for (size_t i = 0; i < size; ++i)
-    real[i] = precision(mdrtDistNarrowWord(grid[i]) * 0x1p-40, mixed);
-  free(grid);
-  free(e.send);
-  free(e.recv);
+    real[i] = precision(
+        fixed ? mdrtDistNarrowWord(((__int128 *)grid)[i]) * 0x1p-40 : real[i],
+        mixed);
+  if (fixed)
+    free(grid);
   mdrtDistPhase(-DistOverlap);
   double *fft = alloc(boxSize(modes), 2 * sizeof(double));
   mdrtDistPhase(DistFFT);
@@ -454,42 +699,51 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
   mdrtPmeBackward(mesh, fft, real);
   mdrtDistPhase(-DistFFT);
   mdrtDistPhase(DistOverlap);
-  double *out = alloc(e.received, sizeof(double)),
-         *in = alloc(e.sent, sizeof(double));
-  for (int i = 0; i < e.received; ++i)
-    out[i] = real[indices[i]];
-  if (peers == 1)
-    memcpy(in, out, e.sent * sizeof(double));
-#ifdef MDIR_ENABLE_MPI
-  else
-    mdrtMPIExchange(out, e.nr, e.or, in, e.ns, e.os, 0);
-#endif
-  for (int i = 0; i < e.sent; ++i)
-    e.source[i]->potential = in[i];
+  /* Reverse the schedule. Both buffers can hold at least one double per point.
+   */
+  double *out = recv, *in = send;
+  for (int r = 0; r < peers; ++r)
+    if (r != rank)
+      moveDomains(domains, e.domains[r], e.domains[r + 1], realBox, n,
+                  PackPotential, 0, real, out + e.or[r], threaded);
+  communicate(out, e.nr, e.or, in, e.ns, e.os, peers, 0);
+  for (int r = 0; r < peers; ++r)
+    if (r != rank)
+      moveDomains(domains, first, past, mdrtPmeRealBoxAt(mesh, r), n,
+                  UnpackPotential, 0, NULL, in + e.os[r], threaded);
+  for (int d = first; d < past; ++d)
+    transfer(domains[d].box, realBox, n, CopyLocalPotential, 0,
+             domains[d].points, real, threaded);
   mdrtDistPhase(-DistOverlap);
   mdrtDistPhase(DistGather);
-  for (int64_t d = first; d < past; ++d)
-    for (int64_t r = 0; r < rows->data[rows->offset + d * rows->stride]; ++r) {
-      double grad[3] = {0}, charge = *field(q, d, r);
-      if (charge) {
-        struct Window w = {0};
-        window(&w, field(x, d, r), x->s[2], box, n, order, t, mixed);
-        stencil(&local, &w, n, order, charge, grad, mixed);
+  for (int64_t d = first; d < past; ++d) {
+    int64_t num = rows->data[rows->offset + d * rows->stride];
+#pragma omp parallel for schedule(static) if (threaded)
+    for (int64_t r = 0; r < num; ++r) {
+      const struct Particle *p = domains[d].atoms + r;
+      double grad[3] = {0};
+      if (p->q) {
+        struct Window w = particleWindow(domains + d, r, order);
+        gather(&w, domains[d].box, order, domains[d].points, mixed, grad);
       }
       for (int a = 0; a < 3; ++a) {
-        double v = precision((-charge * (n[a] / box[a])) * grad[a], mixed);
+        double v = precision((-p->q * (n[a] / box[a])) * grad[a], mixed);
         field(f, d, r)[a * f->s[2]] =
             fixed ? mdrtDistWord(v, 0x1p40) * 0x1p-40 : v;
       }
     }
+    free(domains[d].atoms);
+    free(domains[d].weights);
+    free(domains[d].derivatives);
+    free(domains[d].points);
+  }
   mdrtDistPhase(-DistGather);
-  free(out);
-  free(in);
-  free(indices);
+  free(domains);
+  free(send);
+  free(recv);
   free(fft);
   free(real);
-  free(e.source);
-  free(e.ns);
-  free(local.cells);
+  free(e.domains);
+  free(e.counts);
   mdrtPmeFreePencils(mesh);
 }

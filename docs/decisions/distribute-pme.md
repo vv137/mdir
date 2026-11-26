@@ -12,14 +12,23 @@ boundary length and logs the mesh dimensions, factors and rank count.
 Local transport has one mesh rank.
 
 The direct term follows the pair traversal. Each excluded unordered pair
-takes one reciprocal correction by topology identity. A particle owner
-spreads onto a sparse subgrid covering the union of its assignment stencils.
-The extra support is the window order minus one mesh intervals. Owners
-exchange contributions by periodic mesh index. Each stencil contribution
-is rounded to the nearest even signed Q40 word in units of elementary
-charge. Both the individual word and the completed point must fit in
-$[-2^{23},2^{23})$ elementary charges. Signed 128-bit intermediate sums
-preserve cancellation.
+takes one reciprocal correction by topology identity. Each particle domain stores a contiguous subgrid. Its extent along
+each axis spans all charged stencil starts, including constraint-group
+members, and the following window-order-minus-one grid intervals.
+The subgrid can cross the periodic face. The ordinary CPU spread loop
+runs over the domain's charged particles and adds to this subgrid in
+floating point. Mixed precision rounds each stencil product to binary32
+and accumulates in binary64 before rounding the completed mesh point.
+Gather reuses the cached weights and their derivatives.
+
+In deterministic mode each individual assignment is rounded to the
+nearest even signed Q40 word. Each output plane is assigned to a single
+worker, which visits the particles whose stencils reach it. Signed
+128-bit intermediate sums preserve cancellation. Each individual word
+and the completed point must fit in $[-2^{23},2^{23})$ elementary charges.
+Domains exchange their subgrid bounds once per mesh evaluation. Both
+directions pack contiguous rows of each subgrid–pencil intersection.
+Rows owned by the same rank are copied or accumulated locally.
 
 Forward transforms run along $z$, then $y$, then $x$. Two all-to-all
 transposes deliver complete pencils to the next axis. The influence,

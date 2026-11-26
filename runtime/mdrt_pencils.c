@@ -56,11 +56,15 @@ static struct PmeBox bounds(const struct PmePencils *p, int axis, int rank) {
   return b;
 }
 
-struct PmeBox mdrtPmeRealBox(const struct PmePencils *p) {
-  struct PmeBox b = bounds(p, 2, p->rank);
-  if (p->rank < p->px * p->py)
+struct PmeBox mdrtPmeRealBoxAt(const struct PmePencils *p, int rank) {
+  struct PmeBox b = bounds(p, 2, rank);
+  if (rank < p->px * p->py)
     b.hi[2] = p->n[2];
   return b;
+}
+
+struct PmeBox mdrtPmeRealBox(const struct PmePencils *p) {
+  return mdrtPmeRealBoxAt(p, p->rank);
 }
 
 struct PmeBox mdrtPmeSpectrumBox(const struct PmePencils *p) {

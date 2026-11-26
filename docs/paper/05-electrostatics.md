@@ -1315,7 +1315,12 @@ extends over the window support across domain boundaries. Summing the
 local contributions at each mesh owner reconstructs $Sq$. Returning the
 potential along the transpose of this exchange supplies all terms in the
 force sum, including for constraint-group members outside their owner's
-geometric domain. Global periodic point indices identify overlaps.
+geometric domain. The smallest cyclic interval containing all stencil
+starts on each axis, extended by the assignment support, gives a
+contiguous domain subgrid. Intersecting its periodic images with each
+real pencil determines both the charge message and the return message.
+Their values travel in contiguous runs along $z$. A single copy of the
+weights and their position derivatives serves spreading and gathering.
 
 The real grid begins with divisions $(P_x,P_y,1)$. After transforming
 complete real $z$ lines, the first transpose divides the half-spectrum
@@ -1331,7 +1336,11 @@ first, then transforms along $y$, $x$ and $z$. These transforms commute
 in exact arithmetic. The ordinary CPU path rounds after each axis in
 this order, so exchanging the inverse axes changes the rounded potential.
 
-Each particle-to-point contribution is quantized once at $2^{-40}$ e.
+Floating assignment uses the ordinary CPU stencil loop on the subgrid.
+Mixed precision evaluates each stencil product in binary32 and sums
+the products in binary64 before narrowing the point for the transform.
+In deterministic mode each particle-to-point contribution is quantized
+once at $2^{-40}$ e.
 Integer summation at the owner bounds the point's quantization error by
 half a unit per contributing stencil entry, independently of the
 message order. Its checked final range is $[-2^{23},2^{23})$ e.

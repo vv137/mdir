@@ -1,4 +1,5 @@
 #include "HostPME.h"
+#include "../MDExecKernels/HostChargeStencil.h"
 
 using namespace mlir;
 using namespace mdir::kernels;
@@ -54,59 +55,22 @@ void HostPME::emitSpreadPoint() {
   Value k2 = entry->getArgument(9);
   Value k3 = entry->getArgument(10);
   Value n = entry->getArgument(11);
-  Value c0 = arith::ConstantIndexOp::create(b, loc, 0);
-  Value c1 = arith::ConstantIndexOp::create(b, loc, 1);
   Value sx = arith::RemUIOp::create(b, loc, placex, k1);
   Value sy = arith::RemUIOp::create(b, loc, placey, k2);
   Value sz = arith::RemUIOp::create(b, loc, placez, k3);
   Value scale = arith::ConstantOp::create(
       b, loc, b.getFloatAttr(realType, 1099511627776.0));
   Value qscaled = arith::MulFOp::create(b, loc, qs, scale);
-  scf::ForOp::create(
-      b, loc, c0, n, c1, ValueRange{},
-      [&](OpBuilder &b, Location, Value j1, ValueRange carried) {
-        Value g1s = arith::AddIOp::create(b, loc, sx, j1);
-        Value g1w = arith::SubIOp::create(b, loc, g1s, k1);
-        Value g1o =
-            arith::CmpIOp::create(b, loc, arith::CmpIPredicate::uge, g1s, k1);
-        Value g1 = arith::SelectOp::create(b, loc, g1o, g1w, g1s);
-        Value w1 = load(wx, {j1});
-        Value q1 = arith::MulFOp::create(b, loc, qscaled, w1);
-        scf::ForOp::create(
-            b, loc, c0, n, c1, ValueRange{},
-            [&](OpBuilder &b, Location, Value j2, ValueRange carried) {
-              Value g2s = arith::AddIOp::create(b, loc, sy, j2);
-              Value g2w = arith::SubIOp::create(b, loc, g2s, k2);
-              Value g2o = arith::CmpIOp::create(
-                  b, loc, arith::CmpIPredicate::uge, g2s, k2);
-              Value g2 = arith::SelectOp::create(b, loc, g2o, g2w, g2s);
-              Value w2 = load(wy, {j2});
-              Value q12 = arith::MulFOp::create(b, loc, q1, w2);
-              Value row1 = arith::MulIOp::create(b, loc, g1, k2);
-              Value row = arith::AddIOp::create(b, loc, row1, g2);
-              Value base = arith::MulIOp::create(b, loc, row, k3);
-              scf::ForOp::create(
-                  b, loc, c0, n, c1, ValueRange{},
-                  [&](OpBuilder &b, Location, Value j3, ValueRange carried) {
-                    Value g3s = arith::AddIOp::create(b, loc, sz, j3);
-                    Value g3w = arith::SubIOp::create(b, loc, g3s, k3);
-                    Value g3o = arith::CmpIOp::create(
-                        b, loc, arith::CmpIPredicate::uge, g3s, k3);
-                    Value g3 = arith::SelectOp::create(b, loc, g3o, g3w, g3s);
-                    Value w3 = load(wz, {j3});
-                    Value value = arith::MulFOp::create(b, loc, q12, w3);
-                    Value rounded = math::RoundEvenOp::create(b, loc, value);
-                    Value fixed =
-                        arith::FPToSIOp::create(b, loc, i64Type, rounded);
-                    Value at = arith::AddIOp::create(b, loc, base, g3);
-                    memref::AtomicRMWOp::create(b, loc,
-                                                arith::AtomicRMWKind::addi,
-                                                fixed, grid, ValueRange{at});
-                    scf::YieldOp::create(b, loc);
-                  });
-              scf::YieldOp::create(b, loc);
-            });
-        scf::YieldOp::create(b, loc);
+  Value weights[] = {wx, wy, wz};
+  emitHostChargeStencil(b, loc, {sx, sy, sz}, {k1, k2, k3}, n, qscaled,
+      [&](OpBuilder &at, unsigned axis, Value i) -> Value {
+        return memref::LoadOp::create(at, loc, weights[axis], ValueRange{i});
+      },
+      [&](OpBuilder &at, Value i, Value value) {
+        Value rounded = math::RoundEvenOp::create(at, loc, value);
+        Value word = arith::FPToSIOp::create(at, loc, i64Type, rounded);
+        memref::AtomicRMWOp::create(at, loc, arith::AtomicRMWKind::addi,
+                                    word, grid, ValueRange{i});
       });
   func::ReturnOp::create(b, loc);
 }
