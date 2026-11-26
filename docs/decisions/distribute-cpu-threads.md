@@ -31,3 +31,9 @@ Within a Verlet list, identities and exclusions determine the static
 candidate rows. The midpoint test still uses the current coordinates on
 each evaluation, since a midpoint can cross a domain face before the list
 is rebuilt. Selected entries retain their original list order.
+
+An epoch remains valid only if the maximum squared displacement stays
+within the existing skin bound. Independent particle checks reduce by
+maximum. Sorted exclusion keys live across serial steps while their
+topology relation is invariant. A permutation establishes a new relation
+and a new sorted table.

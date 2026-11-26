@@ -1469,11 +1469,20 @@ LogicalResult Lowering::lowerNeighborhood(NeighborhoodOp op) {
   if (Value excluded = op.getExcluded()) {
     Type i64 = b.getI64Type();
     auto type = mdrt::getMembersType(cast<md::RelationType>(excluded.getType()));
-    Value members = mdrt::ToBufferOp::create(b, loc, type, excluded);
+    // A spatial permutation produces a new relation. Keep its sorted
+    // keys across exactly the serial loops that carry the same topology.
+    Operation *scope = op;
+    while (auto loop = dyn_cast<scf::ForOp>(scope->getParentOp())) {
+      if (!loop.isDefinedOutsideOfLoop(excluded)) break;
+      scope = loop;
+    }
+    OpBuilder init(scope);
+    Value members = mdrt::ToBufferOp::create(init, loc, type, excluded);
     auto build = declare("mdrtDistExclusions", b.getFunctionType({type}, {i64}), true);
-    Value handle = func::CallOp::create(b, loc, build, members).getResult(0);
+    Value handle = func::CallOp::create(init, loc, build, members).getResult(0);
     excludedPairs[op.getResult()] = handle;
     OpBuilder cleanup(end);
+    if (scope != op) cleanup.setInsertionPointAfter(scope);
     auto release = declare("mdrtDistFreeExclusions", b.getFunctionType({i64}, {}), false);
     func::CallOp::create(cleanup, loc, release, handle);
   }

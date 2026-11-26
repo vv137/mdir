@@ -2196,14 +2196,19 @@ int64_t _mlir_ciface_mdrtDistEpochPartition(struct Memref2D *x, int64_t gx,
   if (e->halo) {
     struct Layout *l = e->halo->layout;
     int valid = l->count == n && l->edges[0] == lx && l->edges[1] == ly && l->edges[2] == lz;
-    for (int64_t j = 0; valid && j < n; ++j) {
-      double r2 = 0;
-      for (int c = 0; c < 3; ++c) {
-        double dx = *at2(x,j,c) - e->reference[3*j+c];
-        dx -= box[c]*floor(dx/box[c] + 0.5);
-        r2 += dx*dx;
+    if (valid) {
+      double maxDisplacement2 = 0;
+      #pragma omp parallel for reduction(max:maxDisplacement2) schedule(static) if(n > 1024)
+      for (int64_t j = 0; j < n; ++j) {
+        double r2 = 0;
+        for (int c = 0; c < 3; ++c) {
+          double dx = *at2(x,j,c) - e->reference[3*j+c];
+          dx -= box[c]*floor(dx/box[c] + 0.5);
+          r2 += dx*dx;
+        }
+        maxDisplacement2 = fmax(maxDisplacement2,isfinite(r2) ? r2 : INFINITY);
       }
-      valid = r2 <= 0.25*skin*skin;
+      valid = isfinite(maxDisplacement2) && maxDisplacement2 <= 0.25*skin*skin;
     }
     if (valid) {
       mdrtDistRetainLayout((int64_t)(intptr_t)l);
@@ -2214,6 +2219,7 @@ int64_t _mlir_ciface_mdrtDistEpochPartition(struct Memref2D *x, int64_t gx,
   }
   e->reference = realloc(e->reference, (n ? n : 1)*3*sizeof(double));
   if (!e->reference) fail("out of memory recording trajectory positions");
+  #pragma omp parallel for schedule(static) if(n > 1024)
   for (int64_t j = 0; j < n; ++j)
     for (int c = 0; c < 3; ++c)
       e->reference[3*j+c] = *at2(x,j,c);
