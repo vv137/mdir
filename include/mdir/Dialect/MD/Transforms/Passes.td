@@ -151,6 +151,8 @@ def Distribute : Pass<"md-distribute", "::mlir::ModuleOp"> {
            "contributions returned)">,
     Option<"reach", "reach", "double", /*default=*/"0.0",
            "The reach of the halo; 0 takes the largest cutoff">,
+    Option<"projectionEpochs", "projection-epochs", "bool", "false",
+           "Retain the grouped projection layout over a Verlet epoch">,
     Option<"derivatives", "derivatives", "bool", "false",
            "Distribute the differentiated energy, force and virial functions of topology potentials">,
     ListOption<"potentials", "potentials", "std::string",

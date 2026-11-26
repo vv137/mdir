@@ -114,3 +114,21 @@ The boundary pass waits on the completion event before reading the full
 position field. Both passes use the epoch's original MATRIX entries and
 write disjoint owned force rows. A cold list requires complete geometry
 for its search. The two partial observable sums are added in interior, then boundary order.
+
+### Ownership over a Verlet epoch
+
+After drift, the packed integrator checks the displacements against the
+reference positions that defined its halo. While the reference covers
+the current positions, it carries the same layout, halo and reference
+into the force call. A face crossing within that margin changes the
+position sent by the original owner. When coverage expires, the rebuild
+assigns new owners, redistributes fields in identity order and enumerates
+the canonical images for the new halo.
+
+A native constraint projection also holds a layout over successive calls
+at its force site. Its reference is the complete configuration at the last
+partition. The site tests each minimum-image displacement against half
+the skin. On a miss, it partitions the current positions and assigns each
+constraint group to its common owner. On a hit, it uses those same member
+rows for the solve. The cache belongs to the enclosing loop with invariant
+cell and group relations. A continuation creates a new cache.

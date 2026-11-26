@@ -2531,6 +2531,7 @@ void mdrtDistReleaseHalo(int64_t handle) {
    evaluation. Keep the layout and explicit images for the Verlet epoch.
    The caller scopes this object to one loop with invariant group relations. */
 struct TrajectoryEpoch {
+  struct Layout *layout;
   struct Halo *halo;
   double *reference;
 };
@@ -2544,6 +2545,7 @@ int64_t mdrtDistEpochCreate(void) {
 void mdrtDistEpochDestroy(int64_t cache) {
   struct TrajectoryEpoch *e = (struct TrajectoryEpoch *)(intptr_t)cache;
   if (e->halo) mdrtDistReleaseHalo((int64_t)(intptr_t)e->halo);
+  if (e->layout) mdrtDistReleaseLayout((int64_t)(intptr_t)e->layout);
   free(e->reference);
   free(e);
 }
@@ -2554,8 +2556,8 @@ int64_t _mlir_ciface_mdrtDistEpochPartition(struct Memref2D *x, int64_t gx,
   struct TrajectoryEpoch *e = (struct TrajectoryEpoch *)(intptr_t)cache;
   double box[] = {lx, ly, lz};
   int64_t n = x->sizes[0];
-  if (e->halo) {
-    struct Layout *l = e->halo->layout;
+  if (e->layout) {
+    struct Layout *l = e->layout;
     int valid = l->count == n && l->edges[0] == lx && l->edges[1] == ly && l->edges[2] == lz;
     for (int64_t j = 0; valid && j < n; ++j) {
       double r2 = 0;
@@ -2567,21 +2569,29 @@ int64_t _mlir_ciface_mdrtDistEpochPartition(struct Memref2D *x, int64_t gx,
       valid = r2 <= 0.25*skin*skin;
     }
     if (valid) {
+      l->groupsFrozen = 1;
       mdrtDistRetainLayout((int64_t)(intptr_t)l);
       return (int64_t)(intptr_t)l;
     }
-    mdrtDistReleaseHalo((int64_t)(intptr_t)e->halo);
+    if (e->halo) mdrtDistReleaseHalo((int64_t)(intptr_t)e->halo);
     e->halo = NULL;
+    mdrtDistReleaseLayout((int64_t)(intptr_t)e->layout);
+    e->layout = NULL;
   }
   e->reference = realloc(e->reference, (n ? n : 1)*3*sizeof(double));
   if (!e->reference) fail("out of memory recording trajectory positions");
   for (int64_t j = 0; j < n; ++j)
     for (int c = 0; c < 3; ++c)
       e->reference[3*j+c] = *at2(x,j,c);
+  int64_t handle;
 #ifdef MDIR_ENABLE_MPI
-  if (mpi) return _mlir_ciface_mdrtDistMPIPartition(x,gx,gy,gz,lx,ly,lz);
+  if (mpi) handle = _mlir_ciface_mdrtDistMPIPartition(x,gx,gy,gz,lx,ly,lz);
+  else
 #endif
-  return _mlir_ciface_mdrtDistPartition(x,gx,gy,gz,lx,ly,lz);
+    handle = _mlir_ciface_mdrtDistPartition(x,gx,gy,gz,lx,ly,lz);
+  e->layout = (struct Layout *)(intptr_t)handle;
+  mdrtDistRetainLayout(handle);
+  return handle;
 }
 
 void _mlir_ciface_mdrtDistEpochImages(int64_t cache, int64_t layout,

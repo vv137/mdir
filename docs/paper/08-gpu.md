@@ -1025,3 +1025,15 @@ skin. Thus a pair initially separated across a face by more than the
 halo reach stays outside the cutoff. After waiting on the receive event,
 the compute stream traverses the remaining centers with the complete
 position field. Each center retains its candidate order and destination.
+
+An epoch ties row identity, image translation and candidate membership
+to the same reference configuration. Drift updates a particle on its
+current owner. If all displacements remain inside the half-skin bound,
+the owner sends updated coordinates using the existing halo map. When
+coverage expires, ownership and canonical periodic images are computed
+again before evaluating forces. The native constraint projection retains
+its group-to-domain assignment while its reference covers the new
+positions. Rebuilding that assignment moves all members of a rigid group
+together. The CUDA transport continues to require floating-point
+distributed reductions. The fixed-point CPU reduction and its restart
+ordering use their existing paths.

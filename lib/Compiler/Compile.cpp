@@ -349,6 +349,8 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
     os << "md-distribute{grid=" << grid[0] << "," << grid[1] << "," << grid[2]
        << " traversal=" << control.distribution->traversal
        << (program.domainTopology ? " derivatives=true" : "")
+       << (program.domainTopology && control.distribution->transport == "nccl"
+               ? " projection-epochs=true" : "")
        << " reach=" << (control.getDistributionReach() * driver::units::length + program.domainTupleExtent) << "},";
   }
   os << "md-differentiate,md-expand-truncation,md-inline,"

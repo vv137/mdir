@@ -529,7 +529,7 @@ namespace {
 // integrator supplies the old and predicted rows, and consumes the complete
 // correction and the agreed failure flag before its next kick.
 static LogicalResult distributeGroups(ModuleOp module, ArrayRef<int64_t> grid,
-                                      double reach) {
+                                      double reach, bool retainLayout) {
   for (auto program : module.getOps<dyn::ProgramOp>()) {
     SmallVector<Operation *> work;
     SmallVector<Value> groups;
@@ -561,7 +561,9 @@ static LogicalResult distributeGroups(ModuleOp module, ArrayRef<int64_t> grid,
       return md_dist::FieldType::get(b.getContext(), name, md_dist::Role::Owned,
           false, t.getNumComponents(), t.getElementType());
     };
-    Value original = md_dist::PartitionOp::create(b, loc, layoutType, x, cell, groups);
+    Value original;
+    if (!retainLayout)
+      original = md_dist::PartitionOp::create(b, loc, layoutType, x, cell, groups);
     struct Epoch { Value layout, x, h, ghosts; };
     DenseMap<Value, Epoch> epochs;
     for (Operation *op : work) {
@@ -570,10 +572,18 @@ static LogicalResult distributeGroups(ModuleOp module, ArrayRef<int64_t> grid,
       Value positions = op->getOperand(1);
       Epoch &e = epochs[positions];
       if (!e.layout) {
-        Value moving = md_dist::DistributeOp::create(b, loc, fieldType(positions), positions, original, Value());
-        e.layout = md_dist::MigrateOp::create(b, loc, layoutType, original, moving, cell);
+        if (retainLayout) {
+          auto partition = md_dist::PartitionOp::create(b, loc, layoutType, positions, cell, groups);
+          partition->setAttr("md_dist.projection_epoch", b.getUnitAttr());
+          e.layout = partition;
+          e.x = md_dist::DistributeOp::create(b, loc, fieldType(positions),
+                                              positions, e.layout, cell);
+        } else {
+          Value moving = md_dist::DistributeOp::create(b, loc, fieldType(positions), positions, original, Value());
+          e.layout = md_dist::MigrateOp::create(b, loc, layoutType, original, moving, cell);
+          e.x = md_dist::RedistributeOp::create(b, loc, fieldType(positions), moving, original, e.layout, cell);
+        }
         if (epochs.size() == 1) e.layout.getDefiningOp()->setAttr("md_dist.step", b.getUnitAttr());
-        e.x = md_dist::RedistributeOp::create(b, loc, fieldType(positions), moving, original, e.layout, cell);
         e.h = md_dist::HaloOp::create(b, loc, haloType, e.layout, e.x, cell);
         e.ghosts = md_dist::HaloCopyOp::create(b, loc,
             fieldType(positions).with(md_dist::Role::Ghost, false), e.x, e.h, cell);
@@ -693,7 +703,7 @@ public:
         if (failed(Distributor(fn, divisions, kind, reach).run()))
           return signalPassFailure();
       }
-      if (failed(distributeGroups(module, divisions, reach))) return signalPassFailure();
+      if (failed(distributeGroups(module, divisions, reach, projectionEpochs))) return signalPassFailure();
       return;
     }
     for (PotentialOp potential : selected) {

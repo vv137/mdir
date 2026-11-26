@@ -627,7 +627,7 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
               return isa<NeighborhoodOp>(use);
             }))
           pairHalo = h;
-    if (pairHalo) {
+    if (pairHalo || op->hasAttr("md_dist.projection_epoch")) {
       scf::ForOp scope;
       for (auto loop = op->getParentOfType<scf::ForOp>(); loop;
            loop = loop->getParentOfType<scf::ForOp>()) {
@@ -643,8 +643,10 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
         OpBuilder after(scope->getBlock(), std::next(scope->getIterator()));
         func::CallOp::create(after, loc,
             declare("mdrtDistEpochDestroy", b.getFunctionType({i64}, {}), false), ValueRange{cache});
-        trajectoryCaches[pairHalo.getResult()] = cache;
-        trajectoryCaches[pairHalo.getPositions()] = cache;
+        if (pairHalo) {
+          trajectoryCaches[pairHalo.getResult()] = cache;
+          trajectoryCaches[pairHalo.getPositions()] = cache;
+        }
       }
     }
   }
