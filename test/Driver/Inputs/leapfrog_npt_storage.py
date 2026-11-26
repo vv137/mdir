@@ -186,11 +186,28 @@ else:
         print(f'{step}: reference position {dx:.17g} cell {dc:.17g}; projected full velocity {dv:.17g}',flush=True)
         assert dx<=limits[0] and dc<=limits[1] and dv<=limits[2],('trajectory changed beyond rounding',step,dx,dc,dv,limits)
         if step in [10,20]:
-            expected=project(bx,bv,bc) if a.reference_integrator=='Leapfrog' else project(bx,bv-.5*DT*bf*inverse[:,None],bc)
+            def stored(x_,v_,f_,c_):
+                return project(x_,v_,c_) if a.reference_integrator=='Leapfrog' else project(x_,v_-.5*DT*f_*inverse[:,None],c_)
+            expected=stored(bx,bv,bf,bc)
             difference=float(np.max(np.abs(v-expected)));rate=normalized_rate(x,v,cell)
             largest_projection=max(largest_projection,difference);largest_rate=max(largest_rate,rate)
+            storage_bound=ORACLE_BOUND[1]
+            if a.precision=='Mixed' and a.reference_integrator!=a.integrator:
+                # Against the other integrator's route the expected value
+                # comes from another trajectory, so the difference holds the
+                # finite mixed trajectory divergence of the two routes.
+                # Mixed precision rounds the step cell to binary32 at each
+                # coupling (D[box-f32-exact]), which the double baseline
+                # does not, so that divergence takes the criterion of D393,
+                # max(3B, floor), with B the same expression of the
+                # reference route against its mixed-double and one-f32-ulp
+                # traces. Tangency keeps its constant.
+                storage_baseline=max(float(np.max(np.abs(expected-stored(*[reference[f'{step}_{k}'] for k in ['positions','velocities','forces','cell']]))))
+                                     for reference in [baseline_double,baseline_ulp])
+                storage_bound=max(3*storage_baseline,ORACLE_BOUND[1])
+                print(f'{step}: storage expression baseline {storage_baseline:.17g}; limit {storage_bound:.17g}',flush=True)
             print(f'{step}: independent storage projection {difference:.17g}; normalized bond velocity {rate:.17g}',flush=True)
-            assert difference<=ORACLE_BOUND[1] and rate<=ORACLE_BOUND[2],('stored velocity oracle/tangency failed',step,difference,rate,ORACLE_BOUND)
+            assert difference<=storage_bound and rate<=ORACLE_BOUND[2],('stored velocity oracle/tangency failed',step,difference,rate,storage_bound,ORACLE_BOUND)
         else:
             before=step-1
             x0,v0,f0,c0=[fixed[f'{before}_{k}'] for k in ['positions','velocities','forces','cell']]
