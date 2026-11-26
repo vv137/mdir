@@ -1013,3 +1013,15 @@ row size, the expected forward bytes therefore scale with the sum of
 inter-node face areas. Compact groups of domains reduce that term.
 Edge and corner traffic, density variation, and topology can change
 the payload. The runtime records the actual bytes from the halo plan.
+
+For multiple domains with a cached directed MATRIX and no
+exclusions, the position exchange can overlap force evaluation. The
+communication stream gathers and sends the epoch's export rows and
+records an event after it scatters the imaged receives. The compute
+stream first traverses centers outside the export layer using owned
+positions. The halo reach includes the cutoff and the skin, and each
+particle's displacement from its epoch reference is bounded by half the
+skin. Thus a pair initially separated across a face by more than the
+halo reach stays outside the cutoff. After waiting on the receive event,
+the compute stream traverses the remaining centers with the complete
+position field. Each center retains its candidate order and destination.

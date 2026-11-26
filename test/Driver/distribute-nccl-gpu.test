@@ -19,6 +19,14 @@
 # EPOCH-DAG: llvm.call @mdrtDistDevicePositions(
 # EPOCH-DAG: llvm.call @mdrtDeviceRestoreDomainMatrix(
 
+# The force-and-observable step must dispatch the split even when every
+# step reports energy. Emitting a two-domain deck requires no exchange.
+# RUN: sed '/^\[distribute\]$/a domains = 2' %t/run.toml > %t/two.toml
+# RUN: cd %t && mdir emit two.toml --stage=lowered | FileCheck %s --check-prefix=SPLIT
+# SPLIT-DAG: llvm.call @mdrtDistFirstPairPhase(
+# SPLIT-DAG: llvm.call @mdrtDistBeginPositions(
+# SPLIT-DAG: llvm.call @mdrtDistWriteCenters(
+
 # A narrow skin rebuilds the periodic self-images at both steps. Compare
 # the device face map with the host geometry for the same coordinates.
 # RUN: sed 's/pairlist_distance = 9.5/pairlist_distance = 8.501/' %t/run.toml > %t/faces.toml

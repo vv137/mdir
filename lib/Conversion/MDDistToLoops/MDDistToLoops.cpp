@@ -25,6 +25,7 @@
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
 #include "mdir/Dialect/MDRT/MDRTOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -111,6 +112,8 @@ private:
       function_ref<void(OpBuilder &, Value, FlatSymbolRefAttr, DomainRelation)> emit);
   LogicalResult lowerPairGroup(Operation *anchor, DominanceInfo &dominance);
   scf::ForOp domainLoop;
+  llvm::DenseSet<Value> overlapPositions;
+  Value pairPhase, centerMask, computeStream;
   DomainRelation domainRelation;
   md_exec::PairForOp lastPair;
   llvm::DenseSet<Operation *> grouped;
@@ -1100,7 +1103,15 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
       })) {
     auto type = MemRefType::get({ShapedType::kDynamic, 3}, b.getF64Type(),
                                 MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
-    auto acquire = declare("mdrtDistDevicePositions",
+    bool overlap = domains > 1 && matrixSkin > 0 &&
+        op.getHalo().getDefiningOp<UnpackOp>() && module->hasAttr("md_dist.driver") &&
+        llvm::all_of(op.getResult().getUsers(), [](Operation *user) {
+          auto n = dyn_cast<NeighborhoodOp>(user);
+          if (!n) n = user->getOperand(0).getDefiningOp<NeighborhoodOp>();
+          return !n.getExcluded() && n.getResult().getType().getTraversal() == Traversal::Directed;
+        });
+    if (overlap) overlapPositions.insert(op.getResult());
+    auto acquire = declare(overlap ? "mdrtDistBeginPositions" : "mdrtDistDevicePositions",
         b.getFunctionType({i64, owned.getType()}, {type}), true);
     Value positions = func::CallOp::create(b, loc, acquire,
                                            ValueRange{halo.handle, owned}).getResult(0);
@@ -2442,6 +2453,13 @@ void Lowering::copyBack(OpBuilder &b, Value field, Value first, Value count,
     auto device = MemRefType::get(type.getShape(), type.getElementType(),
                                   MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
     Value flat = mdrt::ToBufferOp::create(b, loc, device, field);
+    if (centerMask) {
+      SmallVector<Value> args{buffer,d,count,flat,centerMask,computeStream};
+      auto fn = declare("mdrtDistWriteCenters",
+                        b.getFunctionType(ValueRange(args).getTypes(), {}),true);
+      func::CallOp::create(b,loc,fn,args);
+      return;
+    }
     SmallVector<Value> args{buffer, d, count, first, flat};
     auto fn = declare("mdrtDistImportForces", b.getFunctionType(ValueRange(args).getTypes(), {}), true);
     func::CallOp::create(b, loc, fn, args);
@@ -2501,6 +2519,23 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
   Value positions;
   if (Value device = devicePositions.lookup(op.getGhosts())) {
     auto type = md::FieldType::get(context, set, 3, b.getF64Type());
+    if (overlapPositions.contains(op.getGhosts())) {
+      auto streamType = LLVM::LLVMPointerType::get(context);
+      auto stream = declare("mdrtDeviceExternalStream", b.getFunctionType({}, {streamType}), false);
+      computeStream = func::CallOp::create(b,loc,stream).getResult(0);
+      Value phase = pairPhase ? pairPhase : Value(arith::ConstantIntOp::create(b,loc,2,64));
+      SmallVector<Value> args{halo.handle, device, owned, phase, computeStream};
+      auto select = declare("mdrtDistPairPositions",
+          b.getFunctionType(ValueRange(args).getTypes(), {device.getType()}),true);
+      device = func::CallOp::create(b,loc,select,args).getResult(0);
+      if (pairPhase) {
+        auto maskType = MemRefType::get({ShapedType::kDynamic},b.getI32Type(),
+            MemRefLayoutAttrInterface(),b.getI64IntegerAttr(1));
+        auto mask = declare("mdrtDistCenterMask",
+            b.getFunctionType({b.getI64Type(),b.getI64Type()},{maskType}),true);
+        centerMask = func::CallOp::create(b,loc,mask,ValueRange{halo.handle,phase}).getResult(0);
+      }
+    }
     positions = mdrt::FromBufferOp::create(b, loc, type, device);
   } else {
     positions = makeField(b, set, 3, b.getF64Type(), d, {owned, ghosts},
@@ -2640,6 +2675,10 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, Value d, FlatSymbolRefAttr
                        : cast<GatherPairsOp>(op).getCenterSet();
   Value centerSet;
   bool ghostFree = false;
+  if (centerMask) {
+    auto field = md::FieldType::get(module.getContext(),set,1,b.getI32Type());
+    centerSet = mdrt::FromBufferOp::create(b,loc,field,centerMask);
+  }
   if (selected) {
     centerSet = makeField(b, set, 1, b.getI32Type(), d,
                           {storage[selected].buffer}, {nOwned});
@@ -2741,6 +2780,23 @@ LogicalResult Lowering::lowerPairGroup(Operation *anchor, DominanceInfo &dominan
     auto start = declare("mdrtDeviceDomainEnter", b.getFunctionType({}, {b.getI64Type()}), false);
     parent = func::CallOp::create(b, loc, start).getResult(0);
   }
+  scf::ForOp phases;
+  if (overlapPositions.contains(n.getGhosts()) && llvm::all_of(group, [](Operation *op) {
+        if (auto sum = dyn_cast<SumPairsOp>(op)) return !sum.getCenterSet();
+        auto force = dyn_cast<GatherPairsOp>(op);
+        return force && force.getResults().size()==1 && !force.getCenterSet() &&
+               cast<FieldType>(force.getResults()[0].getType()).getNumComponents()==3;
+      })) {
+    auto first = declare("mdrtDistFirstPairPhase",
+        b.getFunctionType({b.getI64Type(),b.getF64Type()},{b.getI64Type()}),false);
+    Value start = toIndex(b,func::CallOp::create(b,loc,first,ValueRange{
+        storage[n.getHalo()].handle,real(b,n.getCutoff().convertToDouble())}).getResult(0));
+    Value full = arith::CmpIOp::create(b,loc,arith::CmpIPredicate::eq,start,index(b,2));
+    Value stop = arith::SelectOp::create(b,loc,full,index(b,3),index(b,2));
+    phases = scf::ForOp::create(b,loc,start,stop,index(b,1));
+    OpBuilder in(phases.getBody()->getTerminator());
+    pairPhase = arith::IndexCastOp::create(in,loc,in.getI64Type(),phases.getInductionVar());
+  }
   domainLoop = scf::ForOp::create(b, loc, domainBound(b, false), domainBound(b, true), index(b, 1));
   domainLoop->setAttr("md_dist.domain_loop", b.getUnitAttr());
   OpBuilder body(domainLoop.getBody()->getTerminator());
@@ -2759,6 +2815,11 @@ LogicalResult Lowering::lowerPairGroup(Operation *anchor, DominanceInfo &dominan
     auto leave = declare("mdrtDeviceDomainLeave", after.getFunctionType({after.getI64Type()}, {}), false);
     func::CallOp::create(after, loc, leave, ValueRange{parent});
   }
+  if (phases) {
+    phases->moveBefore(domainLoop);
+    domainLoop->moveBefore(phases.getBody()->getTerminator());
+  }
+  pairPhase = centerMask = computeStream = {};
   domainFields.clear();
   lastPair = {};
   domainLoop = {};
@@ -2789,8 +2850,17 @@ LogicalResult Lowering::lowerSumPairsExec(SumPairsOp op) {
     for (int64_t c = 0; c < length; ++c) {
       Value part =
           vector ? Value(vector::ExtractOp::create(b, loc, sum, c)) : sum;
-      memref::StoreOp::create(b, loc, part, partial,
-                              ValueRange{d, index(b, c)});
+      SmallVector<Value> place{d,index(b,c)};
+      if (pairPhase) {
+        Value boundary = arith::CmpIOp::create(b,loc,arith::CmpIPredicate::eq,
+            pairPhase,arith::ConstantIntOp::create(b,loc,1,64));
+        auto total = scf::IfOp::create(b,loc,boundary,[&](OpBuilder &at, Location) {
+          Value interior = memref::LoadOp::create(at,loc,partial,place);
+          scf::YieldOp::create(at,loc,Value(arith::AddFOp::create(at,loc,interior,part)));
+        },[&](OpBuilder &at, Location) { scf::YieldOp::create(at,loc,part); });
+        part = total.getResult(0);
+      }
+      memref::StoreOp::create(b,loc,part,partial,place);
     }
   });
   storage[op.getResult()].buffer = partial;

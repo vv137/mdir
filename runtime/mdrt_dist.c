@@ -2144,7 +2144,7 @@ int64_t mdrtDistDeviceMatrixSlot(int64_t halo, double cutoff) {
 
 static struct NCCLPlan *devicePlan(struct Halo *h) {
   if (!h->ncclPlan)
-    h->ncclPlan = mdrtNCCLPlan(h->layout->domains, h->rows, h->capacity,
+    h->ncclPlan = mdrtNCCLPlan(h->layout->rows[mdrtMPIDomainBound(h->layout->domains,0)], h->layout->domains, h->rows, h->capacity,
         h->sourceDomain, h->sourceRow, h->image, h->layout->edges);
   return h->ncclPlan;
 }
@@ -2213,8 +2213,8 @@ void _mlir_ciface_mdrtDistDeviceKinds(struct DeviceKinds *out, int64_t handle,
   *out = (struct DeviceKinds){value,value,0,n,1};
 }
 
-void _mlir_ciface_mdrtDistDevicePositions(struct Memref2D *result, int64_t handle,
-                                          struct Memref3D *owned) {
+static void packPositions(struct Memref2D *result, int64_t handle,
+                          struct Memref3D *owned, int asynchronous) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
   int64_t d = mdrtMPIDomainBound(h->layout->domains, 0);
   if (owned->sizes[2] != 3 || owned->strides[1] != 3 || owned->strides[2] != 1)
@@ -2224,8 +2224,48 @@ void _mlir_ciface_mdrtDistDevicePositions(struct Memref2D *result, int64_t handl
       struct Edge edge = h->edges[i];
       observer->transfer(observer->context, edge.from, edge.to, edge.rows*3*sizeof(double), 0);
     }
-  double *data = mdrtNCCLPackedRows(devicePlan(h), deviceRows(owned,d,h->layout->rows[d],0), h->layout->rows[d],3,1);
+  int64_t n = h->layout->rows[d];
+  double *source = deviceRows(owned,d,n,0);
+  double *data = asynchronous ? mdrtNCCLBeginPositions(devicePlan(h),source,n)
+                              : mdrtNCCLPackedRows(devicePlan(h),source,n,3,1);
   *result = (struct Memref2D){data, data, 0, {h->layout->rows[d]+h->rows[d], 3}, {3, 1}};
+}
+
+void _mlir_ciface_mdrtDistDevicePositions(struct Memref2D *result, int64_t halo,
+                                          struct Memref3D *owned) {
+  packPositions(result,halo,owned,0);
+}
+
+void _mlir_ciface_mdrtDistBeginPositions(struct Memref2D *result, int64_t halo,
+                                         struct Memref3D *owned) {
+  packPositions(result,halo,owned,1);
+}
+
+int64_t mdrtDistFirstPairPhase(int64_t halo, double cutoff) {
+  struct Halo *h = (void *)(intptr_t)halo;
+  return !h->layout->groupCount && h->deviceMatrix.data && h->deviceCutoff == cutoff ? 0 : 2;
+}
+
+void _mlir_ciface_mdrtDistPairPositions(struct Memref2D *out, int64_t halo,
+    struct Memref2D *full, struct Memref3D *owned, int64_t phase, void *stream) {
+  struct Halo *h = (void *)(intptr_t)halo;
+  int64_t d = mdrtMPIDomainBound(h->layout->domains,0), n = h->layout->rows[d];
+  double *p = mdrtNCCLPairPositions(devicePlan(h),full->aligned,
+                                    deviceRows(owned,d,n,0),n,phase,stream);
+  *out = (struct Memref2D){p,p,0,{full->sizes[0],3},{3,1}};
+}
+
+void _mlir_ciface_mdrtDistCenterMask(struct DeviceKinds *out, int64_t halo, int64_t phase) {
+  struct Halo *h = (void *)(intptr_t)halo;
+  int64_t d = mdrtMPIDomainBound(h->layout->domains,0);
+  int64_t rows = h->layout->rows[d]+h->rows[d];
+  int *p = mdrtNCCLCenterMask(devicePlan(h),rows,phase);
+  *out = (struct DeviceKinds){p,p,0,rows,1};
+}
+
+void _mlir_ciface_mdrtDistWriteCenters(struct Memref3D *out, int64_t d,
+    int64_t n, struct Memref2D *forces, struct DeviceKinds *mask, void *stream) {
+  mdrtNCCLWriteCenters(deviceRows(out,d,n,1),forces->aligned,mask->aligned,n,stream);
 }
 
 void _mlir_ciface_mdrtDistReleaseDevicePositions(struct Memref2D *rows) {

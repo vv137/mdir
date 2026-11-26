@@ -11,9 +11,13 @@ int mdrtNCCLActive(void);
 struct NCCLPlan;
 struct NCCLPlan *mdrtNCCLSelfPlan(double *x, int64_t rows, const double *edges,
                                   double reach, int64_t *ghosts);
-struct NCCLPlan *mdrtNCCLPlan(int64_t domains, const int64_t *ghosts,
+struct NCCLPlan *mdrtNCCLPlan(int64_t ownedRows, int64_t domains, const int64_t *ghosts,
     int64_t capacity, const int64_t *sourceDomain, const int64_t *sourceRow,
     const int64_t *image, const double *edges);
+double *mdrtNCCLBeginPositions(struct NCCLPlan *, double *, int64_t);
+int *mdrtNCCLCenterMask(struct NCCLPlan *, int64_t, int);
+double *mdrtNCCLPairPositions(struct NCCLPlan *, double *, double *, int64_t, int, void *);
+void mdrtNCCLWriteCenters(double *, const double *, const int *, int64_t, void *);
 void mdrtNCCLFreePlan(struct NCCLPlan *p);
 void mdrtNCCLHalo(const struct NCCLPlan *p, double *owned, int64_t nOwned,
     double *ghosts, int k, int image, int reverse);

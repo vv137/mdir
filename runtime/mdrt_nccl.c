@@ -83,6 +83,9 @@ struct NCCLPlan {
   double *shifts;
   int sendRows, recvRows;
   int hasPeers[2], pooled;
+  int *centerMasks;
+  double *interiorPositions;
+  cudaEvent_t producerReady, haloReady;
 };
 
 static void *upload(const void *host, size_t bytes) {
@@ -94,7 +97,7 @@ static void *upload(const void *host, size_t bytes) {
   return device;
 }
 
-struct NCCLPlan *mdrtNCCLPlan(int64_t domains, const int64_t *ghosts,
+struct NCCLPlan *mdrtNCCLPlan(int64_t ownedRows, int64_t domains, const int64_t *ghosts,
     int64_t capacity, const int64_t *sourceDomain, const int64_t *sourceRow,
     const int64_t *image, const double *edges) {
   int rank = mdrtMPIRank();
@@ -154,6 +157,21 @@ struct NCCLPlan *mdrtNCCLPlan(int64_t domains, const int64_t *ghosts,
   p->source = upload(sources, (size_t)p->sendRows*sizeof(int));
   p->dest = upload(targets, (size_t)p->recvRows*sizeof(int));
   p->shifts = upload(shifts, (size_t)p->recvRows*3*sizeof(double));
+  if (size > 1) {
+    size_t rows = ownedRows + p->recvRows;
+    int *masks = calloc(3 * (rows ? rows : 1), sizeof *masks);
+    if (!masks) mdrtMPIAbort("out of memory classifying halo centers");
+    for (int64_t r = 0; r < ownedRows; ++r)
+      masks[r] = masks[2*rows+r] = 1;
+    for (int r = 0; r < p->sendRows; ++r) {
+      masks[sources[r]] = 0;
+      masks[rows+sources[r]] = 1;
+    }
+    p->centerMasks = upload(masks, 3*(rows ? rows : 1)*sizeof(int));
+    free(masks);
+    checkCuda(cudaEventCreateWithFlags(&p->producerReady, cudaEventDisableTiming));
+    checkCuda(cudaEventCreateWithFlags(&p->haloReady, cudaEventDisableTiming));
+  }
   free(sources); free(targets); free(shifts);
   return p;
 }
@@ -210,6 +228,12 @@ void mdrtNCCLFreePlan(struct NCCLPlan *p) {
     checkCuda(cudaFree(p->dest));
     checkCuda(cudaFree(p->shifts));
   }
+  if (p->producerReady) {
+    checkCuda(cudaEventDestroy(p->producerReady));
+    checkCuda(cudaEventDestroy(p->haloReady));
+    checkCuda(cudaFree(p->centerMasks));
+    if (p->interiorPositions) mdrtNCCLFreePositions(p->interiorPositions);
+  }
   free(p->counts);
   free(p);
 }
@@ -226,14 +250,14 @@ extern void mdrtNCCLRows(int gather, const double *input, const int *rows,
     double *output, long long n, int k, const double *shift, int transpose, CUstream stream);
 
 static void exchange(const struct NCCLPlan *p, double *owned, int64_t nOwned,
-    double *ghosts, int k, int image, int reverse, double *packed) {
+    double *ghosts, int k, int image, int reverse, double *packed, int asynchronous) {
   if (image && k != 3) mdrtMPIAbort("imaged halo positions require three components");
   size_t row = (size_t)k * sizeof(double);
   if (packed && size==1 && !reverse) {
     if (nOwned) checkCuda(cudaMemcpyAsync(packed,owned,nOwned*row,cudaMemcpyDeviceToDevice,stream));
     mdrtNCCLSelfGather(owned,p->source,image ? p->shifts : NULL,packed+nOwned*k,
                        (long long)p->recvRows*k,k,stream);
-    checkCuda(cudaStreamSynchronize(stream));
+    if (!asynchronous) checkCuda(cudaStreamSynchronize(stream));
     return;
   }
   if (!packed) {
@@ -251,7 +275,7 @@ static void exchange(const struct NCCLPlan *p, double *owned, int64_t nOwned,
     checkCuda(cudaMemcpyAsync(ghostDevice, ghosts, p->recvRows*row, cudaMemcpyHostToDevice, stream));
   mdrtNCCLRows(1, reverse ? ghostDevice : ownedDevice, reverse ? p->dest : p->source,
                outgoing, (long long)send*k, k, NULL, reverse, stream);
-  checkCuda(cudaStreamSynchronize(stream));
+  if (!asynchronous) checkCuda(cudaStreamSynchronize(stream));
   int rank = mdrtMPIRank();
   for (int inter = 0; inter <= 1; ++inter) {
     if (!p->hasPeers[inter]) continue;
@@ -272,7 +296,7 @@ static void exchange(const struct NCCLPlan *p, double *owned, int64_t nOwned,
       }
     }
     checkNCCL(ncclGroupEnd());
-    checkCuda(cudaStreamSynchronize(stream));
+    if (!asynchronous) checkCuda(cudaStreamSynchronize(stream));
     if (!reverse) mdrtDistPhase(-phase);
   }
   double *result = reverse ? ownedDevice : ghostDevice;
@@ -281,12 +305,12 @@ static void exchange(const struct NCCLPlan *p, double *owned, int64_t nOwned,
   size_t bytes = (reverse ? nOwned : p->recvRows)*row;
   if (!packed && bytes) checkCuda(cudaMemcpyAsync(reverse ? owned : ghosts, result, bytes,
                                        cudaMemcpyDeviceToHost, stream));
-  checkCuda(cudaStreamSynchronize(stream));
+  if (!asynchronous) checkCuda(cudaStreamSynchronize(stream));
 }
 
 void mdrtNCCLHalo(const struct NCCLPlan *plan, double *owned, int64_t rows,
     double *ghosts, int k, int image, int reverse) {
-  exchange(plan, owned, rows, ghosts, k, image, reverse, NULL);
+  exchange(plan, owned, rows, ghosts, k, image, reverse, NULL, 0);
 }
 
 /* The outlined MATRIX borrows this immutable buffer until its block ends.
@@ -297,8 +321,44 @@ double *mdrtNCCLPackedRows(const struct NCCLPlan *plan, double *owned, int64_t r
   positions = mdrtNCCLAllocate((count ? count : 1)*k*sizeof(double));
   // The integration kernel writes owned rows on the default stream.
   checkCuda(cudaStreamSynchronize(0));
-  exchange(plan, owned, rows, NULL, k, image, 0, positions);
+  exchange(plan, owned, rows, NULL, k, image, 0, positions, 0);
   return positions;
+}
+
+/* An epoch's export rows include every center within the halo reach of a
+   remote or periodic face. An interior center cannot acquire a ghost
+   neighbor before the half-skin displacement test expires. */
+double *mdrtNCCLBeginPositions(struct NCCLPlan *p, double *owned, int64_t n) {
+  size_t bytes = (size_t)(n+p->recvRows)*3*sizeof(double);
+  double *positions = mdrtNCCLAllocate(bytes);
+  checkCuda(cudaEventRecord(p->producerReady, 0));
+  checkCuda(cudaStreamWaitEvent(stream, p->producerReady, 0));
+  exchange(p, owned, n, NULL, 3, 1, 0, positions, 1);
+  checkCuda(cudaEventRecord(p->haloReady, stream));
+  return positions;
+}
+
+int *mdrtNCCLCenterMask(struct NCCLPlan *p, int64_t rows, int phase) {
+  return p->centerMasks + rows*phase;
+}
+
+double *mdrtNCCLPairPositions(struct NCCLPlan *p, double *full, double *owned,
+                              int64_t n, int phase, void *compute) {
+  if (phase != 0) {
+    checkCuda(cudaStreamWaitEvent(compute, p->haloReady, 0));
+    return full;
+  }
+  if (!p->interiorPositions) {
+    p->interiorPositions = mdrtNCCLAllocate((n+p->recvRows)*3*sizeof(double));
+    if (p->recvRows)
+      checkCuda(cudaMemsetAsync(p->interiorPositions+n*3, 0,
+                                p->recvRows*3*sizeof(double), 0));
+  }
+  checkCuda(cudaEventRecord(p->producerReady, 0));
+  checkCuda(cudaStreamWaitEvent(compute, p->producerReady, 0));
+  if (n) checkCuda(cudaMemcpyAsync(p->interiorPositions, owned,
+                    n*3*sizeof(double), cudaMemcpyDeviceToDevice, compute));
+  return p->interiorPositions;
 }
 
 void mdrtNCCLFreePositions(double *positions) {

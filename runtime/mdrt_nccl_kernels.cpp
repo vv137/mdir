@@ -9,6 +9,11 @@
 
 namespace {
 constexpr char source[] = R"(
+extern "C" __global__ void writeCenters(double *out, const double *forces,
+                                        const int *mask, long long n) {
+  long long i = (long long)blockIdx.x*blockDim.x + threadIdx.x;
+  if (i < n && mask[i/3]) out[i] = forces[i];
+}
 extern "C" __global__ void pack(const double *field, const int *row,
                                 double *wire, long long n, int k) {
   long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
@@ -171,6 +176,8 @@ void check(CUresult status) {
   mdrtMPIAbort(message);
 }
 
+CUfunction writeCenters;
+
 void compile() {
   CUdevice device;
   int major, minor;
@@ -197,6 +204,7 @@ void compile() {
   verify(nvrtcGetPTX(program, ptx.data()));
   verify(nvrtcDestroyProgram(&program));
   check(cuModuleLoadData(&module, ptx.data()));
+  check(cuModuleGetFunction(&writeCenters, module, "writeCenters"));
   check(cuModuleGetFunction(&pack, module, "pack"));
   check(cuModuleGetFunction(&unpack, module, "unpack"));
   check(cuModuleGetFunction(&selfFaceCounts,module,"selfFaceCounts"));
@@ -320,4 +328,22 @@ extern "C" void mdrtNCCLSelfGather(const double *owned, const int *source, const
   if (!module) compile();
   void *args[]={&owned,&source,&shifts,&ghosts,&elements,&width};
   check(cuLaunchKernel(selfGather,(elements+255)/256,1,1,256,1,1,0,stream,args,nullptr));
+}
+
+extern "C" void mdrtNCCLWriteCenters(double *out, const double *forces,
+    const int *mask, int64_t rows, void *stream) {
+  long long n = rows*3;
+  if (!n) return;
+  if (!module) compile();
+  // The destination allocation and subsequent integrator work belong
+  // to the default stream. Order both edges without waiting on the CPU.
+  static CUevent handoff;
+  if (!handoff) check(cuEventCreate(&handoff, CU_EVENT_DISABLE_TIMING));
+  check(cuEventRecord(handoff, nullptr));
+  check(cuStreamWaitEvent((CUstream)stream, handoff, 0));
+  void *args[] = {&out, &forces, &mask, &n};
+  check(cuLaunchKernel(writeCenters, (n+255)/256,1,1,256,1,1,0,
+                       (CUstream)stream,args,nullptr));
+  check(cuEventRecord(handoff, (CUstream)stream));
+  check(cuStreamWaitEvent(nullptr, handoff, 0));
 }

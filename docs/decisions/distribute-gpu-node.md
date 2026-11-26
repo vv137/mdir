@@ -94,5 +94,23 @@ membership from coordinates. A topology schedule shares positions for its
 member identities. Host tuple kernels gather the owned and ghost rows they
 read. An immutable field records which rows the host has already received.
 The native constrained integrator and output can still materialize global
-fields at partition and collection boundaries. Forward peer exchanges complete before the pair
-evaluation starts.
+fields at partition and collection boundaries.
+
+### Overlap of position exchange and directed forces
+
+For a cached, exclusion-free directed MATRIX with multiple domains, the export map divides the centers into two sets. Each
+source of a remote or periodic ghost is a boundary center. All other
+owned rows are interior centers. At the rebuild an interior center is
+farther than the halo reach from the faces. The two half-skin displacement
+allowances together bound how much closer it and a remote neighbor can
+move before the next rebuild.
+
+The communication stream waits on the position producer's event, packs
+outgoing triples, exchanges them with peers, scatters translated ghosts,
+and records completion. The compute stream can run the interior force
+rows using a separate buffer with owned positions and initialized padding.
+This keeps the cell-order gather from reading incoming ghost storage.
+The boundary pass waits on the completion event before reading the full
+position field. Both passes use the epoch's original MATRIX entries and
+write disjoint owned force rows. A cold list requires complete geometry
+for its search. The two partial observable sums are added in interior, then boundary order.
