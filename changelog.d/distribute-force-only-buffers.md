@@ -1,0 +1,3 @@
+### Fixed
+
+- Distributed CPU runs with the default (non-deterministic) driver no longer grow in memory at every step. Every call of the procedure of a domain (once per domain and step, on force-only and energy steps alike) kept the local rows it packed and the storage of its fields; a JAC run with two domains lost about 1.7 MB a step on each rank and ran out of memory before 50 ps. `md-dist-release-domain-buffers` now frees them at the end of each call (D[distribute-pair-lowering]); `test/Driver/distribute-memory.test` checks that a run of 1,000 steps peaks at most 16 MiB above one of 50 (before the fix: 84 MiB).
