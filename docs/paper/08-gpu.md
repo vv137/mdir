@@ -1311,3 +1311,10 @@ The same ownership argument removes periodic copies from local bonded
 schedules, whose kernels already evaluate periodic bond geometry. This
 brought the two-run Factor IX mean to 15.891 ms/step and JAC-RF to
 7.085 ms/step in double precision.
+
+The tuple adjacency in global particle order depends only on topology.
+Keeping it on the device across Verlet epochs reduced the Factor IX
+rebuild mean from 65.06 to 39.65 ms in the first repetition on each
+implementation. In the alternating comparison the 204-step production
+means fell from 15.845 to 12.859 ms/step for Factor IX and from 7.052
+to 6.222 ms/step for JAC-RF.

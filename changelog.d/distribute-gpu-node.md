@@ -21,3 +21,5 @@
   that use the same particle numbering.
 - Use owned rows for scheduled one-domain bonded interactions and for
   complete one-domain unique pair traversals with exclusions.
+- Keep immutable topology member and adjacency arrays across distributed
+  GPU neighbor rebuilds.

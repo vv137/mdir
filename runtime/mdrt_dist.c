@@ -2755,19 +2755,37 @@ void _mlir_ciface_mdrtDistDeviceExclusions(struct DeviceKinds *out,
 /* The epoch fixes row identities and periodic images. Keep the immutable
    topology adjacency; the device selects its active incidences at the
    current coordinates in the original tuple order. */
+struct TupleTopology {
+  int64_t references;
+  int count, arity, particles;
+  int *hostMembers, *members, *starts, *entries;
+};
+
+void mdrtDistReleaseTopology(int64_t handle) {
+  struct TupleTopology *t = (void *)(intptr_t)handle;
+  if (--t->references) return;
+  if (t->members) {
+    mdrtNCCLFreePositions((double *)t->members);
+    mdrtNCCLFreePositions((double *)t->starts);
+    mdrtNCCLFreePositions((double *)t->entries);
+  }
+  free(t->hostMembers);
+  free(t);
+}
+
 struct TuplePlan {
   struct TuplePlan *next;
   int64_t site, extent;
   int count, arity, rows, built;
-  int *topology, *starts, *entries;
+  struct TupleTopology *topology;
   int *mapped, *blocks, *csr;
 };
 
 static void freeTuplePlans(struct TuplePlan *p) {
   while (p) {
     struct TuplePlan *next = p->next;
-    int *buffers[] = {p->topology,p->starts,p->entries,
-                      p->mapped,p->blocks,p->csr};
+    mdrtDistReleaseTopology((int64_t)(intptr_t)p->topology);
+    int *buffers[] = {p->mapped,p->blocks,p->csr};
     for (size_t i=0; i<sizeof buffers/sizeof *buffers; ++i)
       mdrtNCCLFreePositions((double *)buffers[i]);
     free(p);
@@ -2779,6 +2797,50 @@ static int *tupleInts(size_t count) {
   int *values=calloc(count ? count : 1,sizeof(*values));
   if (!values) fail("out of memory indexing distributed tuples");
   return values;
+}
+
+int64_t _mlir_ciface_mdrtDistCreateTopology(struct Members *members) {
+  int64_t count = members->sizes[0], arity = members->sizes[1];
+  if (arity < 2 || arity > INT_MAX-2 || count < 0 || count > INT_MAX/arity)
+    fail("distributed tuple topology exceeds device index range");
+  struct TupleTopology *t = calloc(1, sizeof(*t));
+  if (!t) fail("out of memory retaining tuple topology");
+  t->references = 1;
+  t->count = count;
+  t->arity = arity;
+  t->hostMembers = tupleInts(count*arity);
+  for (int64_t row=0; row<count; ++row)
+    for (int64_t a=0; a<arity; ++a)
+      t->hostMembers[row*arity+a] = members->aligned[
+          members->offset + row*members->strides[0] + a*members->strides[1]];
+  return (int64_t)(intptr_t)t;
+}
+
+static void prepareTupleTopology(struct TupleTopology *t, int particles) {
+  if (t->members) {
+    if (t->particles != particles) fail("tuple topology changed its particle count");
+    return;
+  }
+  int count = t->count*t->arity;
+  int *starts = tupleInts((size_t)particles+1);
+  for (int i=0; i<count; ++i) {
+    int j=t->hostMembers[i];
+    if (j<0 || j>=particles) fail("tuple member outside particle set");
+    ++starts[j+1];
+  }
+  for (int j=0; j<particles; ++j) starts[j+1]+=starts[j];
+  int *cursor=tupleInts(particles), *entries=tupleInts(count);
+  memcpy(cursor,starts,(size_t)particles*sizeof(*cursor));
+  for (int i=0; i<count; ++i) entries[cursor[t->hostMembers[i]]++]=i;
+  t->particles = particles;
+  t->members = mdrtNCCLUploadIndices(t->hostMembers,count);
+  t->starts = mdrtNCCLUploadIndices(starts,(int64_t)particles+1);
+  t->entries = mdrtNCCLUploadIndices(entries,count);
+  free(t->hostMembers);
+  t->hostMembers = NULL;
+  free(starts);
+  free(cursor);
+  free(entries);
 }
 
 static void buildTupleDomainRows(struct TupleDomainRows *directory,
@@ -2806,8 +2868,8 @@ static void buildTupleDomainRows(struct TupleDomainRows *directory,
 }
 
 static struct TuplePlan *newTuplePlan(struct Layout *l, struct Halo *h,
-    struct Members *members, int64_t site, int64_t d) {
-  int64_t count=members->sizes[0], arity=members->sizes[1];
+    struct TupleTopology *topology, int64_t site, int64_t d) {
+  int64_t count=topology->count, arity=topology->arity;
   int64_t owned=l->rows[d], rows=owned+(h ? h->rows[d] : 0);
   if (arity<2 || arity>INT_MAX-2 || count<0 || count>INT_MAX/arity ||
       rows>INT_MAX-256 || l->count>INT_MAX/3 || rows>INT_MAX/5 ||
@@ -2818,22 +2880,9 @@ static struct TuplePlan *newTuplePlan(struct Layout *l, struct Halo *h,
   if (!p) fail("out of memory allocating distributed tuple plan");
   p->site=site; p->count=count; p->arity=arity; p->rows=rows;
   p->extent=rows+2+(arity+2)*(memberships+1);
-  int *topology=tupleInts(memberships), *starts=tupleInts(l->count+1);
-  for (int t=0;t<count;++t)
-    for (int a=0;a<arity;++a) {
-      int j=members->aligned[members->offset+t*members->strides[0]+a*members->strides[1]];
-      if (j<0 || j>=l->count) fail("tuple member outside particle set");
-      topology[t*arity+a]=j;
-      ++starts[j+1];
-    }
-  for (int j=0;j<l->count;++j) starts[j+1]+=starts[j];
-  int *cursor=tupleInts(l->count), *entries=tupleInts(memberships);
-  memcpy(cursor,starts,l->count*sizeof(*cursor));
-  for (int m=0;m<memberships;++m) entries[cursor[topology[m]]++]=m;
-  p->topology=mdrtNCCLUploadIndices(topology,memberships);
-  p->starts=mdrtNCCLUploadIndices(starts,l->count+1);
-  p->entries=mdrtNCCLUploadIndices(entries,memberships);
-  free(topology); free(starts); free(entries); free(cursor);
+  prepareTupleTopology(topology,l->count);
+  ++topology->references;
+  p->topology = topology;
   p->mapped=(int *)mdrtNCCLAllocate(memberships*sizeof(int));
   p->blocks=(int *)mdrtNCCLAllocate(((rows+255)/256)*sizeof(int));
   p->csr=(int *)mdrtNCCLAllocate(p->extent*sizeof(int));
@@ -2854,20 +2903,31 @@ static double *tupleCoordinates(struct Halo *h, struct Memref3D *x, int64_t d) {
 }
 
 void _mlir_ciface_mdrtDistTupleIncidence(struct DeviceKinds *out,int64_t handle,
-    struct Memref3D *x,struct Members *members,int64_t site,int64_t group,void *stream) {
+    struct Memref3D *x,int64_t topologyHandle,int64_t site,int64_t group,void *stream) {
+  struct TupleTopology *topology=(void *)(intptr_t)topologyHandle;
   struct Halo *h=group ? NULL : (void *)(intptr_t)handle;
   struct Layout *l=group ? (void *)(intptr_t)handle : h->layout;
   int64_t d=mdrtMPIDomainBound(l->domains,0);
   struct TuplePlan **slot=group ? &l->tuplePlans : &h->tuplePlans;
   while (*slot && (*slot)->site!=site) slot=&(*slot)->next;
-  if (!*slot) *slot=newTuplePlan(l,h,members,site,d);
+  if (*slot && (*slot)->topology != topology) {
+    struct TuplePlan *expired=*slot;
+    *slot=expired->next;
+    expired->next=NULL;
+    freeTuplePlans(expired);
+    struct TuplePlan *fresh=newTuplePlan(l,h,topology,site,d);
+    fresh->next=*slot;
+    *slot=fresh;
+  } else if (!*slot) {
+    *slot=newTuplePlan(l,h,topology,site,d);
+  }
   struct TuplePlan *p=*slot;
   struct TupleDomainRows *directory = group ? &l->tupleDomainRows : &h->tupleDomainRows;
   if (!directory->locations) buildTupleDomainRows(directory,l,h,d);
   if (!group || !p->built) {
     double *coordinates=group ? NULL : tupleCoordinates(h,x,d);
-    mdrtNCCLBuildTupleRows(p->topology,p->count,p->arity,directory->locations,directory->particles,coordinates,
-        l->grid,l->edges,d,group,p->starts,p->entries,p->rows,p->mapped,p->blocks,p->csr);
+    mdrtNCCLBuildTupleRows(topology->members,p->count,p->arity,directory->locations,directory->particles,coordinates,
+        l->grid,l->edges,d,group,topology->starts,topology->entries,p->rows,p->mapped,p->blocks,p->csr);
     p->built=1;
   }
   mdrtNCCLWaitForRows(stream);

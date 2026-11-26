@@ -115,6 +115,7 @@ private:
   scf::ForOp domainLoop;
   llvm::DenseSet<Value> overlapPositions;
   llvm::DenseMap<Value, Value> scheduledMembers, tupleParameters;
+  llvm::DenseMap<Value, Value> tupleTopologies;
   llvm::DenseMap<std::pair<Value, Block *>, Value> exclusionTables;
   Value deviceTupleParameter(Value field);
   Value pairPhase, centerMask, computeStream;
@@ -1400,11 +1401,11 @@ LogicalResult Lowering::lowerDeviceTuples(TupleKernelOp op) {
     auto device = MemRefType::get({ShapedType::kDynamic}, b.getI32Type(),
                                   MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
     SmallVector<Value> args{ownedOnly ? layout.handle : halo.handle, storage[op.getPositions()].buffer,
-                            topology, arith::ConstantIntOp::create(b,loc,tupleSite,64),
+                            tupleTopologies.lookup(op.getRows().getDefiningOp<TupleRowsOp>().getTuples()),
+                            arith::ConstantIntOp::create(b,loc,tupleSite,64),
                             arith::ConstantIntOp::create(b,loc,ownedOnly,64),tupleStream};
     auto fn = declare("mdrtDistTupleIncidence", b.getFunctionType(ValueRange(args).getTypes(),
                        {device}), true);
-    fn.setArgAttr(2,"mdrt.read_only",b.getUnitAttr());
     Value data = func::CallOp::create(b,loc,fn,args).getResult(0);
     rel = mdrt::ScheduledRelationOp::create(b,loc,relationType,data,count);
     for (auto [original, input] : llvm::zip(op.getParameters(),parameterInputs)) {
@@ -1720,6 +1721,20 @@ LogicalResult Lowering::lowerTupleRows(TupleRowsOp op) {
   };
   if (sharedState() && !fixedPoint && module->hasAttr("md_dist.driver") &&
       llvm::all_of(op.getRows().getUsers(), [](Operation *u) { return isa<TupleKernelOp>(u); })) {
+    Value relationValue = op.getTuples();
+    if (!tupleTopologies.count(relationValue)) {
+      OpBuilder at(module.getContext());
+      at.setInsertionPointAfterValue(relationValue);
+      Value input = mdrt::ToBufferOp::create(at, loc, mdrt::getMembersType(relation), relationValue);
+      input = memref::CastOp::create(at, loc, dynamic(at.getI32Type()), input);
+      auto fn = declare("mdrtDistCreateTopology", at.getFunctionType({input.getType()}, {at.getI64Type()}), true);
+      fn.setArgAttr(0, "mdrt.read_only", at.getUnitAttr());
+      Value handle = func::CallOp::create(at, loc, fn, input).getResult(0);
+      tupleTopologies[relationValue] = handle;
+      OpBuilder cleanup(handle.getParentBlock()->getTerminator());
+      auto release = declare("mdrtDistReleaseTopology", at.getFunctionType({at.getI64Type()}, {}), false);
+      func::CallOp::create(cleanup, loc, release, handle);
+    }
     scheduledMembers[op.getRows()] =
         memref::CastOp::create(b, loc, dynamic(b.getI32Type()), members);
     return success();
@@ -3811,6 +3826,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
   tupleParameters.clear();
   exclusionTables.clear();
   scheduledMembers.clear();
+  tupleTopologies.clear();
   emptyGhostForces.clear();
   if (fixedPoint && module->hasAttr("md_dist.driver")) {
     SmallVector<md::SumParticlesOp> sums;

@@ -464,3 +464,9 @@ use the complete set of centers and return ghost contributions only to
 the matching reverse sum. The identity test retains one orientation of
 each pair. The pair list covers twice the per-particle displacement
 allowance of the packed state.
+
+A tuple relation owns its global member indices and adjacency list from
+its first device use to the end of its SSA lifetime. A new rank layout
+maps local rows against these immutable arrays. Each mapped plan retains
+its relation, so replacing a relation at an evaluation site rebuilds the
+plan even when the layout is unchanged.
