@@ -362,8 +362,8 @@ double *mdrtNCCLPackedRows(const struct NCCLPlan *plan, double *owned, int64_t r
   double *positions;
   size_t count = rows + (size_t)plan->recvRows;
   positions = mdrtNCCLAllocate((count ? count : 1)*k*sizeof(double));
-  // The integration kernel writes owned rows on the default stream.
-  checkCuda(cudaStreamSynchronize(0));
+  // The halo stream consumes the default stream's integration result.
+  mdrtNCCLWaitForRows(stream);
   exchange(plan, owned, rows, NULL, k, image, 0, positions, 0, 0);
   return positions;
 }

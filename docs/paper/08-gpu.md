@@ -1121,3 +1121,8 @@ excluded row pairs between rebuilds.
 The host measures required blocking collectives directly. Their elapsed
 time includes arrival skew and transport. Adding this duration to an
 inclusive parent phase would count the same interval twice.
+
+A borrowed observable field is ready when its producing stream reaches
+the recorded event. The reduction stream waits for that event on the
+device. A force import copies on the producer stream and orders the next
+integration update after the copy, preserving the arithmetic order.

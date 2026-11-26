@@ -141,6 +141,7 @@ private:
                   ArrayRef<Value> counts, Value ghostShift = {});
   /// Copies `count` rows of `field`, a field of md_exec, from row `first`
   /// on, to the rows of domain `d` of `buffer`, a buffer of all domains.
+  Value externalStream(OpBuilder &b);
   void copyBack(OpBuilder &b, Value field, Value first, Value count,
                 Value buffer, Value d, Value producer = {});
   /// Gives `loop`, a loop over pairs of md_exec, the kernel of the pair op
@@ -2745,6 +2746,12 @@ Value Lowering::makeField(OpBuilder &b, FlatSymbolRefAttr set, int64_t k,
   return result;
 }
 
+Value Lowering::externalStream(OpBuilder &b) {
+  auto pointer = LLVM::LLVMPointerType::get(module.getContext());
+  auto stream = declare("mdrtDeviceExternalStream", b.getFunctionType({}, {pointer}), false);
+  return func::CallOp::create(b, loc, stream).getResult(0);
+}
+
 void Lowering::copyBack(OpBuilder &b, Value field, Value first, Value count,
                         Value buffer, Value d, Value producer) {
   auto fieldType = cast<md::FieldType>(field.getType());
@@ -2761,9 +2768,10 @@ void Lowering::copyBack(OpBuilder &b, Value field, Value first, Value count,
       func::CallOp::create(b,loc,fn,args);
       return;
     }
-    SmallVector<Value> args{buffer, d, count, first, flat};
-    if (producer) args.push_back(producer);
-    auto fn = declare(producer ? "mdrtDistImportTupleForces" : "mdrtDistImportForces",
+    if (!producer)
+      producer = externalStream(b);
+    SmallVector<Value> args{buffer, d, count, first, flat, producer};
+    auto fn = declare("mdrtDistImportTupleForces",
                       b.getFunctionType(ValueRange(args).getTypes(), {}), true);
     func::CallOp::create(b, loc, fn, args);
     return;
@@ -3244,14 +3252,15 @@ LogicalResult Lowering::lowerSumParticlesExec(ArrayRef<SumParticlesOp> sums) {
   auto emit = [&](OpBuilder &b, Value d, FlatSymbolRefAttr set) {
     Value count = countOf(b, layout, d);
     SmallVector<Value> ins;
+    Value stream = sharedState() ? externalStream(b) : Value();
     for (Value field : fields) {
       int64_t k = cast<FieldType>(field.getType()).getNumComponents();
       if (sharedState()) {
         auto fieldType = md::FieldType::get(module.getContext(),set,k,b.getF64Type());
         auto host = mdrt::getBufferType(fieldType);
         auto device = MemRefType::get(host.getShape(),b.getF64Type(),MemRefLayoutAttrInterface(),b.getI64IntegerAttr(1));
-        SmallVector<Value> args{d,count,storage[field].buffer};
-        auto fn = declare(k == 1 ? "mdrtDistScalarDeviceView" : "mdrtDistVectorDeviceView",
+        SmallVector<Value> args{d, count, storage[field].buffer, stream};
+        auto fn = declare(k == 1 ? "mdrtDistTupleOwnedScalars" : "mdrtDistTupleOwnedVectors",
                           b.getFunctionType(ValueRange(args).getTypes(), {device}), true);
         Value view = func::CallOp::create(b,loc,fn,args).getResult(0);
         ins.push_back(mdrt::FromBufferOp::create(b,loc,fieldType,view));

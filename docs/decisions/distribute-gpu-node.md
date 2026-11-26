@@ -284,3 +284,8 @@ until its layout expires. Repeated evaluations can borrow those pairs.
 MPI wait timing covers arrival skew and completion inside the blocking
 payload collective. A one-rank communicator can return its local
 coverage predicate or maximum immediately.
+
+Owned observable fields and imported force slices use the executor's
+compute stream. An event orders the producer before the consumer.
+The synchronous packed-halo path also orders the halo stream after the
+position update through an event.
