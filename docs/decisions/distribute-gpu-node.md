@@ -246,3 +246,14 @@ give LJ and Coulomb virials of $-4297730.897035$ and $3095703.864428$
 kcal/mol. Their absolute contributions give a bound of $3.525464$
 kcal/mol. The one-rank mixed GPU difference from the CPU MATRIX trace
 of $-1202027.032770$ kcal/mol was $0.521918$ kcal/mol.
+
+## Per-step cost of distributed dynamics
+
+On a V100, the original million-particle liquid averaged 11.138 ms/step
+on four devices. Nineteen of 102 timed intervals rebuilt the halo.
+In two allocations the other intervals averaged 4.77 and 4.52 ms,
+while the rebuild intervals averaged 46.73 and 37.49 ms. On the
+eligible device rebuild path, each owner now compares the new face mask
+with the previous mask and exchanges changed records. A zero mask
+removes a former face member. Migrating rows carry the previous mask
+in their new owner order.

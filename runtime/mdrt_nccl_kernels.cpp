@@ -202,7 +202,7 @@ extern "C" __global__ void selfGather(const double *owned, const int *source,
   if (i<n) ghosts[i]=owned[(long long)source[i/width]*width+i%width]+(shifts ? shifts[i] : 0.);
 }
 extern "C" __global__ void faceRecords(const double *x, long long rows, Box box,
-    int oldDomain, double reach, int *count, long long *output) {
+    int oldDomain, double reach, const unsigned *previous, int *count, long long *output) {
   long long r = (long long)blockIdx.x*blockDim.x+threadIdx.x;
   if (r >= rows) return;
   int cell[3];
@@ -223,7 +223,7 @@ extern "C" __global__ void faceRecords(const double *x, long long rows, Box box,
   }
   int domain=cell[0]+box.grid[0]*(cell[1]+box.grid[1]*cell[2]);
   unsigned mask=faceMask(lower,upper,reach);
-  if (mask || domain!=oldDomain) {
+  if (mask != (previous ? previous[r] : 0u) || domain != oldDomain) {
     int i=atomicAdd(count,1);
     output[2LL*i]=r;
     output[2LL*i+1]=((long long)domain<<32)|mask;
@@ -371,7 +371,7 @@ struct Box { double length[3]; int grid[3]; };
 }
 
 extern "C" int64_t *mdrtNCCLFaceRecords(const double *positions, long long rows,
-    int domain, const int64_t *grid, const double *length, double reach, int64_t *size) {
+    int domain, const int64_t *grid, const double *length, double reach, const unsigned *previous, int64_t *size) {
   *size=0;
   if (!rows) return nullptr;
   if (!module) compile();
@@ -384,7 +384,7 @@ extern "C" int64_t *mdrtNCCLFaceRecords(const double *positions, long long rows,
   check(cuMemAlloc(&deviceCount,sizeof(int)));
   check(cuMemAlloc(&records,2*rows*sizeof(int64_t)));
   check(cuMemsetD32(deviceCount,0,1));
-  void *args[]={&positions,&rows,&box,&domain,&reach,&deviceCount,&records};
+  void *args[]={&positions,&rows,&box,&domain,&reach,&previous,&deviceCount,&records};
   check(cuLaunchKernel(faceRecords,(rows+255)/256,1,1,256,1,1,0,nullptr,args,nullptr));
   int count;
   check(cuMemcpyDtoH(&count,deviceCount,sizeof count));

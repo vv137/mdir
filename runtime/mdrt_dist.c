@@ -105,6 +105,7 @@ struct Layout {
   struct TuplePlan *tuplePlans;
   struct Layout *identityOwner; /* Borrow immutable numberings across stationary epochs. */
   uint32_t *faceMasks;
+  unsigned *localFaceMasks; /* Device snapshot in this epoch's owned order. */
   int selfFaces;
   double faceReach;
   int *deviceMigrationMap;
@@ -1040,6 +1041,7 @@ void mdrtDistReleaseLayout(int64_t handle) {
   free(l->groupCenters);
 #ifdef MDIR_ENABLE_NCCL
   free(l->faceMasks);
+  if (l->localFaceMasks) mdrtNCCLFreePositions((double *)l->localFaceMasks);
   if (l->identityOwner) {
     mdrtDistReleaseLayout((int64_t)(intptr_t)l->identityOwner);
   } else
@@ -1433,7 +1435,7 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
   }
   int64_t localCount;
   int64_t *local = mdrtNCCLFaceRecords(deviceRows(positions,d,rows,0),rows,d,
-      old->grid,edges,reach+margin,&localCount);
+      old->grid,edges,reach+margin,old->localFaceMasks,&localCount);
   int peers = mdrtMPISize();
   int64_t *offsets = malloc(((size_t)peers + 1) * sizeof(*offsets));
   if (!offsets)
@@ -1447,6 +1449,8 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
   size_t capacity = old->count ? old->count : 1;
   next->faceMasks=calloc(capacity,sizeof *next->faceMasks);
   if (!next->faceMasks) fail("out of memory indexing device face rows");
+  if (old->localFaceMasks)
+    memcpy(next->faceMasks, old->faceMasks, old->count * sizeof(*next->faceMasks));
   int64_t *allRecords = mdrtMPIFinishFaces(faces, local, offsets);
   free(local);
   int64_t moved=0;
@@ -1490,6 +1494,16 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
     borrowNumbering(old,next);
 
   }
+  // Classification on the next rebuild reads masks in the new owned order.
+  // The identity-indexed host snapshot also retains rows that did not move.
+  size_t bytes = (size_t)next->rows[d] * sizeof(unsigned);
+  unsigned *masks = malloc(bytes ? bytes : sizeof(*masks));
+  if (!masks) fail("out of memory storing previous face classifications");
+  for (int64_t r = 0; r < next->rows[d]; ++r)
+    masks[r] = next->faceMasks[next->ids[d * next->stride + r]];
+  next->localFaceMasks = (unsigned *)mdrtNCCLAllocate(bytes);
+  mdrtNCCLUpload((double *)next->localFaceMasks, (const double *)masks, bytes);
+  free(masks);
   if (tracing()) traceMigration(old,next);
   return (int64_t)(intptr_t)next;
 }

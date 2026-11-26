@@ -26,7 +26,7 @@ void mdrtNCCLHalo(const struct NCCLPlan *p, double *owned, int64_t nOwned,
     double *ghosts, int k, int image, int reverse);
 double *mdrtNCCLPackedRows(const struct NCCLPlan *plan, double *owned, int64_t rows, int k, int image);
 int64_t *mdrtNCCLFaceRecords(const double *positions, long long rows,
-    int domain, const int64_t *grid, const double *length, double reach, int64_t *count);
+    int domain, const int64_t *grid, const double *length, double reach, const unsigned *previous, int64_t *count);
 void mdrtNCCLWrapRows(const double *source, double *target, long long rows,
                       const double *length);
 void mdrtNCCLWaitForRows(void *compute);

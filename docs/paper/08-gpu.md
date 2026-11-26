@@ -1088,3 +1088,9 @@ the initial frame their magnitudes sum to $7393434.761463$ kcal/mol.
 Four times the f32 spacing at one times that scale gives $3.525464$
 kcal/mol, above the observed $0.521918$ kcal/mol difference. The
 absolute tolerances govern comparisons with ordinary GPU MATRIX.
+
+For a persistent layout, a face membership is an identity and an image
+mask. Applying the changed masks to the previous mask array reconstructs
+the full array, including departures represented by a zero mask. Thus
+the exchanged record count scales with changes in face membership. The
+host still maintains a global identity index.

@@ -610,7 +610,8 @@ count must match the number of ranks. This execution mode requires a build
 with MPI, CUDA, and NCCL and floating-point distributed reductions.
 For unconstrained Verlet dynamics each device retains its owned field
 values across kicks. When every domain is wider than twice the reach,
-the GPU reports the rows that change owner or enter a neighboring halo.
+the GPU reports changes in ownership and face membership, including
+rows that leave a neighboring halo.
 Only crossing rows of unshifted fields are exchanged between owners.
 For directed multi-GPU runs of at least 32 steps, `pair_overlap = "auto"`
 times the split and unsplit traversals on the allocated layout. A short
