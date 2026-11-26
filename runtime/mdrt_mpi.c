@@ -8,6 +8,7 @@ static int useNCCL;
 static int *domainOwner, localDomain;
 #endif
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
 
 static MPI_Comm comm = MPI_COMM_NULL;
@@ -194,6 +195,42 @@ void mdrtMPIRowsToRoot(double *values, int64_t count, int owner) {
   }
 }
 
+// Receive variable-size lists in rank order. Keep the chunked broadcast
+// path for lists whose displacements cannot be represented by Allgatherv.
+int64_t *mdrtMPIGatherIndices(const int64_t *local, int64_t count,
+                              int64_t *offsets) {
+  offsets[0] = 0;
+  arrival();
+  MPI_Allgather(&count, 1, MPI_INT64_T, offsets + 1, 1, MPI_INT64_T, comm);
+  for (int p = 0; p < size; ++p)
+    offsets[p + 1] += offsets[p];
+  int64_t total = offsets[size];
+  int64_t *rows = malloc((total ? total : 1) * sizeof(*rows));
+  if (!rows)
+    mdrtMPIAbort("out of memory sharing domain face records");
+  if (total > INT_MAX) {
+    if (count)
+      memcpy(rows + offsets[rank], local, count * sizeof(*rows));
+    for (int p = 0; p < size; ++p)
+      mdrtMPIBroadcastIndices(rows + offsets[p], offsets[p + 1] - offsets[p],
+                              p);
+  } else {
+    int *sizes = malloc(2 * (size_t)size * sizeof(*sizes));
+    if (!sizes)
+      mdrtMPIAbort("out of memory indexing domain face records");
+    int *starts = sizes + size;
+    for (int p = 0; p < size; ++p) {
+      sizes[p] = (int)(offsets[p + 1] - offsets[p]);
+      starts[p] = (int)offsets[p];
+    }
+    arrival();
+    MPI_Allgatherv(local, (int)count, MPI_INT64_T, rows, sizes, starts,
+                   MPI_INT64_T, comm);
+    free(sizes);
+  }
+  return rows;
+}
+
 void mdrtMPIBroadcastIndices(int64_t *values, int64_t count, int root) {
   while (count > 0) {
     int n = count > INT_MAX ? INT_MAX : (int)count;
@@ -213,6 +250,28 @@ void mdrtMPIBroadcastWords(void *buffer, int64_t count, int root) {
     values += n;
     count -= n;
   }
+}
+
+// Preserve domain order in the result even when placement permutes ranks.
+// Observable partials have a small fixed width and one producer per row.
+int mdrtMPIGatherDomainPartials(double *first, int64_t domains, int64_t stride,
+                                int64_t width) {
+  if (domains != size || width > INT_MAX)
+    return 0;
+  if (size == 1 || width == 0)
+    return 1;
+  size_t bytes = (size_t)width * sizeof(double);
+  double *rows = malloc(size * bytes);
+  if (!rows)
+    mdrtMPIAbort("out of memory sharing domain partials");
+  int64_t local = mdrtMPIDomainBound(domains, 0);
+  arrival();
+  MPI_Allgather(first + local * stride, (int)width, MPI_DOUBLE, rows,
+                (int)width, MPI_DOUBLE, comm);
+  for (int64_t d = 0; d < domains; ++d)
+    memcpy(first + d * stride, rows + mdrtMPIOwner(domains, d) * width, bytes);
+  free(rows);
+  return 1;
 }
 
 void mdrtMPIBroadcast(double *values, int64_t count, int root) {

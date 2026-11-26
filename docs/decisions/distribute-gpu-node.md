@@ -148,3 +148,11 @@ The disjoint solve and its output correction use the integrator's
 working precision. Narrowing this local correction in mixed mode loses
 accuracy for positions close to a periodic face. Bonded tuples retain
 the ordinary force precision.
+
+With one domain per rank, one all-gather publishes the floating-point
+observable partials. Each receiver maps ranks back to domain IDs before
+the existing ordered sum. At a device face rebuild, one count exchange
+and one variable-length all-gather replace the count and payload
+broadcasts from each rank. Receivers process the lists in rank order and
+sort each sender's migrating identities as before. Large displacements
+outside the MPI collective's integer range use chunked broadcasts.

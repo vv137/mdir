@@ -16,8 +16,12 @@ void mdrtMPIStartNCCL(void);
 int mdrtMPIRank(void);
 int mdrtMPISize(void);
 void mdrtMPIRowsToRoot(double *values, int64_t count, int owner);
+int64_t *mdrtMPIGatherIndices(const int64_t *local, int64_t count,
+                              int64_t *offsets);
 void mdrtMPIBroadcastIndices(int64_t *values, int64_t count, int root);
 void mdrtMPIBroadcastWords(void *values, int64_t count, int root);
+int mdrtMPIGatherDomainPartials(double *first, int64_t domains, int64_t stride,
+                                int64_t width);
 void mdrtMPIBroadcast(double *values, int64_t count, int root);
 void mdrtMPIExchange(void *send, int *sendCounts, int *sendOffsets,
                      void *recv, int *recvCounts, int *recvOffsets, int words);

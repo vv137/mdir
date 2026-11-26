@@ -948,6 +948,10 @@ void _mlir_ciface_mdrtMPIShareWords(struct Memref2W *partial) {
 }
 
 void _mlir_ciface_mdrtMPISharePartials(struct Memref2D *partial) {
+  if (partial->strides[1] == 1 &&
+      mdrtMPIGatherDomainPartials(at2(partial, 0, 0), partial->sizes[0],
+                                  partial->strides[0], partial->sizes[1]))
+    return;
   for (int64_t d = 0; d < partial->sizes[0]; ++d)
     mdrtMPIBroadcast(at2(partial, d, 0), partial->sizes[1],
                      mdrtMPIOwner(partial->sizes[0], d));
@@ -1430,16 +1434,17 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
   size_t capacity = old->count ? old->count : 1;
   next->faceMasks=calloc(capacity,sizeof *next->faceMasks);
   if (!next->faceMasks) fail("out of memory indexing device face rows");
+  int peers = mdrtMPISize();
+  int64_t *offsets = malloc(((size_t)peers + 1) * sizeof(*offsets));
+  if (!offsets)
+    fail("out of memory indexing face records");
+  int64_t *allRecords = mdrtMPIGatherIndices(local, 2 * localCount, offsets);
+  free(local);
   int64_t moved=0;
-  for (int peer=0; peer<mdrtMPISize(); ++peer) {
-    int sender=peer==mdrtMPIRank();
-    int64_t count=sender ? localCount : 0;
-    mdrtMPIBroadcastIndices(&count,1,peer);
+  for (int peer = 0; peer < peers; ++peer) {
+    int64_t count = (offsets[peer + 1] - offsets[peer]) / 2;
+    int64_t *records = allRecords + offsets[peer];
     next->migrantOffsets[peer+1]=moved;
-    if (!count) continue;
-    int64_t *records=sender ? local : malloc(2*count*sizeof *records);
-    if (!records) fail("out of memory receiving device face rows");
-    mdrtMPIBroadcastIndices(records,2*count,peer);
     int64_t arrivals=0;
     for (int64_t i=0; i<count; ++i) {
       int64_t j=records[2*i], owner=records[2*i+1]>>32;
@@ -1463,9 +1468,9 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
       moved+=arrivals;
       next->migrantOffsets[peer+1]=moved;
     }
-    if (!sender) free(records);
   }
-  free(local);
+  free(allRecords);
+  free(offsets);
   if (next->owner) {
     next->row=malloc(capacity*sizeof *next->row);
     next->rows=calloc(next->domains,sizeof *next->rows);

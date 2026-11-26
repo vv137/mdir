@@ -1047,3 +1047,10 @@ local positions. The native device tuple kernels then evaluate bonded
 forces, group corrections and constraint virials. Each group contributes
 on its common owner. The program combines scalar failure flags across
 ranks before continuing the integrator.
+
+The domain observable reduction gathers its partials in a single
+collective, then visits them in geometric domain order, including when
+placement permutes ranks. At a face rebuild the ranks exchange record
+lengths and then gather the variable-length face lists. This preserves
+the stable identity order in the migration plan while removing repeated
+rendezvous before individual broadcasts.
