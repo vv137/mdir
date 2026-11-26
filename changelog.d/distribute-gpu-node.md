@@ -17,3 +17,5 @@
   independent floating-point tuple observables share reductions.
 - Keep pointwise updates of owned constraint vectors on the rank's GPU.
 - Reuse the device exclusion incidence over the lifetime of its halo map.
+- Share device row lookups between bonded and constraint evaluation sites
+  that use the same particle numbering.

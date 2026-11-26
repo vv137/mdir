@@ -83,6 +83,17 @@ static void fail(const char *message) {
   abort();
 }
 
+#ifdef MDIR_ENABLE_NCCL
+struct TupleDomainRows {
+  int *locations, *particles;
+};
+static void freeTupleDomainRows(struct TupleDomainRows *rows) {
+  if (!rows->locations) return;
+  mdrtNCCLFreePositions((double *)rows->locations);
+  mdrtNCCLFreePositions((double *)rows->particles);
+}
+#endif
+
 /* Layouts and halos count their references (D399): the
    op that makes one holds the first, a md_dist.state holds one while it
    carries it, and a halo holds one of its layout. */
@@ -104,6 +115,7 @@ struct Layout {
 #endif
 #ifdef MDIR_ENABLE_NCCL
   struct TuplePlan *tuplePlans;
+  struct TupleDomainRows tupleDomainRows;
   struct Layout *identityOwner; /* Borrow immutable numberings across stationary epochs. */
   uint32_t *faceMasks;
   struct FaceSpare *incomingSpare, *outgoingSpare;
@@ -155,6 +167,7 @@ struct Halo {
 #endif
 #ifdef MDIR_ENABLE_NCCL
   struct TuplePlan *tuplePlans;
+  struct TupleDomainRows tupleDomainRows;
   double *tupleCoordinates;
   struct Memref3D tupleInput;
   struct NCCLPlan *ncclPlan;
@@ -1186,6 +1199,7 @@ void mdrtDistReleaseLayout(int64_t handle) {
 #endif
 #ifdef MDIR_ENABLE_NCCL
   freeTuplePlans(l->tuplePlans);
+  freeTupleDomainRows(&l->tupleDomainRows);
   free(l->migrationCounts);
   free(l->migrationSpans);
   if (l->deviceExportRows) mdrtNCCLFreePositions((double *)l->deviceExportRows);
@@ -2726,14 +2740,14 @@ struct TuplePlan {
   struct TuplePlan *next;
   int64_t site, extent;
   int count, arity, rows, built;
-  int *topology, *locations, *particles, *starts, *entries;
+  int *topology, *starts, *entries;
   int *mapped, *blocks, *csr;
 };
 
 static void freeTuplePlans(struct TuplePlan *p) {
   while (p) {
     struct TuplePlan *next = p->next;
-    int *buffers[] = {p->topology,p->locations,p->particles,p->starts,p->entries,
+    int *buffers[] = {p->topology,p->starts,p->entries,
                       p->mapped,p->blocks,p->csr};
     for (size_t i=0; i<sizeof buffers/sizeof *buffers; ++i)
       mdrtNCCLFreePositions((double *)buffers[i]);
@@ -2748,19 +2762,9 @@ static int *tupleInts(size_t count) {
   return values;
 }
 
-static struct TuplePlan *newTuplePlan(struct Layout *l, struct Halo *h,
-    struct Members *members, int64_t site, int64_t d) {
-  int64_t count=members->sizes[0], arity=members->sizes[1];
+static void buildTupleDomainRows(struct TupleDomainRows *directory,
+                                 struct Layout *l, struct Halo *h, int64_t d) {
   int64_t owned=l->rows[d], rows=owned+(h ? h->rows[d] : 0);
-  if (arity<2 || arity>INT_MAX-2 || count<0 || count>INT_MAX/arity ||
-      rows>INT_MAX-256 || l->count>INT_MAX/3 || rows>INT_MAX/5 ||
-      l->stride>INT_MAX/l->domains)
-    fail("distributed tuple map exceeds device index range");
-  int64_t memberships=count*arity;
-  struct TuplePlan *p=calloc(1,sizeof(*p));
-  if (!p) fail("out of memory allocating distributed tuple plan");
-  p->site=site; p->count=count; p->arity=arity; p->rows=rows;
-  p->extent=rows+2+(arity+2)*(memberships+1);
   int *locations=tupleInts(3*l->count), *particles=tupleInts(5*rows);
   for (int64_t j=0; j<l->count; ++j) {
     locations[3*j]=(int)(mdrtMPIOwner(l->domains,l->owner[j])*l->stride+ownedRow(l,j));
@@ -2776,6 +2780,25 @@ static struct TuplePlan *newTuplePlan(struct Layout *l, struct Halo *h,
     if (r>=owned)
       for (int k=0; k<3; ++k) particles[5*r+2+k]=h->image[3*g+k];
   }
+  directory->locations=mdrtNCCLUploadIndices(locations,3*l->count);
+  directory->particles=mdrtNCCLUploadIndices(particles,5*rows);
+  free(locations);
+  free(particles);
+}
+
+static struct TuplePlan *newTuplePlan(struct Layout *l, struct Halo *h,
+    struct Members *members, int64_t site, int64_t d) {
+  int64_t count=members->sizes[0], arity=members->sizes[1];
+  int64_t owned=l->rows[d], rows=owned+(h ? h->rows[d] : 0);
+  if (arity<2 || arity>INT_MAX-2 || count<0 || count>INT_MAX/arity ||
+      rows>INT_MAX-256 || l->count>INT_MAX/3 || rows>INT_MAX/5 ||
+      l->stride>INT_MAX/l->domains)
+    fail("distributed tuple map exceeds device index range");
+  int64_t memberships=count*arity;
+  struct TuplePlan *p=calloc(1,sizeof(*p));
+  if (!p) fail("out of memory allocating distributed tuple plan");
+  p->site=site; p->count=count; p->arity=arity; p->rows=rows;
+  p->extent=rows+2+(arity+2)*(memberships+1);
   int *topology=tupleInts(memberships), *starts=tupleInts(l->count+1);
   for (int t=0;t<count;++t)
     for (int a=0;a<arity;++a) {
@@ -2788,12 +2811,10 @@ static struct TuplePlan *newTuplePlan(struct Layout *l, struct Halo *h,
   int *cursor=tupleInts(l->count), *entries=tupleInts(memberships);
   memcpy(cursor,starts,l->count*sizeof(*cursor));
   for (int m=0;m<memberships;++m) entries[cursor[topology[m]]++]=m;
-  p->locations=mdrtNCCLUploadIndices(locations,3*l->count);
-  p->particles=mdrtNCCLUploadIndices(particles,5*rows);
   p->topology=mdrtNCCLUploadIndices(topology,memberships);
   p->starts=mdrtNCCLUploadIndices(starts,l->count+1);
   p->entries=mdrtNCCLUploadIndices(entries,memberships);
-  free(locations); free(particles); free(topology); free(starts); free(entries); free(cursor);
+  free(topology); free(starts); free(entries); free(cursor);
   p->mapped=(int *)mdrtNCCLAllocate(memberships*sizeof(int));
   p->blocks=(int *)mdrtNCCLAllocate(((rows+255)/256)*sizeof(int));
   p->csr=(int *)mdrtNCCLAllocate(p->extent*sizeof(int));
@@ -2822,9 +2843,11 @@ void _mlir_ciface_mdrtDistTupleIncidence(struct DeviceKinds *out,int64_t handle,
   while (*slot && (*slot)->site!=site) slot=&(*slot)->next;
   if (!*slot) *slot=newTuplePlan(l,h,members,site,d);
   struct TuplePlan *p=*slot;
+  struct TupleDomainRows *directory = group ? &l->tupleDomainRows : &h->tupleDomainRows;
+  if (!directory->locations) buildTupleDomainRows(directory,l,h,d);
   if (!group || !p->built) {
     double *coordinates=group ? NULL : tupleCoordinates(h,x,d);
-    mdrtNCCLBuildTupleRows(p->topology,p->count,p->arity,p->locations,p->particles,coordinates,
+    mdrtNCCLBuildTupleRows(p->topology,p->count,p->arity,directory->locations,directory->particles,coordinates,
         l->grid,l->edges,d,group,p->starts,p->entries,p->rows,p->mapped,p->blocks,p->csr);
     p->built=1;
   }
@@ -3223,6 +3246,7 @@ void mdrtDistReleaseHalo(int64_t handle) {
   }
 #ifdef MDIR_ENABLE_NCCL
   freeTuplePlans(h->tuplePlans);
+  freeTupleDomainRows(&h->tupleDomainRows);
   if (h->tupleInput.allocated) _mlir_ciface_mdrtDistReleaseField(&h->tupleInput);
   if (h->tupleCoordinates) mdrtNCCLFreePositions(h->tupleCoordinates);
   while (h->scalarFields) {

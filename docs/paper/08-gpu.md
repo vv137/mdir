@@ -1297,3 +1297,8 @@ bytes. Their values depend only on the exclusion relation and the halo's
 row numbering. Retaining the ordinary incidence layout on the GPU reduced
 the mean of two runs with resident particle updates to 41.812 ms/step.
 The halo invalidates the mapping when its rows change.
+
+Force, potential, and virial kernels share the mapping from global tuple
+members to local particle identities and periodic images. In paired
+204-step double-precision runs, sharing this mapping reduced Factor IX
+from 40.457 to 31.828 ms/step and JAC-RF from 15.937 to 13.529 ms/step.

@@ -450,3 +450,8 @@ over the mapped local row set once per halo, domain and live exclusion
 relation. The halo owns the device buffer. A covered step borrows it
 directly, and a replacement relation receives its own incidence even
 within the same halo. Releasing a map releases its incidence.
+
+All tuple sites in a rank use the same device table of particle identities,
+owners, local row indices, and periodic images for a given halo. Constraint
+groups use the corresponding owned-only table on the layout. Both tables
+expire with the object that defines their row numbering.
