@@ -268,3 +268,7 @@ For the directed double-precision path without exclusions, each rank
 materializes only its incident halo routes. Global route counts remain
 available to the observer. Import order follows global identity and the
 existing periodic image order. Other halo consumers retain full maps.
+
+Independent sums over owned particles can share a domain traversal
+and field views when their region inputs dominate the traversal.
+Each observable keeps its own accumulation and domain reduction.

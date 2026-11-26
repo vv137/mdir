@@ -122,7 +122,7 @@ private:
   llvm::DenseMap<std::pair<Value, Value>, Value> domainFields;
   LogicalResult lowerSumPairsExec(SumPairsOp op);
   LogicalResult lowerGatherPairsExec(GatherPairsOp op);
-  LogicalResult lowerSumParticlesExec(SumParticlesOp op);
+  LogicalResult lowerSumParticlesExec(ArrayRef<SumParticlesOp> sums);
   LogicalResult lowerMapParticlesExec(MapParticlesOp op);
   /// Declares the particle sets of the owned and the local rows of each
   /// domain, once per module.
@@ -3216,22 +3216,29 @@ static LogicalResult checkOwnedRows(Operation *op, ValueRange gathered) {
   return success();
 }
 
-LogicalResult Lowering::lowerSumParticlesExec(SumParticlesOp op) {
-  if (failed(checkOwnedRows(op, op.getGathered())))
-    return failure();
-  OpBuilder b(op);
-  Type type = op.getResult().getType().getValueType();
-  auto vector = dyn_cast<VectorType>(type);
-  int64_t length = vector ? vector.getNumElements() : 1;
+LogicalResult Lowering::lowerSumParticlesExec(ArrayRef<SumParticlesOp> sums) {
+  OpBuilder b(sums.front());
+  SmallVector<Type> types;
+  SmallVector<Value> partials;
+  llvm::SetVector<Value> fields;
   auto partialType = MemRefType::get(
       {ShapedType::kDynamic, ShapedType::kDynamic}, sumType(b.getF64Type()));
-  Value partial =
-      allocate(b, partialType, {index(b, domains), index(b, length)});
-  Storage &layout = rowsOf(op.getGathered()[0]);
+  for (auto sum : sums) {
+    if (failed(checkOwnedRows(sum, sum.getGathered()))) return failure();
+    Type type = sum.getResult().getType().getValueType();
+    auto vector = dyn_cast<VectorType>(type);
+    int64_t length = vector ? vector.getNumElements() : 1;
+    types.push_back(type);
+    Value partial = allocate(b, partialType, {index(b, domains), index(b, length)});
+    partials.push_back(partial);
+    storage[sum.getResult()].buffer = partial;
+    fields.insert(sum.getGathered().begin(), sum.getGathered().end());
+  }
+  Storage &layout = rowsOf(fields.front());
   auto emit = [&](OpBuilder &b, Value d, FlatSymbolRefAttr set) {
     Value count = countOf(b, layout, d);
     SmallVector<Value> ins;
-    for (Value field : op.getGathered()) {
+    for (Value field : fields) {
       int64_t k = cast<FieldType>(field.getType()).getNumComponents();
       if (sharedState()) {
         auto fieldType = md::FieldType::get(module.getContext(),set,k,b.getF64Type());
@@ -3246,31 +3253,35 @@ LogicalResult Lowering::lowerSumParticlesExec(SumParticlesOp op) {
         ins.push_back(makeField(b,set,k,b.getF64Type(),d,{storage[field].buffer},{count}));
       }
     }
+    SmallVector<Value> initial;
+    for (Type type : types) initial.push_back(zero(b, type));
     auto loop = md_exec::ParticleForOp::create(
-        b, loc, TypeRange{type}, ins, ValueRange(),
-        ValueRange{zero(b, type)}, /*scratch=*/ValueRange());
-    Block *block = new Block();
+        b, loc, types, ins, ValueRange(), initial, /*scratch=*/ValueRange());
+    auto *block = new Block();
     loop.getKernel().push_back(block);
-    Block &source = op.getKernel().front();
-    IRMapping mapping;
-    for (BlockArgument argument : source.getArguments())
-      mapping.map(argument, block->addArgument(argument.getType(), loc));
-    OpBuilder kb = OpBuilder::atBlockEnd(block);
-    for (Operation &nested : source.without_terminator())
-      kb.clone(nested, mapping);
-    md_exec::YieldOp::create(
-        kb, loc,
-        ValueRange{mapping.lookupOrDefault(
-            cast<YieldOp>(source.getTerminator()).getValues()[0])});
-    Value sum = loop.getResult(0);
-    for (int64_t c = 0; c < length; ++c) {
-      Value part =
-          vector ? Value(vector::ExtractOp::create(b, loc, sum, c)) : sum;
-      memref::StoreOp::create(b, loc, part, partial,
-                              ValueRange{d, index(b, c)});
+    for (Value field : fields)
+      block->addArgument(cast<FieldType>(field.getType()).getKernelValueType(), loc);
+    OpBuilder kernel = OpBuilder::atBlockEnd(block);
+    SmallVector<Value> contributions;
+    for (auto sum : sums) {
+      IRMapping map;
+      Block &source = sum.getKernel().front();
+      for (auto [arg, field] : llvm::zip(source.getArguments(), sum.getGathered()))
+        map.map(arg, block->getArgument(llvm::find(fields, field) - fields.begin()));
+      for (Operation &nested : source.without_terminator()) kernel.clone(nested, map);
+      contributions.push_back(map.lookupOrDefault(source.getTerminator()->getOperand(0)));
+    }
+    md_exec::YieldOp::create(kernel, loc, contributions);
+    for (auto [sum, partial] : llvm::zip(loop.getResults(), partials)) {
+      auto vector = dyn_cast<VectorType>(sum.getType());
+      int64_t length = vector ? vector.getNumElements() : 1;
+      for (int64_t c = 0; c < length; ++c) {
+        Value part = vector ? Value(vector::ExtractOp::create(b, loc, sum, c)) : sum;
+        memref::StoreOp::create(b, loc, part, partial, ValueRange{d, index(b, c)});
+      }
     }
   };
-  Value epoch = layoutOf(op.getGathered().front());
+  Value epoch = layoutOf(fields.front());
   if (sharedState()) {
     auto enter = declare("mdrtDeviceDomainEnter",b.getFunctionType({}, {b.getI64Type()}),false);
     Value parent = func::CallOp::create(b,loc,enter).getResult(0);
@@ -3283,7 +3294,6 @@ LogicalResult Lowering::lowerSumParticlesExec(SumParticlesOp op) {
   } else {
     for (int64_t d = 0; d < domains; ++d) emit(b,index(b,d),getSet(d,false,epoch));
   }
-  storage[op.getResult()].buffer = partial;
   return success();
 }
 
@@ -3336,13 +3346,6 @@ LogicalResult Lowering::lowerMapParticlesExec(MapParticlesOp op) {
 LogicalResult Lowering::lower(Operation *op) {
   loc = op->getLoc();
   end = op->getBlock()->getTerminator();
-  if (sharedState())
-    if (auto sum = dyn_cast<SumParticlesOp>(op))
-      if (llvm::all_of(sum.getGathered(), [](Value field) {
-            auto t = cast<FieldType>(field.getType());
-            return t.isOwned() && t.getElementType().isF64() &&
-                   (t.getNumComponents() == 1 || t.getNumComponents() == 3);
-          })) return lowerSumParticlesExec(sum);
   // Native host consumers materialize the local slice on first read.
   // Packing, coverage and integration can pass the device version on.
   if (sharedState() && !isa<PackOp, UnpackOp, CoveredOp, MapParticlesOp,
@@ -3682,6 +3685,13 @@ LogicalResult Lowering::run(func::FuncOp function) {
       if (rows.getGroup())
         for (Operation *use : rows->getUsers())
           if (isa<TupleKernelOp>(use)) constraintKernels.insert(use);
+  auto deviceSum = [&](SumParticlesOp sum) {
+    return sharedState() && sum && llvm::all_of(sum.getGathered(), [](Value field) {
+      auto type = cast<FieldType>(field.getType());
+      return type.isOwned() && type.getElementType().isF64() &&
+             (type.getNumComponents() == 1 || type.getNumComponents() == 3);
+    });
+  };
   DominanceInfo dominance(function);
   for (Operation *op : ops) {
     if (grouped.contains(op)) continue;
@@ -3708,6 +3718,26 @@ LogicalResult Lowering::run(func::FuncOp function) {
       loc = op->getLoc();
       end = op->getBlock()->getTerminator();
       if (failed(lowerPairGroup(op, dominance))) return failure();
+    } else if (auto first = dyn_cast<SumParticlesOp>(op); deviceSum(first)) {
+      loc = op->getLoc();
+      end = op->getBlock()->getTerminator();
+      SmallVector<SumParticlesOp> sums{first};
+      Value layout = layoutOf(first.getGathered().front());
+      // Move independent observables to the first traversal of these owned
+      // rows. Captured scalars, as well as the fields, must be available.
+      for (Operation *next = op->getNextNode(); next; next = next->getNextNode()) {
+        auto sum = dyn_cast<SumParticlesOp>(next);
+        if (!deviceSum(sum) || grouped.contains(next) ||
+            layoutOf(sum.getGathered().front()) != layout) continue;
+        llvm::SetVector<Value> inputs;
+        inputs.insert(sum.getOperands().begin(), sum.getOperands().end());
+        getUsedValuesDefinedAbove(sum.getKernel(), inputs);
+        if (llvm::all_of(inputs, [&](Value v) { return dominance.dominates(v, op); })) {
+          sums.push_back(sum);
+          grouped.insert(next);
+        }
+      }
+      if (failed(lowerSumParticlesExec(sums))) return failure();
     } else if (failed(lower(op))) {
       return failure();
     }

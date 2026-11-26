@@ -1103,3 +1103,7 @@ with determinism disabled, adding the terms earlier can change rounding.
 Given the route counts, a rank needs rows only for routes on which it
 sends or receives. Constructing those rows in identity and image order
 preserves the covered directed traversal's indexing and NCCL peer order.
+
+Several independent owned-particle observables can share the enclosing
+domain traversal. Each keeps its original expression and reduction tree,
+so this transformation shares setup without reassociating the sums.
