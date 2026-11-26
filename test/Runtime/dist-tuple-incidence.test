@@ -1,0 +1,2 @@
+# RUN: env OMP_NUM_THREADS=1 %python %S/Inputs/dist_tuple_incidence.py %mdrt
+# RUN: env OMP_NUM_THREADS=4 %python %S/Inputs/dist_tuple_incidence.py %mdrt
