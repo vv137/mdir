@@ -77,3 +77,18 @@ footprint and another to bin particles and spread charge. A single worker
 scans the block counts in order. Each output plane has one writer. Both
 teams use a particle-row threshold of 512. Mesh overlap transfers execute
 serially below 128 intersecting rows.
+
+Particle halos pack one contiguous stream per nonempty peer and field
+direction using row offsets assigned when the epoch first uses the
+schedule. Each rank posts receives and sends before copying local ghosts.
+For a force transpose, it sums destinations with only local contributions
+during transfer and completes the other destinations after the wait. Each
+destination retains the original order of its contributions.
+
+The MPI lowering packs consecutive forward copies of the same halo into
+one peer message. An intervening distribution can produce the next field.
+A consumer or a new halo ends the batch. The packet holds the components
+of each field in program order at each scheduled row.
+Return packets can span independent tuple-force producers until a result
+is first read. Every component still gathers the original stream for its
+owned row, including checked wide-word additions in deterministic mode.

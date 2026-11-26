@@ -165,6 +165,15 @@ private:
   LogicalResult lowerHalo(HaloOp op);
   LogicalResult lowerCovered(CoveredOp op);
   LogicalResult lowerHaloCopy(HaloCopyOp op);
+  struct HaloGroup {
+    Value halo, handle;
+    SmallVector<Operation *> transfers;
+  };
+  SmallVector<HaloGroup> haloGroups;
+  llvm::DenseMap<Operation *, unsigned> haloGroupOf;
+  void planHaloGroups(ArrayRef<Operation *> ops);
+  bool batchHalo(OpBuilder &b, Operation *op, Value halo, Value owned, Value ghosts,
+                 Value imageOrOutput, bool transpose, bool words);
   LogicalResult lowerHaloSum(HaloSumOp op);
   LogicalResult lowerZeros(ZerosOp op);
   LogicalResult lowerTupleKernel(TupleKernelOp op);
@@ -1051,6 +1060,79 @@ LogicalResult Lowering::lowerCovered(CoveredOp op) {
   return success();
 }
 
+// Group fields in one block and epoch. A reverse packet may span force
+// producers as long as none consumes an outstanding destination.
+void Lowering::planHaloGroups(ArrayRef<Operation *> ops) {
+  haloGroups.clear();
+  haloGroupOf.clear();
+  if (!mpi) return;
+  for (bool transpose : {false,true}) {
+    HaloGroup *group = nullptr;
+    llvm::DenseSet<Operation *> consumers;
+    for (Operation *op : ops) {
+      if (group && (op->getBlock() != group->transfers.front()->getBlock() ||
+                    consumers.contains(op)))
+        group = nullptr;
+      if (isa<DistributeOp, RedistributeOp>(op) ||
+          (transpose && isa<TupleRowsOp, TupleKernelOp, ZerosOp, AllReduceOp>(op)))
+        continue;
+      Value halo;
+      if (auto copy = dyn_cast<HaloCopyOp>(op); copy && !transpose) {
+        if (!copy->use_empty() && llvm::all_of(copy->getUsers(),
+            [&](Operation *u) { return constraintKernels.contains(u); }))
+          continue;
+        halo = copy.getHalo();
+      } else if (auto sum = dyn_cast<HaloSumOp>(op); sum && transpose) {
+        // These producers stage both ends in wide words in fixed-point
+        // mode. Other field representations keep their individual sums.
+        if (fixedPoint && !isa_and_nonnull<TupleKernelOp,GatherPairsOp>(sum.getOwned().getDefiningOp())) {
+          group = nullptr;
+          continue;
+        }
+        halo = sum.getHalo();
+      } else {
+        group = nullptr;
+        continue;
+      }
+      if (!group || group->halo != halo) {
+        haloGroups.emplace_back();
+        group = &haloGroups.back();
+        group->halo = halo;
+        consumers.clear();
+      }
+      group->transfers.push_back(op);
+      haloGroupOf[op] = haloGroups.size()-1;
+      for (auto *user : op->getUsers())
+        consumers.insert(op->getBlock()->findAncestorOpInBlock(*user));
+    }
+  }
+}
+
+bool Lowering::batchHalo(OpBuilder &b, Operation *op, Value halo, Value owned,
+                         Value ghosts, Value imageOrOutput, bool transpose, bool words) {
+  auto it = haloGroupOf.find(op);
+  if (it == haloGroupOf.end()) return false;
+  auto &group = haloGroups[it->second];
+  if (group.transfers.size() == 1) return false;
+  Type i64 = b.getI64Type();
+  if (op == group.transfers.front()) {
+    Value size = arith::ConstantIntOp::create(b, loc, group.transfers.size(), 64);
+    group.handle = func::CallOp::create(b, loc, declare("mdrtDistHaloBatch",
+        b.getFunctionType({i64}, {i64}), false), ValueRange{size}).getResult(0);
+  }
+  SmallVector<Value> fields{group.handle,owned,ghosts,imageOrOutput};
+  func::CallOp::create(b, loc, declare(words ? "mdrtDistHaloWordField" : "mdrtDistHaloField",
+      b.getFunctionType(ValueRange(fields).getTypes(), {}), true), fields);
+  if (op == group.transfers.back()) {
+    Value direction = arith::ConstantIntOp::create(b, loc, transpose, 64);
+    Value fixed = arith::ConstantIntOp::create(b, loc, words, 64);
+    func::CallOp::create(b, loc, declare("mdrtDistFlushHalo",
+        b.getFunctionType({i64,i64,i64,i64}, {}), false),
+        ValueRange{halo,group.handle,direction,fixed});
+  }
+  return true;
+}
+
 LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
   OpBuilder b(op);
   Storage &halo = storage[op.getHalo()];
@@ -1078,6 +1160,10 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
                         b.getFunctionType({i64, shifts.getType()}, {}), true);
     func::CallOp::create(b, loc, fill, ValueRange{halo.handle, shifts});
     imageShifts[op.getResult()] = shifts;
+  }
+  if (batchHalo(b,op,halo.handle,owned,ghosts,image,false,false)) {
+    storage[op.getResult()].buffer = ghosts;
+    return success();
   }
   if (haloEvents) {
     auto start = mdrt::HaloCopyStartOp::create(
@@ -1129,12 +1215,18 @@ LogicalResult Lowering::lowerHaloSum(HaloSumOp op) {
     auto type = cast<MemRefType>(owned.getType());
     Value words = allocate(b, type, {index(b, domains), layout.capacity, index(b, k)});
     initializeBuffer(b, words, true, owned);
-    func::CallOp::create(b, loc, sum, ValueRange{halo.handle, words, ghosts, result});
+    if (!batchHalo(b,op,halo.handle,words,ghosts,result,true,true))
+      func::CallOp::create(b, loc, sum, ValueRange{halo.handle, words, ghosts, result});
     fieldWords[op.getResult()] = words;
     storage[op.getResult()].buffer = result;
     return success();
   }
   initializeBuffer(b, result, true, owned);
+  if (mpi && batchHalo(b,op,halo.handle,result,ghosts,
+                       arith::ConstantIntOp::create(b,loc,0,64),true,false)) {
+    storage[op.getResult()].buffer = result;
+    return success();
+  }
   if (haloEvents) {
     auto start = mdrt::HaloSumStartOp::create(
         b, loc, mdrt::EventType::get(module.getContext()), halo.handle, ghosts,
@@ -3241,6 +3333,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
       if (rows.getGroup())
         for (Operation *use : rows->getUsers())
           if (isa<TupleKernelOp>(use)) constraintKernels.insert(use);
+  planHaloGroups(ops);
   DominanceInfo dominance(function);
   for (Operation *op : ops) {
     if (grouped.contains(op)) continue;

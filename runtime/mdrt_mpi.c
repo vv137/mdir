@@ -216,37 +216,34 @@ void mdrtMPIShareDomainCounts(int64_t *rows, int64_t domains) {
 
 int mdrtMPISameNode(int peer) { return rankNodes[peer] == rankNodes[rank]; }
 
-// Use the shared-memory communicator for nearby peers. World-rank
-// displacements still refer to the original consecutive packing order.
-void mdrtMPIForwardHalo(double *send, int *ns, int *os, double *recv, int *nr, int *or) {
-  if (nodeSize > 1) {
-    int *local = malloc((size_t)4*nodeSize*sizeof *local);
-    if (!local) mdrtMPIAbort("out of memory routing shared-memory halo");
-    for (int k = 0; k < nodeSize; ++k) {
-      int p = nodeRanks[k];
-      local[k] = ns[p];
-      local[nodeSize+k] = os[p];
-      local[2*nodeSize+k] = nr[p];
-      local[3*nodeSize+k] = or[p];
-    }
-    mdrtDistPhase(DistIntra);
-    if (mdrtDistObserving()) {
-      mdrtDistPhase(DistWait);
-      MPI_Barrier(nodeComm);
-      mdrtDistPhase(-DistWait);
-    }
-    MPI_Alltoallv(send, local, local+nodeSize, MPI_DOUBLE,
-                  recv, local+2*nodeSize, local+3*nodeSize, MPI_DOUBLE, nodeComm);
-    mdrtDistPhase(-DistIntra);
-    free(local);
-  }
-  if (size > nodeSize) {
-    for (int k = 0; k < nodeSize; ++k)
-      ns[nodeRanks[k]] = nr[nodeRanks[k]] = 0;
-    mdrtDistPhase(DistInter);
-    mdrtMPIExchange(send, ns, os, recv, nr, or, 0);
-    mdrtDistPhase(-DistInter);
-  }
+/* A halo invocation owns its request set until all peers finish. Only
+   nonempty streams participate; forward and transpose use separate tags. */
+struct HaloRequests {
+  int count;
+  MPI_Request requests[];
+};
+
+struct HaloRequests *mdrtMPIStartHalo(void *send, const int *ns, const int *os,
+    void *recv, const int *nr, const int *offsets, int words, int transpose) {
+  struct HaloRequests *pending = malloc(sizeof *pending + 2*(size_t)size*sizeof(MPI_Request));
+  if (!pending) mdrtMPIAbort("out of memory posting halo exchange");
+  pending->count = 0;
+  MPI_Datatype type = words ? wideWord : MPI_DOUBLE;
+  size_t width = words ? 2*sizeof(uint64_t) : sizeof(double);
+  for (int p = 0; p < size; ++p)
+    if (nr[p])
+      MPI_Irecv((char *)recv + (size_t)offsets[p]*width, nr[p], type, p, transpose,
+                comm, &pending->requests[pending->count++]);
+  for (int p = 0; p < size; ++p)
+    if (ns[p])
+      MPI_Isend((char *)send + (size_t)os[p]*width, ns[p], type, p, transpose,
+                comm, &pending->requests[pending->count++]);
+  return pending;
+}
+
+void mdrtMPIWaitHalo(struct HaloRequests *pending) {
+  MPI_Waitall(pending->count, pending->requests, MPI_STATUSES_IGNORE);
+  free(pending);
 }
 
 void mdrtMPIExchangeCounts(const int *send, int *recv) {
