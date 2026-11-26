@@ -404,11 +404,24 @@ static void exchange(const struct NCCLPlan *p, double *owned, int64_t nOwned,
     if (!p->hasPeers[inter]) continue;
     int phase = inter ? DistInterHalo : DistIntraHalo;
     if (!reverse) mdrtDistPhase(phase);
-    checkNCCL(ncclGroupStart());
+    // A periodic image on the same device uses the same packed row
+    // order in both buffers. Only remote peers need the communicator.
+    if (!inter && p->ns[rank]) {
+      size_t src = (size_t)(reverse ? p->offsetRecv[rank] : p->os[rank])*k;
+      size_t dst = (size_t)(reverse ? p->os[rank] : p->offsetRecv[rank])*k;
+      checkCuda(cudaMemcpyAsync(incoming+dst,outgoing+src,
+          (size_t)p->ns[rank]*row,cudaMemcpyDeviceToDevice,stream));
+    }
+    int grouped = 0;
     for (int peer = 0; peer < size; ++peer) {
-      if ((nodes[peer] != nodes[rank]) != inter) continue;
+      if (peer == rank || (nodes[peer] != nodes[rank]) != inter) continue;
       size_t ns = (size_t)(reverse ? p->nr[peer] : p->ns[peer])*k;
       size_t nr = (size_t)(reverse ? p->ns[peer] : p->nr[peer])*k;
+      if (!ns && !nr) continue;
+      if (!grouped) {
+        checkNCCL(ncclGroupStart());
+        grouped = 1;
+      }
       if (ns) {
         size_t offset = (size_t)(reverse ? p->offsetRecv[peer] : p->os[peer])*k;
         checkNCCL(ncclSend(outgoing+offset, ns, ncclDouble, peer, peers, stream));
@@ -418,7 +431,7 @@ static void exchange(const struct NCCLPlan *p, double *owned, int64_t nOwned,
         checkNCCL(ncclRecv(incoming+offset, nr, ncclDouble, peer, peers, stream));
       }
     }
-    checkNCCL(ncclGroupEnd());
+    if (grouped) checkNCCL(ncclGroupEnd());
     if (!reverse) mdrtDistPhase(-phase);
   }
   double *result = reverse ? ownedDevice : ghostDevice;

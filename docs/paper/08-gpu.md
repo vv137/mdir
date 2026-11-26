@@ -1162,3 +1162,8 @@ between rebuilds. Their two-run mean step times were 8.424, 7.649,
 7.625 and 9.050 ms. In two independent trials choosing the reach on the
 allocated layout, both selected 0.60 Å. Production then took 7.525 and
 7.545 ms/step. The ordinary force cutoff was 9 Å throughout.
+
+Periodic copies can give a rank both ends of an edge of the communication
+graph. For such an edge the rank copies its packed send slice into its
+receive slice on the halo stream. The unpack kernel then applies the
+image shift or reverse force sum exactly as for a remote edge.

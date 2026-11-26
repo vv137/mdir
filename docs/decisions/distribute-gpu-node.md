@@ -352,3 +352,8 @@ steps. The 0.60 Å runs took 7.552 and 7.697 ms/step. A further increase
 to 1.20 Å gave 9.049 and 9.050 ms/step. The wider list costs time on
 every covered step. The search measures the entire distributed step so
 that this cost enters the choice alongside the cost of rebuilding.
+
+A periodic face with the same sending and receiving rank uses a
+device-to-device copy between the packed message buffers. Remote sends
+and receives retain their peer offsets and ordering. Forward coordinate
+translation and reverse force accumulation use the same row maps.
