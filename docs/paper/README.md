@@ -19,12 +19,15 @@ neighbor structures share one pair body: a matrix of neighbors; groups
 of 16 particles with a dual list pruned by its own exact test; and
 TOWERS, which keeps no list, rebuilds its cells every step, and assigns
 each pair to one GPU block by the Neutral Territory decomposition, with
-a distance screen on tensor cores and integer force sums that give the
-same force words for every launch shape. The reciprocal sum is particle
-mesh Ewald with a Gaussian or a prolate spheroidal splitting. On one RTX
-4090 in mixed precision at 2 fs, MDIR runs the systems of the Amber GPU
-benchmark suite at constant energy and at constant pressure, from 1277
-ns/day on JAC (23,558 atoms) to 145 ns/day on Cellulose (408,609 atoms);
+a distance screen on tensor cores where the device has them and integer
+force sums that give the same force words for every launch shape at fixed
+geometry. The reciprocal sum is particle mesh Ewald with a Gaussian or a
+prolate spheroidal splitting. At the first milestone, before TOWERS and
+the prolate splitting, on one RTX 4090 in mixed precision at 2 fs, MDIR
+ran the systems of the Amber GPU benchmark suite up to Cellulose at
+constant energy and at constant pressure, from 1277 ns/day on JAC
+(23,558 atoms) to 138 ns/day on Cellulose (408,609 atoms) at constant
+pressure;
 [Section 10](10-performance.md) compares it with pmemd.cuda 26 under one
 protocol on the same device, and with GROMACS 2026.3 on ubiquitin in
 OPC. The paper derives the methods as they are implemented, among them
