@@ -583,7 +583,8 @@ static int classifyMidpoint(const struct MidpointBounds *i, const struct Midpoin
 }
 
 int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
-    int64_t exclusions, int64_t rule, struct Memref3D *owned, struct Memref3D *ghost) {
+    int64_t exclusions, int64_t rule, struct Memref3D *owned, struct Memref3D *ghost,
+    struct Memref2D *packed, int64_t prune) {
   if (!rule && !exclusions) return 0;
   struct DomainMatrix *m = (struct DomainMatrix *)(intptr_t)matrix;
   struct Halo *h = (struct Halo *)(intptr_t)handle;
@@ -684,6 +685,12 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
   }
   if (rule != 2) return 1;
 
+  /* The packed coordinates are the same explicit images the pair kernel
+     reads. Leave a guard shell for rounding the displacement, products,
+     and sum to binary32. The kernel still applies its own cutoff. */
+  double cutoff2 = m->cutoff*m->cutoff;
+  double outer2 = cutoff2*(1.0 + 16.0*FLT_EPSILON);
+  prune = prune && cutoff2 > FLT_MIN && outer2 < FLT_MAX;
   #pragma omp parallel for schedule(static,8) if(m->centers > 256)
   for (int64_t i = 0; i < m->centers; ++i) {
     int64_t image[3] = {0,0,0};
@@ -693,9 +700,20 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
       xi[c] = i<n ? *at3(owned,d,i,c) : *at3(ghost,d,i-n,c);
       a[c] = image[c]*l->edges[c];
     }
+    double center[3];
+    for (int c = 0; c < 3; ++c) center[c] = *at2(packed,i,c);
     int32_t count = 0;
     for (int32_t k = 0; k < counts[i]; ++k) {
       int32_t j = ((int32_t *)candidates.aligned)[i*candidates.strides[0]+k];
+      if (prune) {
+        int32_t neighbor = j < 0 ? ~j : j;
+        double r2 = 0.0;
+        for (int c = 0; c < 3; ++c) {
+          double dx = center[c] - *at2(packed,neighbor,c);
+          r2 += dx*dx;
+        }
+        if (r2 > outer2) continue;
+      }
       if (j < 0) {
         ((int32_t *)dst.aligned)[i*dst.strides[0]+count++] = ~j;
         continue;

@@ -989,7 +989,8 @@ LogicalResult Lowering::lowerDomainMatrix(mdrt::DomainMatrixOp op) {
   markBuild(-DistList);
   Value rule = word(op.getRule());
   Value selected = call("mdrtDistFilterMatrix", i64, {op.getHalo(), matrix, op.getExclusions(),
-      rule, op.getOwnedPositions(), op.getGhostPositions()}, true);
+      rule, op.getOwnedPositions(), op.getGhostPositions(), x,
+      word(!module->hasAttr(md_exec::algebra::kDeterministicAttrName))}, true);
   view(selected);
   neighbors[op.getResult()] = list;
   return success();

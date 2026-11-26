@@ -873,3 +873,10 @@ geometry. Each rank sorts the remote atom identities required by its tuple
 interval and maps repeated members to the same response slot. It refreshes
 coordinates and spatial ownership every evaluation. Parallel expansion and
 image lookup write rows in their original topology order.
+
+Before a floating midpoint kernel evaluates a row, the CPU filter compares
+the squared distance of its current explicit images with the squared cutoff
+times $1+16\epsilon$, where $\epsilon$ is binary32 machine epsilon. The
+guard covers narrowing the displacement, squaring its components, and adding
+them. Squared cutoffs outside the normal binary32 range bypass this filter.
+The force kernel retains its cutoff test (D[distribute-cpu-threads]).

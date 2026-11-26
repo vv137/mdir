@@ -143,3 +143,10 @@ is invariant. Remote identities are sorted and requested once per peer.
 On each geometry evaluation the peer returns one site per requested identity.
 Workers expand the results into disjoint member slots and resolve the received
 midpoint records into disjoint tuple rows. Parameter and force order are preserved.
+
+In a floating midpoint pair loop, selection reads the current packed
+explicit-image positions and discards Verlet-shell neighbors beyond the
+physical cutoff plus a roundoff guard. It repeats this test at every
+evaluation, including iterations that reuse a neighbor list. The pair
+kernel applies its own precision-specific cutoff to the retained rows.
+Deterministic execution keeps the original lane membership and sums.
