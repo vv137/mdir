@@ -1,8 +1,10 @@
 # REQUIRES: cuda, volta
 # RUN: rm -rf %t && mkdir %t
 # RUN: cp %S/Inputs/towers-one-step.toml %S/../../examples/argon/argon.pdb %t/
-# RUN: not mdir run %t/towers-one-step.toml 2>&1 | FileCheck %s --check-prefix=REFUSE
+# RUN: mdir run %t/towers-one-step.toml 2>&1 | FileCheck %s --check-prefix=SCALAR
 # RUN: sed 's/"TOWERS"/"MATRIX"/' %t/towers-one-step.toml > %t/matrix.toml
 # RUN: env MDIR_GPU_BINARY=ptx mdir emit %t/matrix.toml --stage=pipeline | FileCheck %s --check-prefix=TARGET
-# REFUSE: TOWERS requires mma.sync m16n8k8 f16 (sm_75 or newer)
+# SCALAR: "screen":"SCALAR"
+# SCALAR-SAME: "screen_reason":"device lacks m16n8k8"
+# SCALAR: INFO: 1 0.0050
 # TARGET: cubin-chip=sm_7{{[02]}} cubin-format=isa binary=ptx
