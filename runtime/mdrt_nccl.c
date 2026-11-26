@@ -310,7 +310,7 @@ static void exchange(const struct NCCLPlan *p, double *owned, int64_t nOwned,
     checkCuda(cudaMemcpyAsync(ghostDevice, ghosts, p->recvRows*row, cudaMemcpyHostToDevice, stream));
   mdrtNCCLRows(1, reverse ? ghostDevice : ownedDevice, reverse ? p->dest : p->source,
                outgoing, (long long)send*k, k, NULL, reverse, stream);
-  if (!asynchronous) checkCuda(cudaStreamSynchronize(stream));
+  // Packing, peer transfers, and unpacking are ordered on this stream.
   int rank = mdrtMPIRank();
   for (int inter = 0; inter <= 1; ++inter) {
     if (!p->hasPeers[inter]) continue;
@@ -331,7 +331,6 @@ static void exchange(const struct NCCLPlan *p, double *owned, int64_t nOwned,
       }
     }
     checkNCCL(ncclGroupEnd());
-    if (!asynchronous) checkCuda(cudaStreamSynchronize(stream));
     if (!reverse) mdrtDistPhase(-phase);
   }
   double *result = reverse ? ownedDevice : ghostDevice;
@@ -470,9 +469,11 @@ extern void mdrtNCCLReorderKernel(const double *, const double *, const int *,
 
 void mdrtNCCLReorder(const double *owned, const double *incoming, int64_t received,
                      const int *map, double *result, int64_t rows, int width) {
-  double *arrivals = upload(incoming,(size_t)received*width*sizeof(double));
+  size_t bytes = (size_t)received * width * sizeof(double);
+  double *arrivals = mdrtNCCLAllocate(bytes);
+  mdrtNCCLUpload(arrivals, incoming, bytes);
   mdrtNCCLReorderKernel(owned,arrivals,map,result,rows,width);
-  checkCuda(cudaFree(arrivals));
+  mdrtNCCLFreePositions(arrivals);
 }
 
 void mdrtNCCLRowsReady(void) {

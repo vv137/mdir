@@ -1426,6 +1426,11 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
   int64_t localCount;
   int64_t *local = mdrtNCCLFaceRecords(deviceRows(positions,d,rows,0),rows,d,
       old->grid,edges,reach+margin,&localCount);
+  int peers = mdrtMPISize();
+  int64_t *offsets = malloc(((size_t)peers + 1) * sizeof(*offsets));
+  if (!offsets)
+    fail("out of memory indexing face records");
+  struct FaceExchange *faces = mdrtMPIBeginFaces(2 * localCount, offsets);
   for (int64_t i=0; i<localCount; ++i) {
     int64_t r=local[2*i];
     if (r<0 || r>=rows) fail("invalid position classifying device face rows");
@@ -1434,11 +1439,7 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
   size_t capacity = old->count ? old->count : 1;
   next->faceMasks=calloc(capacity,sizeof *next->faceMasks);
   if (!next->faceMasks) fail("out of memory indexing device face rows");
-  int peers = mdrtMPISize();
-  int64_t *offsets = malloc(((size_t)peers + 1) * sizeof(*offsets));
-  if (!offsets)
-    fail("out of memory indexing face records");
-  int64_t *allRecords = mdrtMPIGatherIndices(local, 2 * localCount, offsets);
+  int64_t *allRecords = mdrtMPIFinishFaces(faces, local, offsets);
   free(local);
   int64_t moved=0;
   for (int peer = 0; peer < peers; ++peer) {

@@ -1064,3 +1064,8 @@ the ghost positions, and the boundary launch waits for that event. The
 driver times split and unsplit traversals on the allocated domains in
 two disposable trials. The faster traversal runs from the production
 initial state. The control file can also select either traversal.
+
+At a face rebuild, local identity remapping runs during the count
+all-gather. Each rank posts the payload receives and sends before waiting
+for the records. Rank-ordered receive slices preserve the migration
+ordering even when peers finish out of order.

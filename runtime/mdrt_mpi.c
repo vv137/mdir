@@ -195,39 +195,68 @@ void mdrtMPIRowsToRoot(double *values, int64_t count, int owner) {
   }
 }
 
-// Receive variable-size lists in rank order. Keep the chunked broadcast
-// path for lists whose displacements cannot be represented by Allgatherv.
-int64_t *mdrtMPIGatherIndices(const int64_t *local, int64_t count,
-                              int64_t *offsets) {
+// Keep the count exchange in flight while the caller maps local face rows
+// to particle IDs. All receives target disjoint ranges in rank order.
+struct FaceExchange {
+  MPI_Request lengths;
+  int64_t count;
+};
+
+struct FaceExchange *mdrtMPIBeginFaces(int64_t count, int64_t *offsets) {
+  struct FaceExchange *exchange = malloc(sizeof(*exchange));
+  if (!exchange) mdrtMPIAbort("out of memory starting face exchange");
+  exchange->count = count;
+  MPI_Iallgather(&exchange->count, 1, MPI_INT64_T, offsets + 1, 1,
+                 MPI_INT64_T, comm, &exchange->lengths);
+  return exchange;
+}
+
+int64_t *mdrtMPIFinishFaces(struct FaceExchange *exchange, const int64_t *local,
+                            int64_t *offsets) {
+  mdrtDistPhase(DistWait);
+  MPI_Wait(&exchange->lengths, MPI_STATUS_IGNORE);
+  mdrtDistPhase(-DistWait);
+  int64_t count = exchange->count;
+  free(exchange);
   offsets[0] = 0;
-  arrival();
-  MPI_Allgather(&count, 1, MPI_INT64_T, offsets + 1, 1, MPI_INT64_T, comm);
-  for (int p = 0; p < size; ++p)
-    offsets[p + 1] += offsets[p];
-  int64_t total = offsets[size];
-  int64_t *rows = malloc((total ? total : 1) * sizeof(*rows));
-  if (!rows)
-    mdrtMPIAbort("out of memory sharing domain face records");
-  if (total > INT_MAX) {
-    if (count)
-      memcpy(rows + offsets[rank], local, count * sizeof(*rows));
-    for (int p = 0; p < size; ++p)
-      mdrtMPIBroadcastIndices(rows + offsets[p], offsets[p + 1] - offsets[p],
-                              p);
-  } else {
-    int *sizes = malloc(2 * (size_t)size * sizeof(*sizes));
-    if (!sizes)
-      mdrtMPIAbort("out of memory indexing domain face records");
-    int *starts = sizes + size;
-    for (int p = 0; p < size; ++p) {
-      sizes[p] = (int)(offsets[p + 1] - offsets[p]);
-      starts[p] = (int)offsets[p];
-    }
-    arrival();
-    MPI_Allgatherv(local, (int)count, MPI_INT64_T, rows, sizes, starts,
-                   MPI_INT64_T, comm);
-    free(sizes);
+  for (int p = 0; p < size; ++p) {
+    if (offsets[p+1] < 0 || offsets[p+1] > INT64_MAX - offsets[p])
+      mdrtMPIAbort("invalid face record count");
+    offsets[p+1] += offsets[p];
   }
+  int64_t total = offsets[size];
+  if ((uint64_t)total > SIZE_MAX / sizeof(int64_t))
+    mdrtMPIAbort("face records exceed addressable memory");
+  int64_t *rows = malloc((total ? total : 1) * sizeof(*rows));
+  MPI_Request *requests = malloc(2 * (size_t)size * sizeof(*requests));
+  if (!rows || !requests) mdrtMPIAbort("out of memory sharing domain face records");
+  if (count) memcpy(rows + offsets[rank], local, count * sizeof(*rows));
+
+  // The ordinary payload takes one round. Slice unusually large peer
+  // messages to fit the MPI count, keeping the same rounds on every rank.
+  int64_t largest = 0;
+  for (int p = 0; p < size; ++p)
+    if (offsets[p+1] - offsets[p] > largest) largest = offsets[p+1] - offsets[p];
+  for (int64_t first = 0; first < largest;) {
+    int pending = 0;
+    for (int p = 0; p < size; ++p) {
+      int64_t n = offsets[p+1] - offsets[p] - first;
+      if (p != rank && n > 0)
+        MPI_Irecv(rows + offsets[p] + first, n > INT_MAX ? INT_MAX : (int)n,
+                  MPI_INT64_T, p, 1, comm, &requests[pending++]);
+    }
+    int64_t n = count - first;
+    if (n > 0)
+      for (int p = 0; p < size; ++p)
+        if (p != rank)
+          MPI_Isend(local + first, n > INT_MAX ? INT_MAX : (int)n,
+                    MPI_INT64_T, p, 1, comm, &requests[pending++]);
+    mdrtDistPhase(DistWait);
+    MPI_Waitall(pending, requests, MPI_STATUSES_IGNORE);
+    mdrtDistPhase(-DistWait);
+    first += largest - first > INT_MAX ? INT_MAX : largest - first;
+  }
+  free(requests);
   return rows;
 }
 

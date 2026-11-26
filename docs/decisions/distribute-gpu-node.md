@@ -175,3 +175,22 @@ Otherwise the trial uses elapsed integration time. Rank zero broadcasts
 the two times. The production log records both and the selected traversal.
 Short runs use the unsplit traversal. Explicit `"split"` and `"unsplit"`
 values bypass measurement. A single rank always uses its self-image path.
+
+### Asynchronous rebuild face exchange
+
+Each rank starts a nonblocking all-gather of its record count, then maps
+local row indices to particle identities. Once the lengths arrive, it
+posts the peer receives into disjoint rank-ordered slices, posts all
+sends, and waits for completion before migration consumes the records.
+Peer payloads exceeding the MPI count range use matching chunk rounds.
+The wait timer records the two completion waits. Earlier rebuilds timed
+arrival barriers before blocking collectives, so the two measurements
+include different amounts of communication progress. Packing, transfer,
+and scatter are ordered on the same CUDA stream. A synchronous caller
+waits after the scatter.
+
+On eight V100s, the mean maximum-rank rebuild wait across two liquid
+runs changed from 13.169 to 14.517 ms. The corresponding migration
+phase changed from 25.777 to 21.710 ms. Each run contributed 19 rebuild
+intervals between steps 103 and 203. The change in the wait timer above
+precludes attributing the migration reduction to a shorter measured wait.
