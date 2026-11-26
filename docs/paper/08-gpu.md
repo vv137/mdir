@@ -1112,3 +1112,8 @@ On device migration the old owner packs rows by destination. Received
 slices are ordered by source rank and particle identity. The new owner
 applies the same permutation to every live field, so each value remains
 associated with its particle through the ownership change.
+
+Mapping topology exclusions to owned and periodic image rows depends
+on the exclusion table and halo geometry. The executor retains this
+mapping with the halo so repeated force evaluations reuse the same
+excluded row pairs between rebuilds.

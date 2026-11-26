@@ -276,3 +276,7 @@ Each observable keeps its own accumulation and domain reduction.
 Device migration computes one peer schedule for the ownership change.
 Each live field uses that schedule to pack outgoing rows, exchange them
 with their new owners, and reorder the received rows on the device.
+
+The sorted exclusion table follows the lifetime of its input relation.
+A halo retains the mapped exclusion pairs for each table and domain
+until its layout expires. Repeated evaluations can borrow those pairs.

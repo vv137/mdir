@@ -113,7 +113,7 @@ private:
   LogicalResult lowerPairGroup(Operation *anchor, DominanceInfo &dominance);
   scf::ForOp domainLoop;
   llvm::DenseSet<Value> overlapPositions;
-  llvm::DenseMap<Value, Value> scheduledMembers, tupleParameters;
+  llvm::DenseMap<Value, Value> scheduledMembers, tupleParameters, exclusionTables;
   Value deviceTupleParameter(Value field);
   Value pairPhase, centerMask, computeStream;
   DomainRelation domainRelation;
@@ -1749,14 +1749,22 @@ LogicalResult Lowering::lowerNeighborhood(NeighborhoodOp op) {
   if (Value excluded = op.getExcluded()) {
     Type i64 = b.getI64Type();
     auto type = mdrt::getMembersType(cast<md::RelationType>(excluded.getType()));
-    Value members = mdrt::ToBufferOp::create(b, loc, type, excluded);
-    auto build = declare("mdrtDistExclusions", b.getFunctionType({type}, {i64}), true);
-    build.setArgAttr(0, "mdrt.read_only", b.getUnitAttr());
-    Value handle = func::CallOp::create(b, loc, build, members).getResult(0);
+    Value handle = exclusionTables.lookup(excluded);
+    if (!handle) {
+      // The relation is an SSA value. Its sorted identities can be shared
+      // by all the neighborhoods in the defining block and its children.
+      OpBuilder setup(module.getContext());
+      setup.setInsertionPointAfterValue(excluded);
+      Value members = mdrt::ToBufferOp::create(setup, loc, type, excluded);
+      auto build = declare("mdrtDistExclusions", b.getFunctionType({type}, {i64}), true);
+      build.setArgAttr(0, "mdrt.read_only", b.getUnitAttr());
+      handle = func::CallOp::create(setup, loc, build, members).getResult(0);
+      OpBuilder cleanup(handle.getParentBlock()->getTerminator());
+      auto release = declare("mdrtDistFreeExclusions", b.getFunctionType({i64}, {}), false);
+      func::CallOp::create(cleanup, loc, release, handle);
+      exclusionTables[excluded] = handle;
+    }
     excludedPairs[op.getResult()] = handle;
-    OpBuilder cleanup(end);
-    auto release = declare("mdrtDistFreeExclusions", b.getFunctionType({i64}, {}), false);
-    func::CallOp::create(cleanup, loc, release, handle);
   }
   func::CallOp::create(
       b, loc,
@@ -2882,8 +2890,6 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
     Value pairs = mdrt::FromBufferOp::create(b, loc, relationType, members);
     excluded = md_exec::BuildIncidenceOp::create(b, loc,
         mdrt::IncidenceType::get(context, set, 2, tupleSet), pairs, Value());
-    OpBuilder cleanup(b.getInsertionBlock()->getTerminator());
-    memref::DeallocOp::create(cleanup, loc, members);
   }
   Value cells = md_exec::BuildCellsOp::create(
       b, loc, mdrt::CellsType::get(context, set), positions,
@@ -3569,6 +3575,7 @@ static LogicalResult outlineSteps(ModuleOp module, func::FuncOp function, String
 LogicalResult Lowering::run(func::FuncOp function) {
   fieldSnapshots.clear();
   tupleParameters.clear();
+  exclusionTables.clear();
   scheduledMembers.clear();
   if (fixedPoint && module->hasAttr("md_dist.driver")) {
     SmallVector<md::SumParticlesOp> sums;
