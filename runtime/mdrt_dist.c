@@ -109,7 +109,7 @@ struct Layout {
   int selfFaces, pairFaces;
   double faceReach;
   int *deviceMigrationMap;
-  int64_t incomingRows;
+  int *migrationCounts, *deviceExportRows;
 #endif
   int64_t *owner; /* [count]: the domain that owns each particle */
   int64_t *row;   /* [count]: its owned row there */
@@ -1034,6 +1034,8 @@ void mdrtDistReleaseLayout(int64_t handle) {
 #endif
 #ifdef MDIR_ENABLE_NCCL
   freeTuplePlans(l->tuplePlans);
+  free(l->migrationCounts);
+  if (l->deviceExportRows) mdrtNCCLFreePositions((double *)l->deviceExportRows);
   if (l->deviceMigrationMap) mdrtNCCLFreePositions((double *)l->deviceMigrationMap);
 #endif
   free(l->migratedPositions);
@@ -1325,10 +1327,34 @@ static void mapDeviceMigrants(struct Layout *old, struct Layout *next, int64_t d
     int64_t j = next->ids[d*next->stride+r];
     if (old->owner[j] == d) map[r] = (int)old->row[j];
   }
-  for (int64_t i = 0; i < next->migrantOffsets[mdrtMPISize()]; ++i) {
+  int peers = mdrtMPISize(), rank = mdrtMPIRank();
+  next->migrationCounts = calloc(2*(size_t)peers, sizeof(int));
+  if (!next->migrationCounts) fail("out of memory counting migrant transfers");
+  int *sends = next->migrationCounts, *receives = sends + peers;
+  int incoming = 0;
+  for (int p = 0; p < peers; ++p)
+    for (int64_t i = next->migrantOffsets[p]; i < next->migrantOffsets[p+1]; ++i) {
+      int64_t j = next->migrantIds[i];
+      if (p == rank) ++sends[mdrtMPIOwner(next->domains, next->owner[j])];
+      if (next->owner[j] == d) {
+        map[next->row[j]] = -1 - incoming++;
+        ++receives[p];
+      }
+    }
+
+  int64_t first = next->migrantOffsets[rank], last = next->migrantOffsets[rank+1];
+  int *exportRows = malloc((last-first+1)*sizeof(*exportRows));
+  int *cursor = calloc(peers, sizeof(*cursor));
+  if (!exportRows || !cursor) fail("out of memory indexing migrant exports");
+  for (int p = 1; p < peers; ++p) cursor[p] = cursor[p-1] + sends[p-1];
+  for (int64_t i = first; i < last; ++i) {
     int64_t j = next->migrantIds[i];
-    if (next->owner[j] == d) map[next->row[j]] = -1-(int)next->incomingRows++;
+    int peer = mdrtMPIOwner(next->domains, next->owner[j]);
+    exportRows[cursor[peer]++] = old->row[j];
   }
+  next->deviceExportRows = mdrtNCCLUploadIndices(exportRows, last-first);
+  free(cursor);
+  free(exportRows);
   next->deviceMigrationMap = mdrtNCCLUploadIndices(map,n);
   free(map);
 }
@@ -1351,35 +1377,10 @@ void _mlir_ciface_mdrtDistRedistributeDevice(struct Memref3D *result,
   int64_t width = source->sizes[2];
   mapDeviceMigrants(old,next,d);
   double *owned = deviceRows(source,d,old->rows[d],0);
-  double *incoming = malloc((1+(size_t)next->incomingRows)*width*sizeof(double));
-  if (!incoming) fail("out of memory receiving device migrants");
-  int64_t received = 0;
-  for (int p = 0; p < peers; ++p) {
-    int64_t count = offsets[p+1]-offsets[p];
-    if (!count) continue;
-    double *wire = malloc((size_t)count*width*sizeof(double));
-    if (!wire) fail("out of memory sharing device migrants");
-    if (p == rank) {
-      int *rows = malloc(count*sizeof *rows);
-      if (!rows) fail("out of memory mapping outgoing migrants");
-      for (int64_t r = 0; r < count; ++r)
-        rows[r] = old->row[next->migrantIds[offsets[p]+r]];
-      mdrtNCCLDownloadRows(owned,rows,count,width,wire);
-      free(rows);
-    }
-    mdrtMPIBroadcast(wire,count*width,p);
-    for (int64_t r = 0; r < count; ++r) {
-      int64_t j = next->migrantIds[offsets[p]+r];
-      if (next->owner[j] == d)
-        memcpy(incoming+(received++)*width,wire+r*width,width*sizeof(double));
-    }
-    free(wire);
-  }
-  if (received != next->incomingRows) fail("inconsistent migration row map");
   _mlir_ciface_mdrtDistCreateField(result,next->domains,next->stride,width);
-  mdrtNCCLReorder(owned, incoming, received, next->deviceMigrationMap,
-      deviceRows(result,d,next->rows[d],1),next->rows[d],width);
-  free(incoming);
+  mdrtNCCLMigrateRows(owned, next->deviceExportRows, next->migrationCounts,
+                      next->deviceMigrationMap, deviceRows(result,d,next->rows[d],1),
+                      next->rows[d], width);
 }
 #endif
 

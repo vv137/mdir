@@ -504,13 +504,33 @@ void mdrtNCCLDownloadRows(const double *source, const int *indices, int64_t rows
 extern void mdrtNCCLReorderKernel(const double *, const double *, const int *,
                                   double *, long long, int);
 
-void mdrtNCCLReorder(const double *owned, const double *incoming, int64_t received,
-                     const int *map, double *result, int64_t rows, int width) {
-  size_t bytes = (size_t)received * width * sizeof(double);
-  double *arrivals = mdrtNCCLAllocate(bytes);
-  mdrtNCCLUpload(arrivals, incoming, bytes);
-  mdrtNCCLReorderKernel(owned,arrivals,map,result,rows,width);
+// The receive buffer is in former rank and particle identity order. Each
+// field follows the same map, including ranks with only sends or receives.
+void mdrtNCCLMigrateRows(const double *owned, const int *exportRows, const int *counts,
+                         const int *map, double *result, int64_t rows, int width) {
+  int64_t send = 0, recv = 0;
+  for (int p = 0; p < size; ++p) {
+    send += counts[p];
+    recv += counts[size+p];
+  }
+  double *exports = mdrtNCCLAllocate(send*width*sizeof(double));
+  double *arrivals = mdrtNCCLAllocate(recv*width*sizeof(double));
+  mdrtNCCLRows(1, owned, exportRows, exports, send*width, width, NULL, 0, NULL);
+  if (send || recv) {
+    size_t out = 0, in = 0;
+    checkNCCL(ncclGroupStart());
+    for (int peer = 0; peer < size; ++peer) {
+      size_t ns = (size_t)counts[peer]*width, nr = (size_t)counts[size+peer]*width;
+      if (ns) checkNCCL(ncclSend(exports+out, ns, ncclDouble, peer, peers, 0));
+      if (nr) checkNCCL(ncclRecv(arrivals+in, nr, ncclDouble, peer, peers, 0));
+      out += ns;
+      in += nr;
+    }
+    checkNCCL(ncclGroupEnd());
+  }
+  mdrtNCCLReorderKernel(owned, arrivals, map, result, rows, width);
   mdrtNCCLFreePositions(arrivals);
+  mdrtNCCLFreePositions(exports);
 }
 
 void mdrtNCCLRowsReady(void) {

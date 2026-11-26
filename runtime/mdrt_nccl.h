@@ -38,8 +38,8 @@ void mdrtNCCLBuildTupleRows(const int *, int, int, const int *, const int *, con
 int *mdrtNCCLUploadIndices(const int *rows, int64_t n);
 void mdrtNCCLDownloadRows(const double *source, const int *indices, int64_t rows,
                           int width, double *host);
-void mdrtNCCLReorder(const double *owned, const double *incoming, int64_t received,
-                     const int *map, double *result, int64_t rows, int width);
+void mdrtNCCLMigrateRows(const double *owned, const int *exportRows, const int *counts,
+                         const int *map, double *result, int64_t rows, int width);
 void mdrtNCCLNarrow(const double *, void *, long long);
 void mdrtNCCLFreePositions(double *positions);
 double *mdrtNCCLAllocate(size_t bytes);

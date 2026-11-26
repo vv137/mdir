@@ -1107,3 +1107,8 @@ preserves the covered directed traversal's indexing and NCCL peer order.
 Several independent owned-particle observables can share the enclosing
 domain traversal. Each keeps its original expression and reduction tree,
 so this transformation shares setup without reassociating the sums.
+
+On device migration the old owner packs rows by destination. Received
+slices are ordered by source rank and particle identity. The new owner
+applies the same permutation to every live field, so each value remains
+associated with its particle through the ownership change.

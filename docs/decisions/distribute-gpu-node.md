@@ -272,3 +272,7 @@ existing periodic image order. Other halo consumers retain full maps.
 Independent sums over owned particles can share a domain traversal
 and field views when their region inputs dominate the traversal.
 Each observable keeps its own accumulation and domain reduction.
+
+Device migration computes one peer schedule for the ownership change.
+Each live field uses that schedule to pack outgoing rows, exchange them
+with their new owners, and reorder the received rows on the device.
