@@ -630,6 +630,45 @@ static LogicalResult distributeGroups(ModuleOp module, ArrayRef<int64_t> grid,
   return success();
 }
 
+// A sum used only in the total potential can share its pair reduction
+// with the other operand. Differentiation then forms one force and one
+// virial tensor per pair. Independently observed terms keep their sums.
+static void combinePairEnergiesIn(PotentialOp potential) {
+  for (Operation &op : llvm::make_early_inc_range(potential.getBody().front())) {
+    auto add = dyn_cast<arith::AddFOp>(op);
+    if (!add || !add.getType().isF64())
+      continue;
+    auto left = add.getLhs().getDefiningOp<SumRelationOp>();
+    auto right = add.getRhs().getDefiningOp<SumRelationOp>();
+    if (!left || !right || !left->hasOneUse() || !right->hasOneUse() ||
+        left.getRelation() != right.getRelation() ||
+        left.getPositions() != right.getPositions() || left.getCell() != right.getCell() ||
+        left.getExchange() != right.getExchange() ||
+        left.getTruncation() != Truncation::None || right.getTruncation() != Truncation::None)
+      continue;
+
+    OpBuilder builder(add);
+    auto joined = cast<SumRelationOp>(builder.clone(*left));
+    joined.getGatheredMutable().append(right.getGathered());
+    Block &kernel = joined.getKernel().front(), &source = right.getKernel().front();
+    IRMapping map;
+    for (BlockArgument arg : source.getArguments()) {
+      unsigned i = arg.getArgNumber();
+      map.map(arg, i < 2 ? kernel.getArgument(i) : kernel.addArgument(arg.getType(), arg.getLoc()));
+    }
+    Operation *yield = kernel.getTerminator();
+    builder.setInsertionPoint(yield);
+    for (Operation &nested : source.without_terminator())
+      builder.clone(nested, map);
+    Value rhs = map.lookupOrDefault(source.getTerminator()->getOperand(0));
+    yield->setOperand(0, arith::AddFOp::create(builder, add.getLoc(), yield->getOperand(0), rhs));
+    add.getResult().replaceAllUsesWith(joined.getResult());
+    add.erase();
+    right.erase();
+    left.erase();
+  }
+}
+
 class Distribute : public impl::DistributeBase<Distribute> {
 public:
   using impl::DistributeBase<Distribute>::DistributeBase;
@@ -707,6 +746,7 @@ public:
       return;
     }
     for (PotentialOp potential : selected) {
+      if (combinePairEnergies) combinePairEnergiesIn(potential);
       Distributor distributor(potential, divisions, kind, reach);
       if (failed(distributor.run()))
         return signalPassFailure();

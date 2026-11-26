@@ -1094,3 +1094,8 @@ mask. Applying the changed masks to the previous mask array reconstructs
 the full array, including departures represented by a zero mask. Thus
 the exchanged record count scales with changes in face membership. The
 host still maintains a global identity index.
+
+Linearity of differentiation permits summing compatible pair energies
+before computing their common force and virial. This shares neighbor
+loads and the warp reductions for the two terms. In double precision
+with determinism disabled, adding the terms earlier can change rounding.

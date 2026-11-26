@@ -257,3 +257,9 @@ eligible device rebuild path, each owner now compares the new face mask
 with the previous mask and exchanges changed records. A zero mask
 removes a former face member. Migrating rows carry the previous mask
 in their new owner order.
+
+For double-precision NCCL potentials with deterministic execution
+disabled, two single-use pair energies added over the same neighborhood
+can share a differentiated pair walk. Both operands must use the same
+positions, cell and exchange convention. Each retains its own scalar
+energy formula.

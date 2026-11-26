@@ -348,6 +348,10 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
     const auto &grid = program.domainGrid;
     os << "md-distribute{grid=" << grid[0] << "," << grid[1] << "," << grid[2]
        << " traversal=" << control.distribution->traversal
+       << (!program.domainTopology && !control.deterministic &&
+                   control.precision == Precision::Double &&
+                   control.distribution->transport == "nccl"
+               ? " combine-pair-energies=true" : "")
        << (program.domainTopology ? " derivatives=true" : "")
        << (program.domainTopology && control.distribution->transport == "nccl"
                ? " projection-epochs=true" : "")
