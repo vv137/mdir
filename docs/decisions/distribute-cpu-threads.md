@@ -100,3 +100,17 @@ A migrated layout can share frozen constraint membership until a caller
 adds a group. Each rank materializes image translations only for its own
 ghost rows. With one local domain, surviving identities are already in
 order, so the rank sorts only incoming identities and merges the two runs.
+
+The midpoint matrix stores three candidate classes in original neighbor
+order. A componentwise coordinate interval extends half the list skin
+around each owned or unshifted ghost coordinate. Applying interval
+endpoints to the actual midpoint arithmetic bounds its cell. A pair whose
+interval misses the domain is dropped. A pair wholly inside is tagged for
+direct inclusion. Other candidates retain the per-step midpoint test.
+Leaving any coordinate interval refreshes the classification, as does a
+list rebuild or an exclusion change.
+
+The midpoint pair kernel assigns runs of eight consecutive rows from each
+of sixteen bands in turn. A static worker interval then visits both the
+heavily populated owned centers and the shorter ghost rows. The final
+incomplete cycle uses the original row order.

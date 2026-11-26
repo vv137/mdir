@@ -416,21 +416,46 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   Value entries = getMatrixEntries(builder, loc, structure.handle);
   Value zero = createIndex(builder, loc, 0);
   Value one = createIndex(builder, loc, 1);
+  // Owned centers and explicit ghosts occupy consecutive ranges with very
+  // different selected row lengths. Interleave runs of adjacent rows from
+  // sixteen equal bands; the short trailing band stays in physical order.
+  Value bandWidth, covered;
+  if (structure.midpoint) {
+    Value cycle = createIndex(builder, loc, 128);
+    Value cycles = arith::DivUIOp::create(builder, loc, size, cycle);
+    bandWidth = arith::MulIOp::create(builder, loc, cycles, createIndex(builder, loc, 8));
+    covered = arith::MulIOp::create(builder, loc, cycles, cycle);
+  }
   auto loop = scf::ParallelOp::create(
       builder, loc, ValueRange{zero}, ValueRange{size}, ValueRange{one},
       inits, [&](OpBuilder &body, Location, ValueRange ivs, ValueRange) {
+        Value row = ivs[0];
+        if (bandWidth) {
+          Value tile = createIndex(body, loc, 8);
+          Value cycle = createIndex(body, loc, 128);
+          Value phase = arith::RemUIOp::create(body, loc, row, cycle);
+          Value band = arith::DivUIOp::create(body, loc, phase, tile);
+          Value start = arith::MulIOp::create(body, loc, band, bandWidth);
+          Value round = arith::DivUIOp::create(body, loc, row, cycle);
+          Value within = arith::AddIOp::create(body, loc,
+              arith::MulIOp::create(body, loc, round, tile),
+              arith::RemUIOp::create(body, loc, phase, tile));
+          row = arith::SelectOp::create(body, loc,
+              arith::CmpIOp::create(body, loc, arith::CmpIPredicate::ult, row, covered),
+              arith::AddIOp::create(body, loc, start, within), row);
+        }
         auto emitRow = [&](OpBuilder &at) {
           if (hostLanes)
             return emitPairRowLanes(at, op, structure.counts, entries, box,
-                                    inverse, ivs[0], *hostLanes, imageShifts, imagePositions);
+                                    inverse, row, *hostLanes, imageShifts, imagePositions);
           IRMapping local;
           return emitPairKernel(at, op, structure.counts, entries, box,
-                                inverse, ivs[0], local, nullptr, nullptr, nullptr, nullptr, imageShifts, imagePositions);
+                                inverse, row, local, nullptr, nullptr, nullptr, nullptr, imageShifts, imagePositions);
         };
         SmallVector<Value> contributions;
         if (Value selected = op.getCenterSet()) {
           Value bit = memref::LoadOp::create(body, loc, selected,
-                                            ValueRange{ivs[0]});
+                                            ValueRange{row});
           Value active = arith::CmpIOp::create(
               body, loc, arith::CmpIPredicate::ne, bit,
               arith::ConstantIntOp::create(body, loc, 0, 32));

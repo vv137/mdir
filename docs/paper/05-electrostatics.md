@@ -1383,3 +1383,13 @@ particle stencil starts into the compact footprint. A second team counts
 and scatters particles by starting plane and computes the output planes.
 The prefix scan visits blocks in particle order, so changing the team size
 preserves the incident-particle order within each plane.
+
+For the real-space midpoint traversal, interval classification amortizes
+the domain test over steps that share a neighbor matrix. The lower bound
+on midpoint displacement uses the lower coordinate of the center and the
+upper coordinate of its neighbor, with both periodic translations fixed.
+The upper bound reverses these endpoint choices. Subtracting half the
+upper displacement from the lower center coordinate bounds the midpoint
+from below. Reversing the choices bounds it from above. Only intervals
+that cross a cell or image boundary need a new exact decision as the
+particles move within their coordinate bounds.

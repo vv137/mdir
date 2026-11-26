@@ -107,11 +107,17 @@ struct Layout {
   int64_t *ids;   /* [domains * stride]: the particle of each owned row */
 };
 
+struct MidpointBounds {
+  double low[3], high[3], shift[3];
+  int64_t image[3];
+};
+
 struct DomainMatrix {
   struct DomainMatrix *next;
   int64_t domain, centers, rows, raw, selected;
   double cutoff, skin, box[3];
   double *reference, *shifts;
+  struct MidpointBounds *bounds;
   int32_t *counts, *selectedCounts;
   int valid;
   int64_t candidateRule, candidates;
@@ -532,6 +538,37 @@ static size_t firstKey(const struct Exclusions *e, uint64_t key) {
   return first;
 }
 
+/* Classify the fractional midpoint relative to the cell of this explicit
+   image, using the same primary-cell wrap and rounded division as selection. */
+static int compareMidpoint(double u, int64_t image, int64_t grid, int64_t cell) {
+  double whole = floor(u), target = -(double)image;
+  if (whole != target) return whole < target ? -1 : 1;
+  int64_t domain = division(u-whole, grid);
+  return (domain > cell) - (domain < cell);
+}
+
+/* Bound each operation of (xi - .5*((xi-xj)-(b-a))) / L separately.
+   Subtraction is increasing in its first operand and decreasing in its
+   second. Using the same operations at the bounding endpoints also
+   encloses rounded results at a domain face. */
+static int classifyMidpoint(const struct MidpointBounds *i, const struct MidpointBounds *j,
+                            const struct Layout *l, const int64_t cell[3]) {
+  int stable = 1;
+  for (int c = 0; c < 3; ++c) {
+    double shift = j->shift[c]-i->shift[c];
+    double dxLow = (i->low[c]-j->high[c])-shift;
+    double dxHigh = (i->high[c]-j->low[c])-shift;
+    double low = (i->low[c]-0.5*dxHigh)/l->edges[c];
+    double high = (i->high[c]-0.5*dxLow)/l->edges[c];
+    if (!isfinite(low) || !isfinite(high)) return 0;
+    int lower = compareMidpoint(low,i->image[c],l->grid[c],cell[c]);
+    int upper = compareMidpoint(high,i->image[c],l->grid[c],cell[c]);
+    if (lower > 0 || upper < 0) return -1;
+    stable &= lower == 0 && upper == 0;
+  }
+  return stable;
+}
+
 int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
     int64_t exclusions, int64_t rule, struct Memref3D *owned, struct Memref3D *ghost) {
   if (!rule && !exclusions) return 0;
@@ -562,9 +599,38 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
   }
   const struct Exclusions *e = (const struct Exclusions *)(intptr_t)exclusions;
   size_t keys = e ? e->count : 0;
-  if (!m->candidatesValid || m->candidateRule != rule || keys != m->exclusionCount ||
-      (keys && memcmp(m->exclusionKeys,e->pairs,keys*sizeof *e->pairs))) {
-    #pragma omp parallel for schedule(static) if(m->centers > 256)
+  int64_t cell[3] = {d%l->grid[0], (d/l->grid[0])%l->grid[1], d/(l->grid[0]*l->grid[1])};
+  int rebuild = !m->candidatesValid || m->candidateRule != rule || keys != m->exclusionCount ||
+                (keys && memcmp(m->exclusionKeys,e->pairs,keys*sizeof *e->pairs));
+  if (rule == 2) {
+    if (!m->bounds) {
+      m->bounds = calloc(m->rows ? m->rows : 1, sizeof *m->bounds);
+      if (!m->bounds) fail("out of memory bounding midpoint candidates");
+      rebuild = 1;
+    }
+    if (!rebuild) {
+      #pragma omp parallel for reduction(|:rebuild) schedule(static) if(m->rows > 512)
+      for (int64_t i = 0; i < m->rows; ++i)
+        for (int c = 0; c < 3; ++c) {
+          double x = i<n ? *at3(owned,d,i,c) : *at3(ghost,d,i-n,c);
+          rebuild |= !(x >= m->bounds[i].low[c] && x <= m->bounds[i].high[c]);
+        }
+    }
+    if (rebuild) {
+      #pragma omp parallel for schedule(static) if(m->rows > 512)
+      for (int64_t i = 0; i < m->rows; ++i)
+        for (int c = 0; c < 3; ++c) {
+          double x = i<n ? *at3(owned,d,i,c) : *at3(ghost,d,i-n,c);
+          m->bounds[i].low[c] = x - 0.5*m->skin;
+          m->bounds[i].high[c] = x + 0.5*m->skin;
+          int64_t image = i<n ? 0 : h->image[3*(d*h->capacity+i-n)+c];
+          m->bounds[i].image[c] = image;
+          m->bounds[i].shift[c] = image*l->edges[c];
+        }
+    }
+  }
+  if (rebuild) {
+    #pragma omp parallel for schedule(static,8) if(m->centers > 256)
     for (int64_t i = 0; i < m->centers; ++i) {
       int64_t idi = i<n ? l->ids[d*l->stride+i] : h->ids[d*h->capacity+i-n];
       uint64_t prefix = (uint64_t)idi << 32;
@@ -583,6 +649,11 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
         }
         if (e && !rule && !mdrtDistPairAllowed(exclusions,idi<idj ? idi : idj,
                                                 idi<idj ? idj : idi)) continue;
+        if (rule == 2) {
+          int membership = classifyMidpoint(&m->bounds[i],&m->bounds[j],l,cell);
+          if (membership < 0) continue;
+          if (membership > 0) j = ~j;
+        }
         ((int32_t *)candidates.aligned)[i*candidates.strides[0]+count++] = j;
       }
       counts[i] = count;
@@ -600,8 +671,7 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
   }
   if (rule != 2) return 1;
 
-  int64_t cell[3] = {d%l->grid[0], (d/l->grid[0])%l->grid[1], d/(l->grid[0]*l->grid[1])};
-  #pragma omp parallel for schedule(static) if(m->centers > 256)
+  #pragma omp parallel for schedule(static,8) if(m->centers > 256)
   for (int64_t i = 0; i < m->centers; ++i) {
     int64_t image[3] = {0,0,0};
     double xi[3], a[3];
@@ -613,6 +683,10 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
     int32_t count = 0;
     for (int32_t k = 0; k < counts[i]; ++k) {
       int32_t j = ((int32_t *)candidates.aligned)[i*candidates.strides[0]+k];
+      if (j < 0) {
+        ((int32_t *)dst.aligned)[i*dst.strides[0]+count++] = ~j;
+        continue;
+      }
       int keep = 1;
       for (int c = 0; c < 3; ++c) {
         double xj = j<n ? *at3(owned,d,j,c) : *at3(ghost,d,j-n,c);
@@ -2421,6 +2495,7 @@ void mdrtDistReleaseHalo(int64_t handle) {
     free(m->selectedCounts);
     free(m->reference);
     free(m->shifts);
+    free(m->bounds);
     free(m);
   }
   free(h->rows);
