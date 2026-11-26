@@ -174,7 +174,7 @@ trial determines the choice when energy reports bracket that interval.
 Otherwise the trial uses elapsed integration time. Rank zero broadcasts
 the two times. The production log records both and the selected traversal.
 Short runs use the unsplit traversal. Explicit `"split"` and `"unsplit"`
-values bypass measurement. A single rank always uses its self-image path.
+values bypass measurement. A single rank uses the unsplit traversal. The physical-row case described below can omit its self exchange.
 
 ### Asynchronous rebuild face exchange
 
@@ -485,3 +485,9 @@ In one domain the sorted row of a particle is its global identity.
 When every image consumer takes physical rows, a new epoch can retain
 this mapping, wrap the coordinates, and publish a halo with zero ghosts.
 The displacement test and neighbor-list rebuild continue to run.
+
+An outlined rank-local evaluation borrows immutable device inputs.
+Precision assignment first isolates the storage and kernel roles. After
+those roles are fixed, it removes an input copy only if the two field
+types agree and the copy kernel returns its argument directly. Storage
+assignment then protects the borrowed buffer from in-place writes.

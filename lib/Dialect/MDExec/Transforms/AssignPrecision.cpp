@@ -177,6 +177,7 @@ private:
   void convertPositions();
   /// Makes each field that a buffer of the boundary holds reach the other
   /// fields through a loop over particles that copies it (`deterministic`).
+  SmallVector<ParticleForOp> borrowedInputs;
   void isolateBoundaries();
   /// A loop over particles, before `before`, that converts `positions` to
   /// the type of the kernels.
@@ -797,6 +798,10 @@ void Assigner::isolateBoundaries() {
       OpBuilder builder(op->getContext());
       builder.setInsertionPointAfter(op);
       Value copy = createCopy(builder, op->getLoc(), result);
+      auto buffer = dyn_cast<MemRefType>(from.getBuffer().getType());
+      if (!deterministic && function->hasAttr("md_dist.local_device_kernel") &&
+          buffer && buffer.getMemorySpace())
+        borrowedInputs.push_back(copy.getDefiningOp<ParticleForOp>());
       result.replaceAllUsesExcept(
           copy, copy.getDefiningOp<ParticleForOp>().getOperation());
       continue;
@@ -826,6 +831,20 @@ LogicalResult Assigner::run() {
   if (failed(status) || failed(resolve()))
     return failure();
   apply();
+  // The copy isolated the precision roles while they were being solved.
+  // Rank-local device inputs borrow immutable rows for this evaluation.
+  // If the assigned operation is an identity, storage can bind its input
+  // directly and retains the read-only flag on that buffer.
+  for (ParticleForOp copy : borrowedInputs) {
+    Value field = copy.getIns().front();
+    Block &body = copy.getKernel().front();
+    if (copy.getResult(0).getType() != field.getType() ||
+        body.getTerminator()->getOperand(0) != body.getArgument(0)) continue;
+    copy.getResult(0).replaceAllUsesWith(field);
+    Operation *empty = copy.getOuts().front().getDefiningOp();
+    copy.erase();
+    if (empty && empty->use_empty() && isa<EmptyOp>(empty)) empty->erase();
+  }
   if (kernelPositions)
     convertPositions();
   return success();

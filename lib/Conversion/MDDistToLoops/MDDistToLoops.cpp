@@ -3829,6 +3829,8 @@ static LogicalResult outlineSteps(ModuleOp module, func::FuncOp function, String
     auto step = func::FuncOp::create(b, loop.getLoc(), name,
                                      b.getFunctionType(inputs, results));
     step.setPrivate();
+    if (gpuPairs && marker == "md_dist.domain_loop")
+      step->setAttr("md_dist.local_device_kernel", b.getUnitAttr());
     if (loop->hasAttr("md_dist.constraint_precision"))
       step->setAttr("md_dist.constraint_precision", b.getUnitAttr());
     Block *entry = step.addEntryBlock();

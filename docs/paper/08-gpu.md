@@ -1337,3 +1337,10 @@ The halo then contains no extra rows. In double precision the resulting
 Factor IX step took 10.551 ms, down from 12.041 ms. JAC-RF took 5.293 ms,
 down from 5.842 ms. The largest potential or virial difference across
 the two 205-frame trials of either system was 0.00000101 kcal/mol.
+
+Precision boundaries accounted for many of the launches around the
+protein terms. A one-device Factor IX trace spent 1.521 ms per step
+in 265 scalar or vector identity kernels. Reusing an immutable device
+input when its assigned precision already matches the requested type
+reduced the alternating Factor IX double mean from 10.403 to 9.353
+ms/step. The JAC-RF mean fell from 5.272 to 4.150 ms/step.
