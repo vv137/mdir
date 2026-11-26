@@ -225,6 +225,7 @@ struct ExclusionMap {
   struct Exclusions *table;
   int64_t domain;
   struct Members pairs;
+  int ownedOnly;
 #ifdef MDIR_ENABLE_NCCL
   int *incidence;
   int64_t incidenceSize;
@@ -251,8 +252,8 @@ static void removeExclusionMap(struct ExclusionMap **link) {
 
 /* Map both ends of each excluded pair to the packed owned/image rows.
    An identity can have several images in a thin domain. */
-void _mlir_ciface_mdrtDistLocalExclusions(struct Members *result, int64_t halo,
-                                           int64_t domain, int64_t exclusions) {
+static void localExclusions(struct Members *result, int64_t halo, int64_t domain,
+                            int64_t exclusions, int ownedOnly) {
   struct Halo *h = (struct Halo *)(intptr_t)halo;
   const struct Layout *l = h->layout;
   struct Exclusions *e = (struct Exclusions *)(intptr_t)exclusions;
@@ -264,13 +265,13 @@ void _mlir_ciface_mdrtDistLocalExclusions(struct Members *result, int64_t halo,
       removeExclusionMap(link);
       continue;
     }
-    if (map->table == e && map->domain == domain) {
+    if (map->table == e && map->domain == domain && map->ownedOnly == ownedOnly) {
       *result = map->pairs;
       return;
     }
     link = &map->next;
   }
-  int64_t owned = l->rows[domain], rows = owned + h->rows[domain];
+  int64_t owned = l->rows[domain], rows = owned + (ownedOnly ? 0 : h->rows[domain]);
   if (rows > INT32_MAX) fail("too many local MATRIX rows");
   int32_t *head = malloc((l->count + 1) * sizeof(*head));
   int32_t *next = malloc((rows + 1) * sizeof(*next));
@@ -307,8 +308,18 @@ void _mlir_ciface_mdrtDistLocalExclusions(struct Members *result, int64_t halo,
   struct ExclusionMap *map = malloc(sizeof(*map));
   if (!map) fail("out of memory retaining domain exclusions");
   ++e->references;
-  *map = (struct ExclusionMap){h->exclusionMaps, e, domain, *result};
+  *map = (struct ExclusionMap){h->exclusionMaps, e, domain, *result, ownedOnly};
   h->exclusionMaps = map;
+}
+
+void _mlir_ciface_mdrtDistLocalExclusions(struct Members *result, int64_t halo,
+                                           int64_t domain, int64_t exclusions) {
+  localExclusions(result, halo, domain, exclusions, 0);
+}
+
+void _mlir_ciface_mdrtDistOwnedExclusions(struct Members *result, int64_t halo,
+                                          int64_t domain, int64_t exclusions) {
+  localExclusions(result, halo, domain, exclusions, 1);
 }
 
 int64_t mdrtDistPairAllowed(int64_t handle, int64_t i, int64_t j) {
@@ -2627,13 +2638,13 @@ static struct TransferPlan *transferPlan(struct Halo *h, int transpose) {
 }
 
 #ifdef MDIR_ENABLE_NCCL
-int64_t mdrtDistDeviceMatrixSlot(int64_t halo, double cutoff, int64_t exclusions) {
+static int64_t deviceMatrixSlot(int64_t halo, double cutoff, int64_t exclusions, int ownedOnly) {
   struct Halo *h = (struct Halo *)(intptr_t)halo;
   if (exclusions) {
     struct Exclusions *table = (struct Exclusions *)(intptr_t)exclusions;
     int64_t d = mdrtMPIDomainBound(h->layout->domains,0);
     for (struct ExclusionMap *map = h->exclusionMaps; map; map = map->next) {
-      if (map->table != table || map->domain != d) continue;
+      if (map->table != table || map->domain != d || map->ownedOnly != ownedOnly) continue;
       if (map->cutoff && map->cutoff != cutoff) return 0;
       map->cutoff = cutoff;
       return (int64_t)(intptr_t)&map->matrix;
@@ -2643,6 +2654,13 @@ int64_t mdrtDistDeviceMatrixSlot(int64_t halo, double cutoff, int64_t exclusions
   if (h->deviceCutoff && h->deviceCutoff != cutoff) return 0;
   h->deviceCutoff = cutoff;
   return (int64_t)(intptr_t)&h->deviceMatrix;
+}
+
+int64_t mdrtDistDeviceMatrixSlot(int64_t halo, double cutoff, int64_t exclusions) {
+  return deviceMatrixSlot(halo, cutoff, exclusions, 0);
+}
+int64_t mdrtDistPeriodicMatrixSlot(int64_t halo, double cutoff, int64_t exclusions) {
+  return deviceMatrixSlot(halo, cutoff, exclusions, 1);
 }
 
 static struct NCCLPlan *devicePlan(struct Halo *h) {
@@ -2712,13 +2730,14 @@ struct DeviceKinds { int32_t *allocated, *aligned; int64_t offset, rows, stride;
 /* A halo fixes the ordering of both endpoints of each mapped exclusion.
    Borrow the ordinary incidence structure for the lifetime of that map. */
 void _mlir_ciface_mdrtDistDeviceExclusions(struct DeviceKinds *out,
-    int64_t halo, int64_t domain, int64_t exclusions, void *stream) {
+    int64_t halo, int64_t domain, int64_t exclusions, int64_t ownedOnly, void *stream) {
   struct Halo *h = (void *)(intptr_t)halo;
   for (struct ExclusionMap *map = h->exclusionMaps; map; map = map->next) {
-    if (map->domain != domain || map->table != (void *)(intptr_t)exclusions)
+    if (map->domain != domain || map->table != (void *)(intptr_t)exclusions ||
+        map->ownedOnly != ownedOnly)
       continue;
     if (!map->incidence) {
-      int64_t rows = h->layout->rows[domain] + h->rows[domain];
+      int64_t rows = h->layout->rows[domain] + (ownedOnly ? 0 : h->rows[domain]);
       int64_t pairs = map->pairs.sizes[0];
       map->incidenceSize = mdrtTuplesSize(pairs, 2, rows);
       int32_t *host = mdrtTuplesAllocate(map->incidenceSize * sizeof(*host));

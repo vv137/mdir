@@ -19,3 +19,5 @@
 - Reuse the device exclusion incidence over the lifetime of its halo map.
 - Share device row lookups between bonded and constraint evaluation sites
   that use the same particle numbering.
+- Use owned rows for scheduled one-domain bonded interactions and for
+  complete one-domain unique pair traversals with exclusions.

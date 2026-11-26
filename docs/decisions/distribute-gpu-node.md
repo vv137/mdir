@@ -455,3 +455,12 @@ All tuple sites in a rank use the same device table of particle identities,
 owners, local row indices, and periodic images for a given halo. Constraint
 groups use the corresponding owned-only table on the layout. Both tables
 expire with the object that defines their row numbering.
+
+On a single domain, a scheduled bonded interaction has all its members
+on the local rank. The kernel uses the layout's owned particle rows and
+periodic bond geometry. A packed unique neighborhood with exclusions can
+likewise construct its periodic MATRIX over owned rows when its consumers
+use the complete set of centers and return ghost contributions only to
+the matching reverse sum. The identity test retains one orientation of
+each pair. The pair list covers twice the per-particle displacement
+allowance of the packed state.

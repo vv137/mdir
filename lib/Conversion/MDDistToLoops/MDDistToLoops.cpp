@@ -79,6 +79,7 @@ struct Storage {
 /// its neighbor structure, and its number of owned rows, the centers.
 struct DomainRelation {
   Value positions, neighbors, owned, cell, centers, shifts;
+  bool periodicOwned = false;
 };
 
 class Lowering {
@@ -171,6 +172,7 @@ private:
   LogicalResult lowerHaloCopy(HaloCopyOp op);
   LogicalResult lowerHaloSum(HaloSumOp op);
   LogicalResult lowerZeros(ZerosOp op);
+  llvm::DenseSet<Value> emptyGhostForces;
   unsigned tupleSite = 0;
   LogicalResult lowerDeviceTuples(TupleKernelOp op);
   LogicalResult lowerTupleKernel(TupleKernelOp op);
@@ -1193,6 +1195,10 @@ LogicalResult Lowering::lowerHaloSum(HaloSumOp op) {
   Storage &halo = storage[op.getHalo()];
   Storage &layout = storage[layoutOf(op.getHalo())];
   Value owned = storage[op.getOwned()].buffer;
+  if (emptyGhostForces.contains(op.getGhosts())) {
+    storage[op.getResult()].buffer = owned;
+    return success();
+  }
   Value ghosts = storage[op.getGhosts()].buffer;
   int64_t k = op.getResult().getType().getNumComponents();
   Value result = allocate(b, layout.capacity, k);
@@ -1282,6 +1288,15 @@ LogicalResult Lowering::lowerDeviceTuples(TupleKernelOp op) {
   OpBuilder setup(op);
   bool reduce = isa<PartialType>(op.getResult(0).getType());
   bool group = constraintKernels.contains(op);
+  // With a single domain every tuple member is an owned row. The
+  // physical tuple kernel already evaluates its periodic coordinates.
+  bool localBonded = !group && domains == 1 && scheduledMembers.count(op.getRows()) &&
+      (reduce || llvm::all_of(op.getResult(1).getUsers(), [&](Operation *user) {
+        auto sum = dyn_cast<HaloSumOp>(user);
+        return sum && sum.getGhosts() == op.getResult(1) && sum.getOwned() == op.getResult(0);
+      }));
+  bool ownedOnly = group || localBonded;
+  if (localBonded && !reduce) emptyGhostForces.insert(op.getResult(1));
   bool flagged = !reduce && op.getNumResults() == 2 && group;
   int64_t arity = op.getRows().getType().getDimSize(1) - 1;
   Storage &layout = storage[layoutOf(op.getHalo())];
@@ -1300,7 +1315,7 @@ LogicalResult Lowering::lowerDeviceTuples(TupleKernelOp op) {
   } else {
     ownedOut = allocate(setup, layout.capacity, 3);
     storage[op.getResult(0)].buffer = ownedOut;
-    if (!group) {
+    if (!ownedOnly) {
       ghostOut = allocate(setup, halo.capacity, 3);
       storage[op.getResult(1)].buffer = ghostOut;
     }
@@ -1322,7 +1337,7 @@ LogicalResult Lowering::lowerDeviceTuples(TupleKernelOp op) {
     loop->setAttr("md_dist.constraint_precision", setup.getUnitAttr());
   OpBuilder b(loop.getBody()->getTerminator());
   Value d = loop.getInductionVar();
-  auto set = getSet(0, !group, group ? layoutOf(op.getHalo()) : op.getHalo());
+  auto set = getSet(0, !ownedOnly, ownedOnly ? layoutOf(op.getHalo()) : op.getHalo());
   auto ctx = module.getContext();
   std::string name = (set.getValue() + ".tuples" + Twine(tupleSite++)).str();
   FlatSymbolRefAttr tuples = FlatSymbolRefAttr::get(ctx, name);
@@ -1332,7 +1347,7 @@ LogicalResult Lowering::lowerDeviceTuples(TupleKernelOp op) {
   auto relationType =
       md::RelationType::get(ctx, set, arity, md::Orientation::Ordered, tuples);
   Value n = countOf(b, layout, d);
-  Value g = group ? Value() : countOf(b, halo, d);
+  Value g = ownedOnly ? Value() : countOf(b, halo, d);
   SmallVector<Value> joinedFields;
   Value tupleStream;
   if (scheduledMembers.count(op.getRows())) {
@@ -1343,7 +1358,7 @@ LogicalResult Lowering::lowerDeviceTuples(TupleKernelOp op) {
   auto localField = [&](Value owned, Value ghosts) -> Value {
     auto type = cast<FieldType>(owned.getType());
     int k = type.getNumComponents();
-    if (group) {
+    if (ownedOnly) {
       auto field = md::FieldType::get(ctx, set, k, type.getElementType());
       auto host = mdrt::getBufferType(field);
       auto device =
@@ -1384,9 +1399,9 @@ LogicalResult Lowering::lowerDeviceTuples(TupleKernelOp op) {
     Value count = memref::DimOp::create(b, loc, topology, 0);
     auto device = MemRefType::get({ShapedType::kDynamic}, b.getI32Type(),
                                   MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
-    SmallVector<Value> args{group ? layout.handle : halo.handle, storage[op.getPositions()].buffer,
+    SmallVector<Value> args{ownedOnly ? layout.handle : halo.handle, storage[op.getPositions()].buffer,
                             topology, arith::ConstantIntOp::create(b,loc,tupleSite,64),
-                            arith::ConstantIntOp::create(b,loc,group,64),tupleStream};
+                            arith::ConstantIntOp::create(b,loc,ownedOnly,64),tupleStream};
     auto fn = declare("mdrtDistTupleIncidence", b.getFunctionType(ValueRange(args).getTypes(),
                        {device}), true);
     fn.setArgAttr(2,"mdrt.read_only",b.getUnitAttr());
@@ -1485,7 +1500,7 @@ LogicalResult Lowering::lowerDeviceTuples(TupleKernelOp op) {
     }
   } else {
     copyBack(b, kernel->getResult(0), index(b, 0), n, ownedOut, d, tupleStream);
-    if (!group)
+    if (!ownedOnly)
       copyBack(b, kernel->getResult(0), n, g, ghostOut, d, tupleStream);
     if (flagged)
       memref::StoreOp::create(
@@ -2939,7 +2954,28 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
   Value nGhosts = countOf(b, halo, d);
   // The local rows, owned then ghost; the ghosts carry their images.
   Value positions;
-  if (Value device = devicePositions.lookup(op.getGhosts())) {
+  bool periodicOwned = domains == 1 && sharedState() && matrixPairs && op.getExcluded() &&
+      module->hasAttr("md_dist.driver") && op.getHalo().getDefiningOp<UnpackOp>() &&
+      op.getResult().getType().getTraversal() == Traversal::Unique &&
+      llvm::all_of(op.getResult().getUsers(), [](Operation *consumer) {
+        if (auto sum = dyn_cast<SumPairsOp>(consumer)) return !sum.getCenterSet();
+        auto force = dyn_cast<GatherPairsOp>(consumer);
+        return force && !force.getCenterSet() && force.getNumResults() == 2 &&
+               llvm::all_of(force.getResult(1).getUsers(), [&](Operation *user) {
+                 auto sum = dyn_cast<HaloSumOp>(user);
+                 return sum && sum.getOwned() == force.getResult(0) &&
+                        sum.getGhosts() == force.getResult(1);
+               });
+      });
+  if (periodicOwned) {
+    auto type = md::FieldType::get(context, set, 3, b.getF64Type());
+    auto device = MemRefType::get({ShapedType::kDynamic, 3}, b.getF64Type(),
+                                  MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
+    SmallVector<Value> args{d, nOwned, owned, externalStream(b)};
+    auto view = declare("mdrtDistTupleOwnedVectors", b.getFunctionType(ValueRange(args).getTypes(), {device}), true);
+    Value data = func::CallOp::create(b, loc, view, args).getResult(0);
+    positions = mdrt::FromBufferOp::create(b, loc, type, data);
+  } else if (Value device = devicePositions.lookup(op.getGhosts())) {
     auto type = md::FieldType::get(context, set, 3, b.getF64Type());
     if (overlapPositions.contains(op.getGhosts())) {
       auto streamType = LLVM::LLVMPointerType::get(context);
@@ -2991,7 +3027,7 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
     auto relationType = md::RelationType::get(context, set, 2,
         md::Orientation::Unordered, tupleSet);
     auto membersType = mdrt::getMembersType(relationType);
-    auto map = declare("mdrtDistLocalExclusions",
+    auto map = declare(periodicOwned ? "mdrtDistOwnedExclusions" : "mdrtDistLocalExclusions",
         b.getFunctionType({i64, i64, i64}, {membersType}), true);
     Value members = func::CallOp::create(b, loc, map, ValueRange{
         halo.handle, arith::IndexCastOp::create(b, loc, i64, d),
@@ -3001,7 +3037,7 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
       auto device = MemRefType::get({ShapedType::kDynamic}, b.getI32Type(),
                                     MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
       SmallVector<Value> args{halo.handle, arith::IndexCastOp::create(b, loc, i64, d),
-                              excludedPairs.lookup(op.getResult()), externalStream(b)};
+                              excludedPairs.lookup(op.getResult()), arith::ConstantIntOp::create(b, loc, periodicOwned, 64), externalStream(b)};
       auto get = declare("mdrtDistDeviceExclusions",
                          b.getFunctionType(ValueRange(args).getTypes(), {device}), true);
       Value incidence = func::CallOp::create(b, loc, get, args).getResult(0);
@@ -3018,14 +3054,16 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
     // Within this Verlet epoch each row moves at most half the halo
     // margin from its reference. Between two evaluations the separation
     // can therefore change by twice the margin.
-    skin = 2*(op.getHalo().getType().getReach().convertToDouble()-cutoff);
+    auto state = op.getHalo().getDefiningOp<UnpackOp>().getState().getType();
+    skin = 2*(state.getReach().convertToDouble()-state.getCutoff().convertToDouble());
     Type wide = b.getI64Type();
     Value exclusions = excludedPairs.lookup(op.getResult());
     if (!exclusions) exclusions = arith::ConstantIntOp::create(b,loc,0,64);
-    auto fn = declare("mdrtDistDeviceMatrixSlot",
+    auto fn = declare(periodicOwned ? "mdrtDistPeriodicMatrixSlot" : "mdrtDistDeviceMatrixSlot",
                       b.getFunctionType({wide, b.getF64Type(), wide}, {wide}), false);
     func::CallOp::create(b,loc,fn,ValueRange{halo.handle,real(b,cutoff),exclusions});
   }
+  auto images = periodicOwned ? md_exec::Images::Minimum : md_exec::Images::Explicit;
   Value cells = md_exec::BuildCellsOp::create(
       b, loc, mdrt::CellsType::get(context, set), positions,
       relation.cell,
@@ -3033,18 +3071,18 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
   Value structure = md_exec::BuildNeighborsOp::create(
       b, loc,
       md_exec::getBuildType(set, md_exec::NeighborKind::Matrix,
-                            md_exec::Images::Explicit),
-      cells, positions, relation.cell, excluded, nOwned,
+                            images),
+      cells, positions, relation.cell, excluded, periodicOwned ? Value() : nOwned,
       APFloat(cutoff),
       APFloat(skin), md_exec::NeighborKind::Matrix,
-      static_cast<uint64_t>(width), md_exec::Images::Explicit);
+      static_cast<uint64_t>(width), images);
   // Match the CPU MATRIX image arithmetic. Gather translations in the
   // same order as the full-precision, imaged search positions.
   Value shifts;
-  if (gpuImageGeometry)
+  if (gpuImageGeometry && !periodicOwned)
     shifts = makeField(b, set, 3, b.getF64Type(), d,
         {Value(), imageShifts.lookup(op.getGhosts())}, {nOwned, nGhosts});
-  return {positions, structure, nOwned, relation.cell, nOwned, shifts};
+  return {positions, structure, nOwned, relation.cell, periodicOwned ? Value() : nOwned, shifts, periodicOwned};
 }
 
 void Lowering::addPairKernel(md_exec::PairForOp loop, Operation *op,
@@ -3136,7 +3174,15 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, Value d, FlatSymbolRefAttr
     if (!packed) {
       if (Value device = deviceScalars.lookup(key.second)) {
         auto field = md::FieldType::get(module.getContext(),set,1,type.getElementType());
+        if (relation.periodicOwned) {
+          SmallVector<OpFoldResult> sizes{nOwned}, strides{b.getIndexAttr(1)};
+          device = memref::ReinterpretCastOp::create(b, loc, cast<MemRefType>(device.getType()),
+              device, b.getIndexAttr(0), sizes, strides);
+        }
         packed = mdrt::FromBufferOp::create(b,loc,field,device);
+      } else if (relation.periodicOwned) {
+        packed = makeField(b, set, type.getNumComponents(), type.getElementType(), d,
+                           {storage[key.first].buffer}, {nOwned});
       } else {
         packed = makeField(b, set, type.getNumComponents(), type.getElementType(), d,
                            {storage[key.first].buffer, storage[key.second].buffer},
@@ -3147,7 +3193,9 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, Value d, FlatSymbolRefAttr
     }
     ins.push_back(packed);
   }
-  if (unique)
+  if (unique && relation.periodicOwned)
+    ins.push_back(makeField(b, set, 1, b.getI64Type(), d, {layout.ids}, {nOwned}));
+  else if (unique)
     ins.push_back(makeField(b, set, 1, b.getI64Type(), d,
                             {layout.ids, halo.ids}, {nOwned, nGhosts}));
 
@@ -3167,7 +3215,7 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, Value d, FlatSymbolRefAttr
                                               ? md_exec::Conflict::Atomic
                                               : md_exec::Conflict::OwnerOnly),
       exchangeAttr, relation.centers, centerSet, b.getBoolAttr(ghostFree),
-      md_exec::ImagesAttr::get(context, md_exec::Images::Explicit),
+      md_exec::ImagesAttr::get(context, relation.periodicOwned ? md_exec::Images::Minimum : md_exec::Images::Explicit),
       /*scatter=*/md_exec::ScatterAttr(),
       /*hostLanes=*/IntegerAttr());
   if (relation.shifts) loop->setAttr("md_exec.image_geometry", b.getUnitAttr());
@@ -3337,7 +3385,9 @@ LogicalResult Lowering::lowerGatherPairsExec(GatherPairsOp op) {
                                scale);
     Value nOwned = relation.owned;
     copyBack(b, loop.getResult(0), index(b, 0), nOwned, ownedOut, d);
-    if (twoEnded)
+    if (twoEnded && relation.periodicOwned)
+      emptyGhostForces.insert(op.getResults()[1]);
+    else if (twoEnded)
       copyBack(b, loop.getResult(0), nOwned, countOf(b, halo, d), ghostOut,
                d);
   });
@@ -3761,6 +3811,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
   tupleParameters.clear();
   exclusionTables.clear();
   scheduledMembers.clear();
+  emptyGhostForces.clear();
   if (fixedPoint && module->hasAttr("md_dist.driver")) {
     SmallVector<md::SumParticlesOp> sums;
     function.walk([&](md::SumParticlesOp op) { sums.push_back(op); });

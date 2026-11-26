@@ -6598,7 +6598,7 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
     Type wide = builder.getI64Type();
     auto function = op->getParentOfType<func::FuncOp>();
     bool haloOwnsEntries = llvm::any_of(function.getOps<func::CallOp>(), [](func::CallOp call) {
-      return call.getCallee() == "mdrtDistDeviceMatrixSlot";
+      return call.getCallee() == "mdrtDistDeviceMatrixSlot" || call.getCallee() == "mdrtDistPeriodicMatrixSlot";
     });
     structure.handle =
         func::CallOp::create(
@@ -8632,9 +8632,15 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
   if (!function)
     function = dyn_cast<func::FuncOp>(builder.getInsertionBlock()->getParentOp());
   Value slot;
-  if (function && !structure.groups)
-    for (auto call : function.getOps<func::CallOp>())
-      if (call.getCallee() == "mdrtDistDeviceMatrixSlot") slot = call.getResult(0);
+  bool explicitImages = false;
+  if (function && !structure.groups) {
+    for (auto call : function.getOps<func::CallOp>()) {
+      if (call.getCallee() == "mdrtDistDeviceMatrixSlot" || call.getCallee() == "mdrtDistPeriodicMatrixSlot") {
+        slot = call.getResult(0);
+        explicitImages = call.getCallee() == "mdrtDistDeviceMatrixSlot";
+      }
+    }
+  }
   if (!slot) return emitUncachedBuild(builder,loc,structure,positions,box,reach,cellWidth);
   SmallVector<Value> args{slot,structure.handle,structure.counts,structure.order};
   Type wide = builder.getI64Type();
@@ -8650,7 +8656,7 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                                        arith::ConstantIntOp::create(builder,loc,0,64));
   LogicalResult status = success();
   scf::IfOp::create(builder,loc,missing,[&](OpBuilder &at, Location) {
-    status = emitUncachedBuild(at,loc,structure,positions,box,reach,cellWidth,true);
+    status = emitUncachedBuild(at,loc,structure,positions,box,reach,cellWidth,explicitImages);
     func::CallOp::create(at,loc,save,args);
     scf::YieldOp::create(at,loc);
   },[&](OpBuilder &at, Location) {

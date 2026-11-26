@@ -1302,3 +1302,12 @@ Force, potential, and virial kernels share the mapping from global tuple
 members to local particle identities and periodic images. In paired
 204-step double-precision runs, sharing this mapping reduced Factor IX
 from 40.457 to 31.828 ms/step and JAC-RF from 15.937 to 13.529 ms/step.
+
+With one domain all members are owned. For an unordered pair whose
+cutoff is below half the shortest cell edge, its minimum image identifies
+the unique contributing displacement. Building the periodic MATRIX on
+the owned positions avoids writing a second force for a periodic copy.
+The same ownership argument removes periodic copies from local bonded
+schedules, whose kernels already evaluate periodic bond geometry. This
+brought the two-run Factor IX mean to 15.891 ms/step and JAC-RF to
+7.085 ms/step in double precision.
