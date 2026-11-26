@@ -51,3 +51,12 @@ virial word per observable component. Mesh ranks sum in signed 128-bit
 integers and check the completed word. Each gathered force component is
 rounded to Q40. Rank zero computes the self and neutralizing-background
 constants in canonical charge order and broadcasts them during setup.
+
+For strong-scaling measurements at one, two, four and eight nodes, keep
+the mesh, time step, coordinates and velocity seed fixed across node
+counts. Record the whole-step rate from the final timed interval of
+each repetition. The benchmark script
+`scripts/benchmarks/prolate-ewald/distributed_interval.py` extracts the
+corresponding maximum rank time for each phase and the aggregate bytes
+sent per step. Different phases can reach their maxima on different
+ranks, so adding the maxima does not recover the whole-step rate.

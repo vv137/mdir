@@ -1361,3 +1361,9 @@ traffic from 13,451,520 to 5,888,340 bytes per step. These counts include
 messages between ranks on the same node. The corresponding two-run mean
 step times were 174.3 and 157.5 ms. They include direct interactions and
 particle migration as well as the measured mesh work.
+
+For Cellulose the corresponding fourth-order grids were
+$224 \times 108 \times 108$ and $160 \times 80 \times 80$, with force
+errors of 0.798 and 0.772 kJ mol⁻¹ nm⁻¹. At four nodes the smaller grid
+reduced the transpose from 58.54 to 23.09 MB per step and the overlap
+exchange from 48.61 to 21.00 MB per step (decimal MB).
