@@ -114,3 +114,16 @@ The midpoint pair kernel assigns runs of eight consecutive rows from each
 of sixteen bands in turn. A static worker interval then visits both the
 heavily populated owned centers and the shorter ghost rows. The final
 incomplete cycle uses the original row order.
+
+The CPU PME driver reports the communicator size and the number of ranks
+sharing the reporting node, including runs with an explicit particle grid.
+It recommends binding a rank to each NUMA domain and placing its threads
+on cores with close affinity. At the same particle-domain count, the
+one-node JAC step measured 38.72 ms with one rank per NUMA domain,
+59.87 ms with two ranks, and 72.37 ms with one rank. The corresponding
+Factor IX measurements were 127.07, 196.50, and 235.56 ms at 2 fs.
+
+For eight equal row slices, interleaving reduced the peak selected-neighbor
+count relative to an equal share from 3.16 to 1.17 in JAC, from 2.40 to
+1.12 in Factor IX, and from 1.74 to 1.05 in Cellulose. The comparison sums
+the peak and ideal counts separately over the same domain evaluations.

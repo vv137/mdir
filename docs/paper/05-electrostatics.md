@@ -1393,3 +1393,17 @@ upper displacement from the lower center coordinate bounds the midpoint
 from below. Reversing the choices bounds it from above. Only intervals
 that cross a cell or image boundary need a new exact decision as the
 particles move within their coordinate bounds.
+
+A double-precision check compared every selected row with the exact
+midpoint filter at the same coordinates during eight 2 fs steps. The
+stable inside and outside classes covered 70.4% of candidates for JAC,
+74.3% for Factor IX, and 79.8% for Cellulose. All selected neighbor
+indices agreed in order. Summing the largest of eight equal row slices
+at each evaluation and dividing by the sum of the ideal slice sizes gave
+the following ratios. These counts measure the distribution of selected
+neighbors across slices.
+
+| Midpoint row order | JAC | Factor IX | Cellulose |
+| --- | ---: | ---: | ---: |
+| Contiguous | 3.16 | 2.40 | 1.74 |
+| Interleaved runs | 1.17 | 1.12 | 1.05 |

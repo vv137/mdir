@@ -1652,9 +1652,14 @@ static int runControlImpl(StringRef controlFile, Emit emit,
         {"cutoff_angstrom", control->cutoffDistance},
         {"skin_angstrom", control->pairlistDistance - control->cutoffDistance},
         {"reach_angstrom", domainReach}};
-    if (rankDefault && program->pme)
-      output.log.print("MDIR: using %d MPI ranks from the launcher; "
-                       "one rank per NUMA node is recommended for threaded PME\n", distRanks);
+#ifdef MDIR_ENABLE_MPI
+    if (program->pme && dist->transport == "mpi" && writer) {
+      output.log.print("MDIR: %d MPI ranks in total, %d on the reporting node. "
+                       "For threaded CPU PME, launch one rank per NUMA domain, "
+                       "bind each rank to that domain, and use OMP_PLACES=cores "
+                       "with OMP_PROC_BIND=close.\n", distRanks, mdrtMPINodeSize());
+    }
+#endif
     output.log.print("MDIR: grid choice %s, requested count %lld, ranks %d; %s transport (%s), %s traversal (%s); reach %g Ang, cutoff %g Ang, skin %g Ang\n",
         source, (long long)(dist->gridGiven ? dist->domains : 0), distRanks, dist->transport.c_str(),
         dist->transportGiven ? "requested" : "default", dist->traversal.c_str(),

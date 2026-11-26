@@ -90,6 +90,7 @@ static void initialize(void) {
 
 int mdrtMPIRank(void) { initialize(); return rank; }
 int mdrtMPISize(void) { initialize(); return size; }
+int mdrtMPINodeSize(void) { initialize(); return nodeSize; }
 
 int64_t mdrtMPIDomainBound(int64_t domains, int64_t end) {
   initialize();
