@@ -736,6 +736,7 @@ specification follow those made with it.
 | [D438](decisions/D438.md) | Launch exclusion corrections and packed valence work in separate block ranges of one grid for eligible mixed force-only steps. | 2026-11-25 |
 | [D439](decisions/D439.md) | Graph replay of ordinary TOWERS steps. | 2026-11-25 |
 | [D440](decisions/D440.md) | With `kernel = "PROLATE"`, `continuity` sets the number of continuous derivatives at the cutoff (0 through 3). | 2026-11-25 |
+| [D441](decisions/D441.md) | Forced PTX uses the detected Volta architecture when no architecture override is present. | 2026-11-26 |
 <!-- end decisions-table -->
 
 
