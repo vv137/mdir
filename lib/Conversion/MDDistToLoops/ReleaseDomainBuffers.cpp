@@ -35,7 +35,7 @@ namespace {
 /// the reference positions of its matrix and copies them there. The midpoint
 /// filter reads current positions while emitting selected row indices.
 static bool usesOnlyDuringCall(StringRef name) {
-  return name == "mdrtDistMatrixRebuild" || name == "mdrtDistFilterMatrix";
+  return name == "mdrtDistMatrixRebuild" || name == "mdrtDistBuildMidpoint" || name == "mdrtDistFilterMatrix";
 }
 
 class Release {

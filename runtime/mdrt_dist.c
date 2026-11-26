@@ -130,7 +130,7 @@ struct DomainMatrix {
   int64_t candidateRule, candidates;
   int32_t *candidateCounts;
   uint64_t exclusionVersion;
-  int candidatesValid;
+  int candidatesValid, midpointList;
 };
 
 struct TransferRow { int64_t domain, ghost, offset; int peer; int64_t source,row; };
@@ -453,7 +453,7 @@ void _mlir_ciface_mdrtDistHaloImageWords(struct ImageView *view, int64_t handle)
    identities and images, but current explicit-image positions still have
    to satisfy the Verlet displacement bound. */
 int64_t mdrtDistMatrix(int64_t handle, int64_t domain, int64_t centers,
-                       int64_t rows, double cutoff, double skin, int64_t width) {
+                       int64_t rows, double cutoff, double skin, int64_t width, int64_t midpoint) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
   if (!h || domain < 0 || domain >= h->layout->domains ||
       rows != h->layout->rows[domain] + h->rows[domain] ||
@@ -461,7 +461,7 @@ int64_t mdrtDistMatrix(int64_t handle, int64_t domain, int64_t centers,
     fail("domain matrix extents do not match its halo");
   struct DomainMatrix *m = h->matrices;
   while (m && !(m->domain == domain && m->centers == centers &&
-                m->cutoff == cutoff && m->skin == skin))
+                m->cutoff == cutoff && m->skin == skin && m->midpointList == midpoint))
     m = m->next;
   if (!m) {
     m = calloc(1, sizeof *m);
@@ -471,6 +471,7 @@ int64_t mdrtDistMatrix(int64_t handle, int64_t domain, int64_t centers,
     m->domain = domain;
     m->rows = rows;
     m->centers = centers;
+    m->midpointList = midpoint;
     m->cutoff = cutoff;
     m->skin = skin;
     m->raw = mdrtHostMatrixAllocate(centers, width);
@@ -514,6 +515,64 @@ int64_t _mlir_ciface_mdrtDistMatrixRebuild(int64_t matrix, struct Memref2D *x) {
   m->valid = 1;
   m->candidatesValid = 0;
   return 1;
+}
+
+/* Packed coordinates already include the halo translation. Within this
+   open Cartesian box the common-image shifts and periodic cell searches
+   of a full-system list are unnecessary. Only the lower identity can
+   own the center of a midpoint pair. */
+void _mlir_ciface_mdrtDistBuildMidpoint(int64_t halo, int64_t matrix, struct Memref2D *x) {
+  struct Halo *h = (struct Halo *)(intptr_t)halo;
+  struct DomainMatrix *m = (struct DomainMatrix *)(intptr_t)matrix;
+  struct Layout *l = h->layout;
+  int64_t n = m->rows, centers = m->centers, d = m->domain, owned = l->rows[d];
+  if (!centers) return;
+  if (n > INT32_MAX) fail("too many explicit images in a pair list");
+  double reach = m->cutoff + m->skin + 3.e-6*(m->box[0]+m->box[1]+m->box[2]);
+  double limit2 = reach*reach;
+  int64_t *order = malloc(n*sizeof *order);
+  int64_t (*spans)[18] = malloc(centers*sizeof *spans);
+  struct SortedSite { double x[3]; int32_t row, id; };
+  struct SortedSite *sites = malloc(n*sizeof *sites);
+  if (!order || !spans || !sites) fail("out of memory binning midpoint rows");
+  struct Memref3D positions = {x->allocated,x->aligned,x->offset,{1,n,3},{0,x->strides[0],x->strides[1]}};
+  struct Memref1I permutation = {order,order,0,{n},{1}};
+  struct Memref1I ranges = {&spans[0][0],&spans[0][0],0,{18*centers},{1}};
+  pairCells(0,n,n,centers,reach,&positions,NULL,NULL,0,&permutation,&ranges);
+  const int64_t *ownerIds = domainIds(l,d);
+  const int64_t *ghostIds = h->ids+(d-h->idBase)*h->capacity;
+  #pragma omp parallel for schedule(static) if(n > 1024)
+  for (int64_t q = 0; q < n; ++q) {
+    int64_t j = order[q];
+    sites[q].row = j;
+    sites[q].id = j < owned ? ownerIds[j] : ghostIds[j-owned];
+    for (int k = 0; k < 3; ++k) sites[q].x[k] = *at2(x,j,k);
+  }
+  for (;;) {
+    struct HostBuffer2 entries;
+    _mlir_ciface_mdrtHostMatrixEntries(&entries,m->raw);
+    int32_t largest = 0;
+    #pragma omp parallel for schedule(static,8) reduction(max:largest) if(centers > 256)
+    for (int64_t i = 0; i < centers; ++i) {
+      int32_t *row = (int32_t *)entries.aligned+i*entries.strides[0];
+      int64_t id = i < owned ? ownerIds[i] : ghostIds[i-owned];
+      double xi = *at2(x,i,0), yi = *at2(x,i,1), zi = *at2(x,i,2);
+      int32_t count = 0;
+      for (int slab = 0; slab < 9; ++slab)
+        for (int64_t q = spans[i][2*slab]; q < spans[i][2*slab+1]; ++q) {
+          if (sites[q].id <= id) continue;
+          double dx = xi-sites[q].x[0], dy = yi-sites[q].x[1], dz = zi-sites[q].x[2];
+          if (dx*dx+dy*dy+dz*dz > limit2) continue;
+          if (count < entries.sizes[1]) row[count] = sites[q].row;
+          ++count;
+        }
+      m->counts[i] = count;
+      if (count > largest) largest = count;
+    }
+    if (largest <= entries.sizes[1]) break;
+    mdrtHostMatrixGrow(m->raw,largest);
+  }
+  free(sites); free(spans); free(order);
 }
 
 void _mlir_ciface_mdrtDistMatrixImages(struct Memref2D *r, int64_t handle, int64_t matrix) {

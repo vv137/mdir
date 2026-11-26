@@ -896,3 +896,13 @@ identity first. Both endpoints of every candidate occur among the owned and
 ghost rows. Querying that directory for the distinct local identities and
 retaining pairs with both endpoints present consequently preserves the
 exclusion test on every candidate.
+
+For the midpoint rule, the halo already contains each required translated
+image. A Cartesian bin query enclosing the cutoff plus skin therefore finds
+every admissible image without folding its displacement a second time.
+Canonical identity order selects the center. The midpoint ownership test
+and exclusion predicate then select the physical interaction. For a
+constraint projection the unique requirement on ownership is that the
+members of a group reside together. Holding their initial assignment fixed
+across successive projections preserves that property as their coordinates
+evolve.

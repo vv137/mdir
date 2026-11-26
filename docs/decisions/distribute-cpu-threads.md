@@ -166,3 +166,11 @@ to the directory rank of the smaller identity. A new halo requests its owned
 and ghost identities and keeps the returned keys whose other endpoint is also
 present. An immutable relation version identifies this projection to the
 candidate matrix.
+
+The midpoint candidate builder bins the explicit owned and ghost image
+coordinates in Cartesian cells. Each center visits intersecting bins and
+rejects identities below its own before testing distance. The final midpoint
+test still chooses the owner of the pair. Constraint projections retain the
+group ownership layout across a fixed-cell integration segment. Each solve
+wraps current coordinates on that layout, so updated positions do not require
+a fresh ownership exchange between projections.

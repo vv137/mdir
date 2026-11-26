@@ -955,7 +955,7 @@ LogicalResult Lowering::lowerDomainMatrix(mdrt::DomainMatrixOp op) {
   Value matrix = call("mdrtDistMatrix", i64,
       {op.getHalo(), wide(op.getDomain()), wide(op.getCenters()), wide(list.size),
        createReal(b, loc, b.getF64Type(), cutoff), createReal(b, loc, b.getF64Type(), skin),
-       word(op.getWidth())});
+       word(op.getWidth()),word(op.getRule() == 2)});
   list.imagePositions = x;
   list.midpoint = op.getRule() == 2;
   list.domainMatrix = matrix;
@@ -976,16 +976,23 @@ LogicalResult Lowering::lowerDomainMatrix(mdrt::DomainMatrixOp op) {
         arith::ConstantIntOp::create(build, loc, phase, 64)});
   };
   markBuild(DistList);
-  SmallVector<Value> edges;
-  auto edge = getOrDeclare("mdrtDistMatrixEdge", b.getFunctionType({i64, i64}, {b.getF64Type()}));
-  for (int axis = 0; axis < 3; ++axis) {
-    Value component = arith::ConstantIntOp::create(build, loc, axis, 64);
-    edges.push_back(func::CallOp::create(build, loc, edge, ValueRange{matrix, component}).getResult(0));
+  if (op.getRule() == 2) {
+    auto fn = getOrDeclare("mdrtDistBuildMidpoint", b.getFunctionType({i64,i64,x.getType()},{}));
+    fn->setAttr("llvm.emit_c_interface",b.getUnitAttr());
+    func::CallOp::create(build,loc,fn,ValueRange{op.getHalo(),matrix,x});
+    func::CallOp::create(build,loc,getOrDeclare(countBuildName,b.getFunctionType({},{})),ValueRange());
+  } else {
+    SmallVector<Value> edges;
+    auto edge = getOrDeclare("mdrtDistMatrixEdge", b.getFunctionType({i64, i64}, {b.getF64Type()}));
+    for (int axis = 0; axis < 3; ++axis) {
+      Value component = arith::ConstantIntOp::create(build, loc, axis, 64);
+      edges.push_back(func::CallOp::create(build, loc, edge, ValueRange{matrix, component}).getResult(0));
+    }
+    Value box = vector::FromElementsOp::create(build, loc, VectorType::get({3}, b.getF64Type()), edges);
+    if (failed(emitMatrixBuild(build, loc, list, x, box, cutoff + skin,
+                               (cutoff + skin) / 3, op.getCenters())))
+      return failure();
   }
-  Value box = vector::FromElementsOp::create(build, loc, VectorType::get({3}, b.getF64Type()), edges);
-  if (failed(emitMatrixBuild(build, loc, list, x, box, cutoff + skin,
-                             (cutoff + skin) / 3, op.getCenters())))
-    return failure();
   markBuild(-DistList);
   Value rule = word(op.getRule());
   Value selected = call("mdrtDistFilterMatrix", i64, {op.getHalo(), matrix, op.getExclusions(),

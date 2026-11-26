@@ -3307,6 +3307,51 @@ static LogicalResult outlineSteps(ModuleOp module, func::FuncOp function, String
   return success();
 }
 
+// Group tuples never read ghosts. Their members stay together on the
+// initial spatial layout throughout the interval of unchanged topology.
+// Coordinates still take their current primary-cell image at each solve.
+static void retainConstraintLayouts(scf::ForOp root) {
+  SmallVector<PartitionOp> partitions;
+  root.walk([&](PartitionOp p) {
+    if (p->hasAttr("md_dist.constraint_layout") &&
+        root.isDefinedOutsideOfLoop(p.getCell()) &&
+        llvm::all_of(p.getGroups(),[&](Value g) { return root.isDefinedOutsideOfLoop(g); }))
+      partitions.push_back(p);
+  });
+  for (auto p : partitions) {
+    SmallVector<MigrateOp> moves;
+    for (Operation *u : p.getLayout().getUsers())
+      if (auto move = dyn_cast<MigrateOp>(u)) moves.push_back(move);
+    if (moves.empty()) continue;
+    OpBuilder before(root);
+    auto base = PartitionOp::create(before,p.getLoc(),p.getLayout().getType(),
+        root.getInitArgs().front(),p.getCell(),p.getGroups());
+    for (auto move : moves) {
+      auto input = move.getPositions().getDefiningOp<DistributeOp>();
+      if (!input || input.getLayout() != p.getLayout()) continue;
+      SmallVector<RedistributeOp> fields;
+      for (Operation *u : move.getLayout().getUsers())
+        if (auto f = dyn_cast<RedistributeOp>(u)) fields.push_back(f);
+      if (fields.empty() || !llvm::all_of(fields,[&](RedistributeOp f) {
+            return f.getField() == input.getResult() && f.getOldLayout() == p.getLayout();
+          })) continue;
+      for (auto f : fields) {
+        OpBuilder at(f);
+        auto positions = DistributeOp::create(at,f.getLoc(),f.getResult().getType(),
+            input.getField(),base.getLayout(),f.getImage());
+        if (move->hasAttr("md_dist.step")) positions->setAttr("md_dist.step",at.getUnitAttr());
+        f.replaceAllUsesWith(positions.getResult());
+        f.erase();
+      }
+      move.replaceAllUsesWith(base.getLayout());
+      move.erase();
+      if (input.use_empty()) input.erase();
+    }
+    if (p.use_empty()) p.erase();
+    if (base.use_empty()) base.erase();
+  }
+}
+
 // The constrained native step carries ordinary particle fields in scf.for.
 // Give its maps, kicks and drifts the contiguous identity interval on this
 // rank. The separate particle-set symbol also gives storage assignment the
@@ -3500,7 +3545,11 @@ LogicalResult Lowering::run(func::FuncOp function) {
       roots.push_back(loop);
       return WalkResult::skip();
     });
-    for (auto root : roots) shardDriverLoop(root);
+    for (auto root : roots) {
+      if (root.getNumRegionIterArgs() == 3) retainConstraintLayouts(root);
+      shardDriverLoop(root);
+    }
+    collect();
   }
   if (module->hasAttr("md_dist.driver")) {
     SmallVector<md::SumParticlesOp> sums;
