@@ -263,3 +263,8 @@ disabled, two single-use pair energies added over the same neighborhood
 can share a differentiated pair walk. Both operands must use the same
 positions, cell and exchange convention. Each retains its own scalar
 energy formula.
+
+For the directed double-precision path without exclusions, each rank
+materializes only its incident halo routes. Global route counts remain
+available to the observer. Import order follows global identity and the
+existing periodic image order. Other halo consumers retain full maps.

@@ -106,7 +106,7 @@ struct Layout {
   struct Layout *identityOwner; /* Borrow immutable numberings across stationary epochs. */
   uint32_t *faceMasks;
   unsigned *localFaceMasks; /* Device snapshot in this epoch's owned order. */
-  int selfFaces;
+  int selfFaces, pairFaces;
   double faceReach;
   int *deviceMigrationMap;
   int64_t incomingRows;
@@ -1404,7 +1404,7 @@ static void borrowNumbering(struct Layout *old, struct Layout *next) {
 }
 
 int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
-    struct Memref3D *positions, double lx, double ly, double lz, double reach, int64_t selfOnly) {
+    struct Memref3D *positions, double lx, double ly, double lz, double reach, int64_t pairOnly) {
   struct Layout *old = (void *)(intptr_t)oldHandle;
   double edges[3] = {lx,ly,lz};
   double margin = 64*DBL_EPSILON*fmax(lx,fmax(ly,lz));
@@ -1427,7 +1427,8 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
   memcpy(next->grid,old->grid,sizeof next->grid);
   next->migrantOffsets=calloc(mdrtMPISize()+1,sizeof *next->migrantOffsets);
   if (!next->migrantOffsets) fail("out of memory indexing device migrants");
-  if (selfOnly && old->domains==1) {
+  next->pairFaces = pairOnly;
+  if (pairOnly && old->domains==1) {
     next->selfFaces=1;
     borrowNumbering(old,next);
     if (tracing()) traceMigration(old,next);
@@ -1742,6 +1743,87 @@ int64_t _mlir_ciface_mdrtDistFinishHalo(int64_t handle, struct Memref3D *x) {
 }
 
 #ifdef MDIR_ENABLE_NCCL
+struct FaceDestination {
+  int64_t domain, image[3], count;
+};
+
+// A directed pair traversal consumes only this rank's imports and exports.
+// Count logical edges for reporting, then retain just the incident rows in
+// destination/identity/image order, as in the complete halo.
+static void buildPairFacePlan(struct Halo *h, struct FaceDestination *routes,
+                              const struct GhostList *boxes) {
+  struct Layout *l = h->layout;
+  int64_t local = mdrtMPIDomainBound(l->domains, 0);
+  int64_t *counts = calloc(l->domains, sizeof(*counts));
+  int64_t *offsets = calloc(l->domains + 1, sizeof(*offsets));
+  uint32_t *incident = calloc(l->domains, sizeof(*incident));
+  if (!counts || !offsets || !incident) fail("out of memory indexing pair faces");
+  for (int64_t d = 0; d < l->domains; ++d)
+    for (int bit = 0; bit < 27; ++bit)
+      if (d == local || routes[27*d + bit].domain == local)
+        incident[d] |= 1u << bit;
+  for (int64_t j = 0; j < l->count; ++j) {
+    uint32_t mask = l->faceMasks[j];
+    if (!mask) continue;
+    struct FaceDestination *row = routes + 27*l->owner[j];
+    while (mask) {
+      int bit = __builtin_ctz(mask);
+      ++row[bit].count;
+      mask &= mask - 1;
+    }
+  }
+  if (observer) {
+    h->edges = malloc(27*l->domains*sizeof(*h->edges));
+    if (!h->edges) fail("out of memory counting pair face transfers");
+  }
+  for (int64_t d = 0; d < l->domains; ++d)
+    for (int bit = 0; bit < 27; ++bit) {
+      struct FaceDestination *route = &routes[27*d + bit];
+      if (!route->count) continue;
+      h->rows[route->domain] += route->count;
+      if (incident[d] & (1u << bit))
+        counts[route->domain] += route->count;
+      if (observer)
+        h->edges[h->edgeCount++] = (struct Edge){d, route->domain, route->count};
+    }
+
+  h->capacity = 1;
+  for (int64_t d = 0; d < l->domains; ++d) {
+    if (h->rows[d] > h->capacity) h->capacity = h->rows[d];
+    offsets[d+1] = offsets[d] + counts[d];
+    counts[d] = 0;
+    if (observer)
+      observer->domain(observer->context, d, l->rows[d], h->rows[d], boxes[d].lo, boxes[d].hi);
+  }
+  size_t n = offsets[l->domains] ? offsets[l->domains] : 1;
+  int64_t *from = malloc(n*sizeof(*from)), *source = malloc(n*sizeof(*source));
+  int64_t *image = malloc(3*n*sizeof(*image));
+  if (!from || !source || !image) fail("out of memory packing pair faces");
+  for (int64_t j = 0; j < l->count; ++j) {
+    uint32_t mask = l->faceMasks[j];
+    if (!mask) continue;
+    int64_t d = l->owner[j];
+    mask &= incident[d];
+    while (mask) {
+      int bit = 31 - __builtin_clz(mask);
+      mask ^= 1u << bit;
+      struct FaceDestination *route = &routes[27*d + bit];
+      int64_t slot = offsets[route->domain] + counts[route->domain]++;
+      from[slot] = d;
+      source[slot] = l->row[j];
+      memcpy(image + 3*slot, route->image, sizeof(route->image));
+    }
+  }
+  h->ncclPlan = mdrtNCCLPlan(l->rows[local], l->domains, counts, 0, offsets,
+                             from, source, image, l->edges);
+  free(image);
+  free(source);
+  free(from);
+  free(incident);
+  free(offsets);
+  free(counts);
+}
+
 int64_t _mlir_ciface_mdrtDistDeviceEpochHalo(int64_t layout, struct Memref3D *x, double reach) {
   struct Layout *l=(void *)(intptr_t)layout;
   if (l->selfFaces) {
@@ -1789,8 +1871,7 @@ int64_t _mlir_ciface_mdrtDistDeviceEpochHalo(int64_t layout, struct Memref3D *x,
   mdrtDistRetainLayout(layout);
   // Each direction selects one receiving domain and periodic translation,
   // independently of the row identity. Resolve it once per domain.
-  struct Destination { int64_t domain, image[3]; };
-  struct Destination *routes=calloc(l->domains*27,sizeof *routes);
+  struct FaceDestination *routes=calloc(l->domains*27,sizeof *routes);
   if (!routes) fail("out of memory routing device face rows");
   for (int64_t d=0; d<l->domains; ++d) {
     int64_t code=d;
@@ -1801,7 +1882,7 @@ int64_t _mlir_ciface_mdrtDistDeviceEpochHalo(int64_t layout, struct Memref3D *x,
       lists[d].hi[k]=l->edges[k]*(cell+1)/l->grid[k];
     }
     for (int bit=0; bit<27; ++bit) {
-      struct Destination *route=&routes[d*27+bit];
+      struct FaceDestination *route=&routes[d*27+bit];
       int relative[3]={bit/9-1,(bit/3)%3-1,bit%3-1};
       int64_t from=d, stride=1;
       for (int k=0; k<3; ++k) {
@@ -1814,17 +1895,23 @@ int64_t _mlir_ciface_mdrtDistDeviceEpochHalo(int64_t layout, struct Memref3D *x,
       }
     }
   }
+  if (l->pairFaces && !tracing()) {
+    buildPairFacePlan(h, routes, lists);
+    free(routes);
+    free(lists);
+    return (int64_t)(intptr_t)h;
+  }
   int64_t cap=1;
   for (int pass=0; pass<2; ++pass) {
     for (int64_t j=0; j<l->count; ++j) {
       uint32_t mask=l->faceMasks[j];
       if (!mask) continue;
-      const struct Destination *domainRoutes=routes+27*l->owner[j];
+      const struct FaceDestination *domainRoutes=routes+27*l->owner[j];
       // Descending direction bits give ascending periodic images.
       while (mask) {
         int bit=31-__builtin_clz(mask);
         mask ^= 1u<<bit;
-        const struct Destination *dest=domainRoutes+bit;
+        const struct FaceDestination *dest=domainRoutes+bit;
         int64_t d=dest->domain;
         if (!pass) {
           ++h->rows[d];
@@ -2187,7 +2274,7 @@ int64_t mdrtDistDeviceMatrixSlot(int64_t halo, double cutoff) {
 
 static struct NCCLPlan *devicePlan(struct Halo *h) {
   if (!h->ncclPlan)
-    h->ncclPlan = mdrtNCCLPlan(h->layout->rows[mdrtMPIDomainBound(h->layout->domains,0)], h->layout->domains, h->rows, h->capacity,
+    h->ncclPlan = mdrtNCCLPlan(h->layout->rows[mdrtMPIDomainBound(h->layout->domains,0)], h->layout->domains, h->rows, h->capacity, NULL,
         h->sourceDomain, h->sourceRow, h->image, h->layout->edges);
   return h->ncclPlan;
 }

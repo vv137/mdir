@@ -12,7 +12,7 @@ struct NCCLPlan;
 struct NCCLPlan *mdrtNCCLSelfPlan(double *x, int64_t rows, const double *edges,
                                   double reach, int64_t *ghosts);
 struct NCCLPlan *mdrtNCCLPlan(int64_t ownedRows, int64_t domains, const int64_t *ghosts,
-    int64_t capacity, const int64_t *sourceDomain, const int64_t *sourceRow,
+    int64_t capacity, const int64_t *offsets, const int64_t *sourceDomain, const int64_t *sourceRow,
     const int64_t *image, const double *edges);
 double *mdrtNCCLBeginPositions(struct NCCLPlan *, double *, int64_t);
 int *mdrtNCCLPairPlaces(struct NCCLPlan *, const int *, int64_t, int, int,

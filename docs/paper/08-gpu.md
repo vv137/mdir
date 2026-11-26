@@ -1099,3 +1099,7 @@ Linearity of differentiation permits summing compatible pair energies
 before computing their common force and virial. This shares neighbor
 loads and the warp reductions for the two terms. In double precision
 with determinism disabled, adding the terms earlier can change rounding.
+
+Given the route counts, a rank needs rows only for routes on which it
+sends or receives. Constructing those rows in identity and image order
+preserves the covered directed traversal's indexing and NCCL peer order.

@@ -93,7 +93,7 @@ public:
         haloEvents(haloEvents), mpi(mpi), parallelDomains(parallelDomains) {}
 
   bool fixedPoint = false;
-  bool deviceSelfFaces = false;
+  bool devicePairFaces = false;
   bool matrixPairs = false, gpuPairs = false, gpuImageGeometry = false;
   double matrixSkin = 0;
   LogicalResult run(func::FuncOp function);
@@ -736,7 +736,7 @@ LogicalResult Lowering::lowerMigrate(MigrateOp op) {
   auto reach = sharedState() ? rebuildReach(op) : std::nullopt;
   if (reach) {
     args.push_back(real(b, *reach));
-    args.push_back(arith::ConstantIntOp::create(b,loc,deviceSelfFaces,64));
+    args.push_back(arith::ConstantIntOp::create(b,loc,devicePairFaces,64));
     name = "mdrtDistDeviceEpoch";
   } else {
     hostRows(b, positions);
@@ -3634,7 +3634,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
     return ops.front()->emitOpError()
            << "has no layout from md_dist.partition to run";
   domains = decomposition.getNumDomains();
-  deviceSelfFaces = domains==1 && sharedState() && matrixPairs && !fixedPoint &&
+  devicePairFaces = sharedState() && matrixPairs && !fixedPoint &&
       !gpuImageGeometry && module->hasAttr("md_dist.driver") &&
       llvm::all_of(ops, [](Operation *op) {
         if (isa<TupleKernelOp, TupleRowsOp, PartitionCentersOp, HaloSumOp>(op)) return false;

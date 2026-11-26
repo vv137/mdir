@@ -320,4 +320,6 @@ D[distribute-gpu-node] introduces node placement, rank-local MATRIX pairs,
 and NCCL peer exchange for finite-range dynamics. The unconstrained Verlet
 path keeps integration and force combination on the device. Eligible directed runs measure split and unsplit traversals on the production
 layout. The split overlaps interior MATRIX rows with the position exchange.
+For eligible directed double-precision liquid runs each rank builds its
+incident halo routes from changed face records.
 Midpoint GPU pair traversal and reproducible integer GPU sums remain open.

@@ -102,7 +102,7 @@ static void *upload(const void *host, size_t bytes) {
 }
 
 struct NCCLPlan *mdrtNCCLPlan(int64_t ownedRows, int64_t domains, const int64_t *ghosts,
-    int64_t capacity, const int64_t *sourceDomain, const int64_t *sourceRow,
+    int64_t capacity, const int64_t *offsets, const int64_t *sourceDomain, const int64_t *sourceRow,
     const int64_t *image, const double *edges) {
   int rank = mdrtMPIRank();
   struct NCCLPlan *p = calloc(1, sizeof *p);
@@ -117,7 +117,7 @@ struct NCCLPlan *mdrtNCCLPlan(int64_t ownedRows, int64_t domains, const int64_t 
     for (int64_t d = 0; d < domains; ++d) {
       int to = mdrtMPIOwner(domains, d);
       for (int64_t g = 0; g < ghosts[d]; ++g) {
-        int64_t i = d*capacity+g;
+        int64_t i = (offsets ? offsets[d] : d*capacity) + g;
         int from = mdrtMPIOwner(domains, sourceDomain[i]);
         if (!pass) {
           if (from == rank) {
