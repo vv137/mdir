@@ -128,7 +128,7 @@ struct Layout {
   int64_t *deviceFaces; /* Packed owner and direction bits by global identity. */
   int64_t *faceCounts;   /* Per owner and direction, updated from face deltas. */
   unsigned *localFaceMasks; /* Device snapshot in this epoch's owned order. */
-  int selfFaces;
+  int selfFaces, physicalEpoch;
   double faceReach;
   int *deviceMigrationMap;
   int *migrationCounts, *deviceExportRows;
@@ -1727,6 +1727,34 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
   int eligible = old->groupCount == 0 && old->count <= INT_MAX && old->domains <= INT_MAX;
   for (int k=0; k<3; ++k)
     eligible = eligible && edges[k] == old->edges[k] && 2*(reach+margin)<edges[k]/old->grid[k];
+  if (pairOnly == 2 && old->domains == 1 && old->mpi && mdrtMPISize() == 1 &&
+      edges[0] == old->edges[0] && edges[1] == old->edges[1] && edges[2] == old->edges[2]) {
+    struct Layout *next = calloc(1,sizeof *next);
+    if (!next) fail("out of memory retaining single-domain layout");
+    next->references=1;
+    next->mpi=old->mpi;
+    next->domains=1;
+    next->count=old->count;
+    next->physicalEpoch=1;
+    next->faceReach=reach;
+    memcpy(next->edges,edges,sizeof edges);
+    memcpy(next->grid,old->grid,sizeof next->grid);
+    borrowNumbering(old,next);
+    next->migrantOffsets=calloc(2,sizeof *next->migrantOffsets);
+    if (!next->migrantOffsets) fail("out of memory indexing stationary domain");
+    if (old->groupCount) {
+      next->groups=malloc(old->groupCount*sizeof *next->groups);
+      if (!next->groups) fail("out of memory retaining constraint groups");
+      memcpy(next->groups,old->groups,old->groupCount*sizeof *next->groups);
+      next->groupCount=old->groupCount;
+    }
+    if (old->ownedTuplePlans) {
+      next->ownedTuplePlans=old->ownedTuplePlans;
+      ++next->ownedTuplePlans->references;
+    }
+    if (tracing()) traceMigration(old,next);
+    return (int64_t)(intptr_t)next;
+  }
   if (!eligible) {
     _mlir_ciface_mdrtDistHostRows(positions);
     return migrate(oldHandle,positions,lx,ly,lz,1);
@@ -1866,7 +1894,7 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
 void _mlir_ciface_mdrtDistEpochPositions(struct Memref3D *result,
     int64_t oldHandle, int64_t newHandle, struct Memref3D *source) {
   struct Layout *next=(void *)(intptr_t)newHandle;
-  if (!next->faceMasks && !next->selfFaces) {
+  if (!next->faceMasks && !next->selfFaces && !next->physicalEpoch) {
     _mlir_ciface_mdrtDistCreateField(result,next->domains,next->stride,3);
     _mlir_ciface_mdrtDistMigratedPositions(newHandle,result);
     return;
@@ -2215,6 +2243,23 @@ static void buildPairFacePlan(struct Halo *h, struct FaceDestination *routes,
 
 int64_t _mlir_ciface_mdrtDistDeviceEpochHalo(int64_t layout, struct Memref3D *x, double reach) {
   struct Layout *l=(void *)(intptr_t)layout;
+  if (l->physicalEpoch) {
+    if (reach!=l->faceReach) fail("local epoch belongs to a different halo reach");
+    struct Halo *h=calloc(1,sizeof *h);
+    if (!h) fail("out of memory creating single-domain halo");
+    h->references=1;
+    h->layout=l;
+    h->reach=reach;
+    h->capacity=1;
+    h->rows=calloc(1,sizeof *h->rows);
+    if (!h->rows) fail("out of memory counting local halo rows");
+    mdrtDistRetainLayout(layout);
+    if (observer) {
+      double lo[3]={0,0,0};
+      observer->domain(observer->context,0,l->rows[0],0,lo,l->edges);
+    }
+    return (int64_t)(intptr_t)h;
+  }
   if (l->selfFaces) {
     if (reach!=l->faceReach) fail("local face plan belongs to a different halo reach");
     struct Halo *h=calloc(1,sizeof *h);

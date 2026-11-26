@@ -94,7 +94,7 @@ public:
         haloEvents(haloEvents), mpi(mpi), parallelDomains(parallelDomains) {}
 
   bool fixedPoint = false;
-  bool devicePairFaces = false;
+  bool devicePairFaces = false, physicalEpoch = false;
   bool matrixPairs = false, gpuPairs = false, gpuImageGeometry = false;
   double matrixSkin = 0;
   LogicalResult run(func::FuncOp function);
@@ -746,7 +746,7 @@ LogicalResult Lowering::lowerMigrate(MigrateOp op) {
   auto reach = sharedState() ? rebuildReach(op) : std::nullopt;
   if (reach) {
     args.push_back(real(b, *reach));
-    args.push_back(arith::ConstantIntOp::create(b,loc,devicePairFaces,64));
+    args.push_back(arith::ConstantIntOp::create(b,loc,physicalEpoch ? 2 : devicePairFaces,64));
     name = "mdrtDistDeviceEpoch";
   } else {
     hostRows(b, positions);
@@ -1075,7 +1075,7 @@ LogicalResult Lowering::lowerCovered(CoveredOp op) {
 
 bool Lowering::usesOwnedPairs(NeighborhoodOp op) const {
   return sharedState() && !fixedPoint && domains == 1 && matrixPairs && op.getExcluded() &&
-      module->hasAttr("md_dist.driver") && op.getHalo().getDefiningOp<UnpackOp>() &&
+      module->hasAttr("md_dist.driver") &&
       op.getResult().getType().getTraversal() == Traversal::Unique &&
       llvm::all_of(op.getResult().getUsers(), [](Operation *consumer) {
         if (auto sum = dyn_cast<SumPairsOp>(consumer)) return !sum.getCenterSet();
@@ -4006,6 +4006,33 @@ LogicalResult Lowering::run(func::FuncOp function) {
       if (rows.getGroup())
         for (Operation *use : rows->getUsers())
           if (isa<TupleKernelOp>(use)) constraintKernels.insert(use);
+  // If every consumer of images is reduced to physical owned rows, the
+  // one-domain Verlet epoch can omit its self exchange. The displacement
+  // test, periodic wrapping, and rebuild of the pair list still apply.
+  physicalEpoch = domains == 1 && sharedState() && !fixedPoint && matrixPairs &&
+      module->hasAttr("md_dist.driver") &&
+      llvm::any_of(ops, [](Operation *u) { return isa<NeighborhoodOp>(u); }) &&
+      llvm::all_of(ops, [&](Operation *u) {
+        if (auto n = dyn_cast<NeighborhoodOp>(u)) return usesOwnedPairs(n);
+        if (auto tuple = dyn_cast<TupleKernelOp>(u))
+          return constraintKernels.contains(u) || usesOwnedTuples(tuple);
+        if (auto rows = dyn_cast<TupleRowsOp>(u))
+          return llvm::all_of(rows.getRows().getUsers(), [](Operation *user) {
+            return isa<TupleKernelOp>(user);
+          });
+        if (auto sum = dyn_cast<HaloSumOp>(u))
+          return sum.getOwned().getDefiningOp() == sum.getGhosts().getDefiningOp() &&
+                 isa_and_nonnull<TupleKernelOp,GatherPairsOp>(sum.getOwned().getDefiningOp());
+        if (isa<PartitionCentersOp>(u)) return false;
+        if (auto copy = dyn_cast<HaloCopyOp>(u))
+          return llvm::all_of(copy.getResult().getUsers(), [](Operation *user) {
+            return isa<TupleKernelOp, NeighborhoodOp, GatherPairsOp, SumPairsOp>(user);
+          });
+        for (Value v : u->getOperands())
+          if (auto f = dyn_cast<FieldType>(v.getType()); f && !f.isOwned() &&
+              !isa<GatherPairsOp,SumPairsOp>(u)) return false;
+        return true;
+      });
   auto deviceSum = [&](SumParticlesOp sum) {
     return sharedState() && sum && llvm::all_of(sum.getGathered(), [](Value field) {
       auto type = cast<FieldType>(field.getType());

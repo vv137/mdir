@@ -1330,3 +1330,10 @@ image translation depends on the halo geometry, so it can be stored for
 the epoch and applied on the device after each exchange. Sharing the
 received coordinates reduced the four-device double means from 23.199
 to 19.420 ms/step for Factor IX and from 13.744 to 10.922 for JAC-RF.
+
+If all force and constraint terms in a single domain use owned particles,
+the periodic translations already appear in their coordinate differences.
+The halo then contains no extra rows. In double precision the resulting
+Factor IX step took 10.551 ms, down from 12.041 ms. JAC-RF took 5.293 ms,
+down from 5.842 ms. The largest potential or virial difference across
+the two 205-frame trials of either system was 0.00000101 kcal/mol.

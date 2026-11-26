@@ -480,3 +480,8 @@ Where tuples and explicit MATRIX pairs share positions, both consumers
 read one completed exchange. The halo owns the periodic translations.
 A device kernel adds these translations to raw ghost coordinates for the
 pair list, while tuple kernels read the raw coordinates.
+
+In one domain the sorted row of a particle is its global identity.
+When every image consumer takes physical rows, a new epoch can retain
+this mapping, wrap the coordinates, and publish a halo with zero ghosts.
+The displacement test and neighbor-list rebuild continue to run.
