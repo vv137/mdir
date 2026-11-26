@@ -5,8 +5,10 @@ Recorded at its merge.
 CPU domain kernels visit the rank's local topology tuples in stable domain
 order. Each tuple retains its original index for parameter lookup. Fixed
 chunks of a domain's tuples compute independent energy subtotals, combined
-in chunk order. Force kernels stage the member forces and gather each
-destination's contributions in topology and member order. Constraint groups
+in chunk order. Parallel force kernels stage the member forces and gather each
+destination's contributions in topology and member order. A serial force kernel adds directly to each member row in that same order,
+skipping the temporary member-force buffer and both incidence passes.
+Constraint groups
 write disjoint rows and combine their convergence flags with bitwise OR.
 
 A snapshot used to distribute a field copies the particle identities of the

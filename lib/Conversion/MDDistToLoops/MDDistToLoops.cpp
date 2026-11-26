@@ -1237,15 +1237,13 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
     flags = allocate(b, MemRefType::get({dyn}, b.getI32Type()), {chunks});
     initializeBuffer(b, flags, false);
   }
-  if (!reduce && !solve)
+  if (parallelDomains && !reduce && !solve)
     contributions = allocate(b, MemRefType::get({dyn, dyn, dyn}, scalar),
                              {localCount, index(b, arity), index(b, 3)});
   auto tupleColumn = [&](OpBuilder &at, Value tuple, Value col) {
     return toIndex(at, memref::LoadOp::create(at, loc, op.getRows(), ValueRange{tuple, col}));
   };
-  scf::ParallelOp::create(b, loc, ValueRange{z}, ValueRange{chunks}, ValueRange{one},
-      [&](OpBuilder &at, Location, ValueRange iv) {
-        Value chunk = iv[0];
+  auto visitChunk = [&](OpBuilder &at, Value chunk) {
         Value begin = memref::LoadOp::create(at, loc, starts, chunk);
         Value end = memref::LoadOp::create(at, loc, starts, arith::AddIOp::create(at, loc, chunk, one).getResult());
         scf::ForOp::create(at, loc, begin, end, one, ValueRange(),
@@ -1328,12 +1326,32 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
           } else {
             for (int64_t a = 0; a < arity; ++a) {
               Value word = quantize(k, map.lookupOrDefault(yielded[a]), 40);
-              storeValue(k, word, contributions, pos, index(k, a));
+              if (contributions) {
+                storeValue(k, word, contributions, pos, index(k, a));
+              } else {
+                scf::IfOp::create(k, loc, isOwned[a], [&](OpBuilder &yes, Location) {
+                  addValue(yes, word, ownedOut, d, localRows[a]);
+                  scf::YieldOp::create(yes, loc);
+                }, [&](OpBuilder &no, Location) {
+                  addValue(no, word, ghostOut, d, ghostRows[a]);
+                  scf::YieldOp::create(no, loc);
+                });
+              }
             }
           }
           scf::YieldOp::create(k, loc);
         });
-      });
+  };
+  if (parallelDomains) {
+    scf::ParallelOp::create(b, loc, ValueRange{z}, ValueRange{chunks}, ValueRange{one},
+        [&](OpBuilder &at, Location, ValueRange iv) { visitChunk(at, iv.front()); });
+  } else {
+    scf::ForOp::create(b, loc, z, chunks, one, ValueRange{},
+        [&](OpBuilder &at, Location, Value chunk, ValueRange) {
+          visitChunk(at, chunk);
+          scf::YieldOp::create(at, loc);
+        });
+  }
   if (reduce)
     scf::ForOp::create(b, loc, z, chunks, one, ValueRange(),
         [&](OpBuilder &at, Location, Value chunk, ValueRange) {

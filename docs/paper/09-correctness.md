@@ -828,6 +828,8 @@ reads the same parameters after grouping. Within each domain, fixed chunks
 sum the energies in topology order, and the domain combines the chunks in
 order. For a force, the traversal stores one contribution per tuple member.
 Each destination row gathers its contributions in the original order,
-including repeated occurrences of a member. Disjoint constraint groups
+including repeated occurrences of a member. A serial kernel writes those additions
+directly to the row, skipping the incidence index and the member-force
+buffer. Disjoint constraint groups
 can update their members concurrently. A bitwise OR combines their
 failure flags independently of evaluation order.
