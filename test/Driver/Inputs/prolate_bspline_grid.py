@@ -5,11 +5,22 @@ reciprocal force, the forces less those of a grid three times finer, over
 the reciprocal force, the forces of that grid less the direct sum of the
 constrained density by NumPy. At each tolerance the automatic grid is finer
 than that of eq. 15 of Liang et al. (2026), whose error is above the
-tolerance, and its own error lies between 0.4 and 1.3 times the tolerance
-(the estimate is at most the tolerance, and on these charges the error was
-1.10 to 1.19 times the estimate)."""
+tolerance; the error is 1.1 to 1.55 times the estimate E_B that the
+manifest of `mdir run` records for that grid (measured: 1.29 at 1e-3 and
+1.35 at 1e-4, above the 1.10 to 1.19 of 1200 charges, since the excess, the
+force of a charge on itself, falls with their number); and the error lies
+between 0.7 and 1.3 times the tolerance (measured 0.77 and 1.12). An
+estimate twice too high fails both: the grid where the doubled estimate
+meets the tolerance has E_B at most half of it, an error at most about 0.68
+times it, and the error over the doubled estimate is near 0.67. With the
+estimate doubled in the driver, the grids were 28^3 and 60^3, the error
+0.52 and 0.58 to 0.59 times the tolerance, and 0.66 and 0.69 to 0.70 times
+the estimate logged; the bounds of before, 0.4 and 1.3 times the tolerance,
+passed it. The margin of the bound 0.7 at 1e-3 is small (0.68 to 0.77)."""
+import json
 import math
 from pathlib import Path
+import subprocess
 import sys
 
 import mdir
@@ -19,7 +30,7 @@ from numpy.polynomial import legendre
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from mdir_physical_constants import COULOMB_NATIVE
 
-target, work = sys.argv[1], Path(sys.argv[2])
+target, work, executable = sys.argv[1], Path(sys.argv[2]), sys.argv[3]
 work.mkdir(parents=True, exist_ok=True)
 count, edge, cutoff = 400, 3.0, 0.9
 rng = np.random.default_rng(985)
@@ -97,6 +108,44 @@ def run(precision, grid=None):
     return list(program.plan["pme_grid"]), np.asarray(simulation.state().forces, dtype=float)
 
 
+def manifest(tolerance):
+    """The grid and E_B that `mdir run` records for this system."""
+    name = f"estimate-{tolerance:g}"
+    (work / f"{name}.toml").write_text(f"""[input]
+topology = "ions.top"
+coordinates = "ions.gro"
+[output]
+energy_interval = 0
+manifest = "{name}.jsonl"
+[energy]
+cutoff = {10 * cutoff}
+pairlist_distance = 10.0
+electrostatics = "PME"
+[pme]
+kernel = "PROLATE"
+continuity = 2
+tolerance = {tolerance:g}
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step = 0.0005
+steps = 0
+[ensemble]
+ensemble = "NVE"
+temperature = 300.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target = "{target}"
+""")
+    done = subprocess.run([executable, "run", f"{name}.toml"], cwd=work, text=True,
+                          capture_output=True)
+    assert done.returncode == 0, done.stdout + done.stderr
+    start = json.loads((work / f"{name}.jsonl").read_text().splitlines()[0])
+    pme = start["effective"]["pme"]
+    assert pme["grid_source"] == "automatic" and pme["aliasing_bound"] == tolerance, pme
+    return pme["grid"], pme["aliasing_estimate"]
+
+
 for tolerance, bandwidth in [(1e-3, 9.5392), (1e-4, 12.024)]:
     system.pme_tolerance = tolerance
     # Eq. 15: the grid before the refinement of the B-spline window.
@@ -113,13 +162,17 @@ for tolerance, bandwidth in [(1e-3, 9.5392), (1e-4, 12.024)]:
           f"{before:.4g}; the automatic grid {chosen[0]}x{chosen[1]}x{chosen[2]}", flush=True)
     assert before > tolerance, before
     assert all(k > start for k in chosen), chosen
+    logged, estimate = manifest(tolerance)
+    assert logged == chosen, (logged, chosen)
     for precision in ("Mixed", "Double"):
         grid, forces = run(precision)
         assert grid == chosen, (grid, chosen)
         error = np.sqrt(np.mean((forces - fine) ** 2)) / scale
         print(f"{target} {precision} tolerance {tolerance:g}: reciprocal force error "
               f"{error:.4g} of its RMS {scale:.6g} kJ/mol/nm against the grid "
-              f"{fine_grid[0]}^3, {error / tolerance:.3f} of the tolerance, bounds 0.4 and 1.3",
+              f"{fine_grid[0]}^3, {error / tolerance:.3f} of the tolerance, bounds 0.7 and 1.3; "
+              f"{error / estimate:.3f} of the estimate {estimate:.4g}, bounds 1.1 and 1.55",
               flush=True)
-        assert 0.4 * tolerance < error < 1.3 * tolerance, error
+        assert 1.1 * estimate < error < 1.55 * estimate, (error, estimate)
+        assert 0.7 * tolerance < error < 1.3 * tolerance, error
 print("passed")

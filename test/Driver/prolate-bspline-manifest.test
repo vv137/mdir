@@ -1,0 +1,42 @@
+# The log and the manifest of the grid of the prolate kernel with the
+# B-spline window (D[prolate-bspline-grid]): aliasing_estimate,
+# aliasing_bound, and grid_source for the automatic grid, a given grid, and
+# max_spacing; the bound eta/2 with continuity 0 and no basis_terms.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/base.toml
+# RUN: %python %S/Inputs/prolate_bspline_manifest.py %t mdir | FileCheck %s
+# CHECK: automatic: grid {{.*}}, automatic, grid_source automatic, estimate {{.*}}, bound 0.001
+# CHECK: given: grid {{.*}}, given, grid_source grid
+# CHECK: coarse: grid [12, 12, 12], given, grid_source grid
+# CHECK: spaced: grid {{.*}}, from max_spacing, grid_source max_spacing
+# CHECK: continuity0: grid {{.*}}, automatic, grid_source automatic, estimate {{.*}}, bound 0.0005
+# CHECK: passed
+
+#--- run.toml
+[input]
+topology   = "opc.prmtop"
+coordinates = "opc.inpcrd"
+
+[output]
+energy_interval = 0
+[energy]
+cutoff        = 9.0
+pairlist_distance = 10.0
+electrostatics = "PME"
+
+[pme]
+#PME
+
+[dynamics]
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.0005
+steps         = 0
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PERIODIC"
+#--- end

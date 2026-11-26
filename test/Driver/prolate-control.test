@@ -40,6 +40,11 @@
 # RUN: sed 's/^#PME$/kernel = "PROLATE"\ncontinuity = 2\ntolerance = 1e-9/' %t/base.toml > %t/spline.toml
 # RUN: not mdir run %t/spline.toml 2>&1 | FileCheck %s --check-prefix=SPLINE
 # SPLINE: the mesh error estimate of the prolate kernel with the B-spline window stays above its bound 1e-09 for the tolerance 1e-09 of [pme]: it is {{.*}} at {{[0-9]+}} x {{[0-9]+}} x {{[0-9]+}} points, 8 times finer than the grid of eq. 15; give a looser 'tolerance' or the grid in 'grid'{{$}}
+# The same tolerance with the grid given: not refused, and the log gives
+# the estimate on that grid against the bound.
+# RUN: sed 's/^#PME$/kernel = "PROLATE"\ncontinuity = 2\ntolerance = 1e-9\ngrid = [24, 24, 24]/' %t/base.toml > %t/spline-grid.toml
+# RUN: mdir run %t/spline-grid.toml 2>&1 | FileCheck %s --check-prefix=SPLINE-GRID
+# SPLINE-GRID: MDIR: a grid of 24 x 24 x 24 (given), the mesh error estimate {{[0-9.e-]+}}, the bound of the automatic grid 1e-09 (D[prolate-bspline-grid])
 # With 'bandwidth' alone the default tolerance 1e-5 is the bound, which
 # c = 9.5392 does not reach there.
 # RUN: sed 's/^#PME$/kernel = "PROLATE"\ncontinuity = 2\nbandwidth = 9.5392/' %t/base.toml > %t/spline-bandwidth.toml

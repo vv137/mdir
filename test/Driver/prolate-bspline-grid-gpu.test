@@ -1,10 +1,11 @@
 # The automatic grid of the prolate kernel with the B-spline window
 # (D[prolate-bspline-grid], issue #985): finer than the grid of eq. 15,
-# whose error is above the tolerance, and within 0.4 to 1.3 times the
-# tolerance on charges at uncorrelated places, in mixed and double precision.
+# whose error is above the tolerance, and within 0.7 to 1.3 times the
+# tolerance and 1.1 to 1.55 times the mesh error estimate of the manifest
+# on charges at uncorrelated places, in mixed and double precision.
 # REQUIRES: python-api, cuda
 # RUN: rm -rf %t
-# RUN: env OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 %mdir_python %S/Inputs/prolate_bspline_grid.py GPU %t | FileCheck %s
+# RUN: env OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 %mdir_python %S/Inputs/prolate_bspline_grid.py GPU %t mdir | FileCheck %s
 # CHECK: GPU tolerance 0.001: the grid of eq. 15
 # CHECK: GPU Mixed tolerance 0.001: reciprocal force error
 # CHECK: GPU Double tolerance 0.001: reciprocal force error
