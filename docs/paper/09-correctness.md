@@ -880,3 +880,19 @@ times $1+16\epsilon$, where $\epsilon$ is binary32 machine epsilon. The
 guard covers narrowing the displacement, squaring its components, and adding
 them. Squared cutoffs outside the normal binary32 range bypass this filter.
 The force kernel retains its cutoff test (D[distribute-cpu-threads]).
+
+For D[distribute-cpu-threads], spatial ownership and native integration
+ownership are two partitions of the same identities. Collecting a spatial
+field assigns each row to its unique position in its native interval.
+Reversing the sends and receives returns the field to the original spatial
+rows. Particlewise Verlet updates therefore use the same mass, position,
+velocity, and force for each identity in both representations. A disjoint
+constraint group requests its members before determining their common owner.
+The deterministic observable sum adds integer interval totals before the
+single conversion to physical units.
+
+An exclusion pair has a unique directory entry orientation, with its smaller
+identity first. Both endpoints of every candidate occur among the owned and
+ghost rows. Querying that directory for the distinct local identities and
+retaining pairs with both endpoints present consequently preserves the
+exclusion test on every candidate.

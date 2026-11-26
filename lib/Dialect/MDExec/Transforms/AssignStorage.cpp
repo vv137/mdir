@@ -2081,7 +2081,8 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
               auto cast = dyn_cast<arith::IndexCastOp>(*ptr->user_begin());
               if (!cast || !cast->hasOneUse()) return true;
               auto call = dyn_cast<func::CallOp>(*cast->user_begin());
-              return !call || call.getCallee() != "mdrtMPICollectField" ||
+              return !call || (call.getCallee() != "mdrtMPICollectField" &&
+                               call.getCallee() != "mdrtMPIExpandField") ||
                      call.getNumOperands() != 5 || call.getOperand(2) != cast.getResult() ||
                      call->getBlock() != op->getBlock() || !call->isBeforeInBlock(op);
             }

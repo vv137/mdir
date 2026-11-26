@@ -616,3 +616,7 @@ product must agree with an explicit rank count. The log prints both
 the physical PME grid and its pencil decomposition (D[distribute-pme]).
 
 For MPI transport, the driver assembles native output fields in particle identity order from distributed ranges (D[distribute-cpu-threads]).
+
+MPI distribution uses rank-local native integration fields and halo-local
+exclusion keys under the existing transport and domain controls
+(D[distribute-cpu-threads]).

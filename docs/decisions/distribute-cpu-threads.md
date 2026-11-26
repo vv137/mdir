@@ -150,3 +150,19 @@ physical cutoff plus a roundoff guard. It repeats this test at every
 evaluation, including iterations that reuse a neighbor list. The pair
 kernel applies its own precision-specific cutoff to the retained rows.
 Deterministic execution keeps the original lane membership and sums.
+
+Inside an MPI native integration loop, the particle state uses a separate
+particle set for the rank's contiguous interval of identities. Kicks, drifts,
+constraint updates, and their loop-carried copies use that extent. The layout
+routes spatially owned values to interval owners for collection. Distribution
+reads the same schedule in reverse. Group registration requests coordinates
+for its disjoint interval of constraint tuples. Scalar reporting combines the
+interval sums. Deterministic sums retain their wide integer representation
+until all intervals have contributed. A complete-field consumer at an output
+boundary materializes particle-set order.
+
+Each rank reads an interval of exclusion tuples. It sends each unordered pair
+to the directory rank of the smaller identity. A new halo requests its owned
+and ghost identities and keeps the returned keys whose other endpoint is also
+present. An immutable relation version identifies this projection to the
+candidate matrix.

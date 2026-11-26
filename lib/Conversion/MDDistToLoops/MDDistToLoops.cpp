@@ -15,6 +15,7 @@
 #include "mdir/Conversion/Passes.h"
 
 #include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/Dyn/DynOps.h"
 #include "mdir/Dialect/MDDist/MDDistDialect.h"
 #include "mdir/Dialect/MDDist/MDDistOps.h"
 #include "mdir/Dialect/MDExec/Algebra.h"
@@ -198,6 +199,12 @@ private:
   LogicalResult lowerSumPairs(SumPairsOp op);
   LogicalResult lowerGatherPairs(GatherPairsOp op);
   LogicalResult lowerSumParticles(SumParticlesOp op);
+  DenseMap<Operation *,Value> shardExtent;
+  void shardDriverLoop(scf::ForOp loop);
+  Value bufferAddress(OpBuilder &b, Value buffer) {
+    return arith::IndexCastOp::create(b,loc,b.getI64Type(),
+        memref::ExtractAlignedPointerAsIndexOp::create(b,loc,buffer));
+  }
   void lowerCollectedSum(md::SumParticlesOp op);
   LogicalResult lowerMapParticles(MapParticlesOp op);
   LogicalResult lowerAllReduce(AllReduceOp op);
@@ -693,6 +700,11 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
     name = "mdrtDistEpochPartition";
     args.append({cache, real(b, matrixSkin), arith::ConstantIntOp::create(b, loc, mpi, 64)});
   }
+  Value globalCount = shardExtent.lookup(op);
+  if (globalCount) {
+    name = cache ? "mdrtDistShardEpochPartition" : "mdrtDistShardPartition";
+    args.push_back(arith::IndexCastOp::create(b,loc,i64,globalCount));
+  }
   Value handle = func::CallOp::create(b, loc,
       declare(name, b.getFunctionType(ValueRange(args).getTypes(), {i64}), true), args).getResult(0);
   for (Value group : op.getGroups()) {
@@ -700,13 +712,13 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
     Value members = mdrt::ToBufferOp::create(b, loc, type, group);
     auto dynamic = MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, b.getI32Type());
     Value view = memref::CastOp::create(b, loc, dynamic, members);
-    auto apply = declare("mdrtDistGroupOwners", b.getFunctionType({i64, wide, dynamic}, {}), true);
+    auto apply = declare(globalCount ? "mdrtDistShardGroupOwners" : "mdrtDistGroupOwners", b.getFunctionType({i64, wide, dynamic}, {}), true);
     func::CallOp::create(b, loc, apply, ValueRange{handle, cast, view});
   }
   if (mpi)
     func::CallOp::create(b,loc,declare("mdrtDistEndPartition",
         b.getFunctionType({i64}, {}),false),handle);
-  Value count = memref::DimOp::create(b, loc, positions, 0);
+  Value count = globalCount ? globalCount : Value(memref::DimOp::create(b, loc, positions, 0));
   Value capacity = ownedCapacity(b, handle);
   auto [rows, ids] = rowViews(b, handle, false);
   OpBuilder atEnd(end);
@@ -770,6 +782,23 @@ LogicalResult Lowering::lowerDistribute(DistributeOp op) {
   int64_t k = fieldType.getNumComponents();
   Value first = domainBound(b, false), past = domainBound(b, true);
   Value z = index(b, 0), one = index(b, 1), offsets, ids;
+  if (shardExtent.count(op)) {
+    auto view = mdrt::ToBufferOp::create(b,loc,mdrt::getBufferType(fieldType),op.getField());
+    view->setAttr("mdrt.partition_view",b.getUnitAttr());
+    Value owned = allocate(b,layout.capacity,k);
+    auto i64 = b.getI64Type();
+    auto fn = declare("mdrtDistDistributeShard",b.getFunctionType({i64,i64,owned.getType(),i64,i64},{}),true);
+    func::CallOp::create(b,loc,fn,ValueRange{layout.handle,bufferAddress(b,view),owned,
+        arith::ConstantIntOp::create(b,loc,fieldType.getElementType().isInteger(32),64),
+        arith::ConstantIntOp::create(b,loc,bool(op.getImage()),64)});
+    if (Value cache = trajectoryCaches.lookup(op.getResult())) {
+      SmallVector<Value> args{cache, layout.handle, owned};
+      func::CallOp::create(b,loc,declare("mdrtDistEpochImages",
+          b.getFunctionType(ValueRange(args).getTypes(),{}),true),args);
+    }
+    storage[op.getResult()].buffer = owned;
+    return success();
+  }
   if (mpi && module->hasAttr("md_dist.driver")) {
     auto indexRows = MemRefType::get({ShapedType::kDynamic}, b.getIndexType());
     offsets = allocate(b, indexRows, {index(b, domains)});
@@ -888,7 +917,7 @@ LogicalResult Lowering::lowerCollect(CollectOp op) {
   // The buffer is handed to the program as a field, which owns it from
   // then on; it is not freed here.
   Value global =
-      memref::AllocOp::create(b, loc, type, ValueRange{layout.count});
+      memref::AllocOp::create(b, loc, type, ValueRange{shardExtent.count(op) ? shardExtent.lookup(op) : layout.count});
   if (mpi) {
     Type i64 = b.getI64Type();
     Value base = arith::IndexCastOp::create(b,loc,i64,
@@ -897,7 +926,7 @@ LogicalResult Lowering::lowerCollect(CollectOp op) {
         b.getFunctionType({i64,owned.getType(),i64,i64,i64}, {}), true);
     func::CallOp::create(b,loc,collect,ValueRange{layout.handle,owned,base,
         arith::ConstantIntOp::create(b,loc,fieldType.getElementType().isInteger(32),64),
-        arith::ConstantIntOp::create(b,loc,checkpointOnly,64)});
+        arith::ConstantIntOp::create(b,loc,shardExtent.count(op) ? 2 : checkpointOnly,64)});
   } else scf::ForOp::create(
       b, loc, index(b, 0), limit, index(b, 1), ValueRange(),
       [&](OpBuilder &bd, Location, Value d, ValueRange) {
@@ -1626,12 +1655,19 @@ LogicalResult Lowering::lowerNeighborhood(NeighborhoodOp op) {
     }
     OpBuilder init(scope);
     Value members = mdrt::ToBufferOp::create(init, loc, type, excluded);
-    auto build = declare("mdrtDistExclusions", b.getFunctionType({type}, {i64}), true);
+    bool local = mpi && module->hasAttr("md_dist.driver");
+    auto build = declare(local ? "mdrtDistExclusionShard" : "mdrtDistExclusions", b.getFunctionType({type}, {i64}), true);
     Value handle = func::CallOp::create(init, loc, build, members).getResult(0);
-    excludedPairs[op.getResult()] = handle;
+    Value selected = handle;
+    if (local) {
+      auto project = declare("mdrtDistHaloExclusions",b.getFunctionType({i64,i64},{i64}),false);
+      selected = func::CallOp::create(b,loc,project,ValueRange{storage[op.getHalo()].handle,handle}).getResult(0);
+    }
+    excludedPairs[op.getResult()] = selected;
     OpBuilder cleanup(end);
-    if (scope != op) cleanup.setInsertionPointAfter(scope);
     auto release = declare("mdrtDistFreeExclusions", b.getFunctionType({i64}, {}), false);
+    if (local) func::CallOp::create(cleanup,loc,release,selected);
+    if (scope != op) cleanup.setInsertionPointAfter(scope);
     func::CallOp::create(cleanup, loc, release, handle);
   }
   func::CallOp::create(
@@ -2294,7 +2330,21 @@ void Lowering::lowerCollectedSum(md::SumParticlesOp op) {
         scf::YieldOp::create(body, loc,
                              add(body, acc[0], quantize(body, term, format)));
       });
-  op.replaceAllUsesWith(decodeObservable(b, loop.getResult(0), format));
+  Value total = loop.getResult(0);
+  if (shardExtent.count(op)) {
+    auto scalar = [&](Value v) {
+      auto fn = declare(fixedPoint ? "mdrtMPICombineWide" : "mdrtMPICombineDouble",
+          b.getFunctionType({v.getType()},{v.getType()}),false);
+      return func::CallOp::create(b,loc,fn,v).getResult(0);
+    };
+    if (auto vec = dyn_cast<VectorType>(total.getType())) {
+      SmallVector<Value> parts;
+      for (int i=0; i<vec.getNumElements(); ++i)
+        parts.push_back(scalar(vector::ExtractOp::create(b,loc,total,i)));
+      total = vector::FromElementsOp::create(b,loc,vec,parts);
+    } else total = scalar(total);
+  }
+  op.replaceAllUsesWith(decodeObservable(b,total,32));
   op.erase();
 }
 
@@ -3257,18 +3307,129 @@ static LogicalResult outlineSteps(ModuleOp module, func::FuncOp function, String
   return success();
 }
 
-LogicalResult Lowering::run(func::FuncOp function) {
-  // The words of the deterministic mode are those of the reference
-  // executor; the executor through md_exec sums in binary64 only.
-  if (fixedPoint && throughExec)
-    return function.emitError(
-        "deterministic fixed-point sums require the reference executor");
-  if (fixedPoint && module->hasAttr("md_dist.driver")) {
-    SmallVector<md::SumParticlesOp> sums;
-    function.walk([&](md::SumParticlesOp op) { sums.push_back(op); });
-    for (auto sum : sums)
-      lowerCollectedSum(sum);
+// The constrained native step carries ordinary particle fields in scf.for.
+// Give its maps, kicks and drifts the contiguous identity interval on this
+// rank. The separate particle-set symbol also gives storage assignment the
+// local extent for loop-carried destinations and their copies.
+void Lowering::shardDriverLoop(scf::ForOp root) {
+  OpBuilder entry(root);
+  loc = root.getLoc();
+  Value initial = root.getInitArgs().front();
+  auto original = cast<md::FieldType>(initial.getType());
+  auto sourceSet = original.getParticleSet();
+  std::string name = (decomposition.getSymName() + ".native").str();
+  OpBuilder symbols(decomposition);
+  auto symbol = module.lookupSymbol<md::ParticleSetOp>(name);
+  if (!symbol) symbol = md::ParticleSetOp::create(symbols,loc,name);
+  auto shardSet = FlatSymbolRefAttr::get(module.getContext(),name);
+  auto retype = [&](Value field, FlatSymbolRefAttr set) {
+    auto t = cast<md::FieldType>(field.getType());
+    return md::FieldType::get(module.getContext(),set,t.getNumComponents(),t.getElementType());
+  };
+  auto inSet = [](Value field, FlatSymbolRefAttr set) {
+    auto t = dyn_cast<md::FieldType>(field.getType());
+    return t && t.getParticleSet() == set;
+  };
+  auto view = [&](OpBuilder &b, Value field) -> Value {
+    auto op = mdrt::ToBufferOp::create(b,loc,mdrt::getBufferType(cast<md::FieldType>(field.getType())),field);
+    op->setAttr("mdrt.partition_view",b.getUnitAttr());
+    return op;
+  };
+  auto i64 = entry.getI64Type();
+  Value extent = memref::DimOp::create(entry,loc,view(entry,initial),0);
+  Value extent64 = arith::IndexCastOp::create(entry,loc,i64,extent);
+  auto bound = [&](int side) {
+    auto fn = declare("mdrtMPIIdentityBound",entry.getFunctionType({i64,i64},{i64}),false);
+    Value side64 = arith::ConstantIntOp::create(entry,loc,side,64);
+    return toIndex(entry,func::CallOp::create(entry,loc,fn,ValueRange{extent64,side64}).getResult(0));
+  };
+  Value first = bound(0);
+  Value length = arith::SubIOp::create(entry,loc,bound(1),first);
+  Value ids = memref::AllocOp::create(entry,loc,MemRefType::get({ShapedType::kDynamic},entry.getIndexType()),ValueRange{length});
+  scf::ParallelOp::create(entry,loc,ValueRange{index(entry,0)},ValueRange{length},ValueRange{index(entry,1)},
+      [&](OpBuilder &b, Location, ValueRange iv) {
+        memref::StoreOp::create(b,loc,arith::AddIOp::create(b,loc,first,iv[0]),ids,iv);
+      });
+  DenseMap<Value,Value> immutable;
+  auto compact = [&](OpBuilder &use, Value field) -> Value {
+    if (!inSet(field,sourceSet)) return field;
+    bool external = root.isDefinedOutsideOfLoop(field);
+    if (external && immutable.count(field)) return immutable.lookup(field);
+    OpBuilder b(external ? entry : use);
+    auto copy = mdrt::SnapshotOp::create(b,loc,mdrt::getBufferType(cast<md::FieldType>(field.getType())),field,ids);
+    Value result = mdrt::FromBufferOp::create(b,loc,retype(field,shardSet),copy);
+    if (external) immutable[field] = result;
+    return result;
+  };
+  auto expand = [&](OpBuilder &b, Value field) -> Value {
+    auto t = retype(field,sourceSet);
+    Value dst = memref::AllocOp::create(b,loc,mdrt::getBufferType(t),ValueRange{extent});
+    auto fn = declare("mdrtMPIExpandField",b.getFunctionType({i64,i64,i64,i64,i64},{}),false);
+    func::CallOp::create(b,loc,fn,ValueRange{bufferAddress(b,view(b,field)),extent64,bufferAddress(b,dst),
+        arith::ConstantIntOp::create(b,loc,t.getNumComponents(),64),
+        arith::ConstantIntOp::create(b,loc,t.getElementType().isInteger(32),64)});
+    auto result = mdrt::FromBufferOp::create(b,loc,t,dst);
+    result->setAttr("mdrt.collect_buffer",b.getUnitAttr());
+    return result;
+  };
+  std::function<void(scf::ForOp)> visit = [&](scf::ForOp loop) {
+    OpBuilder pre(loop);
+    for (auto [i, arg] : llvm::enumerate(loop.getRegionIterArgs())) {
+      if (!inSet(arg,sourceSet)) continue;
+      Value seed = compact(pre,loop.getInitArgs()[i]);
+      loop.getInitArgsMutable()[i].set(seed);
+      arg.setType(seed.getType());
+      loop.getResult(i).setType(seed.getType());
+    }
+    for (Operation &op : llvm::make_early_inc_range(*loop.getBody())) {
+      OpBuilder b(&op);
+      if (auto nested = dyn_cast<scf::ForOp>(op)) { visit(nested); continue; }
+      if (auto yield = dyn_cast<scf::YieldOp>(op)) {
+        for (auto [i, operand] : llvm::enumerate(yield->getOpOperands()))
+          if (inSet(loop.getResult(i),shardSet)) operand.set(compact(b,operand.get()));
+        continue;
+      }
+      if (auto collect = dyn_cast<CollectOp>(op)) {
+        collect.getResult().setType(retype(collect.getResult(),shardSet));
+        shardExtent[&op] = length;
+        continue;
+      }
+      if (auto part = dyn_cast<PartitionOp>(op)) {
+        if (inSet(part.getPositions(),shardSet)) shardExtent[&op] = extent;
+        continue;
+      }
+      if (auto distribute = dyn_cast<DistributeOp>(op)) {
+        if (inSet(distribute.getField(),shardSet)) shardExtent[&op] = length;
+        continue;
+      }
+      bool map = isa<md::MapParticlesOp,mdir::dyn::KickOp,mdir::dyn::DriftOp>(op);
+      if ((map || isa<md::SumParticlesOp>(op)) && llvm::any_of(op.getOperands(),
+          [&](Value v) { return inSet(v,sourceSet) || inSet(v,shardSet); })) {
+        for (OpOperand &operand : op.getOpOperands())
+          operand.set(compact(b,operand.get()));
+        if (map) op.getResult(0).setType(retype(op.getResult(0),shardSet));
+        else shardExtent[&op] = length;
+        continue;
+      }
+      // A host observation, permutation or other complete-field consumer
+      // sees the original particle set at its actual point of use.
+      for (OpOperand &operand : op.getOpOperands())
+        if (inSet(operand.get(),shardSet)) operand.set(expand(b,operand.get()));
+    }
+  };
+  visit(root);
+  OpBuilder after(root->getBlock(),std::next(root->getIterator()));
+  memref::DeallocOp::create(after,loc,ids);
+  for (Value result : root.getResults()) {
+    if (!inSet(result,shardSet) || result.use_empty()) continue;
+    SmallVector<OpOperand *> uses;
+    for (OpOperand &use : result.getUses()) uses.push_back(&use);
+    Value full = expand(after,result);
+    for (OpOperand *use : uses) use->set(full);
   }
+}
+
+LogicalResult Lowering::run(func::FuncOp function) {
   SmallVector<Operation *> ops;
   auto collect = [&] {
     ops.clear();
@@ -3330,6 +3491,24 @@ LogicalResult Lowering::run(func::FuncOp function) {
     return ops.front()->emitOpError()
            << "has no layout from md_dist.partition to run";
   domains = decomposition.getNumDomains();
+  if (mpi && module->hasAttr("md_dist.driver")) {
+    SmallVector<scf::ForOp> roots;
+    function.walk<WalkOrder::PreOrder>([&](scf::ForOp loop) {
+      if (!loop.getNumRegionIterArgs() || !isa<md::FieldType>(loop.getInitArgs().front().getType()) ||
+          !loop.walk([](CollectOp) { return WalkResult::interrupt(); }).wasInterrupted())
+        return WalkResult::advance();
+      roots.push_back(loop);
+      return WalkResult::skip();
+    });
+    for (auto root : roots) shardDriverLoop(root);
+  }
+  if (module->hasAttr("md_dist.driver")) {
+    SmallVector<md::SumParticlesOp> sums;
+    function.walk([&](md::SumParticlesOp sum) {
+      if (fixedPoint || shardExtent.count(sum)) sums.push_back(sum);
+    });
+    for (auto sum : sums) lowerCollectedSum(sum);
+  }
   if (throughExec)
     declareSets();
   bool statistics = module->hasAttr("md_dist.driver");
