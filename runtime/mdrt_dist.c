@@ -208,6 +208,10 @@ struct ExclusionMap {
   struct Exclusions *table;
   int64_t domain;
   struct Members pairs;
+#ifdef MDIR_ENABLE_NCCL
+  struct DistDeviceMatrix matrix;
+  double cutoff;
+#endif
 };
 
 static void releaseExclusionReference(struct Exclusions *table) {
@@ -217,6 +221,9 @@ static void releaseExclusionReference(struct Exclusions *table) {
 static void removeExclusionMap(struct ExclusionMap **link) {
   struct ExclusionMap *map = *link;
   *link = map->next;
+#ifdef MDIR_ENABLE_NCCL
+  if (map->matrix.data) map->matrix.release(map->matrix.data);
+#endif
   free(map->pairs.allocated);
   releaseExclusionReference(map->table);
   free(map);
@@ -2414,8 +2421,19 @@ static struct TransferPlan *transferPlan(struct Halo *h, int transpose) {
 }
 
 #ifdef MDIR_ENABLE_NCCL
-int64_t mdrtDistDeviceMatrixSlot(int64_t halo, double cutoff) {
+int64_t mdrtDistDeviceMatrixSlot(int64_t halo, double cutoff, int64_t exclusions) {
   struct Halo *h = (struct Halo *)(intptr_t)halo;
+  if (exclusions) {
+    struct Exclusions *table = (struct Exclusions *)(intptr_t)exclusions;
+    int64_t d = mdrtMPIDomainBound(h->layout->domains,0);
+    for (struct ExclusionMap *map = h->exclusionMaps; map; map = map->next) {
+      if (map->table != table || map->domain != d) continue;
+      if (map->cutoff && map->cutoff != cutoff) return 0;
+      map->cutoff = cutoff;
+      return (int64_t)(intptr_t)&map->matrix;
+    }
+    return 0;
+  }
   if (h->deviceCutoff && h->deviceCutoff != cutoff) return 0;
   h->deviceCutoff = cutoff;
   return (int64_t)(intptr_t)&h->deviceMatrix;

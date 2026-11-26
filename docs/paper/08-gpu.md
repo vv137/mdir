@@ -1173,3 +1173,9 @@ status. Its host read completes before the collective decision for the
 step. Reusing this result across steps removes a driver allocation and
 free per nonempty rank per step. The device row fields and generated
 temporaries retain their own activation or reference-counted lifetimes.
+
+Exclusion membership is a second condition for reusing a neighbor
+matrix. The local exclusion map fixes the global relation and both
+endpoints' owned or ghost row identities. Attaching the matrix to that
+map lets successive covered evaluations borrow it. A replaced relation
+gets a new map even if the geometry is still covered.

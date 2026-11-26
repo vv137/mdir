@@ -2874,16 +2874,6 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
         midpoint ? 2 : traversal == Traversal::Unique ? 1 : 0);
     return {positions, structure, nOwned, relation.cell, centers};
   }
-  if (sharedState() && !op.getExcluded() && op.getHalo().getDefiningOp<UnpackOp>() &&
-      module->hasAttr("md_dist.driver") && matrixSkin > 0) {
-    // Within this Verlet epoch each row moves at most half the halo
-    // margin from its reference. Between two evaluations the separation
-    // can therefore change by twice the margin.
-    skin = 2*(op.getHalo().getType().getReach().convertToDouble()-cutoff);
-    auto fn = declare("mdrtDistDeviceMatrixSlot",
-                      b.getFunctionType({b.getI64Type(), b.getF64Type()}, {b.getI64Type()}), false);
-    func::CallOp::create(b,loc,fn,ValueRange{halo.handle,real(b,cutoff)});
-  }
   Value excluded;
   if (gpuPairs && op.getExcluded()) {
     auto name = (set.getValue() + ".excluded").str();
@@ -2905,6 +2895,19 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
     Value pairs = mdrt::FromBufferOp::create(b, loc, relationType, members);
     excluded = md_exec::BuildIncidenceOp::create(b, loc,
         mdrt::IncidenceType::get(context, set, 2, tupleSet), pairs, Value());
+  }
+  if (sharedState() && op.getHalo().getDefiningOp<UnpackOp>() &&
+      module->hasAttr("md_dist.driver") && matrixSkin > 0) {
+    // Within this Verlet epoch each row moves at most half the halo
+    // margin from its reference. Between two evaluations the separation
+    // can therefore change by twice the margin.
+    skin = 2*(op.getHalo().getType().getReach().convertToDouble()-cutoff);
+    Type wide = b.getI64Type();
+    Value exclusions = excludedPairs.lookup(op.getResult());
+    if (!exclusions) exclusions = arith::ConstantIntOp::create(b,loc,0,64);
+    auto fn = declare("mdrtDistDeviceMatrixSlot",
+                      b.getFunctionType({wide, b.getF64Type(), wide}, {wide}), false);
+    func::CallOp::create(b,loc,fn,ValueRange{halo.handle,real(b,cutoff),exclusions});
   }
   Value cells = md_exec::BuildCellsOp::create(
       b, loc, mdrt::CellsType::get(context, set), positions,

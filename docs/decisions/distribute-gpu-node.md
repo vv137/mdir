@@ -363,3 +363,10 @@ runtime lifetime. Each call clears it before testing local rows and reads
 it before voting on coverage. Shutdown releases it. On one V100, two
 2,104-step runs at a 0.15 Å skin reached 4,661.375 MiB used within the
 first 1,000 steps and stayed at or below that high-water mark to the end.
+
+For an excluded GPU MATRIX, store the candidate rows, traversal order
+and counts with the mapped exclusion relation for that halo and domain.
+A changed relation has its own map. A different cutoff declines reuse.
+Releasing an expired map releases its cached list. The list radius
+includes twice the halo margin so that a list first built during the
+epoch remains valid through its last covered evaluation.
