@@ -1788,6 +1788,8 @@ writer. A collect shared with the following segment also supplies its peers.
 
 ### GPU spatial decomposition (D[distribute-gpu-node])
 
+With NCCL transport, pointwise constraint corrections on owned three-component fields run on each rank’s GPU.
+
 With MPI, CUDA, and NCCL enabled at build time, select a GPU target,
 `[distribute] transport = "nccl"`, and `placement = "node"`. The latter
 is the default. Each MPI rank owns one domain and one distinct CUDA

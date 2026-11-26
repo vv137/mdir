@@ -15,3 +15,4 @@
   eligible fused particle observables.
 - Constrained multi-device halos enclose periodic groups separately, and
   independent floating-point tuple observables share reductions.
+- Keep pointwise updates of owned constraint vectors on the rank's GPU.

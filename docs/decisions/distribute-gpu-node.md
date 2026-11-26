@@ -438,3 +438,9 @@ and 76.287, 61.760, 54.835, and 50.320 at one, two, four, and eight
 distributed GPUs, respectively. Both repetitions at every layout
 agreed with the ordinary potential energy and scalar virial across all
 205 frames within $2\times10^{-4}$ and $2\times10^{-3}$ kcal/mol.
+
+Floating-point NCCL particle maps that produce a three-component field
+from owned scalar and vector rows can borrow those inputs on the device.
+Each rank executes the pointwise program over its own count. The result
+is copied on the producer stream into the new owned field. This keeps
+constraint corrections on the device between tuple projections.

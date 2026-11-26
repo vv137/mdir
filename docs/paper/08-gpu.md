@@ -1279,3 +1279,13 @@ Across all 205 output frames in each repetition and all four
 decompositions, the maximum potential-energy difference from ordinary was below
 $1.01\times10^{-6}$ kcal/mol, and the maximum scalar-virial difference
 was below $2.01\times10^{-6}$ kcal/mol.
+
+On one V100 the distributed Factor IX host phase clocks measured 33.982
+ms/step in other terms, 22.325 in pairs and 13.575 in integration.
+The device kernels for tuple scheduling consumed 1.188 ms/step in a
+separate trace. Between projections, the executor transferred whole
+three-component fields of 2,181,744 bytes to the host for pointwise
+arithmetic. A rank can instead evaluate that arithmetic on the device
+over its owned rows. Each output row depends only on input rows with the
+same index, so this change requires no additional halo exchange. Two
+runs of this implementation took 50.137 and 50.192 ms/step.

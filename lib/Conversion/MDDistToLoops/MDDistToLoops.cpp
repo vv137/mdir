@@ -2403,6 +2403,18 @@ LogicalResult Lowering::lowerMapParticles(MapParticlesOp op) {
   OpBuilder b(op);
   FieldType resultType = op.getResult().getType();
   Storage &rows = rowsOf(op.getGathered()[0]);
+  // Constraint corrections and intermediate forces are immutable owned
+  // fields. Keep their pointwise arithmetic on the stream of the local rank.
+  if (sharedState() && matrixPairs && !fixedPoint && resultType.isOwned() &&
+      resultType.getElementType().isF64() && resultType.getNumComponents() == 3 &&
+      !op->hasAttr("md_dist.verlet_kick") && !op->hasAttr("md_dist.verlet_drift") &&
+      !op->hasAttr("md_dist.add_terms") &&
+      llvm::all_of(op.getGathered(), [](Value field) {
+        auto type = cast<FieldType>(field.getType());
+        return type.isOwned() && type.getElementType().isF64() &&
+               (type.getNumComponents() == 1 || type.getNumComponents() == 3);
+      }))
+    return lowerMapParticlesExec(op);
   Value result = allocate(b, rows.capacity, resultType.getNumComponents());
   if (sharedState() && (op->hasAttr("md_dist.verlet_kick") || op->hasAttr("md_dist.verlet_drift"))) {
     llvm::SetVector<Value> captures;
@@ -3445,15 +3457,27 @@ LogicalResult Lowering::lowerMapParticlesExec(MapParticlesOp op) {
   int64_t k = resultType.getNumComponents();
   Storage &layout = rowsOf(op.getGathered()[0]);
   Value result = allocate(b, layout.capacity, k);
-  for (int64_t d = 0; d < domains; ++d) {
-    FlatSymbolRefAttr set =
-        getSet(d, /*local=*/false, layoutOf(op.getGathered()[0]));
-    Value count = countOf(b, layout, index(b, d));
+  Value epoch = layoutOf(op.getGathered().front());
+  auto emit = [&](OpBuilder &b, Value d, FlatSymbolRefAttr set) {
+    Value count = countOf(b, layout, d);
+    Value stream = sharedState() ? externalStream(b) : Value();
     SmallVector<Value> ins;
-    for (Value field : op.getGathered())
-      ins.push_back(makeField(
-          b, set, cast<FieldType>(field.getType()).getNumComponents(),
-          b.getF64Type(), index(b, d), {storage[field].buffer}, {count}));
+    for (Value field : op.getGathered()) {
+      int64_t width = cast<FieldType>(field.getType()).getNumComponents();
+      if (stream) {
+        auto fieldType = md::FieldType::get(module.getContext(), set, width, b.getF64Type());
+        auto host = mdrt::getBufferType(fieldType);
+        auto device = MemRefType::get(host.getShape(), host.getElementType(),
+                                     MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
+        SmallVector<Value> args{d, count, storage[field].buffer, stream};
+        auto view = declare(width == 1 ? "mdrtDistTupleOwnedScalars" : "mdrtDistTupleOwnedVectors",
+                            b.getFunctionType(ValueRange(args).getTypes(), {device}), true);
+        Value data = func::CallOp::create(b, loc, view, args).getResult(0);
+        ins.push_back(mdrt::FromBufferOp::create(b, loc, fieldType, data));
+      } else {
+        ins.push_back(makeField(b, set, width, b.getF64Type(), d, {storage[field].buffer}, {count}));
+      }
+    }
     auto outType =
         md::FieldType::get(module.getContext(), set, k, b.getF64Type());
     Value destination = md_exec::EmptyOp::create(b, loc, outType);
@@ -3473,7 +3497,20 @@ LogicalResult Lowering::lowerMapParticlesExec(MapParticlesOp op) {
         kb, loc,
         ValueRange{mapping.lookupOrDefault(
             cast<YieldOp>(source.getTerminator()).getValues()[0])});
-    copyBack(b, loop.getResult(0), index(b, 0), count, result, index(b, d));
+    copyBack(b, loop.getResult(0), index(b, 0), count, result, d, stream);
+  };
+  if (sharedState()) {
+    auto enter = declare("mdrtDeviceDomainEnter", b.getFunctionType({}, {b.getI64Type()}), false);
+    Value parent = func::CallOp::create(b, loc, enter).getResult(0);
+    auto loop = scf::ForOp::create(b, loc, domainBound(b, false), domainBound(b, true), index(b, 1));
+    loop->setAttr("md_dist.domain_loop", b.getUnitAttr());
+    OpBuilder body(loop.getBody()->getTerminator());
+    emit(body, loop.getInductionVar(), getSet(0, false, epoch));
+    auto leave = declare("mdrtDeviceDomainLeave", b.getFunctionType({b.getI64Type()}, {}), false);
+    func::CallOp::create(b, loc, leave, ValueRange{parent});
+  } else {
+    for (int64_t d = 0; d < domains; ++d)
+      emit(b, index(b, d), getSet(d, false, epoch));
   }
   storage[op.getResult()].buffer = result;
   return success();
