@@ -535,7 +535,9 @@ def run_triclinic():
     evaluator = mdir.FrameEvaluator(program)
     out = evaluator.evaluate(trajectory)
     names = list(out.jacobian)
-    volumes = diagonals.prod(axis=1)
+    # Each frame is evaluated in its step cell, whose components in nm are
+    # rounded to binary32 in mixed precision (D[box-f32-exact]).
+    volumes = (diagonals if double else diagonals.astype(np.float32).astype(np.float64)).prod(axis=1)
     assert relative(out.volume, volumes) < 1e-14 and len(set(out.volume)) == count
     # A simulation compiled from the frame, whose cell is then the cell of
     # the program.

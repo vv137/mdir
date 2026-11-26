@@ -618,7 +618,7 @@ def mixture_program(precision, shift, kind="NVE", dispersion=None):
     return mdir.compile(system, state, integrator, ensemble, execution, mdir.Schedule())
 
 
-def mixture_tails():
+def mixture_tails(precision):
     """What the correction adds to the columns of the NBFIX term, in closed
     form (D209, D210), kJ/mol and nm: nu (4 pi / V) N_A N_B (I + f r_c^3
     u(r_c) / 3), with I the integral of r^2 u beyond r_c, f = 1 - V / (N 4
@@ -628,7 +628,12 @@ def mixture_tails():
     gro = (mixture / "system.gro").read_text().splitlines()
     count = int(gro[1])
     kinds = [line[5:10].strip() for line in gro[2:2 + count]]
-    volume = float(gro[2 + count].split()[0]) ** 3
+    edge = float(gro[2 + count].split()[0])
+    if precision != "Double":
+        # Mixed precision runs in the binary32 step cell (D[box-f32-exact]):
+        # the edge in nm rounded once, so the closed form takes that edge.
+        edge = float(np.float32(edge))
+    volume = edge ** 3
     na, nb, rc = kinds.count("A"), kinds.count("B"), 1.2
     n = na + nb
     f = 1 - volume / (n * 4 * math.pi / 3 * rc ** 3)
@@ -673,7 +678,7 @@ def run_mixture():
             bare.run(20, energy=True)
             off = bare.state().observables
             tails = {key: (on[key] - off[key]) / KJ for key in on}
-            closed = mixture_tails()
+            closed = mixture_tails(precision)
             for key, value in closed.items():
                 assert abs(tails[key] * KJ / value - 1) < 1e-8, (key, tails[key] * KJ, value)
             print(f"{target_name} {precision} {'shift' if shift else 'cutoff'}: the mixture's "

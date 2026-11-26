@@ -315,9 +315,11 @@ def reporters():
     assert len(np.unique(cells[:, 4])) > count // 2, "the barostat did not change the tilts"
     dcd, xtc = dcd_cells(work / "run.dcd"), xtc_cells(work / "run.xtc")
     assert len(dcd) == count and len(xtc) == count, (len(dcd), len(xtc))
-    # DCD holds lengths and cosines in f64, XTC the vectors in f32.
+    # DCD holds lengths and cosines in f64, XTC the vectors in f32. In mixed
+    # precision the step cell is binary32 in nm (D[box-f32-exact]), so XTC
+    # holds it exactly.
     in_dcd, in_xtc = float(np.abs(dcd - cells).max()), float(np.abs(xtc - cells).max())
-    assert in_dcd < 1e-12 and in_xtc < 5e-7, (in_dcd, in_xtc)
+    assert in_dcd < 1e-12 and (in_xtc < 5e-7 if precision == "Double" else in_xtc == 0.0), (in_dcd, in_xtc)
     frames = mdir.read_h5md(str(work / "run.h5md"))
     assert len(frames) == count and frames.dtype == np.float64
     for n, frame in enumerate(frames):

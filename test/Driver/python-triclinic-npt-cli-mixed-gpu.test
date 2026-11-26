@@ -28,5 +28,5 @@
 # CHECKPOINTS: GPU Mixed: Python -> mdir run at step 100: positions, velocities, forces, and the cell with its tilts equal
 # CHECKPOINTS: GPU Mixed: the energy files and the trajectories of the continued runs equal those of mdir run byte for byte
 # CHECKPOINTS: triclinic npt checkpoints GPU Mixed passed
-# REPORTERS: GPU Mixed: the cell of each of 20 frames against the state of its step: DCD within {{[0-9.e-]+}} nm, XTC within {{[0-9.e-]+}} nm, H5MD (box/edges, (3, 3) per frame) and its positions equal to the bit
+# REPORTERS: GPU Mixed: the cell of each of 20 frames against the state of its step: DCD within {{[0-9.e-]+}} nm, XTC within 0e+00 nm, H5MD (box/edges, (3, 3) per frame) and its positions equal to the bit
 # REPORTERS: triclinic npt reporters GPU Mixed passed

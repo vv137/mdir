@@ -473,8 +473,13 @@ def keys():
         written = mdir.read_checkpoint(str(here / "run.h5"))
         assert written.fingerprint == reference.fingerprint, (
             set(written.fingerprint) ^ set(reference.fingerprint))
-        start = parts_of_model()[1].cell
-        strain = np.log(np.asarray(state.cell.diagonal) / np.asarray(start.diagonal))
+        start = np.asarray(parts_of_model()[1].cell.diagonal)
+        if precision != "Double":
+            # The step cell is the master rounded to binary32
+            # (D[box-f32-exact]); an axis of compressibility 0 keeps its
+            # master, so its step edge is the rounded start edge exactly.
+            start = start.astype(np.float32).astype(np.float64)
+        strain = np.log(np.asarray(state.cell.diagonal) / start)
         assert np.abs(strain).max() > 1e-5, strain
         if still is not None:
             assert strain[still] == 0.0, strain
