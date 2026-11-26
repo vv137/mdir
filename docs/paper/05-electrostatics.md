@@ -1336,11 +1336,12 @@ first, then transforms along $y$, $x$ and $z$. These transforms commute
 in exact arithmetic. The ordinary CPU path rounds after each axis in
 this order, so exchanging the inverse axes changes the rounded potential.
 
-Floating assignment uses the ordinary CPU stencil loop on the subgrid.
-Mixed precision evaluates each stencil product in binary32 and sums
-the products in binary64 before narrowing the point for the transform.
-In deterministic mode each particle-to-point contribution is quantized
-once at $2^{-40}$ e.
+Both precisions use the charge representation of ordinary CPU PME.
+Each stencil multiplies the scaled charge $2^{40}q$ by the three
+weights in axis order, rounding each product in the selected precision.
+Rounding the last product to the nearest even integer quantizes each
+contribution once at $2^{-40}$ e. A particle domain accumulates these
+signed words and sends one 64-bit word per overlap point.
 Integer summation at the owner bounds the point's quantization error by
 half a unit per contributing stencil entry, independently of the
 message order. Its checked final range is $[-2^{23},2^{23})$ e.

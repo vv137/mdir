@@ -1,5 +1,4 @@
 #include "../../../runtime/mdrt_dist_stats.h"
-#include "MeshSpread.h"
 // The executors of md_dist: every domain in one process.
 //
 // See docs/distributed-ml2.md, Sections 6 and 7 (D275, D290). Every
@@ -820,9 +819,6 @@ LogicalResult Lowering::lowerMesh(MeshOp op) {
   for (int64_t n : {int64_t(op.getOrder()), meshX, meshY, int64_t(mpi), int64_t(fixedPoint), int64_t(meshMixed)})
     args.push_back(index(b,n));
   args.push_back(index(b, parallelDomains));
-  auto spread = mdir::getMeshSpread(module, op.getOrder(), meshMixed);
-  args.push_back(func::ConstantOp::create(b, loc, spread.getFunctionType(),
-                                          spread.getSymName()));
   auto solve = declare("mdrtDistPME",
       b.getFunctionType(ValueRange(args).getTypes(), {}), true);
   for (unsigned i : {0u, 3u, 4u, 5u})

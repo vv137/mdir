@@ -194,9 +194,14 @@ static struct Subgrid footprint(struct Particle *p, size_t count,
   return g;
 }
 
+static inline void addCharge(int64_t *point, int64_t word) {
+  if (__builtin_add_overflow(*point, word, point))
+    fail("PME charge sum outside signed Q40 range");
+}
+
 static inline void spreadFixedPlane(const struct DomainMesh *local,
                                     struct Subgrid g, int x, int order,
-                                    int mixed, __int128 *grid,
+                                    int mixed, int64_t *grid,
                                     const size_t *offset, const size_t *ids) {
   int nx = g.len[0], ny = g.len[1], nz = g.len[2];
   for (int j = 0; j < order; ++j) {
@@ -218,7 +223,7 @@ static inline void spreadFixedPlane(const struct DomainMesh *local,
           double word = nearbyint(v);
           if (!(word >= -0x1p63 && word < 0x1p63))
             fail("PME assignment outside signed Q40 range");
-          grid[at] += (int64_t)word;
+          addCharge(grid + at, (int64_t)word);
         }
       }
     }
@@ -228,7 +233,7 @@ static inline void spreadFixedPlane(const struct DomainMesh *local,
    order incident bins, avoiding atomics and private copies of the mesh. */
 static void spreadFixed(const struct DomainMesh *local, size_t count,
                         struct Subgrid g, int order, int mixed, int threaded,
-                        __int128 *grid) {
+                        int64_t *grid) {
   const struct Particle *p = local->atoms;
   int nx = g.len[0];
   size_t *offset = alloc((size_t)nx + 1, sizeof *offset);
@@ -299,18 +304,13 @@ static int segments(int start, int len, int period, int lo, int hi,
   }
   return count;
 }
-static void sumRow(void *to, size_t dst, const void *from, size_t src, int len,
-                   int fixed) {
-  if (fixed) {
-    for (int k = 0; k < len; ++k)
-      ((__int128 *)to)[dst + k] += ((const __int128 *)from)[src + k];
-  } else {
-    for (int k = 0; k < len; ++k)
-      ((double *)to)[dst + k] += ((const double *)from)[src + k];
-  }
+static void sumRow(int64_t *to, size_t dst, const int64_t *from,
+                   size_t src, int len) {
+  for (int k = 0; k < len; ++k)
+    addCharge(to + dst + k, from[src + k]);
 }
 static size_t transfer(struct Subgrid g, struct PmeBox b, const int n[3],
-                       enum Move op, int fixed, void *field, void *packet,
+                       enum Move op, void *field, void *packet,
                        int threaded) {
   struct Segment span[3][2];
   int parts[3];
@@ -323,7 +323,7 @@ static size_t transfer(struct Subgrid g, struct PmeBox b, const int n[3],
   }
   if (op == Count)
     return count;
-  size_t width = fixed ? sizeof(__int128) : sizeof(double);
+  size_t width = sizeof(int64_t);
   size_t offset = 0;
   for (int i = 0; i < parts[0]; ++i)
     for (int j = 0; j < parts[1]; ++j)
@@ -351,10 +351,10 @@ static size_t transfer(struct Subgrid g, struct PmeBox b, const int n[3],
               break;
             }
             case SumCharge:
-              sumRow(field, pencil, packet, atPacket, z.len, fixed);
+              sumRow(field, pencil, packet, atPacket, z.len);
               break;
             case AddLocalCharge:
-              sumRow(packet, pencil, field, local, z.len, fixed);
+              sumRow(packet, pencil, field, local, z.len);
               break;
             case UnpackPotential:
             case CopyLocalPotential: {
@@ -381,12 +381,12 @@ static int append(size_t *total, size_t count) {
    concatenate its rows with the other domains destined for this pencil. */
 static size_t moveDomains(struct DomainMesh *domains, int first, int past,
                           struct PmeBox pencil, const int n[3], enum Move op,
-                          int fixed, void *mesh, void *packet, int threaded) {
-  size_t count = 0, width = fixed ? sizeof(__int128) : sizeof(double);
+                          void *mesh, void *packet, int threaded) {
+  size_t count = 0, width = sizeof(int64_t);
   for (int d = first; d < past; ++d) {
     void *field =
         op == PackCharge || op == UnpackPotential ? domains[d].points : mesh;
-    count += transfer(domains[d].box, pencil, n, op, fixed, field,
+    count += transfer(domains[d].box, pencil, n, op, field,
                       packet ? (char *)packet + count * width : NULL, threaded);
   }
   return count;
@@ -433,23 +433,24 @@ static struct Exchange schedule(struct DomainMesh *domains, int nd, int first,
     }
     e.ns[r] = append(&e.sent, moveDomains(domains, first, past,
                                           mdrtPmeRealBoxAt(mesh, r), n, Count,
-                                          0, NULL, NULL, 0));
+                                          NULL, NULL, 0));
     e.nr[r] =
         append(&e.received,
                moveDomains(domains, e.domains[r], e.domains[r + 1],
-                           mdrtPmeRealBox(mesh), n, Count, 0, NULL, NULL, 0));
+                           mdrtPmeRealBox(mesh), n, Count, NULL, NULL, 0));
   }
   return e;
 }
 static void communicate(void *send, int *ns, int *os, void *recv, int *nr,
-                        int *or, int peers, int fixed) {
+                        int *or, int peers, int charge) {
 #ifdef MDIR_ENABLE_MPI
   if (peers > 1) {
-    mdrtMPIExchange(send, ns, os, recv, nr, or, fixed);
-    return;
+    if (charge)
+      mdrtMPIExchangeCharges(send, ns, os, recv, nr, or);
+    else
+      mdrtMPIExchange(send, ns, os, recv, nr, or, 0);
   }
 #endif
-  memcpy(recv, send, ns[0] * (fixed ? sizeof(__int128) : sizeof(double)));
 }
 static size_t boxSize(struct PmeBox b) {
   return (size_t)(b.hi[0] - b.lo[0]) * (b.hi[1] - b.lo[1]) *
@@ -556,26 +557,6 @@ static void spectrum(const int n[3], const double box[3], struct PmeBox b,
         }
       }
 }
-/* Unranked memrefs cross the compiled CPU function boundary as a rank
-   and a pointer to a ranked descriptor. The indices and charges are
-   strided particle fields. The weights and the output grid are contiguous. */
-typedef void (*SpreadKernel)(int64_t, const void *, int64_t, const void *,
-                             int64_t, const void *, int64_t, const void *,
-                             int64_t, int64_t, int64_t);
-static void spreadFloating(struct DomainMesh *local, int64_t num, int order,
-                           SpreadKernel kernel) {
-  struct Particle *p = local->atoms;
-  struct {
-    int64_t *base, *data, offset, n[2], s[2];
-  } start = {p->first, p->first, 0, {num, 3}, {sizeof *p / sizeof(int64_t), 1}};
-  double *w = local->weights;
-  struct Table weights = {w, w, 0, {num, 3 * order}, {3 * order, 1}};
-  struct Results charges = {&p->q, &p->q, 0, num, sizeof *p / sizeof(double)};
-  struct Results grid = {local->points, local->points, 0, volume(local->box),
-                         1};
-  kernel(2, &start, 2, &weights, 1, &charges, 1, &grid, local->box.len[0],
-         local->box.len[1], local->box.len[2]);
-}
 void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
                               struct Field *x, struct Field *q, struct Table *t,
                               struct Field *f, struct Results *result,
@@ -583,7 +564,7 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
                               double coulomb, int64_t nx, int64_t ny,
                               int64_t nz, int64_t order, int64_t px, int64_t py,
                               int64_t mpi, int64_t fixed, int64_t mixed,
-                              int64_t threaded, SpreadKernel compiledSpread) {
+                              int64_t threaded) {
   if (nx < 1 || ny < 1 || nz < 1 || nx > INT_MAX || ny > INT_MAX ||
       nz > INT_MAX || nx * ny > INT64_MAX / nz || order < 3 || order > 8)
     fail("unsupported PME mesh size or assignment order");
@@ -604,7 +585,7 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
   if (rows->size > INT_MAX / 6)
     fail("PME domain count exceeds MPI metadata range");
   struct DomainMesh *domains = alloc(rows->size, sizeof *domains);
-  size_t width = fixed ? sizeof(__int128) : sizeof(double);
+  size_t width = sizeof(int64_t);
   for (int64_t d = first; d < past; ++d) {
     int64_t num = rows->data[rows->offset + d * rows->stride];
     struct DomainMesh *local = domains + d;
@@ -622,11 +603,8 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
     }
     local->box = footprint(local->atoms, num, n, order);
     local->points = alloc(volume(local->box), width);
-    if (fixed)
-      spreadFixed(local, num, local->box, order, mixed, threaded,
+    spreadFixed(local, num, local->box, order, mixed, threaded,
                   local->points);
-    else if (num)
-      spreadFloating(local, num, order, compiledSpread);
   }
   mdrtDistPhase(-DistSpread);
   mdrtDistPhase(DistOverlap);
@@ -640,28 +618,25 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
   for (int r = 0; r < peers; ++r)
     if (r != rank)
       moveDomains(domains, first, past, mdrtPmeRealBoxAt(mesh, r), n,
-                  PackCharge, fixed, NULL, (char *)send + width * e.os[r],
+                  PackCharge, NULL, (char *)send + width * e.os[r],
                   threaded);
 
-  communicate(send, e.ns, e.os, recv, e.nr, e.or, peers, fixed);
+  communicate(send, e.ns, e.os, recv, e.nr, e.or, peers, 1);
   size_t size = boxSize(realBox);
   double *real = alloc(size, sizeof *real);
-  void *grid = fixed ? alloc(size, width) : real;
+  int64_t *grid = alloc(size, sizeof *grid);
   for (int r = 0; r < peers; ++r)
     if (r != rank)
       moveDomains(domains, e.domains[r], e.domains[r + 1], realBox, n,
-                  SumCharge, fixed, grid, (char *)recv + width * e.or[r],
+                  SumCharge, grid, (char *)recv + width * e.or[r],
                   threaded);
   for (int d = first; d < past; ++d)
-    transfer(domains[d].box, realBox, n, AddLocalCharge, fixed,
+    transfer(domains[d].box, realBox, n, AddLocalCharge,
              domains[d].points, grid, threaded);
 #pragma omp parallel for schedule(static) if (threaded)
   for (size_t i = 0; i < size; ++i)
-    real[i] = precision(
-        fixed ? mdrtDistNarrowWord(((__int128 *)grid)[i]) * 0x1p-40 : real[i],
-        mixed);
-  if (fixed)
-    free(grid);
+    real[i] = mixed ? (float)grid[i] * 0x1p-40 : (double)grid[i] * 0x1p-40;
+  free(grid);
   mdrtDistPhase(-DistOverlap);
   double *fft = alloc(boxSize(modes), 2 * sizeof(double));
   mdrtDistPhase(DistFFT);
@@ -709,14 +684,14 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
   for (int r = 0; r < peers; ++r)
     if (r != rank)
       moveDomains(domains, e.domains[r], e.domains[r + 1], realBox, n,
-                  PackPotential, 0, real, out + e.or[r], threaded);
+                  PackPotential, real, out + e.or[r], threaded);
   communicate(out, e.nr, e.or, in, e.ns, e.os, peers, 0);
   for (int r = 0; r < peers; ++r)
     if (r != rank)
       moveDomains(domains, first, past, mdrtPmeRealBoxAt(mesh, r), n,
-                  UnpackPotential, 0, NULL, in + e.os[r], threaded);
+                  UnpackPotential, NULL, in + e.os[r], threaded);
   for (int d = first; d < past; ++d)
-    transfer(domains[d].box, realBox, n, CopyLocalPotential, 0,
+    transfer(domains[d].box, realBox, n, CopyLocalPotential,
              domains[d].points, real, threaded);
   mdrtDistPhase(-DistOverlap);
   mdrtDistPhase(DistGather);

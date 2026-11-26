@@ -15,17 +15,15 @@ The direct term follows the pair traversal. Each excluded unordered pair
 takes one reciprocal correction by topology identity. Each particle domain stores a contiguous subgrid. Its extent along
 each axis spans all charged stencil starts, including constraint-group
 members, and the following window-order-minus-one grid intervals.
-The subgrid can cross the periodic face. The ordinary CPU spread loop
-runs over the domain's charged particles and adds to this subgrid in
-floating point. Mixed precision rounds each stencil product to binary32
-and accumulates in binary64 before rounding the completed mesh point.
+The subgrid can cross the periodic face. Each output plane has one worker, which
+visits the particles whose stencils reach it. Both precision modes use
+the ordinary CPU Q40 charge representation. Each stencil product rounds
+in the selected precision and its scaled value rounds to the nearest
+even integer. Subgrids and overlap packets store signed 64-bit words.
+Both local and owner additions check the signed range. The completed
+point converts to the transform precision and scales by $2^{-40}$.
 Gather reuses the cached weights and their derivatives.
 
-In deterministic mode each individual assignment is rounded to the
-nearest even signed Q40 word. Each output plane is assigned to a single
-worker, which visits the particles whose stencils reach it. Signed
-128-bit intermediate sums preserve cancellation. Each individual word
-and the completed point must fit in $[-2^{23},2^{23})$ elementary charges.
 Domains exchange their subgrid bounds once per mesh evaluation. Both
 directions pack contiguous rows of each subgrid–pencil intersection.
 Rows owned by the same rank are copied or accumulated locally.

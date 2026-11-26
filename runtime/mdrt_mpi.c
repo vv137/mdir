@@ -165,6 +165,12 @@ void mdrtMPIExchange(void *send, int *sendCounts, int *sendOffsets,
 }
 
 
+void mdrtMPIExchangeCharges(int64_t *send, int *ns, int *os,
+                            int64_t *recv, int *nr, int *offsets) {
+  arrival();
+  MPI_Alltoallv(send, ns, os, MPI_INT64_T, recv, nr, offsets, MPI_INT64_T, comm);
+}
+
 int mdrtMPISameNode(int peer) { return rankNodes[peer] == rankNodes[rank]; }
 
 // Use the shared-memory communicator for nearby peers. World-rank
