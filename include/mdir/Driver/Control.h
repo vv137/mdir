@@ -243,6 +243,9 @@ struct Control {
   struct Distribution {
     std::array<int64_t, 3> grid{1, 1, 1};
     bool gridGiven = false, transportGiven = false, traversalGiven = false;
+    // Setup transport for the topology-wide, cell-independent charge sums.
+    bool ownsPmeConstants = true;
+    void (*broadcastPmeConstants)(double *, int64_t, int) = nullptr;
     int64_t pmeRanks = 0;
     std::array<int64_t, 2> pmeDecomposition{};
     int64_t domains = 0; // Nonzero when the cell chooses the factorization.

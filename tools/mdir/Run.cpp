@@ -537,7 +537,9 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     ranks = mdrtMPISize();
     output.log.quiet = !writer;
     output.checkpointVote = mdrtMPIMax;
-    const auto &d = *control->distribution;
+    auto &d = *control->distribution;
+    d.ownsPmeConstants = writer;
+    d.broadcastPmeConstants = mdrtMPIBroadcast;
     auto domains = d.domains ? d.domains : d.grid[0]*d.grid[1]*d.grid[2];
     if (domains < ranks)
       return writer ? refuse(*control, llvm::createStringError("each rank needs at least one domain")) : 1;

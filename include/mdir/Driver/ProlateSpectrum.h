@@ -3,12 +3,20 @@
 // for the even Legendre polynomial of degree at most 78.
 #pragma once
 
+#ifdef __cplusplus
 namespace mdir::prolate {
-inline constexpr int SpectrumBasis = 40;
-inline constexpr int SpectrumTransition = 512;
-inline constexpr int SpectrumSamplesPerUnit = 16;
-inline constexpr int SpectrumKnots = SpectrumTransition * SpectrumSamplesPerUnit + 1;
-inline constexpr int SpectrumTerms = SpectrumKnots + SpectrumBasis;
+#define MDIR_SPECTRUM_VALUE(name, value) inline constexpr int name = value
+#else
+#define MDIR_SPECTRUM_VALUE(name, value) enum { name = value }
+#endif
+MDIR_SPECTRUM_VALUE(SpectrumBasis, 40);
+MDIR_SPECTRUM_VALUE(SpectrumTransition, 512);
+MDIR_SPECTRUM_VALUE(SpectrumSamplesPerUnit, 16);
+MDIR_SPECTRUM_VALUE(SpectrumKnots, SpectrumTransition * SpectrumSamplesPerUnit + 1);
+MDIR_SPECTRUM_VALUE(SpectrumTerms, SpectrumKnots + SpectrumBasis);
 // Three metadata words and the transform and window coefficients for values and slopes.
-inline constexpr int SpectrumDeviceTableWords = 3 + 2 * SpectrumTerms + 2 * 8 * 64;
+MDIR_SPECTRUM_VALUE(SpectrumDeviceTableWords, 3 + 2 * SpectrumTerms + 2 * 8 * 64);
+#undef MDIR_SPECTRUM_VALUE
+#ifdef __cplusplus
 }
+#endif
