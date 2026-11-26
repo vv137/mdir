@@ -104,9 +104,10 @@ struct Layout {
 #ifdef MDIR_ENABLE_NCCL
   struct TuplePlan *tuplePlans;
   struct Layout *identityOwner; /* Borrow immutable numberings across stationary epochs. */
-  uint32_t *faceMasks, *preparedMasks;
-  int64_t *preparedOwners;
-  size_t preparedRows;
+  uint32_t *faceMasks;
+  struct FaceSpare *incomingSpare, *outgoingSpare;
+  size_t idCapacity;
+  int64_t localIdDomainPlusOne; /* Domain plus one when only this rank has materialized rows. */
   int64_t *deviceFaces; /* Packed owner and direction bits by global identity. */
   int64_t *faceCounts;   /* Per owner and direction, updated from face deltas. */
   unsigned *localFaceMasks; /* Device snapshot in this epoch's owned order. */
@@ -687,11 +688,36 @@ static int64_t groupOwner(const struct Layout *l, const struct ConstraintGroup *
   return owner;
 }
 
+/* The direct pair path reads only local numbering until a replicated
+   output or host fallback. Complete its immutable table from the global
+   owner map in identity order before exposing remote rows. */
+static void completeIds(struct Layout *l) {
+#ifdef MDIR_ENABLE_NCCL
+  if (l->identityOwner) l = l->identityOwner;
+  if (!l->localIdDomainPlusOne) return;
+  int64_t *cursor = calloc(l->domains, sizeof(*cursor));
+  if (!cursor) fail("out of memory materializing domain identities");
+  for (int64_t j = 0; j < l->count; ++j) {
+    int64_t d = l->owner[j];
+    if (d + 1 != l->localIdDomainPlusOne)
+      l->ids[d*l->stride + cursor[d]++] = j;
+  }
+  l->localIdDomainPlusOne = 0;
+  free(cursor);
+#else
+  (void)l;
+#endif
+}
+
 static int64_t ownedRow(const struct Layout *l, int64_t id) {
   if (l->row) return l->row[id];
   // Directed device epochs need this inverse on the host only for the
   // migrants themselves. Other consumers can look up any identity.
   int64_t d = l->owner[id], lo = 0, hi = l->rows[d];
+#ifdef MDIR_ENABLE_NCCL
+  struct Layout *numbering = l->identityOwner ? l->identityOwner : (struct Layout *)l;
+  if (numbering->localIdDomainPlusOne && numbering->localIdDomainPlusOne != d+1) completeIds(numbering);
+#endif
   const int64_t *ids = l->ids+d*l->stride;
   while (lo < hi) {
     int64_t mid = lo+(hi-lo)/2;
@@ -978,26 +1004,48 @@ void _mlir_ciface_mdrtDistImportForces(struct Memref3D *field, int64_t domain,
   mdrtNCCLImport(deviceRows(field,domain,rows,1),at2(forces,start,0),rows*3*sizeof(double));
 }
 
-// Prime the next epoch's private host snapshots while device work from the
-// current step is outstanding. A short epoch copies its tail at the rebuild.
-static void prepareFaceSnapshot(struct Layout *layout) {
-  if (!layout->deviceFaces || layout->preparedRows == (size_t)layout->count)
-    return;
-  size_t total = layout->count;
-  if (!layout->preparedMasks) {
-    layout->preparedMasks = malloc(total * sizeof(*layout->preparedMasks));
-    layout->preparedOwners = malloc(total * sizeof(*layout->preparedOwners));
-    if (!layout->preparedMasks || !layout->preparedOwners)
-      fail("out of memory preparing the next face snapshot");
+/* A predecessor can lend its arrays only after its last reader exits.
+   The successor can outlive it, retire first, or branch again beforehand.
+   Two references to this handoff cover every release order. */
+struct FaceSpare {
+  int references;
+  uint32_t *masks;
+  int64_t *owners, *ids, *changes;
+  size_t idCapacity;
+  int64_t records;
+};
+
+static void releaseSpare(struct FaceSpare *s) {
+  if (!s || --s->references) return;
+  free(s->masks);
+  free(s->owners);
+  free(s->ids);
+  free(s->changes);
+  free(s);
+}
+
+static void retireFaceSnapshot(struct Layout *l) {
+  struct FaceSpare *s = l->outgoingSpare;
+  if (s && s->references == 2) {
+    s->masks = l->faceMasks;
+    l->faceMasks = NULL;
+    if (!l->identityOwner) {
+      s->owners = l->owner;
+      l->owner = NULL;
+      s->ids = l->ids;
+      s->idCapacity = l->idCapacity ? l->idCapacity : (size_t)l->domains*l->stride;
+      l->ids = NULL;
+    }
+    for (int64_t i = 0; i < s->records; ++i) {
+      int64_t j = s->changes[2*i], record = s->changes[2*i+1];
+      s->masks[j] = (uint32_t)record;
+      if (s->owners) s->owners[j] = record >> 32;
+    }
+    free(s->changes);
+    s->changes = NULL;
   }
-  size_t start = layout->preparedRows;
-  size_t length = (total + 3) / 4;
-  if (length > total - start) length = total - start;
-  memcpy(layout->preparedMasks + start, layout->faceMasks + start,
-         length * sizeof(*layout->preparedMasks));
-  memcpy(layout->preparedOwners + start, layout->owner + start,
-         length * sizeof(*layout->preparedOwners));
-  layout->preparedRows += length;
+  releaseSpare(s);
+  releaseSpare(l->incomingSpare);
 }
 
 int64_t _mlir_ciface_mdrtDistDeviceCovered(int64_t halo, struct Memref3D *ref,
@@ -1006,7 +1054,6 @@ int64_t _mlir_ciface_mdrtDistDeviceCovered(int64_t halo, struct Memref3D *ref,
   int64_t d = mdrtMPIDomainBound(h->layout->domains,0), n = h->layout->rows[d];
   double half = 0.5*(h->reach-cutoff);
   if (!(cutoff > 0 && half > 0)) fail("coverage requires a positive cutoff and skin");
-  prepareFaceSnapshot(h->layout);
   int flag = mdrtNCCLCoverage(deviceRows(current,d,n,0),deviceRows(ref,d,n,0),n,half*half);
   if (flag == 2) fail("coverage requires finite displacement");
   return mdrtMPIAllTrue(!flag);
@@ -1022,6 +1069,7 @@ void _mlir_ciface_mdrtMPICopyState(struct Memref3D *source, struct Memref3D *des
 
 void _mlir_ciface_mdrtMPICollectRows(int64_t handle, struct Memref3D *field) {
   struct Layout *layout = (struct Layout *)(intptr_t)handle;
+  completeIds(layout);
   shareRows(layout, layout->rows, field);
 }
 
@@ -1031,6 +1079,7 @@ int64_t _mlir_ciface_mdrtMPICheckpointRows(int64_t handle, struct Memref3D *fiel
     if (l->rows[d])
       mdrtMPIRowsToRoot(at3(field, d, 0, 0), l->rows[d] * field->sizes[2],
                         mdrtMPIOwner(l->domains, d));
+  if (mdrtMPIRank() == 0) completeIds(l);
   return mdrtMPIRank() == 0 ? l->domains : 0;
 }
 
@@ -1062,6 +1111,7 @@ void _mlir_ciface_mdrtMPISharePartials(struct Memref2D *partial) {
 void _mlir_ciface_mdrtDistLayoutRows(int64_t handle, struct Memref1I *rows,
                                      struct Memref2I *ids) {
   struct Layout *l = (struct Layout *)(intptr_t)handle;
+  completeIds(l);
   int64_t cap = l->stride;
   for (int64_t d = 0; d < l->domains; ++d) {
     rows->aligned[rows->offset + d * rows->strides[0]] = l->rows[d];
@@ -1081,13 +1131,18 @@ void _mlir_ciface_mdrtDistRowView(struct Memref1I *out, int64_t handle, int64_t 
   out->allocated = out->aligned;
 }
 
-void _mlir_ciface_mdrtDistIdView(struct Memref2I *out, int64_t handle, int64_t ghosts) {
+void _mlir_ciface_mdrtDistLocalIdView(struct Memref2I *out, int64_t handle, int64_t ghosts) {
   struct Halo *h = ghosts ? (struct Halo *)(intptr_t)handle : NULL;
   struct Layout *l = h ? h->layout : (struct Layout *)(intptr_t)handle;
   int64_t stride = h ? h->capacity : l->stride;
   *out = (struct Memref2I){.aligned = h ? h->ids : l->ids,
                            .sizes = {l->domains,stride}, .strides = {stride,1}};
   out->allocated = out->aligned;
+}
+
+void _mlir_ciface_mdrtDistIdView(struct Memref2I *out, int64_t handle, int64_t ghosts) {
+  if (!ghosts) completeIds((struct Layout *)(intptr_t)handle);
+  _mlir_ciface_mdrtDistLocalIdView(out,handle,ghosts);
 }
 
 void mdrtDistRetainLayout(int64_t handle) {
@@ -1136,8 +1191,7 @@ void mdrtDistReleaseLayout(int64_t handle) {
   free(l->groups);
   free(l->groupCenters);
 #ifdef MDIR_ENABLE_NCCL
-  free(l->preparedMasks);
-  free(l->preparedOwners);
+  retireFaceSnapshot(l);
   free(l->faceMasks);
   if (l->deviceFaces) mdrtNCCLFreePositions((double *)l->deviceFaces);
   free(l->faceCounts);
@@ -1158,6 +1212,7 @@ void mdrtDistReleaseLayout(int64_t handle) {
 /* A migration is a new ownership epoch. Prove that the source's identity
    table is a bijection before any field can be copied into that epoch. */
 static void checkIdentities(struct Layout *l) {
+  completeIds(l);
   int64_t n = l->count, cap = n > 0 ? n : 1;
   unsigned char *seen = calloc((size_t)cap, 1);
   if (!seen)
@@ -1543,10 +1598,28 @@ static void numberMigrantRows(const struct Layout *old, struct Layout *next,
   next->stride = 1;
   for (int64_t d = 0; d < old->domains; ++d)
     if (next->rows[d] > next->stride) next->stride = next->rows[d];
-  next->ids = malloc(old->domains*next->stride*sizeof(*next->ids));
+  size_t slots = (size_t)old->domains * next->stride;
+  struct FaceSpare *spare = old->incomingSpare;
+  if (spare && spare->ids && spare->idCapacity >= slots) {
+    next->ids = spare->ids;
+    next->idCapacity = spare->idCapacity;
+    spare->ids = NULL;
+  } else {
+    next->idCapacity = next->deviceFaces ? (slots+1023)/1024*1024 : slots;
+    next->ids = malloc(next->idCapacity*sizeof(*next->ids));
+  }
   if (!next->ids) fail("out of memory copying domain identities");
   int64_t i = 0;
-  for (int64_t d = 0; d < old->domains; ++d) {
+  int64_t first = 0, end = old->domains;
+  if (next->deviceFaces) {
+    first = local;
+    end = local + 1;
+    next->localIdDomainPlusOne = local + 1;
+    while (i < 2*moved && changes[i].domain < local) ++i;
+  } else {
+    completeIds((struct Layout *)old);
+  }
+  for (int64_t d = first; d < end; ++d) {
     const int64_t *before = old->ids + d*old->stride;
     int64_t *after = next->ids + d*next->stride;
     int64_t read = 0, write = 0;
@@ -1646,30 +1719,42 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
     local[2*i] = old->ids[d*old->stride+r];
   }
   size_t capacity = old->count ? old->count : 1;
-  size_t prepared = direct && reuse ? old->preparedRows : 0;
-  if (prepared) {
-    next->faceMasks = old->preparedMasks;
-    old->preparedMasks = NULL;
+  struct FaceSpare *spare = direct && reuse ? old->incomingSpare : NULL;
+  if (spare && spare->masks) {
+    next->faceMasks = spare->masks;
+    spare->masks = NULL;
+  } else if (reuse) {
+    next->faceMasks = malloc(capacity * sizeof(*next->faceMasks));
+    if (next->faceMasks)
+      memcpy(next->faceMasks, old->faceMasks, old->count * sizeof(*next->faceMasks));
   } else {
-    next->faceMasks=calloc(capacity,sizeof *next->faceMasks);
+    next->faceMasks = calloc(capacity, sizeof(*next->faceMasks));
   }
   if (!next->faceMasks) fail("out of memory indexing device face rows");
   if (direct) {
     next->faceCounts = calloc(27*old->domains, sizeof(*next->faceCounts));
     if (!next->faceCounts) fail("out of memory indexing face changes");
   }
-  if (reuse) {
-    memcpy(next->faceMasks + prepared, old->faceMasks + prepared,
-           (old->count - prepared) * sizeof(*next->faceMasks));
-    if (direct) {
-      memcpy(next->faceCounts, old->faceCounts, 27*old->domains*sizeof(*next->faceCounts));
-    }
-  }
+  if (reuse && direct)
+    memcpy(next->faceCounts, old->faceCounts, 27*old->domains*sizeof(*next->faceCounts));
   int64_t *allRecords = mdrtMPIFinishFaces(faces, local, offsets);
   free(local);
   if (direct)
     next->deviceFaces = mdrtNCCLFaceState(reuse ? old->deviceFaces : NULL,old->owner,
                                           old->count,allRecords,offsets[peers]/2);
+  if (direct && reuse && !old->outgoingSpare) {
+    struct FaceSpare *handoff = calloc(1, sizeof(*handoff));
+    if (!handoff) fail("out of memory tracking retired face arrays");
+    handoff->references = 2;
+    handoff->records = offsets[peers]/2;
+    if (handoff->records) {
+      size_t bytes = offsets[peers]*sizeof(*allRecords);
+      handoff->changes = malloc(bytes);
+      if (!handoff->changes) fail("out of memory retaining face changes");
+      memcpy(handoff->changes, allRecords, bytes);
+    }
+    next->incomingSpare = old->outgoingSpare = handoff;
+  }
   int64_t moved=0;
   for (int peer = 0; peer < peers; ++peer) {
     int64_t count = (offsets[peer + 1] - offsets[peer]) / 2;
@@ -1688,11 +1773,14 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
       next->faceMasks[j]=mask;
       if (owner==old->owner[j]) continue;
       if (!next->owner) {
-        next->owner = prepared ? old->preparedOwners : malloc(capacity*sizeof *next->owner);
-        if (prepared) old->preparedOwners = NULL;
-        if (!next->owner) fail("out of memory recording new domain owners");
-        memcpy(next->owner + prepared, old->owner + prepared,
-               (old->count - prepared) * sizeof(*next->owner));
+        if (spare && spare->owners) {
+          next->owner = spare->owners;
+          spare->owners = NULL;
+        } else {
+          next->owner = malloc(capacity * sizeof(*next->owner));
+          if (!next->owner) fail("out of memory recording new domain owners");
+          memcpy(next->owner, old->owner, old->count * sizeof(*next->owner));
+        }
       }
       // Compact in place after reading this row's identity and mask.
       records[arrivals++]=j;
@@ -1707,11 +1795,6 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
       moved+=arrivals;
       next->migrantOffsets[peer+1]=moved;
     }
-  }
-  if (prepared) {
-    free(old->preparedOwners);
-    old->preparedOwners = NULL;
-    old->preparedRows = 0;
   }
   free(allRecords);
   free(offsets);
@@ -1861,6 +1944,7 @@ int64_t _mlir_ciface_mdrtDistBeginHalo(int64_t layout, struct Memref3D *x,
   h->layout = (struct Layout *)(intptr_t)layout;
   mdrtDistRetainLayout(layout);
   h->reach = reach;
+  completeIds(h->layout);
   if (!migrated) shareRows(h->layout, h->layout->rows, x);
   int64_t domains = h->layout->domains;
   h->rows = calloc(domains, sizeof(int64_t));

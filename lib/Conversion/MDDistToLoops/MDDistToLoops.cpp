@@ -758,7 +758,7 @@ LogicalResult Lowering::lowerMigrate(MigrateOp op) {
           arith::ConstantIntOp::create(b,loc,0,64)}).getResult(0);
     };
     rows = view("mdrtDistRowView",rowsType);
-    ids = view("mdrtDistIdView",idsType);
+    ids = view(devicePairFaces ? "mdrtDistLocalIdView" : "mdrtDistIdView",idsType);
   } else {
     rows = allocate(b, rowsType, {index(b, domains)});
     ids = allocate(b, idsType, {index(b, domains), capacity});
@@ -2615,7 +2615,7 @@ LogicalResult Lowering::lowerUnpack(UnpackOp op) {
         handle, arith::ConstantIntOp::create(b, loc, ghosts, 64)}).getResult(0);
   };
   Value rows = view("mdrtDistRowView", rowsType, layoutHandle, false);
-  Value ids = view("mdrtDistIdView", idsType, layoutHandle, false);
+  Value ids = view(devicePairFaces ? "mdrtDistLocalIdView" : "mdrtDistIdView", idsType, layoutHandle, false);
   // The halo, likewise.
   Value haloCapacity = toIndex(
       b, func::CallOp::create(

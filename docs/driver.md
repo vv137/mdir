@@ -1820,6 +1820,7 @@ work and cannot independently measure time on the network. Self-images stay loca
 contributions. The unconstrained Verlet path retains owned state on the
 device between kicks. A pair-only position halo feeds device MATRIX
 directly. For an unconstrained grid with cells wider than twice the halo
-reach, device face records supply the ownership and halo rebuild. Other
+reach, device face records supply the ownership and halo rebuild. Retired host tables can
+serve the next rebuild after sparse owner and face updates. Other
 grids, topology, and output can require host fields. MPI exchanges
 migrating rows and reduces scalar observables.

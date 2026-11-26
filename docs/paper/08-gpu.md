@@ -1188,12 +1188,15 @@ traversal is selected. Only the boundary traversal needs the halo event.
 The interval clock gather precedes formatting so the other ranks can
 advance while the writer emits the rank and domain statistics.
 
-Owner and face classifications are immutable within an epoch. Consequently
-the next epoch can copy part of its host snapshot before the displacement
-test triggers a rebuild. Four coverage calls suffice to copy both arrays.
-An earlier rebuild copies the remaining suffix before applying the face
-deltas. Classification scratch grows in blocks of 256 records and is reused
-on subsequent rebuilds.
+A coverage test needs only local displacements and their collective vote.
+Preparing one quarter of the owner and face arrays at each of the first
+four such tests added host memory traffic. For 1,048,576 particles the
+two tables occupy 12 MiB per rank. The updated implementation records
+the sparse changes at rebuild. Once the old layout's last reader exits,
+applying the changes to its retired storage reconstructs the successor's
+table, since every identity absent from the records keeps both its owner
+and its face mask. Each live layout therefore retains its original
+classification. The device classifier reuses its count and record storage.
 
 Across multiple domains, particle observables evaluated in one traversal can use one
 collective. Each domain concatenates its partial sums into one row,
@@ -1218,3 +1221,15 @@ devices and 2.611 ms on eight across two nodes. Each layout was measured
 twice at 2 fs. Both eight-device trials selected unsplit traversal.
 Grouping peer calls alone gave 3.452 and 3.561 ms on the two layouts.
 The measured speedup therefore includes the interval-reporting change.
+
+With sparse host updates, the same fixed-skin protocol on four V100s gave
+3.485 ms per covered step and 10.335 ms per rebuild, including final
+output. The matched parent took 3.998 and 11.849 ms. The independent
+production timer went from 4.656 to 3.842 ms/step.
+
+The directed pair schedule needs only its local identities between
+rebuild and global output. Each rank merges the migrations into its
+local identity list. The owner table determines the ascending identity
+order for every other domain. A full field collection, checkpoint on
+the writing rank, or host geometry fallback materializes those rows.
+The two-run means were 8.627 ms per rebuild and 3.593 ms per covered interval including output. Covered intervals before final output averaged 2.014 ms.

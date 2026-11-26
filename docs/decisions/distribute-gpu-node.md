@@ -377,10 +377,12 @@ contiguous slice per field. The joint launch is charged to the outer
 halo phase. Gather interval clocks before formatting the replicated
 counts. The writer emits the complete interval in one log call.
 
-Before a distributed pair-only rebuild, coverage calls prepare private
-copies of the previous owner and face-mask arrays, up to one quarter per
-call. A rebuild consumes the prepared prefix and copies any remaining
-rows. The old layout keeps its original arrays for outstanding fields.
+A pair-only epoch retains sparse changes in particle owner and face mask.
+When its predecessor releases its last reference, the runtime applies
+those changes to the retired host arrays. A successor rebuild can take
+the updated arrays and reuse the retired identity storage if it fits.
+An outstanding reader or another branch keeps its original snapshot.
+A rebuild without a spare copies the current tables on demand.
 The device classifier reuses its count and record storage across rebuilds
 and frees the allocation at transport shutdown.
 
@@ -395,3 +397,17 @@ in 102 steps at 2 fs. The rebuild change lowered the ratio of mean
 rebuild to covered time from 4.59 to 2.82 against its immediate parent
 in the same allocation. The means include final output in its measured
 interval. The full production step improved by 6.5 percent.
+
+The four-device comparison of sparse snapshot reuse at a 0.15 Å skin
+gave 3.485 ms per covered interval and 10.335 ms per rebuild. The
+corresponding parent means were 3.998 and 11.849 ms. Both rebuilt
+19 times in 102 production steps at 2 fs.
+
+On the directed device face path each rank merges only its own sorted
+identities. All ranks still know every particle owner and every domain
+size. A global identity view reconstructs the remote rows from that
+map in increasing identity order, in the existing allocation. Collective
+field output and the host fallback request those rows before reading
+them. A checkpoint needs them only on its writer.
+
+On four V100 devices the fixed-skin liquid rebuilt 19 times in 102 steps. The rank-local numbering gave 8.627 ms per rebuild, 3.593 ms per covered interval including final output, and 3.525 ms per production step. A 204-step checkpoint comparison agreed exactly in identities, positions, velocities and forces.
