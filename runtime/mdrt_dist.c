@@ -87,6 +87,11 @@ static void fail(const char *message) {
 struct TupleDomainRows {
   int *locations, *particles;
 };
+struct OwnedTuplePlans {
+  size_t references;
+  struct TuplePlan *plans;
+  struct TupleDomainRows domainRows;
+};
 static void freeTupleDomainRows(struct TupleDomainRows *rows) {
   if (!rows->locations) return;
   mdrtNCCLFreePositions((double *)rows->locations);
@@ -114,8 +119,7 @@ struct Layout {
   int64_t *migrantOffsets, *migrantIds; /* Old rank, then particle identity. */
 #endif
 #ifdef MDIR_ENABLE_NCCL
-  struct TuplePlan *tuplePlans;
-  struct TupleDomainRows tupleDomainRows;
+  struct OwnedTuplePlans *ownedTuplePlans;
   struct Layout *identityOwner; /* Borrow immutable numberings across stationary epochs. */
   uint32_t *faceMasks;
   struct FaceSpare *incomingSpare, *outgoingSpare;
@@ -1209,8 +1213,11 @@ void mdrtDistReleaseLayout(int64_t handle) {
   free(l->migrantIds);
 #endif
 #ifdef MDIR_ENABLE_NCCL
-  freeTuplePlans(l->tuplePlans);
-  freeTupleDomainRows(&l->tupleDomainRows);
+  if (l->ownedTuplePlans && --l->ownedTuplePlans->references == 0) {
+    freeTuplePlans(l->ownedTuplePlans->plans);
+    freeTupleDomainRows(&l->ownedTuplePlans->domainRows);
+    free(l->ownedTuplePlans);
+  }
   free(l->migrationCounts);
   free(l->migrationSpans);
   if (l->deviceExportRows) mdrtNCCLFreePositions((double *)l->deviceExportRows);
@@ -1420,6 +1427,15 @@ static int64_t migrate(int64_t oldHandle, struct Memref3D *positions,
   numberOwnedRows(next);
 #ifdef MDIR_ENABLE_MPI
   if (next->mpi) indexMigrants(old,next);
+#ifdef MDIR_ENABLE_NCCL
+  // Without an ownership change, sorting by identity gives exactly the
+  // same rows. Group incidences depend only on those rows and the topology.
+  if (old->ownedTuplePlans && next->migrantOffsets && next->domains == mdrtMPISize() &&
+      !next->migrantOffsets[next->domains]) {
+    next->ownedTuplePlans = old->ownedTuplePlans;
+    ++next->ownedTuplePlans->references;
+  }
+#endif
 #endif
   if (observer)
     for (int64_t j = 0; j < n; ++j)
@@ -2908,7 +2924,12 @@ void _mlir_ciface_mdrtDistTupleIncidence(struct DeviceKinds *out,int64_t handle,
   struct Halo *h=group ? NULL : (void *)(intptr_t)handle;
   struct Layout *l=group ? (void *)(intptr_t)handle : h->layout;
   int64_t d=mdrtMPIDomainBound(l->domains,0);
-  struct TuplePlan **slot=group ? &l->tuplePlans : &h->tuplePlans;
+  if (group && !l->ownedTuplePlans) {
+    l->ownedTuplePlans = calloc(1,sizeof(*l->ownedTuplePlans));
+    if (!l->ownedTuplePlans) fail("out of memory retaining owned tuple rows");
+    l->ownedTuplePlans->references = 1;
+  }
+  struct TuplePlan **slot=group ? &l->ownedTuplePlans->plans : &h->tuplePlans;
   while (*slot && (*slot)->site!=site) slot=&(*slot)->next;
   if (*slot && (*slot)->topology != topology) {
     struct TuplePlan *expired=*slot;
@@ -2922,7 +2943,7 @@ void _mlir_ciface_mdrtDistTupleIncidence(struct DeviceKinds *out,int64_t handle,
     *slot=newTuplePlan(l,h,topology,site,d);
   }
   struct TuplePlan *p=*slot;
-  struct TupleDomainRows *directory = group ? &l->tupleDomainRows : &h->tupleDomainRows;
+  struct TupleDomainRows *directory = group ? &l->ownedTuplePlans->domainRows : &h->tupleDomainRows;
   if (!directory->locations) buildTupleDomainRows(directory,l,h,d);
   if (!group || !p->built) {
     double *coordinates=group ? NULL : tupleCoordinates(h,x,d);

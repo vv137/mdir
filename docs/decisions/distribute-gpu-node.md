@@ -470,3 +470,8 @@ its first device use to the end of its SSA lifetime. A new rank layout
 maps local rows against these immutable arrays. Each mapped plan retains
 its relation, so replacing a relation at an evaluation site rebuilds the
 plan even when the layout is unchanged.
+
+A stationary packed layout can reuse the local tuple numbering after
+migration when every particle retains its owner. If all consumers of an
+imaged coordinate use owned positions and periodic bond or pair geometry,
+the lowered program omits that halo copy entirely.

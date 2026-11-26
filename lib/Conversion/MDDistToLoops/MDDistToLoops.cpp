@@ -170,6 +170,8 @@ private:
   LogicalResult lowerRedistribute(RedistributeOp op);
   LogicalResult lowerHalo(HaloOp op);
   LogicalResult lowerCovered(CoveredOp op);
+  bool usesOwnedTuples(TupleKernelOp op) const;
+  bool usesOwnedPairs(NeighborhoodOp op) const;
   LogicalResult lowerHaloCopy(HaloCopyOp op);
   LogicalResult lowerHaloSum(HaloSumOp op);
   LogicalResult lowerZeros(ZerosOp op);
@@ -1071,6 +1073,36 @@ LogicalResult Lowering::lowerCovered(CoveredOp op) {
   return success();
 }
 
+bool Lowering::usesOwnedPairs(NeighborhoodOp op) const {
+  return sharedState() && !fixedPoint && domains == 1 && matrixPairs && op.getExcluded() &&
+      module->hasAttr("md_dist.driver") && op.getHalo().getDefiningOp<UnpackOp>() &&
+      op.getResult().getType().getTraversal() == Traversal::Unique &&
+      llvm::all_of(op.getResult().getUsers(), [](Operation *consumer) {
+        if (auto sum = dyn_cast<SumPairsOp>(consumer)) return !sum.getCenterSet();
+        auto force = dyn_cast<GatherPairsOp>(consumer);
+        return force && !force.getCenterSet() && force.getNumResults() == 2 &&
+               llvm::all_of(force.getResult(1).getUsers(), [&](Operation *user) {
+                 auto sum = dyn_cast<HaloSumOp>(user);
+                 return sum && sum.getOwned() == force.getResult(0) &&
+                        sum.getGhosts() == force.getResult(1);
+               });
+      });
+}
+
+bool Lowering::usesOwnedTuples(TupleKernelOp op) const {
+  if (!sharedState() || fixedPoint || domains != 1 || !module->hasAttr("md_dist.driver"))
+    return false;
+  auto rows = op.getRows().getDefiningOp<TupleRowsOp>();
+  if (!rows || !llvm::all_of(rows.getRows().getUsers(),
+                             [](Operation *u) { return isa<TupleKernelOp>(u); }))
+    return false;
+  if (isa<PartialType>(op.getResult(0).getType())) return true;
+  return op.getNumResults() == 2 && llvm::all_of(op.getResult(1).getUsers(), [&](Operation *user) {
+    auto sum = dyn_cast<HaloSumOp>(user);
+    return sum && sum.getGhosts() == op.getResult(1) && sum.getOwned() == op.getResult(0);
+  });
+}
+
 LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
   OpBuilder b(op);
   Storage &halo = storage[op.getHalo()];
@@ -1080,6 +1112,20 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
   // owner. A copy used only by such kernels has no destination reads.
   if (!op.getResult().use_empty() && llvm::all_of(op.getResult().getUsers(), [&](Operation *use) {
         return constraintKernels.contains(use);
+      }))
+    return success();
+  // No imaged copy is needed when every consumer takes its physical
+  // coordinates from owned rows. The same proof selects those kernels.
+  if (op.getImage() && !op.getResult().use_empty() &&
+      llvm::all_of(op.getResult().getUsers(), [&](Operation *u) {
+        if (auto tuple = dyn_cast<TupleKernelOp>(u))
+          return constraintKernels.contains(u) || usesOwnedTuples(tuple);
+        if (auto n = dyn_cast<NeighborhoodOp>(u)) return usesOwnedPairs(n);
+        if (isa<GatherPairsOp, SumPairsOp>(u)) {
+          auto n = u->getOperand(0).getDefiningOp<NeighborhoodOp>();
+          return n && n.getGhosts() == op.getResult() && usesOwnedPairs(n);
+        }
+        return false;
       }))
     return success();
   Type i64 = b.getI64Type();
@@ -1291,11 +1337,7 @@ LogicalResult Lowering::lowerDeviceTuples(TupleKernelOp op) {
   bool group = constraintKernels.contains(op);
   // With a single domain every tuple member is an owned row. The
   // physical tuple kernel already evaluates its periodic coordinates.
-  bool localBonded = !group && domains == 1 && scheduledMembers.count(op.getRows()) &&
-      (reduce || llvm::all_of(op.getResult(1).getUsers(), [&](Operation *user) {
-        auto sum = dyn_cast<HaloSumOp>(user);
-        return sum && sum.getGhosts() == op.getResult(1) && sum.getOwned() == op.getResult(0);
-      }));
+  bool localBonded = !group && usesOwnedTuples(op);
   bool ownedOnly = group || localBonded;
   if (localBonded && !reduce) emptyGhostForces.insert(op.getResult(1));
   bool flagged = !reduce && op.getNumResults() == 2 && group;
@@ -2969,19 +3011,7 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
   Value nGhosts = countOf(b, halo, d);
   // The local rows, owned then ghost; the ghosts carry their images.
   Value positions;
-  bool periodicOwned = domains == 1 && sharedState() && matrixPairs && op.getExcluded() &&
-      module->hasAttr("md_dist.driver") && op.getHalo().getDefiningOp<UnpackOp>() &&
-      op.getResult().getType().getTraversal() == Traversal::Unique &&
-      llvm::all_of(op.getResult().getUsers(), [](Operation *consumer) {
-        if (auto sum = dyn_cast<SumPairsOp>(consumer)) return !sum.getCenterSet();
-        auto force = dyn_cast<GatherPairsOp>(consumer);
-        return force && !force.getCenterSet() && force.getNumResults() == 2 &&
-               llvm::all_of(force.getResult(1).getUsers(), [&](Operation *user) {
-                 auto sum = dyn_cast<HaloSumOp>(user);
-                 return sum && sum.getOwned() == force.getResult(0) &&
-                        sum.getGhosts() == force.getResult(1);
-               });
-      });
+  bool periodicOwned = usesOwnedPairs(op);
   if (periodicOwned) {
     auto type = md::FieldType::get(context, set, 3, b.getF64Type());
     auto device = MemRefType::get({ShapedType::kDynamic, 3}, b.getF64Type(),

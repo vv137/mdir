@@ -1318,3 +1318,8 @@ rebuild mean from 65.06 to 39.65 ms in the first repetition on each
 implementation. In the alternating comparison the 204-step production
 means fell from 15.845 to 12.859 ms/step for Factor IX and from 7.052
 to 6.222 ms/step for JAC-RF.
+
+With one domain, the periodic displacement can be computed from the
+two owned positions. Removing an unused copy of the imaged coordinates
+reduced the Factor IX double mean from 13.039 to 12.030 ms/step and
+the JAC-RF mean from 6.007 to 5.893 in the alternating runs.
