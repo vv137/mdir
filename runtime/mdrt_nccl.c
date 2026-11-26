@@ -84,6 +84,9 @@ struct NCCLPlan {
   int sendRows, recvRows;
   int hasPeers[2], pooled;
   int *centerMasks;
+  int *centerSlots, *pairPlaces, *exported;
+  int interiorRows, boundaryRows, placesReady;
+  int64_t ownedRows;
   double *interiorPositions;
   cudaEvent_t producerReady, haloReady;
 };
@@ -158,22 +161,51 @@ struct NCCLPlan *mdrtNCCLPlan(int64_t ownedRows, int64_t domains, const int64_t 
   p->dest = upload(targets, (size_t)p->recvRows*sizeof(int));
   p->shifts = upload(shifts, (size_t)p->recvRows*3*sizeof(double));
   if (size > 1) {
-    size_t rows = ownedRows + p->recvRows;
-    int *masks = calloc(3 * (rows ? rows : 1), sizeof *masks);
-    if (!masks) mdrtMPIAbort("out of memory classifying halo centers");
-    for (int64_t r = 0; r < ownedRows; ++r)
-      masks[r] = masks[2*rows+r] = 1;
-    for (int r = 0; r < p->sendRows; ++r) {
-      masks[sources[r]] = 0;
-      masks[rows+sources[r]] = 1;
-    }
-    p->centerMasks = upload(masks, 3*(rows ? rows : 1)*sizeof(int));
-    free(masks);
-    checkCuda(cudaEventCreateWithFlags(&p->producerReady, cudaEventDisableTiming));
-    checkCuda(cudaEventCreateWithFlags(&p->haloReady, cudaEventDisableTiming));
+    p->ownedRows = ownedRows;
+    p->exported = sources;
+    sources = NULL;
   }
   free(sources); free(targets); free(shifts);
   return p;
+}
+
+// Plans used only by ordinary exchanges do not allocate split-row storage.
+static void preparePairRows(struct NCCLPlan *p) {
+  if (p->producerReady) return;
+  int64_t ownedRows = p->ownedRows;
+  size_t rows = ownedRows + p->recvRows;
+  int *masks = calloc(3 * (rows ? rows : 1), sizeof *masks);
+  if (!masks) mdrtMPIAbort("out of memory classifying halo centers");
+  for (int64_t r = 0; r < ownedRows; ++r)
+    masks[r] = masks[2*rows+r] = 1;
+  for (int r = 0; r < p->sendRows; ++r) {
+    masks[p->exported[r]] = 0;
+    masks[rows+p->exported[r]] = 1;
+  }
+  p->centerMasks = upload(masks, 3*(rows ? rows : 1)*sizeof(int));
+  // Each owned row has one slot in the two compact launch lists. Reserve
+  // place zero for an empty phase (its center mask suppresses the row).
+  int *slots = calloc(ownedRows + 1, sizeof(*slots));
+  if (!slots) mdrtMPIAbort("out of memory numbering pair centers");
+  for (int64_t r = 0; r < ownedRows; ++r)
+    p->interiorRows += masks[r];
+  int interior = 1, boundary = 1 + p->interiorRows;
+  for (int64_t r = 0; r < ownedRows; ++r)
+    slots[r] = masks[r] ? interior++ : boundary++;
+  p->boundaryRows = ownedRows - p->interiorRows;
+  p->centerSlots = upload(slots, (ownedRows + 1) * sizeof(*slots));
+  free(slots);
+  int *places = calloc(1 + ownedRows + rows, sizeof(*places));
+  if (!places) mdrtMPIAbort("out of memory allocating pair row lists");
+  for (size_t r = 0; r < rows; ++r)
+    places[1 + ownedRows + r] = r;
+  p->pairPlaces = upload(places, (1 + ownedRows + rows) * sizeof(*places));
+  free(places);
+  free(masks);
+  checkCuda(cudaEventCreateWithFlags(&p->producerReady, cudaEventDisableTiming));
+  checkCuda(cudaEventCreateWithFlags(&p->haloReady, cudaEventDisableTiming));
+  free(p->exported);
+  p->exported = NULL;
 }
 
 extern void mdrtNCCLSelfFaces(const double *, long long, const double *, double,
@@ -232,8 +264,11 @@ void mdrtNCCLFreePlan(struct NCCLPlan *p) {
     checkCuda(cudaEventDestroy(p->producerReady));
     checkCuda(cudaEventDestroy(p->haloReady));
     checkCuda(cudaFree(p->centerMasks));
+    checkCuda(cudaFree(p->centerSlots));
+    checkCuda(cudaFree(p->pairPlaces));
     if (p->interiorPositions) mdrtNCCLFreePositions(p->interiorPositions);
   }
+  free(p->exported);
   free(p->counts);
   free(p);
 }
@@ -329,6 +364,7 @@ double *mdrtNCCLPackedRows(const struct NCCLPlan *plan, double *owned, int64_t r
    remote or periodic face. An interior center cannot acquire a ghost
    neighbor before the half-skin displacement test expires. */
 double *mdrtNCCLBeginPositions(struct NCCLPlan *p, double *owned, int64_t n) {
+  preparePairRows(p);
   size_t bytes = (size_t)(n+p->recvRows)*3*sizeof(double);
   double *positions = mdrtNCCLAllocate(bytes);
   checkCuda(cudaEventRecord(p->producerReady, 0));
@@ -336,6 +372,29 @@ double *mdrtNCCLBeginPositions(struct NCCLPlan *p, double *owned, int64_t n) {
   exchange(p, owned, n, NULL, 3, 1, 0, positions, 1);
   checkCuda(cudaEventRecord(p->haloReady, stream));
   return positions;
+}
+
+extern void mdrtNCCLIndexPlaces(const int *, const int *, int *, int64_t,
+                                int64_t, void *);
+
+int *mdrtNCCLPairPlaces(struct NCCLPlan *p, const int *order, int64_t rows,
+                        int phase, int cached, void *compute, int64_t *count) {
+  if (cached && !p->placesReady) {
+    mdrtNCCLIndexPlaces(order, p->centerSlots, p->pairPlaces, rows,
+                        p->ownedRows, compute);
+    p->placesReady = 1;
+  }
+  if (phase == 2) {
+    *count = rows;
+    return p->pairPlaces + 1 + p->ownedRows;
+  }
+  if (!cached || !p->placesReady) mdrtMPIAbort("missing matrix for split pair rows");
+  *count = phase ? p->boundaryRows : p->interiorRows;
+  if (!*count) {
+    *count = rows ? 1 : 0;
+    return p->pairPlaces;
+  }
+  return p->pairPlaces + 1 + (phase ? p->interiorRows : 0);
 }
 
 int *mdrtNCCLCenterMask(struct NCCLPlan *p, int64_t rows, int phase) {

@@ -2283,6 +2283,15 @@ void _mlir_ciface_mdrtDistCenterMask(struct DeviceKinds *out, int64_t halo, int6
   *out = (struct DeviceKinds){p,p,0,rows,1};
 }
 
+void _mlir_ciface_mdrtDistPairPlaces(struct DeviceKinds *out, int64_t halo,
+    int64_t phase, int64_t slot, struct DeviceKinds *order, void *stream) {
+  struct Halo *h = (void *)(intptr_t)halo;
+  int64_t count;
+  int *places = mdrtNCCLPairPlaces(devicePlan(h), order->aligned + order->offset,
+      order->rows, phase, slot && h->deviceMatrix.data, stream, &count);
+  *out = (struct DeviceKinds){places, places, 0, count, 1};
+}
+
 void _mlir_ciface_mdrtDistWriteCenters(struct Memref3D *out, int64_t d,
     int64_t n, struct Memref2D *forces, struct DeviceKinds *mask, void *stream) {
   mdrtNCCLWriteCenters(deviceRows(out,d,n,1),forces->aligned,mask->aligned,n,stream);

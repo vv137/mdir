@@ -15,6 +15,8 @@ struct NCCLPlan *mdrtNCCLPlan(int64_t ownedRows, int64_t domains, const int64_t 
     int64_t capacity, const int64_t *sourceDomain, const int64_t *sourceRow,
     const int64_t *image, const double *edges);
 double *mdrtNCCLBeginPositions(struct NCCLPlan *, double *, int64_t);
+int *mdrtNCCLPairPlaces(struct NCCLPlan *, const int *, int64_t, int, int,
+                        void *, int64_t *);
 int *mdrtNCCLCenterMask(struct NCCLPlan *, int64_t, int);
 double *mdrtNCCLPairPositions(struct NCCLPlan *, double *, double *, int64_t, int, void *);
 void mdrtNCCLWriteCenters(double *, const double *, const int *, int64_t, void *);

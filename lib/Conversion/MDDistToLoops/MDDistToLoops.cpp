@@ -1107,7 +1107,7 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
       })) {
     auto type = MemRefType::get({ShapedType::kDynamic, 3}, b.getF64Type(),
                                 MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
-    bool overlap = domains > 1 && matrixSkin > 0 &&
+    bool overlap = module->hasAttr("md_dist.split_pairs") && domains > 1 && matrixSkin > 0 &&
         op.getHalo().getDefiningOp<UnpackOp>() && module->hasAttr("md_dist.driver") &&
         llvm::all_of(op.getResult().getUsers(), [](Operation *user) {
           auto n = dyn_cast<NeighborhoodOp>(user);

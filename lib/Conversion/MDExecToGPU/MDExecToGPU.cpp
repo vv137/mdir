@@ -3966,12 +3966,32 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
     table->add(b, outs[out], member, value);
   };
   RowExtras extras{attributions, openTable, closeTable};
-  launchRows(builder, loc, size, [&](OpBuilder &body, Value central,
+  Value places;
+  if (centers && op.getCenterSet()) {
+    auto function = op->getParentOfType<func::FuncOp>();
+    func::CallOp mask, slot, stream;
+    for (auto call : function.getOps<func::CallOp>()) {
+      if (call.getCallee() == "mdrtDistCenterMask") mask = call;
+      if (call.getCallee() == "mdrtDistDeviceMatrixSlot") slot = call;
+      if (call.getCallee() == "mdrtDeviceExternalStream") stream = call;
+    }
+    if (mask && slot && stream && mask.getResult(0) == op.getCenterSet()) {
+      SmallVector<Value> args{mask.getOperand(0), mask.getOperand(1),
+                              slot.getResult(0), structure.order, stream.getResult(0)};
+      auto select = getOrDeclare("mdrtDistPairPlaces", builder.getFunctionType(
+          ValueRange(args).getTypes(), TypeRange{structure.order.getType()}));
+      select->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+      places = func::CallOp::create(builder, loc, select, args).getResult(0);
+      size = createSize(builder, loc, places);
+    }
+  }
+  launchRows(builder, loc, size, [&](OpBuilder &body, Value item,
                                      const RowLanes &sharing) {
     IRMapping local;
     // The places run in the order of the cells, which mixes the centers
     // with the other rows: a place whose particle is not a center does
     // nothing, as a place past the last does.
+    Value central = places ? emitPlacedParticle(body, loc, places, item) : item;
     RowLanes lanes = sharing;
     if (centers) {
       Value particle = arith::IndexCastOp::create(
@@ -4011,9 +4031,9 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
         tabled ? AddToMember(addToTable) : AddToMember());
     // A place that is not a center contributes zeros to the sums, which
     // its slot of the scratch must hold.
-    storeContributions(body, loc, contributions, op.getScratch(), central,
+    storeContributions(body, loc, contributions, op.getScratch(), item,
                        sharing);
-  }, structure.order, tabled ? &extras : nullptr);
+  }, places ? Value() : structure.order, tabled ? &extras : nullptr);
   return finishSums(op, builder, op.getReduce(), op.getScratch(), size);
 }
 

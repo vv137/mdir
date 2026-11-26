@@ -21,11 +21,12 @@
 
 # The force-and-observable step must dispatch the split even when every
 # step reports energy. Emitting a two-domain deck requires no exchange.
-# RUN: sed '/^\[distribute\]$/a domains = 2' %t/run.toml > %t/two.toml
+# RUN: sed '/^\[distribute\]$/a domains = 2\npair_overlap = \"split\"' %t/run.toml > %t/two.toml
 # RUN: cd %t && mdir emit two.toml --stage=lowered | FileCheck %s --check-prefix=SPLIT
 # SPLIT-DAG: llvm.call @mdrtDistFirstPairPhase(
 # SPLIT-DAG: llvm.call @mdrtDistBeginPositions(
 # SPLIT-DAG: llvm.call @mdrtDistWriteCenters(
+# SPLIT-DAG: llvm.call @mdrtDistPairPlaces(
 
 # A narrow skin rebuilds the periodic self-images at both steps. Compare
 # the device face map with the host geometry for the same coordinates.

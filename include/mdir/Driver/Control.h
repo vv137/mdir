@@ -241,6 +241,7 @@ struct Control {
     bool gridGiven = false, transportGiven = false, traversalGiven = false;
     int64_t domains = 0; // Nonzero when the cell chooses the factorization.
     std::string traversal = "directed";
+    std::string pairOverlap = "auto";
     std::string transport = "local";
   };
   std::optional<Distribution> distribution;

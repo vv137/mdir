@@ -105,6 +105,8 @@ llvm::Error mdir::driver::builder::serializeNativeProgram(Program &program,
   auto native = plan.getModule();
   if (program.distributed)
     native->setAttr("md_dist.driver", mlir::UnitAttr::get(native.getContext()));
+  if (program.domainSplitPairs)
+    native->setAttr("md_dist.split_pairs", mlir::UnitAttr::get(native.getContext()));
   std::string printed;
   llvm::raw_string_ostream os(printed);
   mlir::OpPrintingFlags flags;

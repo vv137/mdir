@@ -497,6 +497,9 @@ llvm::Expected<Program> mdir::driver::buildProgram(const Control &control,
                                            system.box);
       llvm::copy(grid, program.domainGrid.begin());
     }
+    const auto &grid = program.domainGrid;
+    program.domainSplitPairs = control.distribution->pairOverlap == "split" &&
+                               grid[0] * grid[1] * grid[2] > 1;
   }
   Builder builder(control, system, program);
   builder.kept = kept;

@@ -1054,3 +1054,13 @@ placement permutes ranks. At a face rebuild the ranks exchange record
 lengths and then gather the variable-length face lists. This preserves
 the stable identity order in the migration plan while removing repeated
 rendezvous before individual broadcasts.
+
+For a covered directed MATRIX step, the halo's export map partitions
+owned centers into interior and boundary rows. A matrix rebuild maps
+those particle IDs to matrix places. The two launches index the stored
+lists. Each center contributes to exactly one phase's observable
+reduction. The communication stream records completion after writing
+the ghost positions, and the boundary launch waits for that event. The
+driver times split and unsplit traversals on the allocated domains in
+two disposable trials. The faster traversal runs from the production
+initial state. The control file can also select either traversal.

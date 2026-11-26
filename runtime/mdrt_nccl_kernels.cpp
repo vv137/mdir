@@ -9,6 +9,13 @@
 
 namespace {
 constexpr char source[] = R"(
+extern "C" __global__ void indexPlaces(const int *order, const int *slots, int *places,
+                                       long long rows, long long owned) {
+  long long place = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (place >= rows) return;
+  int particle = order[place];
+  if (particle >= 0 && particle < owned) places[slots[particle]] = place;
+}
 extern "C" __global__ void writeCenters(double *out, const double *forces,
                                         const int *mask, long long n) {
   long long i = (long long)blockIdx.x*blockDim.x + threadIdx.x;
@@ -176,7 +183,7 @@ void check(CUresult status) {
   mdrtMPIAbort(message);
 }
 
-CUfunction writeCenters;
+CUfunction indexPlaces, writeCenters;
 
 void compile() {
   CUdevice device;
@@ -204,6 +211,7 @@ void compile() {
   verify(nvrtcGetPTX(program, ptx.data()));
   verify(nvrtcDestroyProgram(&program));
   check(cuModuleLoadData(&module, ptx.data()));
+  check(cuModuleGetFunction(&indexPlaces, module, "indexPlaces"));
   check(cuModuleGetFunction(&writeCenters, module, "writeCenters"));
   check(cuModuleGetFunction(&pack, module, "pack"));
   check(cuModuleGetFunction(&unpack, module, "unpack"));
@@ -328,6 +336,15 @@ extern "C" void mdrtNCCLSelfGather(const double *owned, const int *source, const
   if (!module) compile();
   void *args[]={&owned,&source,&shifts,&ghosts,&elements,&width};
   check(cuLaunchKernel(selfGather,(elements+255)/256,1,1,256,1,1,0,stream,args,nullptr));
+}
+
+extern "C" void mdrtNCCLIndexPlaces(const int *order, const int *slots, int *places,
+                                    int64_t rows, int64_t owned, void *stream) {
+  if (!rows) return;
+  if (!module) compile();
+  void *args[] = {&order, &slots, &places, &rows, &owned};
+  check(cuLaunchKernel(indexPlaces, (rows+255)/256, 1, 1, 256, 1, 1, 0,
+                       (CUstream)stream, args, nullptr));
 }
 
 extern "C" void mdrtNCCLWriteCenters(double *out, const double *forces,

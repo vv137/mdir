@@ -3312,7 +3312,7 @@ Error Reader::read(const toml::table &root) {
     return error;
   if (table) {
     if (Error error = checkKeywords(*table, "distribute",
-                                    {"domains", "transport", "traversal", "placement"}))
+                                    {"domains", "transport", "traversal", "placement", "pair_overlap"}))
       return error;
     auto &dist = control.distribution.emplace();
     dist.gridGiven = table->contains("domains");
@@ -3366,10 +3366,17 @@ Error Reader::read(const toml::table &root) {
           control.neighborStructure != NeighborStructure::Matrix)
         return fail(*table, "distributed GPU pairs require MATRIX");
       control.neighborStructure = NeighborStructure::Matrix;
+      if (Error err = readChoice<std::string>(*table, "pair_overlap", dist.pairOverlap,
+              {{"auto", "auto"}, {"split", "split"}, {"unsplit", "unsplit"}}))
+        return err;
+      if (dist.pairOverlap == "split" && dist.traversal != "directed")
+        return fail(*table, "split pair overlap requires directed traversal");
       std::string placement = "node";
       if (Error err = readChoice<std::string>(*table, "placement", placement, {{"node", "node"}}))
         return err;
     } else {
+      if (table->contains("pair_overlap"))
+        return fail(*table, "pair_overlap requires NCCL transport");
       if (table->contains("placement"))
         return fail(*table, "node placement requires NCCL transport");
       if (control.target != Target::CPU)

@@ -1797,6 +1797,10 @@ when launched with a shared visibility mask. A rank that sees a single
 assigned GPU uses ordinal zero. Stage 1 uses MATRIX with directed or
 unique traversal and floating-point accumulation. A deterministic GPU
 request fails at setup.
+For eligible directed multi-GPU runs, `pair_overlap = "auto"` times
+split and unsplit traversal on the allocated layout for runs of at least
+32 steps. Short runs use the unsplit path. Set `pair_overlap = "split"`
+or `"unsplit"` to override selection. The log records the choice.
 
 Node placement groups neighboring domains by periodic face area. At each
 report the intra-node and inter-node byte totals count directed logical

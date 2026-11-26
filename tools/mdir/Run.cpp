@@ -457,8 +457,15 @@ struct StepGraphTrial {
   }
 };
 
+struct PairOverlapTrial {
+  StringRef mode, restart;
+  int64_t steps;
+  double milliseconds = 0;
+};
+
 static int runControlImpl(StringRef controlFile, Emit emit,
-                           const char *argv0, const RunOptions &options, StepGraphTrial *trial) {
+                           const char *argv0, const RunOptions &options, StepGraphTrial *trial,
+                           PairOverlapTrial *pairTrial = nullptr) {
   auto began = std::chrono::steady_clock::now();
 
   //===--------------------------------------------------------------------===//
@@ -520,25 +527,6 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // What the run writes (D149). Its log goes to the standard output from
   // here, and to the file of [output] as well once that is open.
   Output output;
-  if (trial) {
-    // An independent invocation owns its state, callbacks and banks. Use the
-    // production shape and checkpoint, with no files or checkpoints to write.
-    output.log.quiet = true;
-    control->stepGraph = trial->path.str();
-    control->restartInput = trial->restart.str();
-    for (auto *file : {&control->restartOutput, &control->energyFile,
-                       &control->trajectoryFile, &control->manifestFile, &control->logFile,
-                       &control->profileMapFile, &control->freeEnergyFile, &control->pullFile,
-                       &control->observablesFile})
-      file->clear();
-    control->framePeriod = control->checkpointPeriod = 0;
-    auto period = std::min<int64_t>(control->getCouplingPeriod(), 17);
-    control->thermostatPeriod = period;
-    if (control->comPeriod) control->comPeriod = period;
-    // Leave a long sequence of ordinary chunks between reporting sites.
-    control->energyPeriod = period * 32;
-    control->numSteps = control->energyPeriod * 2;
-  }
   bool writer = true;
   int ranks = 1;
 #ifdef MDIR_ENABLE_MPI
@@ -562,6 +550,32 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       return writer ? refuse(*control, llvm::createStringError("each rank needs at least one domain")) : 1;
   }
 #endif
+  if (trial || pairTrial) {
+    // Each trial has disposable state and never opens production outputs.
+    output.log.quiet = true;
+    control->restartInput = (trial ? trial->restart : pairTrial->restart).str();
+    for (auto *file : {&control->restartOutput, &control->energyFile,
+                       &control->trajectoryFile, &control->manifestFile, &control->logFile,
+                       &control->profileMapFile, &control->freeEnergyFile, &control->pullFile,
+                       &control->observablesFile})
+      file->clear();
+    control->framePeriod = control->checkpointPeriod = 0;
+  }
+  if (pairTrial) {
+    control->distribution->pairOverlap = pairTrial->mode.str();
+    control->numSteps = pairTrial->steps;
+    if (control->energyPeriod <= 0 || control->energyPeriod > pairTrial->steps / 2)
+      control->energyPeriod = pairTrial->steps / 2;
+  }
+  if (trial) {
+    control->stepGraph = trial->path.str();
+    auto period = std::min<int64_t>(control->getCouplingPeriod(), 17);
+    control->thermostatPeriod = period;
+    if (control->comPeriod) control->comPeriod = period;
+    // Leave a long sequence of ordinary chunks between reporting sites.
+    control->energyPeriod = period * 32;
+    control->numSteps = control->energyPeriod * 2;
+  }
   Manifest manifest;
   llvm::json::Array manifestInputs;
 
@@ -1015,6 +1029,24 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // (#568, the equivalence check of the builder).
   if (options.segments)
     *control = compiler::getSegmentsControl(*control);
+  double pairTimes[2] = {};
+  bool requestedAutoOverlap = control->distribution && control->distribution->pairOverlap == "auto";
+#ifdef MDIR_ENABLE_MPI
+  if (requestedAutoOverlap && emit == Emit::Run && ranks > 1 &&
+      control->distribution->transport == "nccl" &&
+      control->distribution->traversal == "directed" && !control->hasTopology() &&
+      !control->minimize && control->numSteps >= 32) {
+    for (unsigned i = 0; i < 2; ++i) {
+      PairOverlapTrial sample{i ? "split" : "unsplit", control->restartInput, 32};
+      if (runControlImpl(controlFile, Emit::Run, argv0, {}, nullptr, &sample))
+        return fail("could not time the distributed pair traversal");
+      pairTimes[i] = sample.milliseconds;
+    }
+    mdrtMPIBroadcast(pairTimes, 2, 0);
+    control->distribution->pairOverlap =
+        pairTimes[1] < pairTimes[0] ? "split" : "unsplit";
+  }
+#endif
   auto program = buildProgram(*control, *system);
   if (!program)
     return control->distribution ? refuse(*control, program.takeError()) : fail(program.takeError());
@@ -1962,6 +1994,13 @@ static int runControlImpl(StringRef controlFile, Emit emit,
                      static_cast<long long>(grid[0]), static_cast<long long>(grid[1]),
                      static_cast<long long>(grid[2]), control->distribution->transport.c_str(),
                      control->distribution->traversal.c_str(), domainReach);
+    if (control->distribution->transport == "nccl")
+      output.log.print("MDIR: covered pair traversal %s (pair_overlap = %s)\n",
+                       program->domainSplitPairs ? "split" : "unsplit",
+                       requestedAutoOverlap ? "auto" : control->distribution->pairOverlap.c_str());
+    if (pairTimes[0] > 0)
+      output.log.print("MDIR: pair overlap trials, unsplit %.3f and split %.3f ms per step\n",
+                       pairTimes[0], pairTimes[1]);
   }
   if (program->pme)
     output.log.print("MDIR: PME force-only product rule: %s\n", pmeForceProduct);
@@ -2147,7 +2186,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     const auto &g = program->domainGrid;
     distLog.emplace(output.log, manifest, distRank, distRanks, g[0]*g[1]*g[2],
                     firstStep, control->energyPeriod, domainReach);
-    const char *prefix = std::getenv("MDIR_DIST_STEP_TRACE");
+    const char *prefix = pairTrial ? nullptr : std::getenv("MDIR_DIST_STEP_TRACE");
 #ifdef MDIR_ENABLE_MPI
     if (control->distribution->transport != "local") {
       bool any = mdrtMPIMax(prefix && *prefix);
@@ -2221,6 +2260,15 @@ static int runControlImpl(StringRef controlFile, Emit emit,
             &trial->warmSeconds, &trial->timedSeconds))
       trial->refusal = "too few warmed ordinary chunks to measure replay";
     // Trial builds and prunes belong to the disposable run.
+    if (auto reset = findRuntime("mdrtResetCounts", "mdrtResetCounts"))
+      reinterpret_cast<void (*)()>(reset)();
+    setOutput(nullptr);
+  }
+  if (pairTrial) {
+    pairTrial->milliseconds = 1000 * runTime / control->numSteps;
+    if (output.rateFrom && output.rateLast.first > output.rateFrom->first)
+      pairTrial->milliseconds = 1000 * (output.rateLast.second - output.rateFrom->second) /
+                                (output.rateLast.first - output.rateFrom->first);
     if (auto reset = findRuntime("mdrtResetCounts", "mdrtResetCounts"))
       reinterpret_cast<void (*)()>(reset)();
     setOutput(nullptr);

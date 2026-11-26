@@ -612,3 +612,7 @@ For unconstrained Verlet dynamics each device retains its owned field
 values across kicks. When every domain is wider than twice the reach,
 the GPU reports the rows that change owner or enter a neighboring halo.
 Only crossing rows of unshifted fields are exchanged between owners.
+For directed multi-GPU runs of at least 32 steps, `pair_overlap = "auto"`
+times the split and unsplit traversals on the allocated layout. A short
+run uses the unsplit path. The values `"split"` and `"unsplit"` override
+selection. The run log records the choice.

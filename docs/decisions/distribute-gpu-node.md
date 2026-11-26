@@ -156,3 +156,22 @@ and one variable-length all-gather replace the count and payload
 broadcasts from each rank. Receivers process the lists in rank order and
 sort each sender's migrating identities as before. Large displacements
 outside the MPI collective's integer range use chunked broadcasts.
+
+### Row lists for a covered directed traversal
+
+At a halo rebuild, each owned row gets a slot in the interior list or
+the boundary list. Every exported row, including a periodic self-image
+source, belongs to the boundary. Once the device builds the neighbor
+matrix, one kernel converts the cell-ordered matrix places into the two
+launch lists. Each covered phase indexes its own list and reduces its
+observable scratch over that list's length. The interior evaluates
+against owned coordinates while the communication stream fills the
+ghost rows. The boundary waits for the halo event. A cold matrix takes
+a full traversal. For an eligible directed run of at least 32 steps,
+the default `pair_overlap = "auto"` runs two disposable 32-step trials
+from the same input on the production layout. The second half of each
+trial determines the choice when energy reports bracket that interval.
+Otherwise the trial uses elapsed integration time. Rank zero broadcasts
+the two times. The production log records both and the selected traversal.
+Short runs use the unsplit traversal. Explicit `"split"` and `"unsplit"`
+values bypass measurement. A single rank always uses its self-image path.
