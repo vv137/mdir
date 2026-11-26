@@ -756,6 +756,31 @@ def MDDistPrintSchedule
   }];
 }
 
+def MDDistReleaseDomainBuffers
+    : Pass<"md-dist-release-domain-buffers", "::mlir::ModuleOp"> {
+  let summary = "Free, at the end of each call, the buffers that a domain "
+                "procedure allocates";
+  let description = [{
+    Runs on the host code after `convert-md-exec-to-loops`, on the
+    functions that `convert-md-dist-to-loops{matrix-pairs=true}` outlined
+    from a loop over domains (marked `md_dist.domain_procedure`,
+    D[distribute-pair-lowering]). The driver calls such a procedure once per
+    domain and step; the local rows that it packs and the storage that
+    `md-exec-assign-storage` gives its fields are allocated in it, and
+    nothing else frees them. Each `memref.alloc` of the procedure that is
+    not already released gets a `memref.dealloc` before the terminator of
+    its block.
+
+    The release is valid only if the buffer does not outlive the call. The
+    pass follows the buffer through its views and through the functions of
+    the module that it is given, and rejects, naming the op, a return, a
+    yield, a loop that carries it, a raw pointer or other alias, and a call
+    of an external function other than those of the runtime that use a
+    buffer only during the call (`mdrtDistMatrixRebuild`). The marks are
+    removed.
+  }];
+}
+
 def MDistributeDriverSteps : Pass<"md-distribute-driver-steps", "::mlir::ModuleOp"> {
   let options = [Option<"wrapDrift", "wrap-drift", "bool", "false",
                        "keep the position representative independent of halo rebuilds">];

@@ -2716,6 +2716,10 @@ LogicalResult Assignment::convertFunction(func::FuncOp function) {
   // lowering after fields have been assigned storage.
   if (Attribute batch = function->getAttr("mdir.frame_batch"))
     converted->setAttr("mdir.frame_batch", batch);
+  // A procedure of a domain frees its buffers after the lowering of its
+  // loops (md-dist-release-domain-buffers).
+  if (Attribute procedure = function->getAttr("md_dist.domain_procedure"))
+    converted->setAttr("md_dist.domain_procedure", procedure);
   // The attributes of the arguments, among them which are read-only.
   if (ArrayAttr attributes = function.getArgAttrsAttr())
     converted.setArgAttrsAttr(attributes);

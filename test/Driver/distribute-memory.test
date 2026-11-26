@@ -1,0 +1,9 @@
+# A distributed CPU run holds the same memory for 50 and for 1,000 steps of
+# the same particles: the procedure of each domain frees at its end the
+# buffers it allocates (md-dist-release-domain-buffers,
+# D[distribute-pair-lowering]). Before, the two domains of this mixture kept
+# about 0.09 MiB a step, and the run of 1,000 steps peaked 84 MiB above
+# the short one.
+# RUN: rm -rf %t
+# RUN: %python %S/Inputs/distributed_memory.py mdir %t %S/charged.toml 50 1000 16 | FileCheck %s
+# CHECK: bounded
