@@ -1080,3 +1080,11 @@ within that particle's force sum. The original tuple number selects
 the parameter. Constraint groups keep one owner and reuse their rows
 until ownership changes. This removes host scheduling from covered
 bonded steps at the cost of gathering the padded owner coordinates.
+
+The mixed-precision cross-backend comparison uses the sum of the
+magnitudes of the individual interaction contributions as its scale.
+LJ and Coulomb have opposite virial signs in the charged liquid. At
+the initial frame their magnitudes sum to $7393434.761463$ kcal/mol.
+Four times the f32 spacing at one times that scale gives $3.525464$
+kcal/mol, above the observed $0.521918$ kcal/mol difference. The
+absolute tolerances govern comparisons with ordinary GPU MATRIX.

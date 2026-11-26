@@ -1,0 +1,2 @@
+# REQUIRES: h5py
+# RUN: %h5md_python %S/Inputs/distributed_comparison_bound.py %S/../../scripts/validation/distributed

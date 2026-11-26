@@ -216,3 +216,33 @@ field lifetime. The schedule, coordinates, and tuple forces stay on
 the device during covered steps. Scalar observations and constraint
 failure flags still have host consumers. The padded coordinate gather
 communicates all owners' positions for each new bonded position field.
+
+### Mixed-precision comparisons between backends
+
+For a scalar component $X=\sum_i X_i$, model the result on backend $b$ as
+$\widehat X_b=\sum_i(X_i+e_{bi})$. The reduction-order allowance assigns
+each backend $|e_{bi}|\le 2\epsilon_{32}|X_i|$, with
+$\epsilon_{32}=2^{-23}$. Applying the triangle inequality to the two
+results gives $|\widehat X_1-\widehat X_2|\le
+4\epsilon_{32}\sum_i|X_i|$. The coefficient four specifies the
+validation budget. The worst-case error of an arbitrary serial f32 sum
+also depends on its length.
+
+Use the greater of this allowance and the original field-specific
+absolute bound for each scalar of a mixed GPU versus CPU MATRIX
+comparison. For each energy frame, sum the magnitudes of the reference
+potential terms. For the virial, take the magnitude of each term's
+signed virial trace, including the constraint contribution when
+present. For force, sum the magnitudes of the force terms at the same
+particle and Cartesian component. For positions and velocities the
+checkpoint supplies a single reference component. Apply the minimum
+image to the position difference. Double comparisons and distributed
+versus ordinary GPU comparisons use the original absolute bounds.
+The comparison script checks every frame or coordinate against its own
+bound and reports the largest error-to-bound ratio.
+
+In the charged liquid's initial frame, CPU mixed single-term replays
+give LJ and Coulomb virials of $-4297730.897035$ and $3095703.864428$
+kcal/mol. Their absolute contributions give a bound of $3.525464$
+kcal/mol. The one-rank mixed GPU difference from the CPU MATRIX trace
+of $-1202027.032770$ kcal/mol was $0.521918$ kcal/mol.
