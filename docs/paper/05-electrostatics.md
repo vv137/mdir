@@ -1295,3 +1295,45 @@ which the builder does not model.
 
 The u-series gives a different smooth decomposition using Gaussians
 [[Predescu2020]](references.md#predescu2020).
+
+### Distributed electrostatic PME (D[distribute-pme])
+
+In a fixed periodic cell the reciprocal electrostatic energy is the
+quadratic form $U=\tfrac12(TSq)^*G(TSq)$ on the full spectrum. Here
+$S_{ji}$ is the product of the three assignment weights at mesh point
+$j$ for charge $q_i$. Differentiation with respect to the charge grid
+gives the potential $T^*GTSq$. Differentiation with respect to particle
+position gives $\mathbf F_i=-q_i\sum_j (T^*GTSq)_j\nabla_i S_{ji}$.
+The inverse transform in this convention is unnormalized. The
+strain derivative at fixed fractional coordinates differentiates the
+volume and wave vectors in $G$, giving the mode virial of Section 5.
+The direct potential and excluded-pair correction use the same splitting
+density as $G$.
+
+Partition the columns of $S$ by particle owner. Each local assignment
+extends over the window support across domain boundaries. Summing the
+local contributions at each mesh owner reconstructs $Sq$. Returning the
+potential along the transpose of this exchange supplies all terms in the
+force sum, including for constraint-group members outside their owner's
+geometric domain. Global periodic point indices identify overlaps.
+
+The real grid begins with divisions $(P_x,P_y,1)$. After transforming
+complete real $z$ lines, the first transpose divides the half-spectrum
+as $(P_x,1,P_y)$ for the $y$ transform. The next gives $(1,P_x,P_y)$
+for the $x$ transform. Each message contains the intersection of a
+source and a destination box. This partitions every coefficient exactly
+once even for unequal pencil widths. Multiplying by $G$ in this layout
+avoids a third forward transpose. Interior $z$ frequencies have
+multiplicity two in the quadratic form; zero and an even grid's Nyquist
+plane have multiplicity one. Reversing the two transposes and three
+transforms reconstructs the real potential.
+
+Each particle-to-point contribution is quantized once at $2^{-40}$ e.
+Integer summation at the owner bounds the point's quantization error by
+half a unit per contributing stencil entry, independently of the
+message order. Its checked final range is $[-2^{23},2^{23})$ e.
+The deterministic reciprocal energy and virial quantize each mode at
+$2^{-32}$ in native observable units before integer reduction. The
+self term depends only on the squared charge norm, and the neutralizing
+background on the squared total charge and inverse volume. A single
+evaluation in canonical charge order at setup supplies every rank.

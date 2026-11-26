@@ -316,3 +316,6 @@ D[distribute-pair-lowering] connects default distributed CPU pairs to the
 ordinary MATRIX list, host lane chooser, and threaded center traversal.
 
 D[distribute-steady] adds exclusive CPU phase clocks and epoch-local transport schedules.
+
+D[distribute-pme] extends fixed-cell CPU domain decomposition to
+electrostatic PME with a separate mesh-rank grid and pencil transforms.

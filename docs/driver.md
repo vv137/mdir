@@ -1812,3 +1812,21 @@ payload collective. Pair, copy, sum, reduction and migration times exclude
 that wait. Cross-rank halo payload excludes replicated state collection
 and logging traffic. A checkpoint-private collect gathers live rows to the
 writer. A collect shared with the following segment also supplies its peers.
+
+### Distributed electrostatic PME
+
+A fixed-cell CPU run with unique or midpoint traversal may use Gaussian
+or prolate electrostatic PME, including the D440 cubic B-spline window.
+Set the physical mesh and split in `[pme]`. The optional `[distribute]`
+key `pme_ranks` gives the number of mesh owners (default all ranks).
+Alternatively, `pme_decomposition = [a, b]` chooses the real mesh's
+$x$ and $y$ divisions. Its product sets the owner count. If both keys are
+given, the product must equal `pme_ranks`. The remaining ranks still own
+particles and participate in the forward and reverse overlap exchanges.
+Each real pencil must cover the assignment overlap, and each transposed
+pencil must contain at least one line.
+
+The setup log gives the resolved pencil decomposition. The phase log
+times `pme_spread`, `pme_overlap` (outgoing charge and returning
+potential), `pme_fft` (local transforms), `pme_transpose`,
+`pme_solve` and `pme_gather`. Direct-space pairs use `pairs`.
