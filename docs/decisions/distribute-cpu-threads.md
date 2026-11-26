@@ -21,3 +21,8 @@ identity map. Field payloads travel to the receiving ranks. Each rank
 numbers its new local identities in ascending order using fixed-block
 counts and prefix offsets. Halo construction can request the remote row
 maps and positions after the migration.
+
+The halo plan stores the peer stream offset of each crossing row.
+Packing and forward delivery write disjoint rows. The transpose groups
+the existing stream by destination, preserving its order within each
+owned row for both floating-point and checked wide sums.
