@@ -1358,7 +1358,7 @@ It rounds the scaled positions to a lattice and rounds the encoded source
 squared norm downward. A padded distance threshold accounts for the endpoint
 rounding.
 
-For the scalar evaluation (D[towers-scalar-screen]), let $s$ be the
+For the scalar evaluation (D442), let $s$ be the
 power-of-two scale, $u,v$ the rounded target and source triples, and $B$ the
 Cartesian extent used to choose $s$. Each endpoint contributes at most half
 a lattice unit per coordinate. Including the common-image staging allowance

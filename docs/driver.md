@@ -450,7 +450,7 @@ The optional `screen` field accepts `"AUTO"` (default), `"MMA"`, or
 `"SCALAR"`. AUTO uses MMA on compute capability 7.5 and newer and scalar
 binary32 fused multiply-adds on older devices. Requesting MMA on an older
 device fails during preflight. The setup log and manifest record the
-effective screen and the reason for its selection (D[towers-scalar-screen]).
+effective screen and the reason for its selection (D442).
 
 The log and the manifest's `effective.towers_shape` record the cell medians
 in microseconds, winning shape, margin over the runner-up, whether the

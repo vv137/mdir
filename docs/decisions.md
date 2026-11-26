@@ -737,6 +737,7 @@ specification follow those made with it.
 | [D439](decisions/D439.md) | Graph replay of ordinary TOWERS steps. | 2026-11-25 |
 | [D440](decisions/D440.md) | With `kernel = "PROLATE"`, `continuity` sets the number of continuous derivatives at the cutoff (0 through 3). | 2026-11-25 |
 | [D441](decisions/D441.md) | Forced PTX uses the detected Volta architecture when no architecture override is present. | 2026-11-26 |
+| [D442](decisions/D442.md) | The optional `[execution] towers_shape.screen` selects `"AUTO"`, `"MMA"`, or `"SCALAR"`. | 2026-11-26 |
 <!-- end decisions-table -->
 
 
