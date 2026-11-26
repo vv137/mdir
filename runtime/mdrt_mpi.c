@@ -32,26 +32,23 @@ static void finish(void) {
 
 int mdrtMPIActive(void) { return comm != MPI_COMM_NULL; }
 
-extern int mdrtDistObserving(void);
 extern void mdrtDistPhase(int64_t phase);
 
-// Time arrival at the payload collective with a rendezvous on the same
-// communicator. The measurement includes the latency of the barrier.
-static void arrival(void) {
-  if (size > 1 && mdrtDistObserving()) {
-    mdrtDistPhase(DistWait);
-    MPI_Barrier(comm);
-    mdrtDistPhase(-DistWait);
-  }
+// The progress clock includes both rank arrival skew and completion of the
+// required collective. A separate rendezvous would serialize the step.
+static void collectivePhase(int phase) {
+  if (size > 1) mdrtDistPhase(phase);
 }
 void mdrtMPIGatherTimes(const double *send, double *recv, int count) {
   MPI_Allgather(send, count, MPI_DOUBLE, recv, count, MPI_DOUBLE, comm);
 }
 
 int mdrtMPIMax(int value) {
+  if (size == 1) return value;
   int result;
-  arrival();
+  collectivePhase(DistWait);
   MPI_Allreduce(&value, &result, 1, MPI_INT, MPI_MAX, comm);
+  collectivePhase(-DistWait);
   return result;
 }
 
@@ -263,8 +260,9 @@ int64_t *mdrtMPIFinishFaces(struct FaceExchange *exchange, const int64_t *local,
 void mdrtMPIBroadcastIndices(int64_t *values, int64_t count, int root) {
   while (count > 0) {
     int n = count > INT_MAX ? INT_MAX : (int)count;
-    arrival();
+    collectivePhase(DistWait);
     MPI_Bcast(values,n,MPI_INT64_T,root,comm);
+    collectivePhase(-DistWait);
     values += n;
     count -= n;
   }
@@ -274,8 +272,9 @@ void mdrtMPIBroadcastWords(void *buffer, int64_t count, int root) {
   unsigned char *values = buffer;
   while (count > 0) {
     int n = count > INT_MAX ? INT_MAX : (int)count;
-    arrival();
+    collectivePhase(DistWait);
     MPI_Bcast(values, n, wideWord, root, comm);
+    collectivePhase(-DistWait);
     values += n;
     count -= n;
   }
@@ -294,9 +293,10 @@ int mdrtMPIGatherDomainPartials(double *first, int64_t domains, int64_t stride,
   if (!rows)
     mdrtMPIAbort("out of memory sharing domain partials");
   int64_t local = mdrtMPIDomainBound(domains, 0);
-  arrival();
+  collectivePhase(DistWait);
   MPI_Allgather(first + local * stride, (int)width, MPI_DOUBLE, rows,
                 (int)width, MPI_DOUBLE, comm);
+  collectivePhase(-DistWait);
   for (int64_t d = 0; d < domains; ++d)
     memcpy(first + d * stride, rows + mdrtMPIOwner(domains, d) * width, bytes);
   free(rows);
@@ -306,24 +306,28 @@ int mdrtMPIGatherDomainPartials(double *first, int64_t domains, int64_t stride,
 void mdrtMPIBroadcast(double *values, int64_t count, int root) {
   while (count > 0) {
     int n = count > INT_MAX ? INT_MAX : (int)count;
-    arrival();
+    collectivePhase(DistWait);
     MPI_Bcast(values, n, MPI_DOUBLE, root, comm);
+    collectivePhase(-DistWait);
     values += n;
     count -= n;
   }
 }
 
 int mdrtMPIAllTrue(int predicate) {
+  if (size == 1) return predicate != 0;
   int result;
-  arrival();
+  collectivePhase(DistWait);
   MPI_Allreduce(&predicate, &result, 1, MPI_INT, MPI_LAND, comm);
+  collectivePhase(-DistWait);
   return result;
 }
 
 void mdrtMPIExchange(void *send, int *sendCounts, int *sendOffsets,
                      void *recv, int *recvCounts, int *recvOffsets, int words) {
-  arrival();
   MPI_Datatype type = words ? wideWord : MPI_DOUBLE;
+  collectivePhase(DistWait);
   MPI_Alltoallv(send, sendCounts, sendOffsets, type,
                 recv, recvCounts, recvOffsets, type, comm);
+  collectivePhase(-DistWait);
 }

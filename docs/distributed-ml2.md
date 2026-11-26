@@ -1580,8 +1580,8 @@ layout metadata and capacity for the global rows. Scalar reductions
 broadcast domain partials and fold them in domain order.
 
 For MPI, rank clocks use local monotonic time. Rank extrema compare
-durations and need no clock synchronization. A rendezvous before each
-payload collective measures arrival wait plus barrier latency. The rank
+durations and need no clock synchronization. The wait clock measures the blocking payload collective, including
+arrival skew and transport latency. The rank
 table reports actual inter-rank halo payload separately from logical
 intra-rank copies. With a fixed grid, assigning the same domain partials
 to another number of ranks preserves their order in the reduction.

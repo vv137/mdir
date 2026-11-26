@@ -280,3 +280,7 @@ with their new owners, and reorder the received rows on the device.
 The sorted exclusion table follows the lifetime of its input relation.
 A halo retains the mapped exclusion pairs for each table and domain
 until its layout expires. Repeated evaluations can borrow those pairs.
+
+MPI wait timing covers arrival skew and completion inside the blocking
+payload collective. A one-rank communicator can return its local
+coverage predicate or maximum immediately.

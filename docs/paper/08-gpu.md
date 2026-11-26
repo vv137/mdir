@@ -1117,3 +1117,7 @@ Mapping topology exclusions to owned and periodic image rows depends
 on the exclusion table and halo geometry. The executor retains this
 mapping with the halo so repeated force evaluations reuse the same
 excluded row pairs between rebuilds.
+
+The host measures required blocking collectives directly. Their elapsed
+time includes arrival skew and transport. Adding this duration to an
+inclusive parent phase would count the same interval twice.
