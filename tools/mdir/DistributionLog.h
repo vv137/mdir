@@ -4,6 +4,7 @@
 #include "../../runtime/mdrt_dist_stats.h"
 #include "Manifest.h"
 #include "mdir/Driver/Output.h"
+#include "llvm/Support/Format.h"
 #include <array>
 #include <chrono>
 #include <map>
@@ -89,9 +90,15 @@ class DistributionLog {
   }
 
   void rows(Sample &s, const char *label, bool detailed) {
+    std::vector<double> times(size_t(ranks) * DistPhaseCount);
+    if (gather) gather(s.seconds.data(), times.data(), DistPhaseCount);
+    else std::copy(s.seconds.begin(), s.seconds.end(), times.begin());
+    if (rank && !detailed) return;
+    llvm::SmallString<4096> report;
+    llvm::raw_svector_ostream output(report);
     auto print = [&](const char *format, auto... args) {
       if (detailed) std::fprintf(trace, format, args...);
-      else log.print(format, args...);
+      else output << llvm::format(format, args...);
     };
     for (int64_t d = 0; d < domains; ++d)
       if (!detailed || owner(d) == rank)
@@ -143,10 +150,6 @@ class DistributionLog {
                 (long long)step, r, columns[i], (long long)counts[r][i],
                 sum ? double(counts[r][i])/sum : 0.);
     }
-    std::vector<double> times(size_t(ranks) * DistPhaseCount);
-    if (gather) gather(s.seconds.data(), times.data(), DistPhaseCount);
-    else std::copy(s.seconds.begin(), s.seconds.end(), times.begin());
-    if (rank && !detailed) return;
     for (int i = 0; i < DistPhaseCount; ++i) {
       double sum = 0, low = times[i], high = times[i];
       for (int r = 0; r < ranks; ++r) {
@@ -164,6 +167,7 @@ class DistributionLog {
               label, (long long)step, r, names[i], v, sum ? v/sum : 0.);
       }
     }
+    if (!detailed) log.print("%s", report.c_str());
     if (detailed && std::fflush(trace)) error = "cannot flush distributed step trace";
   }
   void phase(int64_t code) {

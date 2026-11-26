@@ -1179,3 +1179,11 @@ matrix. The local exclusion map fixes the global relation and both
 endpoints' owned or ghost row identities. Attaching the matrix to that
 map lets successive covered evaluations borrow it. A replaced relation
 gets a new map even if the geometry is still covered.
+
+In a halo that spans nodes, the directed edges from one rank to one peer
+occupy a contiguous message. Grouping both link classes in a single NCCL
+submission allows the transport to schedule independent edges together.
+The interior pair stream can proceed from owned coordinates when split
+traversal is selected. Only the boundary traversal needs the halo event.
+The interval clock gather precedes formatting so the other ranks can
+advance while the writer emits the rank and domain statistics.

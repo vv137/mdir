@@ -400,6 +400,11 @@ static void exchange(const struct NCCLPlan *p, double *owned, int64_t nOwned,
                outgoing, (long long)send*k, k, NULL, reverse, stream);
   // Packing, peer transfers, and unpacking are ordered on this stream.
   int rank = mdrtMPIRank();
+  // An outer group lets NCCL schedule both link classes together. The
+  // per-peer slices are disjoint. The forward clock includes their joint
+  // launch, while the link clocks count the corresponding enqueue calls.
+  int joint = p->hasPeers[0] && p->hasPeers[1];
+  if (joint) checkNCCL(ncclGroupStart());
   for (int inter = 0; inter <= 1; ++inter) {
     if (!p->hasPeers[inter]) continue;
     int phase = inter ? DistInterHalo : DistIntraHalo;
@@ -434,6 +439,7 @@ static void exchange(const struct NCCLPlan *p, double *owned, int64_t nOwned,
     if (grouped) checkNCCL(ncclGroupEnd());
     if (!reverse) mdrtDistPhase(-phase);
   }
+  if (joint) checkNCCL(ncclGroupEnd());
   double *result = reverse ? ownedDevice : ghostDevice;
   mdrtNCCLRows(0, incoming, reverse ? p->source : p->dest, result,
                (long long)recv*k, k, image ? p->shifts : NULL, reverse, stream);

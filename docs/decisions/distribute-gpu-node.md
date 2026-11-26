@@ -370,3 +370,9 @@ A changed relation has its own map. A different cutoff declines reuse.
 Releasing an expired map releases its cached list. The list radius
 includes twice the halo margin so that a list first built during the
 epoch remains valid through its last covered evaluation.
+
+Submit the local and inter-node peer groups inside a common NCCL group
+when the plan uses both link classes. Each peer still receives one
+contiguous slice per field. The joint launch is charged to the outer
+halo phase. Gather interval clocks before formatting the replicated
+counts. The writer emits the complete interval in one log call.
