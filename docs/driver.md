@@ -1788,7 +1788,7 @@ writer. A collect shared with the following segment also supplies its peers.
 
 ### GPU spatial decomposition (D[distribute-gpu-node])
 
-With NCCL transport, pointwise constraint corrections on owned three-component fields run on each rank’s GPU.
+With NCCL transport, pointwise constraint corrections on owned three-component fields run on each rank’s GPU. The halo retains mapped exclusions on the GPU for covered steps.
 
 With MPI, CUDA, and NCCL enabled at build time, select a GPU target,
 `[distribute] transport = "nccl"`, and `placement = "node"`. The latter

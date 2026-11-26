@@ -623,7 +623,7 @@ selection. The run log records the choice. Both modes pack contiguous
 messages by peer. With split traversal, the boundary pass waits for the
 position halo and the interior pass uses owned positions. Covered pair-only steps test displacement without copying the host owner or face tables.
 
-With NCCL transport, pointwise constraint corrections on owned three-component fields run on each rank’s GPU.
+With NCCL transport, pointwise constraint corrections on owned three-component fields run on each rank’s GPU. The halo retains mapped exclusions on the GPU for covered steps.
 
 A numeric `[energy] pairlist_distance` fixes the halo reach. For directed
 NCCL runs without topology, `"AUTO"` can measure that reach on the allocated

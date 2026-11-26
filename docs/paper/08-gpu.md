@@ -1289,3 +1289,11 @@ arithmetic. A rank can instead evaluate that arithmetic on the device
 over its owned rows. Each output row depends only on input rows with the
 same index, so this change requires no additional halo exchange. Two
 runs of this implementation took 50.137 and 50.192 ms/step.
+
+At a covered Factor IX step, 90,906 owned and 85,280 image rows mapped
+the excluded interactions to 484,649 pairs of local indices. Those pairs
+occupied 3,877,192 bytes and their incidence structure occupied 16,213,536
+bytes. Their values depend only on the exclusion relation and the halo's
+row numbering. Retaining the ordinary incidence layout on the GPU reduced
+the mean of two runs with resident particle updates to 41.812 ms/step.
+The halo invalidates the mapping when its rows change.

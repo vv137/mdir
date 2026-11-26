@@ -444,3 +444,9 @@ from owned scalar and vector rows can borrow those inputs on the device.
 Each rank executes the pointwise program over its own count. The result
 is copied on the producer stream into the new owned field. This keeps
 constraint corrections on the device between tuple projections.
+
+For a floating-point NCCL MATRIX, build the ordinary exclusion incidence
+over the mapped local row set once per halo, domain and live exclusion
+relation. The halo owns the device buffer. A covered step borrows it
+directly, and a replacement relation receives its own incidence even
+within the same halo. Releasing a map releases its incidence.

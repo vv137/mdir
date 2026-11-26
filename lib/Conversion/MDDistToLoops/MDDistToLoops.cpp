@@ -2996,7 +2996,20 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
     Value members = func::CallOp::create(b, loc, map, ValueRange{
         halo.handle, arith::IndexCastOp::create(b, loc, i64, d),
         excludedPairs.lookup(op.getResult())}).getResult(0);
-    Value pairs = mdrt::FromBufferOp::create(b, loc, relationType, members);
+    Value pairs;
+    if (sharedState()) {
+      auto device = MemRefType::get({ShapedType::kDynamic}, b.getI32Type(),
+                                    MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
+      SmallVector<Value> args{halo.handle, arith::IndexCastOp::create(b, loc, i64, d),
+                              excludedPairs.lookup(op.getResult()), externalStream(b)};
+      auto get = declare("mdrtDistDeviceExclusions",
+                         b.getFunctionType(ValueRange(args).getTypes(), {device}), true);
+      Value incidence = func::CallOp::create(b, loc, get, args).getResult(0);
+      Value count = memref::DimOp::create(b, loc, members, 0);
+      pairs = mdrt::ScheduledRelationOp::create(b, loc, relationType, incidence, count);
+    } else {
+      pairs = mdrt::FromBufferOp::create(b, loc, relationType, members);
+    }
     excluded = md_exec::BuildIncidenceOp::create(b, loc,
         mdrt::IncidenceType::get(context, set, 2, tupleSet), pairs, Value());
   }

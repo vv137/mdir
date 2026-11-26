@@ -326,5 +326,5 @@ Retired epochs apply sparse face changes to host arrays for the next rebuild. Th
 classifier reuses its record storage, and independent particle observables
 from one traversal can share their domain rows in one collective.
 Constrained NCCL runs filter periodic ghosts against separate group
-boxes. Independent tuple observables can share a collective. Pointwise updates of owned constraint vectors run on the GPU.
+boxes. Independent tuple observables can share a collective. Pointwise updates of owned constraint vectors run on the GPU. The halo retains mapped exclusions on the GPU for covered steps.
 Midpoint GPU pair traversal and reproducible integer GPU sums remain open.

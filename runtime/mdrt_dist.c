@@ -15,6 +15,7 @@
 #include "mdrt_dist_stats.h"
 #ifdef MDIR_ENABLE_NCCL
 #include "mdrt_nccl.h"
+#include "mdrt_tuples.h"
 #endif
 #include "mdrt_host_matrix.h"
 #ifdef MDIR_ENABLE_MPI
@@ -212,6 +213,8 @@ struct ExclusionMap {
   int64_t domain;
   struct Members pairs;
 #ifdef MDIR_ENABLE_NCCL
+  int *incidence;
+  int64_t incidenceSize;
   struct DistDeviceMatrix matrix;
   double cutoff;
 #endif
@@ -225,6 +228,7 @@ static void removeExclusionMap(struct ExclusionMap **link) {
   struct ExclusionMap *map = *link;
   *link = map->next;
 #ifdef MDIR_ENABLE_NCCL
+  if (map->incidence) mdrtNCCLFreePositions((double *)map->incidence);
   if (map->matrix.data) map->matrix.release(map->matrix.data);
 #endif
   free(map->pairs.allocated);
@@ -2691,6 +2695,30 @@ void _mlir_ciface_mdrtDistDeviceScalar(struct Memref1D *out, int64_t handle,
 }
 
 struct DeviceKinds { int32_t *allocated, *aligned; int64_t offset, rows, stride; };
+/* A halo fixes the ordering of both endpoints of each mapped exclusion.
+   Borrow the ordinary incidence structure for the lifetime of that map. */
+void _mlir_ciface_mdrtDistDeviceExclusions(struct DeviceKinds *out,
+    int64_t halo, int64_t domain, int64_t exclusions, void *stream) {
+  struct Halo *h = (void *)(intptr_t)halo;
+  for (struct ExclusionMap *map = h->exclusionMaps; map; map = map->next) {
+    if (map->domain != domain || map->table != (void *)(intptr_t)exclusions)
+      continue;
+    if (!map->incidence) {
+      int64_t rows = h->layout->rows[domain] + h->rows[domain];
+      int64_t pairs = map->pairs.sizes[0];
+      map->incidenceSize = mdrtTuplesSize(pairs, 2, rows);
+      int32_t *host = mdrtTuplesAllocate(map->incidenceSize * sizeof(*host));
+      mdrtTuplesFill(map->pairs.aligned, pairs, 2, rows, host);
+      map->incidence = mdrtNCCLUploadIndices(host, map->incidenceSize);
+      free(host);
+    }
+    mdrtNCCLWaitForRows(stream);
+    *out = (struct DeviceKinds){map->incidence, map->incidence, 0, map->incidenceSize, 1};
+    return;
+  }
+  fail("missing mapped exclusions for device incidence");
+}
+
 /* The epoch fixes row identities and periodic images. Keep the immutable
    topology adjacency; the device selects its active incidences at the
    current coordinates in the original tuple order. */
