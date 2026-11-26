@@ -9,6 +9,8 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Matchers.h"
 #include <array>
+#include <functional>
+#include <map>
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
 namespace prolate = mdir::prolate;
@@ -898,7 +900,66 @@ llvm::Error NonbondedWork::collectProlate() {
   double spacing = 0.0;
   for (int k = 0; k != 3; ++k)
     spacing = std::max(spacing, edges[k] / static_cast<double>(grid[k]));
-  while (automatic && aliasing > bound) {
+  if (spline) {
+    // The B-spline window (D[prolate-bspline-grid]): its estimate of the
+    // mesh error (getSplineMeshError), on any grid, and the automatic grid
+    // the coarsest at one spacing for the three edges with the estimate at
+    // most its bound. The spectrum is the one the kernels take: the
+    // transform of the constrained density in full, or the prolate's within
+    // its band and 0 beyond.
+    std::function<double(double)> spectrum;
+    double scale = psi.eigenvalue() / (2.0 * psi.halfIntegral());
+    if (polynomialSplit)
+      spectrum = [&influence](double k) {
+        return prolate::evaluatePolynomialInfluence(influence, k);
+      };
+    else
+      spectrum = [&psi, c, scale](double k) {
+        return k < c ? scale * psi.value(k / c) : 0.0;
+      };
+    std::map<std::array<int64_t, 3>, double> estimates;
+    auto estimate = [&](const int64_t (&at)[3]) {
+      auto [entry, added] =
+          estimates.try_emplace({at[0], at[1], at[2]}, 0.0);
+      if (added)
+        entry->second =
+            prolate::getSplineMeshError(spectrum, points, edges, at, rc);
+      return entry->second;
+    };
+    auto spaced = [&](double h, int64_t (&at)[3]) {
+      for (int k = 0; k != 3; ++k)
+        at[k] = getSmoothSize(
+            static_cast<int64_t>(std::ceil(edges[k] / h - 1e-9)));
+    };
+    bound = prolate::getSplineBound(epsilon, polynomialSplit);
+    aliasing = estimate(grid);
+    if (automatic && aliasing > bound) {
+      // Bisection in the spacing between that of eq. 15 and a finer limit;
+      // `fine` always meets the bound, so the grid chosen does.
+      double coarse = spacing, fine = spacing / prolate::SplineRefinementLimit;
+      int64_t trial[3];
+      spaced(fine, trial);
+      if (double finest = estimate(trial); finest > bound)
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            "the mesh error estimate of the prolate kernel with the "
+            "B-spline window stays above its bound %g for the tolerance %g "
+            "of [pme]: it is %g at %lld x %lld x %lld points, %g times finer "
+            "than the grid of eq. 15; give a looser 'tolerance' or the "
+            "grid in 'grid'",
+            bound, epsilon, finest, static_cast<long long>(trial[0]),
+            static_cast<long long>(trial[1]), static_cast<long long>(trial[2]),
+            prolate::SplineRefinementLimit);
+      while (coarse > fine * (1.0 + 1e-6)) {
+        double middle = std::sqrt(coarse * fine);
+        spaced(middle, trial);
+        (estimate(trial) <= bound ? fine : coarse) = middle;
+      }
+      spaced(fine, grid);
+      aliasing = estimate(grid);
+    }
+  }
+  while (!spline && automatic && aliasing > bound) {
     // Twice the grid of eq. 15 on every axis and still above: the estimate
     // is near the floor that the tail of the window sets, which a finer
     // grid lowers only slowly (at ε = 1e-9 with 8 points: 8.4e-8 at twice
