@@ -1354,3 +1354,11 @@ executables at 2 fs reduced the Factor IX double mean from 9.340 to
 7.208 ms/step and the JAC-RF mean from 4.207 to 3.579 ms/step. The
 largest potential or virial difference from the ordinary double
 trajectory in either system was 0.00000101 kcal/mol over 205 frames.
+
+Single-domain exclusion members also have stable indices across halo
+rebuilds. Attaching the incidence to the exclusion relation avoids
+remapping and uploading the same exclusions on each rebuild. Alternating
+the two binaries reduced Factor IX double from 7.120 to 5.985 ms/step
+and JAC-RF from 3.598 to 3.458 ms/step. Both repetitions of both proteins
+stayed within 0.00000101 kcal/mol of the ordinary potential and virial at
+every frame.

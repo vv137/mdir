@@ -499,3 +499,9 @@ stores each eligible pair once, in increasing identity order, before
 the force or observable evaluation. Each consumer reads that list
 directly. The uncached single-domain evaluation still applies the
 identity test at traversal.
+
+An excluded pair on a single physical domain has the same two row
+indices after every rebuild. The exclusion relation owns these members
+and their device incidence while the particle count is unchanged. Each
+halo keeps its own neighbor list. A new exclusion relation has its own
+members and incidence, even when it appears within the same halo.

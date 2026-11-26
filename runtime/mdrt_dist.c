@@ -193,6 +193,10 @@ struct Halo {
 struct Exclusions {
   size_t references, count;
   int live;
+#ifdef MDIR_ENABLE_NCCL
+  int64_t physicalRows, physicalSize;
+  int32_t *physicalPairs, *physicalIncidence;
+#endif
   uint64_t pairs[];
 };
 
@@ -210,7 +214,7 @@ int64_t _mlir_ciface_mdrtDistExclusions(struct Members *members) {
   size_t count = members->sizes[0];
   if (count > (SIZE_MAX - sizeof(struct Exclusions)) / sizeof(uint64_t))
     fail("exclusion table too large");
-  struct Exclusions *e = malloc(sizeof *e + count * sizeof *e->pairs);
+  struct Exclusions *e = calloc(1, sizeof *e + count * sizeof *e->pairs);
   if (!e) fail("out of memory building exclusions");
   e->references = 1;
   e->live = 1;
@@ -239,19 +243,36 @@ struct ExclusionMap {
 };
 
 static void releaseExclusionReference(struct Exclusions *table) {
-  if (--table->references == 0) free(table);
+  if (--table->references) return;
+#ifdef MDIR_ENABLE_NCCL
+  if (table->physicalIncidence) mdrtNCCLFreePositions((double *)table->physicalIncidence);
+  free(table->physicalPairs);
+#endif
+  free(table);
 }
 
 static void removeExclusionMap(struct ExclusionMap **link) {
   struct ExclusionMap *map = *link;
   *link = map->next;
 #ifdef MDIR_ENABLE_NCCL
-  if (map->incidence) mdrtNCCLFreePositions((double *)map->incidence);
+  if (map->incidence && map->incidence != map->table->physicalIncidence)
+    mdrtNCCLFreePositions((double *)map->incidence);
   if (map->matrix.data) map->matrix.release(map->matrix.data);
-#endif
+  if (map->pairs.allocated != map->table->physicalPairs) free(map->pairs.allocated);
+#else
   free(map->pairs.allocated);
+#endif
   releaseExclusionReference(map->table);
   free(map);
+}
+
+static void retainExclusionMap(struct Halo *h, struct Exclusions *e, int64_t domain,
+                               struct Members pairs, int ownedOnly) {
+  struct ExclusionMap *map = malloc(sizeof(*map));
+  if (!map) fail("out of memory retaining domain exclusions");
+  ++e->references;
+  *map = (struct ExclusionMap){h->exclusionMaps, e, domain, pairs, ownedOnly};
+  h->exclusionMaps = map;
 }
 
 /* Map both ends of each excluded pair to the packed owned/image rows.
@@ -277,6 +298,29 @@ static void localExclusions(struct Members *result, int64_t halo, int64_t domain
   }
   int64_t owned = l->rows[domain], rows = owned + (ownedOnly ? 0 : h->rows[domain]);
   if (rows > INT32_MAX) fail("too many local MATRIX rows");
+#ifdef MDIR_ENABLE_NCCL
+  // With one domain, owned rows are numbered by global identity. The
+  // topology therefore owns the same endpoint mapping across rebuilds.
+  if (ownedOnly && l->domains == 1 && (!e->physicalPairs || e->physicalRows == rows)) {
+    if (!e->physicalPairs) {
+      if (e->count > INT_MAX) fail("too many physical exclusions");
+      e->physicalRows = rows;
+      size_t elements = e->count ? 2 * e->count : 1;
+      e->physicalPairs = malloc(elements * sizeof(*e->physicalPairs));
+      if (!e->physicalPairs) fail("out of memory retaining physical exclusions");
+      for (size_t i = 0; i < e->count; ++i) {
+        uint32_t a = e->pairs[i] >> 32, b = (uint32_t)e->pairs[i];
+        if (a >= rows || b >= rows) fail("invalid excluded particle ID");
+        e->physicalPairs[2*i] = a;
+        e->physicalPairs[2*i+1] = b;
+      }
+    }
+    *result = (struct Members){e->physicalPairs, e->physicalPairs, 0,
+                               {e->count, 2}, {2, 1}};
+    retainExclusionMap(h, e, domain, *result, ownedOnly);
+    return;
+  }
+#endif
   int32_t *head = malloc((l->count + 1) * sizeof(*head));
   int32_t *next = malloc((rows + 1) * sizeof(*next));
   if (!head || !next) fail("out of memory indexing domain exclusions");
@@ -309,11 +353,7 @@ static void localExclusions(struct Members *result, int64_t halo, int64_t domain
   free(next);
   free(head);
   *result = (struct Members){pairs, pairs, 0, {count, 2}, {2, 1}};
-  struct ExclusionMap *map = malloc(sizeof(*map));
-  if (!map) fail("out of memory retaining domain exclusions");
-  ++e->references;
-  *map = (struct ExclusionMap){h->exclusionMaps, e, domain, *result, ownedOnly};
-  h->exclusionMaps = map;
+  retainExclusionMap(h, e, domain, *result, ownedOnly);
 }
 
 void _mlir_ciface_mdrtDistLocalExclusions(struct Members *result, int64_t halo,
@@ -2797,6 +2837,11 @@ void _mlir_ciface_mdrtDistDeviceExclusions(struct DeviceKinds *out,
     if (map->domain != domain || map->table != (void *)(intptr_t)exclusions ||
         map->ownedOnly != ownedOnly)
       continue;
+    int physical = map->pairs.allocated == map->table->physicalPairs;
+    if (physical && map->table->physicalIncidence) {
+      map->incidence = map->table->physicalIncidence;
+      map->incidenceSize = map->table->physicalSize;
+    }
     if (!map->incidence) {
       int64_t rows = h->layout->rows[domain] + (ownedOnly ? 0 : h->rows[domain]);
       int64_t pairs = map->pairs.sizes[0];
@@ -2804,6 +2849,10 @@ void _mlir_ciface_mdrtDistDeviceExclusions(struct DeviceKinds *out,
       int32_t *host = mdrtTuplesAllocate(map->incidenceSize * sizeof(*host));
       mdrtTuplesFill(map->pairs.aligned, pairs, 2, rows, host);
       map->incidence = mdrtNCCLUploadIndices(host, map->incidenceSize);
+      if (physical) {
+        map->table->physicalIncidence = map->incidence;
+        map->table->physicalSize = map->incidenceSize;
+      }
       free(host);
     }
     mdrtNCCLWaitForRows(stream);
