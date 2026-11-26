@@ -175,10 +175,43 @@ void mdrtMPIExchange(void *send, int *sendCounts, int *sendOffsets,
 }
 
 
-void mdrtMPIExchangeCharges(int64_t *send, int *ns, int *os,
-                            int64_t *recv, int *nr, int *offsets) {
+MPI_Request mdrtMPIStartChargeExchange(int64_t *send, int *ns, int *os,
+                                       int64_t *recv, int *nr, int *offsets) {
+  MPI_Request request;
+  MPI_Ialltoallv(send, ns, os, MPI_INT64_T, recv, nr, offsets, MPI_INT64_T,
+                 comm, &request);
+  return request;
+}
+
+/* Ranks own consecutive domains. For a packed table one all-gather
+   places each live subtotal in its original row without doing arithmetic. */
+static int shareDomainBlocks(void *values, int64_t domains, int64_t width,
+                             MPI_Datatype type) {
+  if (size == 1 || !width) return 1;
+  if (domains > INT_MAX / width) return 0;
+  int64_t q = domains / size, rem = domains % size;
+  int *counts = malloc(2*(size_t)size*sizeof *counts);
+  if (!counts) mdrtMPIAbort("out of memory sharing domain rows");
+  int *offsets = counts + size;
+  for (int p = 0; p < size; ++p) {
+    offsets[p] = (p*q + (p < rem ? p : rem)) * width;
+    counts[p] = (q + (p < rem)) * width;
+  }
   arrival();
-  MPI_Alltoallv(send, ns, os, MPI_INT64_T, recv, nr, offsets, MPI_INT64_T, comm);
+  MPI_Allgatherv(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, values, counts, offsets, type, comm);
+  free(counts);
+  return 1;
+}
+
+int mdrtMPIShareDomainPartials(void *values, int64_t domains, int64_t width, int words) {
+  return shareDomainBlocks(values, domains, width, words ? wideWord : MPI_DOUBLE);
+}
+
+void mdrtMPIShareDomainCounts(int64_t *rows, int64_t domains) {
+  if (shareDomainBlocks(rows, domains, 1, MPI_INT64_T)) return;
+  int64_t q = domains / size, rem = domains % size;
+  for (int p = 0; p < size; ++p)
+    mdrtMPIBroadcastIndices(rows + p*q + (p < rem ? p : rem), q + (p < rem), p);
 }
 
 int mdrtMPISameNode(int peer) { return rankNodes[peer] == rankNodes[rank]; }

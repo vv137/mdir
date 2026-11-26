@@ -4,6 +4,8 @@
 #include "mdrt_pencils.h"
 #ifdef MDIR_ENABLE_MPI
 #include "mdrt_mpi.h"
+#include <mpi.h>
+MPI_Request mdrtMPIStartChargeExchange(int64_t *, int *, int *, int64_t *, int *, int *);
 #endif
 #include <limits.h>
 #include <math.h>
@@ -476,17 +478,6 @@ static struct Exchange schedule(struct DomainMesh *domains, int nd, int first,
   }
   return e;
 }
-static void communicate(void *send, int *ns, int *os, void *recv, int *nr,
-                        int *or, int peers, int charge) {
-#ifdef MDIR_ENABLE_MPI
-  if (peers > 1) {
-    if (charge)
-      mdrtMPIExchangeCharges(send, ns, os, recv, nr, or);
-    else
-      mdrtMPIExchange(send, ns, os, recv, nr, or, 0);
-  }
-#endif
-}
 static size_t boxSize(struct PmeBox b) {
   return (size_t)(b.hi[0] - b.lo[0]) * (b.hi[1] - b.lo[1]) *
          (b.hi[2] - b.lo[2]);
@@ -669,18 +660,25 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
                   PackCharge, NULL, (char *)send + width * e.os[r],
                   threaded);
 
-  communicate(send, e.ns, e.os, recv, e.nr, e.or, peers, 1);
+#ifdef MDIR_ENABLE_MPI
+  MPI_Request request = MPI_REQUEST_NULL;
+  if (peers > 1)
+    request = mdrtMPIStartChargeExchange(send, e.ns, e.os, recv, e.nr, e.or);
+#endif
   size_t size = boxSize(realBox);
   double *real = alloc(size, sizeof *real);
   int64_t *grid = alloc(size, sizeof *grid);
+  for (int d = first; d < past; ++d)
+    transfer(domains[d].box, realBox, n, AddLocalCharge,
+             domains[d].points, grid, threaded);
+#ifdef MDIR_ENABLE_MPI
+  if (peers > 1) MPI_Wait(&request, MPI_STATUS_IGNORE);
+#endif
   for (int r = 0; r < peers; ++r)
     if (r != rank)
       moveDomains(domains, e.domains[r], e.domains[r + 1], realBox, n,
                   SumCharge, grid, (char *)recv + width * e.or[r],
                   threaded);
-  for (int d = first; d < past; ++d)
-    transfer(domains[d].box, realBox, n, AddLocalCharge,
-             domains[d].points, grid, threaded);
 #pragma omp parallel for schedule(static) if (threaded)
   for (size_t i = 0; i < size; ++i)
     real[i] = mixed ? (float)grid[i] * 0x1p-40 : (double)grid[i] * 0x1p-40;
@@ -733,7 +731,10 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
     if (r != rank)
       moveDomains(domains, e.domains[r], e.domains[r + 1], realBox, n,
                   PackPotential, real, out + e.or[r], threaded);
-  communicate(out, e.nr, e.or, in, e.ns, e.os, peers, 0);
+#ifdef MDIR_ENABLE_MPI
+  if (peers > 1)
+    mdrtMPIExchange(out, e.nr, e.or, in, e.ns, e.os, 0);
+#endif
   for (int r = 0; r < peers; ++r)
     if (r != rank)
       moveDomains(domains, first, past, mdrtPmeRealBoxAt(mesh, r), n,

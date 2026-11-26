@@ -57,3 +57,10 @@ For a two-member tuple the owner midpoint uses the minimum-image distance
 from the lower identity, which also determines both periodic images.
 A transpose gather writes each active destination component
 once after summing its incident ghost entries in stream order.
+
+Ranks gather ownership changes as one packed stream in rank order when
+MPI counts and offsets fit. A second gather shares the new domain row
+counts. Each packed observable exchanges all domain partials in a single
+collective and adds them in domain order. One-rank halo transfers use the local copy and transpose kernels
+directly. Mesh ranks begin the charge exchange before processing the
+subgrid intersections they own.

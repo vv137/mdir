@@ -845,3 +845,13 @@ the local domain and row indices together. The capacity bounds define a
 rectangular iteration space, and the live row count excludes padding.
 During redistribution the new owner similarly writes each destination
 row once, using the old owner and inverse row map to find its source.
+
+For a migration, the old owners enumerate changed identities in domain
+and row order. An all-gather concatenates the records by source rank,
+so every rank applies the same map updates. When no owner changes, the
+count exchange alone establishes that the migration record set is empty.
+
+Likewise the observable partials occupy consecutive domain rows. Each
+rank contributes its interval to a single gather on all ranks, then adds
+the complete rows in increasing domain order. This combines the
+transfers while preserving the order of the numerical reduction.

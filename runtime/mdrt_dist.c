@@ -663,12 +663,7 @@ static void numberRows(struct Layout *l, const int64_t *ids, int64_t count) {
   }
 #ifdef MDIR_ENABLE_MPI
   if (ids) {
-    for (int p = 0; p < mdrtMPISize(); ++p) {
-      int64_t q = l->domains/mdrtMPISize(), rem = l->domains%mdrtMPISize();
-      int64_t first = p*q + (p < rem ? p : rem);
-      int64_t past = first + q + (p < rem);
-      mdrtMPIBroadcastIndices(l->rows+first, past-first, p);
-    }
+    mdrtMPIShareDomainCounts(l->rows, l->domains);
     for (int64_t d = 0; d < l->domains; ++d)
       if (l->rows[d] > cap) cap = l->rows[d];
   }
@@ -850,12 +845,20 @@ struct Memref2W {
 };
 
 void _mlir_ciface_mdrtMPIShareWords(struct Memref2W *partial) {
+  if (partial->strides[0] == partial->sizes[1] && partial->strides[1] == 1 &&
+      mdrtMPIShareDomainPartials(partial->aligned + partial->offset, partial->sizes[0],
+                                 partial->sizes[1], 1))
+    return;
   for (int64_t d = 0; d < partial->sizes[0]; ++d)
     mdrtMPIBroadcastWords(partial->aligned + partial->offset + d * partial->strides[0],
                           partial->sizes[1], mdrtMPIOwner(partial->sizes[0], d));
 }
 
 void _mlir_ciface_mdrtMPISharePartials(struct Memref2D *partial) {
+  if (partial->strides[0] == partial->sizes[1] && partial->strides[1] == 1 &&
+      mdrtMPIShareDomainPartials(partial->aligned + partial->offset, partial->sizes[0],
+                                 partial->sizes[1], 0))
+    return;
   for (int64_t d = 0; d < partial->sizes[0]; ++d)
     mdrtMPIBroadcast(at2(partial, d, 0), partial->sizes[1],
                      mdrtMPIOwner(partial->sizes[0], d));
@@ -1017,33 +1020,59 @@ static void shareOwnership(struct Layout *old, struct Layout *next, int64_t firs
     total += counts[p];
     if (counts[p] > largest) largest = counts[p];
   }
-  struct Move *moves = malloc(largest * sizeof *moves);
+  if (!total) {
+    free(counts);
+    return;
+  }
+  /* Ordinary epochs fit in one packed gather. Chunked broadcasts cover
+     migration counts above the signed MPI displacement limit. */
+  int packed = total <= INT_MAX;
+  struct Move *moves = malloc((packed ? total : largest) * sizeof *moves);
   next->migrantIds = malloc((total ? total : 1)*sizeof *next->migrantIds);
   if (!moves || !next->migrantIds) fail("out of memory sharing migration records");
-  int64_t crossing = 0;
+  int64_t start = 0;
+  for (int p = 0; packed && p < rank; ++p) start += counts[p];
+  int64_t nextMove = start;
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < old->rows[d]; ++r) {
+      int64_t j = old->ids[d*old->stride+r];
+      if (next->owner[j] != d)
+        moves[nextMove++] = (struct Move){j, next->owner[j]};
+    }
+  if (packed) {
+    int *sizes = malloc(2*(size_t)peers*sizeof *sizes);
+    if (!sizes) fail("out of memory sharing migration records");
+    int *offsets = sizes + peers;
+    for (int p = 0, offset = 0; p < peers; ++p) {
+      sizes[p] = counts[p];
+      offsets[p] = offset;
+      offset += sizes[p];
+    }
+    mdrtMPIShareBlocks(moves,sizes,offsets,1);
+    free(sizes);
+  }
+  int64_t crossing = 0, offset = 0;
+  struct Move *block = packed ? moves : malloc(largest*sizeof *block);
+  if (!block) fail("out of memory receiving migration records");
   for (int p = 0; p < peers; ++p) {
     next->migrantOffsets[p] = crossing;
     if (!counts[p]) continue;
-    if (rank == p) {
-      int64_t i = 0;
-      for (int64_t d = first; d < past; ++d)
-        for (int64_t r = 0; r < old->rows[d]; ++r) {
-          int64_t j = old->ids[d*old->stride+r];
-          if (next->owner[j] != d) moves[i++] = (struct Move){j, next->owner[j]};
-        }
-    }
-    for (int64_t i = 0; i < counts[p]; i += INT_MAX) {
-      int64_t n = counts[p]-i;
-      mdrtMPIBroadcastWords(moves+i, n < INT_MAX ? n : INT_MAX, p);
+    if (packed) {
+      block = moves+offset;
+      offset += counts[p];
+    } else {
+      if (p == rank) memcpy(block,moves,counts[p]*sizeof *block);
+      mdrtMPIBroadcastWords(block,counts[p],p);
     }
     for (int64_t i = 0; i < counts[p]; ++i) {
-      struct Move m = moves[i];
+      struct Move m = block[i];
       next->owner[m.id] = m.domain;
       if (mdrtMPIOwner(old->domains,m.domain) != p)
         next->migrantIds[crossing++] = m.id;
     }
   }
   next->migrantOffsets[peers] = crossing;
+  if (!packed) free(block);
   free(moves);
   free(counts);
 }
@@ -2097,14 +2126,14 @@ void _mlir_ciface_mdrtDistHaloSumWords(int64_t handle, struct Memref3W *owned,
                          edge.rows * components * (int64_t)sizeof(DistWide));
     }
 #ifdef MDIR_ENABLE_MPI
-  if (h->layout->mpi)
+  if (h->layout->mpi && mdrtMPISize() > 1)
     exchangeHalo(h, NULL, NULL, 0, 1, owned, ghosts);
   else
 #endif
     gatherHalo(h,0,h->layout->domains,NULL,0,NULL,NULL,NULL,owned,ghosts);
   int64_t first = 0, past = h->layout->domains;
 #ifdef MDIR_ENABLE_MPI
-  if (h->layout->mpi) {
+  if (h->layout->mpi && mdrtMPISize() > 1) {
     first = mdrtMPIDomainBound(past, 0);
     past = mdrtMPIDomainBound(past, 1);
   }
@@ -2127,7 +2156,7 @@ void _mlir_ciface_mdrtDistHaloCopy(int64_t handle, struct Memref3D *owned,
                          edge.rows * owned->sizes[2] * (int64_t)sizeof(double));
     }
 #ifdef MDIR_ENABLE_MPI
-  if (h->layout->mpi) {
+  if (h->layout->mpi && mdrtMPISize() > 1) {
     exchangeHalo(h, owned, ghosts, image, 0, NULL, NULL);
     return;
   }
@@ -2164,7 +2193,7 @@ void _mlir_ciface_mdrtDistHaloSum(int64_t handle, struct Memref3D *ghosts,
                          edge.rows * owned->sizes[2] * (int64_t)sizeof(double));
     }
 #ifdef MDIR_ENABLE_MPI
-  if (h->layout->mpi) {
+  if (h->layout->mpi && mdrtMPISize() > 1) {
     exchangeHalo(h, owned, ghosts, 0, 1, NULL, NULL);
     return;
   }
