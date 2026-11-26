@@ -1925,6 +1925,21 @@ void _mlir_ciface_mdrtDistConstraintRows(int64_t handle, struct Memref3D *positi
 }
 
 #ifdef MDIR_ENABLE_NCCL
+void _mlir_ciface_mdrtDistCompactTupleIds(struct Memref1I *out,
+                                          struct Memref2I *schedule,
+                                          int64_t domain) {
+  int64_t count = schedule->sizes[0];
+  int64_t *ids = malloc((count ? count : 1) * sizeof *ids);
+  if (!ids)
+    fail("out of memory compacting the local tuple schedule");
+  int64_t n = 0;
+  for (int64_t i = 0; i < count; ++i)
+    if (schedule->aligned[schedule->offset + i * schedule->strides[0]] ==
+        domain)
+      ids[n++] = i;
+  *out = (struct Memref1I){ids, ids, 0, {n}, {1}};
+}
+
 void _mlir_ciface_mdrtDistShareTupleMembers(int64_t layout, struct Memref3D *positions,
                                              struct Members *members) {
   struct Layout *l=(void *)(intptr_t)layout;

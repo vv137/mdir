@@ -132,3 +132,19 @@ the skin. On a miss, it partitions the current positions and assigns each
 constraint group to its common owner. On a hit, it uses those same member
 rows for the solve. The cache belongs to the enclosing loop with invariant
 cell and group relations. A continuation creates a new cache.
+
+The constrained fixed-cell GPU Verlet loop carries the owned position,
+velocity, force, mass and potential parameters. At the force neighborhood
+it tests coverage and, on a rebuild, redistributes each live field by
+particle identity. Position and velocity projections read the members
+of each disjoint group on their common owner. Each rank compacts its
+bonded and constraint tuple rows in original tuple order and gathers the
+matching parameter rows. The ordinary device tuple lowering evaluates
+these local relations. Constraint failure flags are agreed across ranks
+and virial terms reduce per-domain partials. Only the live global fields
+consumed outside the packed loop are collected at its boundary.
+
+The disjoint solve and its output correction use the integrator's
+working precision. Narrowing this local correction in mixed mode loses
+accuracy for positions close to a periodic face. Bonded tuples retain
+the ordinary force precision.

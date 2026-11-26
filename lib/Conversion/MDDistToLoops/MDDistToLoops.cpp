@@ -166,6 +166,8 @@ private:
   LogicalResult lowerHaloCopy(HaloCopyOp op);
   LogicalResult lowerHaloSum(HaloSumOp op);
   LogicalResult lowerZeros(ZerosOp op);
+  unsigned tupleSite = 0;
+  LogicalResult lowerDeviceTuples(TupleKernelOp op);
   LogicalResult lowerTupleKernel(TupleKernelOp op);
   LogicalResult lowerTupleRows(TupleRowsOp op);
   LogicalResult lowerNeighborhood(NeighborhoodOp op);
@@ -1230,7 +1232,203 @@ LogicalResult Lowering::lowerZeros(ZerosOp op) {
   return success();
 }
 
+// The local tuples keep the member order and parameter row of the global
+// relation. Outline one ordinary tuple program for each participating rank.
+LogicalResult Lowering::lowerDeviceTuples(TupleKernelOp op) {
+  OpBuilder setup(op);
+  bool reduce = isa<PartialType>(op.getResult(0).getType());
+  bool group = constraintKernels.contains(op);
+  bool flagged = !reduce && op.getNumResults() == 2 && group;
+  int64_t arity = op.getRows().getType().getDimSize(1) - 1;
+  Storage &layout = storage[layoutOf(op.getHalo())];
+  Storage &halo = storage[op.getHalo()];
+  Value partial, ownedOut, ghostOut, flags;
+  Type totalType;
+  if (reduce) {
+    totalType = cast<PartialType>(op.getResult(0).getType()).getValueType();
+    auto vec = dyn_cast<VectorType>(totalType);
+    partial = allocate(
+        setup,
+        MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
+                        setup.getF64Type()),
+        {index(setup, domains), index(setup, vec ? vec.getNumElements() : 1)});
+    storage[op.getResult(0)].buffer = partial;
+  } else {
+    ownedOut = allocate(setup, layout.capacity, 3);
+    storage[op.getResult(0)].buffer = ownedOut;
+    if (!group) {
+      ghostOut = allocate(setup, halo.capacity, 3);
+      storage[op.getResult(1)].buffer = ghostOut;
+    }
+    if (flagged)
+      flags = allocate(setup, MemRefType::get({1}, setup.getI32Type()), {});
+  }
+  SmallVector<Value> parameterInputs;
+  for (Value field : op.getParameters())
+    parameterInputs.push_back(
+        inputSnapshot(setup, cast<md::FieldType>(field.getType()), field));
+  auto enter = declare("mdrtDeviceDomainEnter",
+                       setup.getFunctionType({}, {setup.getI64Type()}), false);
+  Value parent = func::CallOp::create(setup, loc, enter).getResult(0);
+  auto loop = scf::ForOp::create(setup, loc, domainBound(setup, false),
+                                 domainBound(setup, true), index(setup, 1));
+  loop->setAttr("md_dist.domain_loop", setup.getUnitAttr());
+  if (group)
+    loop->setAttr("md_dist.constraint_precision", setup.getUnitAttr());
+  OpBuilder b(loop.getBody()->getTerminator());
+  Value d = loop.getInductionVar();
+  auto set = getSet(0, !group, group ? layoutOf(op.getHalo()) : op.getHalo());
+  auto ctx = module.getContext();
+  std::string name = (set.getValue() + ".tuples" + Twine(tupleSite++)).str();
+  FlatSymbolRefAttr tuples = FlatSymbolRefAttr::get(ctx, name);
+  OpBuilder declarations(decomposition);
+  md::TupleSetOp::create(declarations, loc, name, set.getValue(), arity,
+                         md::Orientation::Ordered, group);
+  auto relationType =
+      md::RelationType::get(ctx, set, arity, md::Orientation::Ordered, tuples);
+  Value n = countOf(b, layout, d);
+  Value g = group ? Value() : countOf(b, halo, d);
+  auto localField = [&](Value owned, Value ghosts) -> Value {
+    auto type = cast<FieldType>(owned.getType());
+    int k = type.getNumComponents();
+    if (group) {
+      auto field = md::FieldType::get(ctx, set, k, type.getElementType());
+      auto host = mdrt::getBufferType(field);
+      auto device =
+          MemRefType::get(host.getShape(), host.getElementType(),
+                          MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
+      SmallVector<Value> args{d, n, storage[owned].buffer};
+      auto fn = declare(
+          k == 1 ? "mdrtDistScalarDeviceView" : "mdrtDistVectorDeviceView",
+          b.getFunctionType(ValueRange(args).getTypes(), {device}), true);
+      Value data = func::CallOp::create(b, loc, fn, args).getResult(0);
+      return mdrt::FromBufferOp::create(b, loc, field, data);
+    }
+    return makeField(b, set, k, type.getElementType(), d,
+                     {storage[owned].buffer, storage[ghosts].buffer}, {n, g});
+  };
+  Value positions = localField(op.getPositions(), op.getGhosts());
+  SmallVector<Value> inputs, parameters;
+  for (size_t i = 0; i < op.getGathered().size(); i += 2)
+    inputs.push_back(localField(op.getGathered()[i], op.getGathered()[i + 1]));
+  // Compact only local tuples. The map indexes the original parameter
+  // buffers even when consecutive global tuples have different owners.
+  auto wide = MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
+                              b.getI64Type());
+  Value schedule = memref::CastOp::create(b, loc, wide, op.getRows());
+  auto idsType = MemRefType::get({ShapedType::kDynamic}, b.getI64Type());
+  auto compact =
+      declare("mdrtDistCompactTupleIds",
+              b.getFunctionType({wide, b.getIndexType()}, {idsType}), true);
+  Value ids = func::CallOp::create(b, loc, compact, ValueRange{schedule, d})
+                  .getResult(0);
+  Value count = memref::DimOp::create(b, loc, ids, 0);
+  auto membersType = mdrt::getMembersType(relationType);
+  Value members =
+      memref::AllocOp::create(b, loc, membersType, ValueRange{count});
+  SmallVector<Value> params;
+  for (Value original : op.getParameters()) {
+    auto type = cast<md::FieldType>(original.getType());
+    auto field = md::FieldType::get(ctx, tuples, type.getNumComponents(),
+                                    type.getElementType());
+    Value data = memref::AllocOp::create(b, loc, mdrt::getBufferType(field),
+                                         ValueRange{count});
+    params.push_back(data);
+  }
+  scf::ForOp::create(
+      b, loc, index(b, 0), count, index(b, 1), ValueRange(),
+      [&](OpBuilder &at, Location, Value row, ValueRange) {
+        Value t = toIndex(at, memref::LoadOp::create(at, loc, ids, row));
+        for (int64_t a = 0; a < arity; ++a) {
+          Value value = memref::LoadOp::create(at, loc, schedule,
+                                               ValueRange{t, index(at, a + 1)});
+          memref::StoreOp::create(
+              at, loc, arith::TruncIOp::create(at, loc, at.getI32Type(), value),
+              members, ValueRange{row, index(at, a)});
+        }
+        for (auto [src, dst] : llvm::zip(parameterInputs, params)) {
+          auto type = cast<MemRefType>(src.getType());
+          if (type.getRank() == 1)
+            memref::StoreOp::create(
+                at, loc, memref::LoadOp::create(at, loc, src, t), dst, row);
+          else
+            for (int64_t c = 0; c < type.getDimSize(1); ++c) {
+              Value k = index(at, c);
+              memref::StoreOp::create(
+                  at, loc,
+                  memref::LoadOp::create(at, loc, src, ValueRange{t, k}), dst,
+                  ValueRange{row, k});
+            }
+        }
+        scf::YieldOp::create(at, loc);
+      });
+  for (auto [original, data] : llvm::zip(op.getParameters(), params)) {
+    auto type = cast<md::FieldType>(original.getType());
+    auto field = md::FieldType::get(ctx, tuples, type.getNumComponents(),
+                                    type.getElementType());
+    auto wrap = mdrt::FromBufferOp::create(b, loc, field, data);
+    wrap->setAttr("mdrt.collect_buffer", b.getUnitAttr());
+    parameters.push_back(wrap);
+  }
+  Value rel = mdrt::FromBufferOp::create(b, loc, relationType, members);
+  Value cell = cellOf(op.getHalo());
+  Operation *kernel;
+  if (reduce)
+    kernel = md::SumTuplesOp::create(
+        b, loc, totalType, rel, positions, cell, inputs, parameters,
+        op.getCoordinateKindsAttr(), op.getCoordinateMembersAttr());
+  else
+    kernel = md::GatherTuplesOp::create(
+        b, loc, positions.getType(), flagged ? b.getI1Type() : Type{}, rel,
+        positions, cell, inputs, parameters, op.getCoordinateKindsAttr(),
+        op.getCoordinateMembersAttr());
+  IRMapping mapping;
+  op.getKernel().cloneInto(&kernel->getRegion(0), mapping);
+  Operation *term = kernel->getRegion(0).front().getTerminator();
+  OpBuilder kb(term);
+  md::YieldOp::create(kb, loc, term->getOperands());
+  term->erase();
+  if (reduce) {
+    Value value = kernel->getResult(0);
+    auto vector = dyn_cast<VectorType>(totalType);
+    for (int64_t c = 0; c < (vector ? vector.getNumElements() : 1); ++c) {
+      Value scalar =
+          vector ? Value(vector::ExtractOp::create(b, loc, value, c)) : value;
+      memref::StoreOp::create(b, loc, scalar, partial,
+                              ValueRange{d, index(b, c)});
+    }
+  } else {
+    copyBack(b, kernel->getResult(0), index(b, 0), n, ownedOut, d);
+    if (!group)
+      copyBack(b, kernel->getResult(0), n, g, ghostOut, d);
+    if (flagged)
+      memref::StoreOp::create(
+          b, loc,
+          arith::ExtUIOp::create(b, loc, b.getI32Type(), kernel->getResult(1)),
+          flags, index(b, 0));
+  }
+  memref::DeallocOp::create(b, loc, members);
+  memref::DeallocOp::create(b, loc, ids);
+  auto leave = declare("mdrtDeviceDomainLeave",
+                       setup.getFunctionType({setup.getI64Type()}, {}), false);
+  func::CallOp::create(setup, loc, leave, ValueRange{parent});
+  if (flagged) {
+    Value flag = memref::LoadOp::create(setup, loc, flags, index(setup, 0));
+    auto maximum = declare(
+        "mdrtMPIMax",
+        setup.getFunctionType({setup.getI32Type()}, {setup.getI32Type()}),
+        false);
+    flag = func::CallOp::create(setup, loc, maximum, ValueRange{flag})
+               .getResult(0);
+    op.getResult(1).replaceAllUsesWith(
+        arith::TruncIOp::create(setup, loc, setup.getI1Type(), flag));
+  }
+  return success();
+}
+
 LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
+  if (sharedState() && !fixedPoint)
+    return lowerDeviceTuples(op);
   OpBuilder b(op);
   Value edge[3];
   if (failed(getHaloEdges(op, op.getHalo(), edge)))
@@ -3221,6 +3419,8 @@ static LogicalResult outlineSteps(ModuleOp module, func::FuncOp function, String
     auto step = func::FuncOp::create(b, loop.getLoc(), name,
                                      b.getFunctionType(inputs, results));
     step.setPrivate();
+    if (loop->hasAttr("md_dist.constraint_precision"))
+      step->setAttr("md_dist.constraint_precision", b.getUnitAttr());
     Block *entry = step.addEntryBlock();
     IRMapping mapping;
     for (auto [argument, value] :

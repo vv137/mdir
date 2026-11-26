@@ -924,11 +924,17 @@ public:
       if (auto function = dyn_cast<func::FuncOp>(&op))
         if (!function.isExternal())
           functions.push_back(function);
-    for (func::FuncOp function : functions)
-      if (failed(Assigner(function, policy, kernelPositions, deterministic,
+    for (func::FuncOp function : functions) {
+      Policy local = policy;
+      // Local constraint corrections feed the integrator directly. Keep
+      // the geometry, correction and accumulation in its working type.
+      if (function->hasAttr("md_dist.constraint_precision"))
+        local.force = local.kernel = local.integrator;
+      if (failed(Assigner(function, local, kernelPositions, deterministic,
                           stageFieldsF64)
                      .run()))
         return signalPassFailure();
+    }
   }
 
 private:

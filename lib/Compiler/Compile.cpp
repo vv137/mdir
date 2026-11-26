@@ -356,10 +356,15 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
   os << "md-differentiate,md-expand-truncation,md-inline,"
      << "dyn-expand-couplings,md-bypass-updates,";
   if (control.distribution) {
-    os << "md-dist-owner-computes,"
-       << (program.domainGroupSteps ? "" : control.deterministic
-           ? "md-distribute-driver-steps{wrap-drift=true}," : "md-distribute-driver-steps,")
-       << "md-exec-assign-algebra,"
+    os << "md-dist-owner-computes,";
+    if (program.domainGroupSteps && control.distribution->transport == "nccl" &&
+        !control.thermostat && program.skin > 0)
+      os << "md-distribute-driver-steps{group-skin=" << program.skin << "},";
+    else if (!program.domainGroupSteps)
+      os << (control.deterministic
+                 ? "md-distribute-driver-steps{wrap-drift=true},"
+                 : "md-distribute-driver-steps,");
+    os << "md-exec-assign-algebra,"
        << "convert-md-dist-to-loops{halo-events=true";
     if (control.deterministic)
       os << " fixed-point=true";

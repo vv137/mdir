@@ -1037,3 +1037,13 @@ positions. Rebuilding that assignment moves all members of a rigid group
 together. The CUDA transport continues to require floating-point
 distributed reductions. The fixed-point CPU reduction and its restart
 ordering use their existing paths.
+
+For a constrained fixed-cell Verlet step the persistent state also
+contains the mass and potential parameters on the same owned rows.
+A failed coverage test redistributes the live fields together before
+the pair evaluation. For each local tuple the original relation index
+selects its parameter row, while its remapped member indices address
+local positions. The native device tuple kernels then evaluate bonded
+forces, group corrections and constraint virials. Each group contributes
+on its common owner. The program combines scalar failure flags across
+ranks before continuing the integrator.

@@ -939,6 +939,49 @@ LogicalResult NeighborhoodOp::verify() {
   return proveCovers(*this, getHalo(), getPositions(), radius);
 }
 
+// A loop-carried group layout has the same disjoint relations on every
+// incoming edge. Follow both induction edges, including the initializer.
+static bool preservesGroup(Value root, Value group) {
+  SmallVector<Value> work{root};
+  llvm::DenseSet<Value> seen;
+  bool established = false;
+  auto loopEdges = [&](scf::ForOp loop, unsigned i) {
+    work.push_back(loop.getInitArgs()[i]);
+    work.push_back(loop.getBody()->getTerminator()->getOperand(i));
+  };
+  while (!work.empty()) {
+    Value v = work.pop_back_val();
+    if (!seen.insert(v).second)
+      continue;
+    if (auto p = v.getDefiningOp<PartitionOp>()) {
+      if (!llvm::is_contained(p.getGroups(), group))
+        return false;
+      established = true;
+    } else if (auto m = v.getDefiningOp<MigrateOp>())
+      work.push_back(m.getOldLayout());
+    else if (auto u = v.getDefiningOp<UnpackOp>())
+      work.push_back(u.getState());
+    else if (auto p = v.getDefiningOp<PackOp>())
+      work.push_back(p.getLayout());
+    else if (auto b = v.getDefiningOp<scf::IfOp>()) {
+      unsigned i = cast<OpResult>(v).getResultNumber();
+      if (b.getElseRegion().empty())
+        return false;
+      work.push_back(b.thenYield().getOperand(i));
+      work.push_back(b.elseYield().getOperand(i));
+    } else if (auto loop = v.getDefiningOp<scf::ForOp>()) {
+      loopEdges(loop, cast<OpResult>(v).getResultNumber());
+    } else if (auto arg = dyn_cast<BlockArgument>(v)) {
+      auto loop = dyn_cast<scf::ForOp>(arg.getOwner()->getParentOp());
+      if (!loop || !arg.getArgNumber())
+        return false;
+      loopEdges(loop, arg.getArgNumber() - 1);
+    } else
+      return false;
+  }
+  return established;
+}
+
 LogicalResult TupleRowsOp::verify() {
   auto relation = cast<md::RelationType>(getTuples().getType());
   auto decomposition = SymbolTable::lookupNearestSymbolFrom<DecompositionOp>(
@@ -950,10 +993,7 @@ LogicalResult TupleRowsOp::verify() {
       return emitOpError("tuple rows require a read-only consumer in their defining scope");
   if (getGroup()) {
     Value layout = layoutOf(getHalo());
-    while (auto move = layout.getDefiningOp<MigrateOp>())
-      layout = move.getOldLayout();
-    auto partition = layout.getDefiningOp<PartitionOp>();
-    if (!partition || !llvm::is_contained(partition.getGroups(), getTuples()))
+    if (!layout || !preservesGroup(layout, getTuples()))
       return emitOpError("constraint solver needs the group relation that established ownership");
   }
   if (!relation.getTupleSet() || !decomposition ||
