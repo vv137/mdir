@@ -316,7 +316,7 @@ def reporters():
     dcd, xtc = dcd_cells(work / "run.dcd"), xtc_cells(work / "run.xtc")
     assert len(dcd) == count and len(xtc) == count, (len(dcd), len(xtc))
     # DCD holds lengths and cosines in f64, XTC the vectors in f32. In mixed
-    # precision the step cell is binary32 in nm (D[box-f32-exact]), so XTC
+    # precision the step cell is binary32 in nm (D443), so XTC
     # holds it exactly.
     in_dcd, in_xtc = float(np.abs(dcd - cells).max()), float(np.abs(xtc - cells).max())
     assert in_dcd < 1e-12 and (in_xtc < 5e-7 if precision == "Double" else in_xtc == 0.0), (in_dcd, in_xtc)

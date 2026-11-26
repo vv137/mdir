@@ -288,7 +288,7 @@ saves nothing, and a root is a divisor like any other there. With $\mathsf u
 neither overflow nor underflow where the quotients do not, as long as $1/y$
 is a normal number, which holds for $r^2 \in (0, r_c^2]$.
 
-**The period of retained images (D[box-f32-exact]).** Consider a pair at
+**The period of retained images (D443).** Consider a pair at
 displacement $\mathbf d$ for which a neighbor entry retains image $\mathbf e$.
 Wrapping with $H_{64}$ and translating the retained partner with $H_{32}$
 assign two displacements to the same configuration. Their difference, up to

@@ -361,7 +361,7 @@ def commits_against_the_interface(precision):
         assert borrow.commit() == ("positions", "cell")
     committed = sim.state()
     # The simulation runs in the step cell, each component in nm rounded to
-    # binary32 in mixed precision (D[box-f32-exact]), and reports that cell.
+    # binary32 in mixed precision (D443), and reports that cell.
     step_edges = edges if precision == "Double" else edges.astype(np.float32).astype(np.float64)
     assert np.array_equal(committed.cell.diagonal, step_edges)
     assert np.array_equal(edges, np.asarray(at.cell.diagonal) * 1.01)

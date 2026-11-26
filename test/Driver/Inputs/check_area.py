@@ -17,7 +17,7 @@ scratch.mkdir(parents=True, exist_ok=True)
 
 
 def periodic(value_nm, precision):
-    """The component of the step cell in nm (D[box-f32-exact]): mixed
+    """The component of the step cell in nm (D443): mixed
     precision rounds each component of the supplied cell once to binary32."""
     if precision == 'double':
         return value_nm

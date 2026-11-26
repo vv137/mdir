@@ -418,7 +418,7 @@ def round_trip(precision, pme):
         # The plain cutoff makes the pair force jump at r_c. Two runs whose
         # positions differ by rounding can put a pair on either side of it,
         # and which pairs come that near follows the trajectory, here that
-        # of the binary32 step cell (D[box-f32-exact]). Steps of one part
+        # of the binary32 step cell (D443). Steps of one part
         # each, the same to the bit as one part, show such pairs.
         allowance = crossings(sim, twin, program, 12)
         bounds = (bounds[0], bounds[1] + allowance)

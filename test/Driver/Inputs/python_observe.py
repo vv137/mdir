@@ -630,7 +630,7 @@ def mixture_tails(precision):
     kinds = [line[5:10].strip() for line in gro[2:2 + count]]
     edge = float(gro[2 + count].split()[0])
     if precision != "Double":
-        # Mixed precision runs in the binary32 step cell (D[box-f32-exact]):
+        # Mixed precision runs in the binary32 step cell (D443):
         # the edge in nm rounded once, so the closed form takes that edge.
         edge = float(np.float32(edge))
     volume = edge ** 3

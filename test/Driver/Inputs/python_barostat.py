@@ -476,7 +476,7 @@ def keys():
         start = np.asarray(parts_of_model()[1].cell.diagonal)
         if precision != "Double":
             # The step cell is the master rounded to binary32
-            # (D[box-f32-exact]); an axis of compressibility 0 keeps its
+            # (D443); an axis of compressibility 0 keeps its
             # master, so its step edge is the rounded start edge exactly.
             start = start.astype(np.float32).astype(np.float64)
         strain = np.log(np.asarray(state.cell.diagonal) / start)

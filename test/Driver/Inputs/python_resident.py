@@ -120,7 +120,7 @@ def failures():
         assert np.array_equal(kept.positions, start.positions)
         assert not kept.velocities.any()
         # The state it began from has the step cell, each component in nm
-        # rounded to binary32 in mixed precision (D[box-f32-exact]).
+        # rounded to binary32 in mixed precision (D443).
         vectors = np.asarray(start.cell.vectors)
         if precision != "Double":
             vectors = vectors.astype(np.float32).astype(np.float64)

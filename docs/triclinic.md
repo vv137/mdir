@@ -42,7 +42,7 @@ give applied minus supplied in the order $a_x,b_y,c_z,b_x,c_x,c_y$.
 For a restart, `effective.input_box_rounding_delta_nm` also records the
 coordinate input used for the reference cell. A restart from an already
 rounded checkpoint cell has six zero changes in `box_rounding_delta_nm`. Double precision
-retains the original components (D[box-f32-exact]).
+retains the original components (D443).
 
 The cell is the matrix of the GROMACS manual
 [[GromacsManual2025]](references.md#gromacsmanual2025), lower triangular,

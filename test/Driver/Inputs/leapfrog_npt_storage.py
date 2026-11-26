@@ -197,7 +197,7 @@ else:
                 # comes from another trajectory, so the difference holds the
                 # finite mixed trajectory divergence of the two routes.
                 # Mixed precision rounds the step cell to binary32 at each
-                # coupling (D[box-f32-exact]), which the double baseline
+                # coupling (D443), which the double baseline
                 # does not, so that divergence takes the criterion of D393,
                 # max(3B, floor), with B the same expression of the
                 # reference route against its mixed-double and one-f32-ulp

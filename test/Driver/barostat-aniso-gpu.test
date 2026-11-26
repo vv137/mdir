@@ -1,7 +1,7 @@
 # The anisotropic cell rescaling of barostat-aniso.test on a GPU, in mixed
 # precision (D163c): the host draws the strain of each axis from the
 # pressures that the device sums. The first volume is that of the binary32
-# step cell (D[box-f32-exact]): each edge of 2.32 nm rounds to
+# step cell (D443): each edge of 2.32 nm rounds to
 # 2.3199999332 nm, and (23.199999332 Ang)^3 = 12487.16692 Ang^3.
 #
 # REQUIRES: cuda

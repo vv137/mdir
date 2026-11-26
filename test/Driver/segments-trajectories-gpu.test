@@ -9,7 +9,7 @@
 # Inputs/segments_trajectory.py), on three waters of OPC and of TIP3P. Each
 # case passed 10 of 10 runs at the head of the PR. The NPT baselines were
 # recorded again (5 runs) after mixed precision began to round the step cell
-# to binary32 at each coupling (D[box-f32-exact]): with the old ones TIP3P
+# to binary32 at each coupling (D443): with the old ones TIP3P
 # LEAPFROG NPT failed 10 of 10 runs at step 90 (projected v 6.18e-05 against
 # 5.89e-05) and passed 10 of 10 on main; with the new ones each NPT case
 # passed 10 of 10 runs on an RTX 4090.
