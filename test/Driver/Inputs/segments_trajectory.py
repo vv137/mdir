@@ -21,7 +21,9 @@ bounds:
 
 The baseline of the general mixed route is the largest of N runs at each
 sample, recorded once by --record=N in Inputs/segments_trajectory_bounds.json
-(5 runs, 2026-11-18): one run's baseline changes from run to run, and the
+(5 runs, 2026-11-18; the four NPT cases again on 2026-11-26, once mixed
+precision rounded the step cell to binary32 at each coupling,
+D[box-f32-exact]): one run's baseline changes from run to run, and the
 gate flickered (the leader's ruling on #906). Each sample also prints, for
 the diagnosis, the largest difference of the unprojected velocities at the
 step, its component along the constraints, and that of h dF/m, the
