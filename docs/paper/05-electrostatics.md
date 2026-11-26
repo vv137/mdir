@@ -1368,3 +1368,11 @@ $224 \times 108 \times 108$ and $160 \times 80 \times 80$, with force
 errors of 0.798 and 0.772 kJ mol⁻¹ nm⁻¹. At four nodes the smaller grid
 reduced the transpose from 58.54 to 23.09 MB per step and the overlap
 exchange from 48.61 to 21.00 MB per step (decimal MB).
+
+The CPU pencil transform assigns complete lines to workers, so each line
+undergoes the same sequence of operations for any team size. For the
+reciprocal energy and virial, each spectral plane accumulates its own
+subtotal and the rank adds the planes in order. In deterministic mode each
+mode contributes a rounded word before that sum. A change of pencil
+layout can therefore regroup these words without changing their total
+(D[distribute-cpu-threads]).

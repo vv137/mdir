@@ -151,17 +151,31 @@ static size_t volume(struct Subgrid g) {
 
 /* Remove the largest empty cyclic interval on each axis. */
 static struct Subgrid footprint(struct Particle *p, size_t count,
-                                const int n[3], int order) {
+                                const int n[3], int order, int threaded) {
   struct Subgrid g = {0};
-  char *occupied[3];
-  for (int a = 0; a < 3; ++a)
-    occupied[a] = alloc(n[a], 1);
-  for (size_t i = 0; i < count; ++i)
-    if (p[i].q)
-      for (int a = 0; a < 3; ++a)
-        occupied[a][p[i].first[a]] = 1;
+  size_t extent = (size_t)n[0]+n[1]+n[2];
+  size_t width = extent > 1024 ? extent : 1024;
+  size_t blocks = count ? 1+(count-1)/width : 1;
+  char *occupied = alloc(blocks,extent);
+  #pragma omp parallel for schedule(static) if(threaded && blocks > 1)
+  for (size_t b = 0; b < blocks; ++b) {
+    size_t end = (b+1)*width < count ? (b+1)*width : count;
+    for (size_t i = b*width; i < end; ++i) {
+      if (!p[i].q) continue;
+      size_t base = b*extent;
+      for (int a = 0; a < 3; ++a) {
+        occupied[base+p[i].first[a]] = 1;
+        base += n[a];
+      }
+    }
+  }
+  #pragma omp parallel for schedule(static) if(threaded && blocks > 1)
+  for (size_t j = 0; j < extent; ++j)
+    for (size_t b = 1; b < blocks; ++b) occupied[j] |= occupied[b*extent+j];
+  size_t base = 0;
   for (int a = 0; a < 3; ++a) {
-    const char *used = occupied[a];
+    const char *used = occupied+base;
+    base += n[a];
     int last = -1, first = -1, gap = 0;
     for (int j = 0; j < n[a]; ++j)
       if (used[j]) {
@@ -173,7 +187,6 @@ static struct Subgrid footprint(struct Particle *p, size_t count,
         }
         last = j;
       }
-    free(occupied[a]);
     if (first < 0)
       continue;
     int cyclic = (n[a] - 1 - last) + first;
@@ -185,6 +198,8 @@ static struct Subgrid footprint(struct Particle *p, size_t count,
     if (g.len[a] == n[a])
       g.start[a] = 0;
   }
+  free(occupied);
+  #pragma omp parallel for schedule(static) if(threaded && count > 512)
   for (size_t i = 0; i < count; ++i)
     if (p[i].q)
       for (int a = 0; a < 3; ++a) {
@@ -236,18 +251,32 @@ static void spreadFixed(const struct DomainMesh *local, size_t count,
                         int64_t *grid) {
   const struct Particle *p = local->atoms;
   int nx = g.len[0];
+  if (!nx) return;
   size_t *offset = alloc((size_t)nx + 1, sizeof *offset);
-  size_t *next = alloc(nx, sizeof *next), *ids = alloc(count, sizeof *ids);
-  for (size_t i = 0; i < count; ++i)
-    if (p[i].q)
-      ++offset[p[i].first[0] + 1];
-  for (int x = 0; x < nx; ++x) {
-    offset[x + 1] += offset[x];
-    next[x] = offset[x];
+  size_t width = nx > 512 ? (size_t)nx : 512;
+  size_t blocks = count ? 1+(count-1)/width : 1;
+  size_t *next = alloc(blocks,(size_t)nx*sizeof *next), *ids = alloc(count,sizeof *ids);
+  #pragma omp parallel for schedule(static) if(threaded && blocks > 1)
+  for (size_t b = 0; b < blocks; ++b) {
+    size_t end = (b+1)*width < count ? (b+1)*width : count;
+    for (size_t i = b*width; i < end; ++i)
+      if (p[i].q) ++next[b*nx+p[i].first[0]];
   }
-  for (size_t i = 0; i < count; ++i)
-    if (p[i].q)
-      ids[next[p[i].first[0]]++] = i;
+  for (int x = 0; x < nx; ++x) {
+    size_t pos = offset[x];
+    for (size_t b = 0; b < blocks; ++b) {
+      size_t n = next[b*nx+x];
+      next[b*nx+x] = pos;
+      pos += n;
+    }
+    offset[x+1] = pos;
+  }
+  #pragma omp parallel for schedule(static) if(threaded && blocks > 1)
+  for (size_t b = 0; b < blocks; ++b) {
+    size_t end = (b+1)*width < count ? (b+1)*width : count;
+    for (size_t i = b*width; i < end; ++i)
+      if (p[i].q) ids[next[b*nx+p[i].first[0]]++] = i;
+  }
   free(next);
 #pragma omp parallel for schedule(static) if (threaded)
   for (int x = 0; x < nx; ++x)
@@ -324,51 +353,57 @@ static size_t transfer(struct Subgrid g, struct PmeBox b, const int n[3],
   if (op == Count)
     return count;
   size_t width = sizeof(int64_t);
-  size_t offset = 0;
+  size_t offset = 0, base[2][2][2];
   for (int i = 0; i < parts[0]; ++i)
     for (int j = 0; j < parts[1]; ++j)
       for (int k = 0; k < parts[2]; ++k) {
-        struct Segment x = span[0][i], y = span[1][j], z = span[2][k];
-#pragma omp parallel for collapse(2)                                           \
-    schedule(static) if (threaded && (size_t)x.len * y.len * z.len >= 32768)
-        for (int u = 0; u < x.len; ++u)
-          for (int v = 0; v < y.len; ++v) {
-            size_t local =
-                ((size_t)(x.local + u) * g.len[1] + y.local + v) * g.len[2] +
-                z.local;
-            size_t pencil =
-                ((size_t)(x.global + u - b.lo[0]) * (b.hi[1] - b.lo[1]) +
-                 y.global + v - b.lo[1]) *
-                    n[2] +
-                z.global;
-            size_t atPacket = offset + ((size_t)u * y.len + v) * z.len;
-            switch (op) {
-            case PackCharge:
-            case PackPotential: {
-              size_t at = op == PackCharge ? local : pencil;
-              memcpy((char *)packet + atPacket * width,
-                     (char *)field + at * width, z.len * width);
-              break;
-            }
-            case SumCharge:
-              sumRow(field, pencil, packet, atPacket, z.len);
-              break;
-            case AddLocalCharge:
-              sumRow(packet, pencil, field, local, z.len);
-              break;
-            case UnpackPotential:
-            case CopyLocalPotential: {
-              size_t at = op == CopyLocalPotential ? pencil : atPacket;
-              memcpy((double *)field + local, (double *)packet + at,
-                     z.len * sizeof(double));
-              break;
-            }
-            case Count:
-              break;
-            }
-          }
-        offset += (size_t)x.len * y.len * z.len;
+        base[i][j][k] = offset;
+        offset += (size_t)span[0][i].len*span[1][j].len*span[2][k].len;
       }
+  int nx = span[0][0].len + (parts[0] == 2 ? span[0][1].len : 0);
+  int ny = span[1][0].len + (parts[1] == 2 ? span[1][1].len : 0);
+  #pragma omp parallel for collapse(2) schedule(static) if(threaded && count >= 2048)
+  for (int row = 0; row < nx; ++row)
+    for (int col = 0; col < ny; ++col) {
+      int i = row >= span[0][0].len, j = col >= span[1][0].len;
+      int u = row - (i ? span[0][0].len : 0), v = col - (j ? span[1][0].len : 0);
+      for (int k = 0; k < parts[2]; ++k) {
+        struct Segment x = span[0][i], y = span[1][j], z = span[2][k];
+        size_t local =
+            ((size_t)(x.local + u) * g.len[1] + y.local + v) * g.len[2] +
+            z.local;
+        size_t pencil =
+            ((size_t)(x.global + u - b.lo[0]) * (b.hi[1] - b.lo[1]) +
+             y.global + v - b.lo[1]) *
+                n[2] +
+            z.global;
+        size_t atPacket = base[i][j][k] + ((size_t)u * y.len + v) * z.len;
+        switch (op) {
+        case PackCharge:
+        case PackPotential: {
+          size_t at = op == PackCharge ? local : pencil;
+          memcpy((char *)packet + atPacket * width,
+                 (char *)field + at * width, z.len * width);
+          break;
+        }
+        case SumCharge:
+          sumRow(field, pencil, packet, atPacket, z.len);
+          break;
+        case AddLocalCharge:
+          sumRow(packet, pencil, field, local, z.len);
+          break;
+        case UnpackPotential:
+        case CopyLocalPotential: {
+          size_t at = op == CopyLocalPotential ? pencil : atPacket;
+          memcpy((double *)field + local, (double *)packet + at,
+                 z.len * sizeof(double));
+          break;
+        }
+        case Count:
+          break;
+        }
+      }
+    }
   return count;
 }
 static int append(size_t *total, size_t count) {
@@ -488,11 +523,16 @@ static void polynomial(double k, const double *value, const double *slope,
 }
 static void spectrum(const int n[3], const double box[3], struct PmeBox b,
                      double *fft, struct Table *t, double beta, double coulomb,
-                     int fixed, int mixed, double *sums, __int128 words[10]) {
+                     int fixed, int mixed, int threaded, double *sums, __int128 words[10]) {
   const double pi = acos(-1),
                pref = coulomb / (pi * (box[0] * box[1] * box[2]));
-  size_t i = 0;
-  for (int x = b.lo[0]; x < b.hi[0]; ++x)
+  size_t planes = b.hi[0]-b.lo[0];
+  double (*planeSums)[10] = fixed ? NULL : alloc(planes,sizeof *planeSums);
+  __int128 (*planeWords)[10] = fixed ? alloc(planes,sizeof *planeWords) : NULL;
+  #pragma omp parallel for schedule(static) if(threaded && boxSize(b) >= 1024)
+  for (int x = b.lo[0]; x < b.hi[0]; ++x) {
+    int plane = x-b.lo[0];
+    size_t i = 2*(size_t)plane*(b.hi[1]-b.lo[1])*(b.hi[2]-b.lo[2]);
     for (int y = b.lo[1]; y < b.hi[1]; ++y)
       for (int z = b.lo[2]; z < b.hi[2]; ++z, i += 2) {
         double m[3] = {(x > n[0] / 2 ? x - n[0] : x) / box[0],
@@ -551,11 +591,19 @@ static void spectrum(const int n[3], const double box[3], struct PmeBox b,
             term[1 + 3 * a + d] = power * ((a == d ? g : 0) + dg * m[a] * m[d]);
         for (int k = 0; k < 10; ++k) {
           if (fixed)
-            words[k] += mdrtDistWord(term[k], 0x1p32, DistPairEnergy);
+            planeWords[plane][k] += mdrtDistWord(term[k], 0x1p32);
           else
-            sums[k] += term[k];
+            planeSums[plane][k] += term[k];
         }
       }
+  }
+  for (size_t plane = 0; plane < planes; ++plane)
+    for (int k = 0; k < 10; ++k) {
+      if (fixed) words[k] += planeWords[plane][k];
+      else sums[k] += planeSums[plane][k];
+    }
+  free(planeWords);
+  free(planeSums);
 }
 void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
                               struct Field *x, struct Field *q, struct Table *t,
@@ -601,7 +649,7 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
         window(&w, field(x, d, r), x->s[2], box, n, order, t, mixed);
       }
     }
-    local->box = footprint(local->atoms, num, n, order);
+    local->box = footprint(local->atoms, num, n, order, threaded);
     local->points = alloc(volume(local->box), width);
     spreadFixed(local, num, local->box, order, mixed, threaded,
                   local->points);
@@ -645,7 +693,7 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
   mdrtDistPhase(DistSolve);
   double sums[10] = {0};
   __int128 words[10] = {0};
-  spectrum(n, box, modes, fft, t, beta, coulomb, fixed, mixed, sums, words);
+  spectrum(n, box, modes, fft, t, beta, coulomb, fixed, mixed, threaded, sums, words);
 #ifdef MDIR_ENABLE_MPI
   if (peers > 1) {
     int *counts = alloc(peers, 2 * sizeof(int)), *offsets = counts + peers;

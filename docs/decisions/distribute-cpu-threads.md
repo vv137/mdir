@@ -37,3 +37,10 @@ within the existing skin bound. Independent particle checks reduce by
 maximum. Sorted exclusion keys live across serial steps while their
 topology relation is invariant. A permutation establishes a new relation
 and a new sorted table.
+
+The mesh uses independent particle blocks to mark occupied planes and bin
+fixed-point charges. A plane visits the bins in particle order. Overlap
+packets have prescribed offsets for their periodic intersections. Fourier
+lines have private work buffers and reuse pocketfft plans of the same
+dimensions. Spectrum planes form separate energy and virial subtotals,
+which the rank combines in increasing plane order.
