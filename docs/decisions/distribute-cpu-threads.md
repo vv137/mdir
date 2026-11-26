@@ -137,3 +137,9 @@ For eight equal row slices, interleaving reduced the peak selected-neighbor
 count relative to an equal share from 3.16 to 1.17 in JAC, from 2.40 to
 1.12 in Factor IX, and from 1.74 to 1.05 in Cellulose. The comparison sums
 the peak and ideal counts separately over the same domain evaluations.
+
+A tuple relation retains its member-to-directory plan while its SSA input
+is invariant. Remote identities are sorted and requested once per peer.
+On each geometry evaluation the peer returns one site per requested identity.
+Workers expand the results into disjoint member slots and resolve the received
+midpoint records into disjoint tuple rows. Parameter and force order are preserved.

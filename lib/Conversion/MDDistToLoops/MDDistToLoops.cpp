@@ -1554,10 +1554,27 @@ LogicalResult Lowering::lowerTupleRows(TupleRowsOp op) {
       func::CallOp::create(cleanup, loc, declare("mdrtDistReleaseShard",
           b.getFunctionType({i64}, {}), false), shard);
     }
+    Value flag = arith::ConstantIntOp::create(b,loc,op.getGroup() ? 1 : 0,64);
+    Value none = arith::ConstantIntOp::create(b,loc,0,64);
+    Value plan = none;
+    if (!op.getGroup()) {
+      Operation *scope = op;
+      while (auto loop = dyn_cast<scf::ForOp>(scope->getParentOp())) {
+        if (!loop.isDefinedOutsideOfLoop(op.getTuples())) break;
+        scope = loop;
+      }
+      OpBuilder init(scope);
+      plan = func::CallOp::create(init,loc,declare("mdrtDistNewTuplePlan",
+          b.getFunctionType({}, {i64}),false)).getResult(0);
+      OpBuilder cleanup(end);
+      if (scope != op) cleanup.setInsertionPointAfter(scope);
+      func::CallOp::create(cleanup,loc,declare("mdrtDistFreeTuplePlan",
+          b.getFunctionType({i64},{}),false),plan);
+    }
     auto build = declare("mdrtDistScheduleTuples",
-        b.getFunctionType({i64,i64,i64,positions.getType(),source.getType()}, {i64}), true);
-    Value schedule = func::CallOp::create(b, loc, build, ValueRange{handle,
-        arith::ConstantIntOp::create(b, loc, op.getGroup() ? 1 : 0, 64),op.getGroup() ? arith::ConstantIntOp::create(b,loc,0,64).getResult() : shard,positions,source}).getResult(0);
+        b.getFunctionType({i64,i64,i64,i64,positions.getType(),source.getType()}, {i64}), true);
+    Value schedule = func::CallOp::create(b, loc, build,
+        ValueRange{handle,flag,op.getGroup() ? none : shard,plan,positions,source}).getResult(0);
     auto view = declare("mdrtDistScheduleView",
         b.getFunctionType({i64}, {dynamic(i64)}), true);
     Value table = func::CallOp::create(b, loc, view, schedule).getResult(0);

@@ -2492,40 +2492,89 @@ static int64_t memberAt(const struct Members *m, int64_t i) {
   return m->aligned[m->offset+i/m->sizes[1]*m->strides[0]+i%m->sizes[1]*m->strides[1]];
 }
 
-static struct TopologySite *readSites(const struct TopologyShard *shard, struct Members *m,
-                                     int64_t count) {
-  int64_t n = m->sizes[0]*m->sizes[1];
-  struct TopologySite *sites = malloc((n ? n : 1)*sizeof *sites);
-  if (!sites) fail("out of memory gathering tuple members");
-  struct Route route = beginRoute();
-  int rank = mdrtMPIRank();
+/* Relations are immutable across iterations of their enclosing step loop.
+   Map every member once to a local slot or a unique remote request. */
+struct TuplePlan {
+  struct Route route;
+  int64_t *slots, *incoming;
+};
+
+int64_t mdrtDistNewTuplePlan(void) {
+  struct TuplePlan *p = calloc(1,sizeof *p);
+  if (!p) fail("out of memory starting tuple plan");
+  return (int64_t)(intptr_t)p;
+}
+
+void mdrtDistFreeTuplePlan(int64_t handle) {
+  struct TuplePlan *p = (struct TuplePlan *)(intptr_t)handle;
+  free(p->route.send);
+  free(p->slots);
+  free(p->incoming);
+  free(p);
+}
+
+static int compareId(const void *x, const void *y) {
+  int64_t a = *(const int64_t *)x, b = *(const int64_t *)y;
+  return (a > b) - (a < b);
+}
+
+static void planSites(struct TuplePlan *p, const struct TopologyShard *shard,
+                      struct Members *m, int64_t count) {
+  int64_t n = m->sizes[0]*m->sizes[1], remote = 0;
+  p->slots = malloc((n ? n : 1)*sizeof *p->slots);
+  int64_t *ids = malloc((n ? n : 1)*sizeof *ids);
+  if (!p->slots || !ids) fail("out of memory planning tuple members");
   for (int64_t i = 0; i < n; ++i) {
     int64_t id = memberAt(m,i);
     if (id < 0 || id >= count) fail("tuple member outside particle set");
-    int peer = mdrtMPIOwner(count,id);
-    if (peer != rank) countRoute(&route,peer);
+    if (id >= shard->first && id-shard->first < shard->count)
+      p->slots[i] = id-shard->first;
+    else {
+      ids[remote++] = id;
+      p->slots[i] = ~id;
+    }
   }
-  finishRoute(&route);
-  int64_t *out = malloc((route.sends ? (size_t)route.sends : 1)*sizeof *out);
-  int64_t *in = malloc((route.receives ? (size_t)route.receives : 1)*sizeof *in);
-  struct TopologySite *s = malloc((route.receives ? (size_t)route.receives : 1)*sizeof *s);
-  struct TopologySite *r = malloc((route.sends ? (size_t)route.sends : 1)*sizeof *r);
-  if (!out || !in || !s || !r) fail("out of memory routing tuple requests");
+  qsort(ids,remote,sizeof *ids,compareId);
+  p->route = beginRoute();
+  int64_t unique = 0;
+  for (int64_t i = 0; i < remote; ++i)
+    if (!i || ids[i] != ids[i-1]) {
+      countRoute(&p->route,mdrtMPIOwner(count,ids[i]));
+      ids[unique++] = ids[i];
+    }
+  finishRoute(&p->route);
+  p->incoming = malloc((p->route.receives ? p->route.receives : 1)*sizeof *p->incoming);
+  if (!p->incoming) fail("out of memory planning remote tuple members");
+  mdrtMPIExchangeRecords(ids,p->route.send,p->route.sendOffset,p->incoming,
+      p->route.recv,p->route.recvOffset,sizeof *ids);
+  for (int64_t i = 0; i < n; ++i)
+    if (p->slots[i] < 0) {
+      int64_t id = ~p->slots[i];
+      const int64_t *found = bsearch(&id,ids,unique,sizeof *ids,compareId);
+      p->slots[i] = ~(int64_t)(found-ids);
+    }
+  free(ids);
+}
+
+static struct TopologySite *readSites(struct TuplePlan *p, const struct TopologyShard *shard,
+                                     struct Members *m, int64_t count) {
+  if (!p->slots) planSites(p,shard,m,count);
+  struct Route *route = &p->route;
+  int64_t n = m->sizes[0]*m->sizes[1];
+  struct TopologySite *sites = malloc((n ? n : 1)*sizeof *sites);
+  struct TopologySite *send = malloc((route->receives ? route->receives : 1)*sizeof *send);
+  struct TopologySite *recv = malloc((route->sends ? route->sends : 1)*sizeof *recv);
+  if (!sites || !send || !recv) fail("out of memory gathering tuple geometry");
+  for (int i = 0; i < route->receives; ++i)
+    send[i] = shard->sites[p->incoming[i]-shard->first];
+  mdrtMPIExchangeRecords(send,route->recv,route->recvOffset,recv,route->send,route->sendOffset,sizeof *send);
+  #pragma omp parallel for schedule(static) if(n > 4096)
   for (int64_t i = 0; i < n; ++i) {
-    int64_t id = memberAt(m,i);
-    int peer = mdrtMPIOwner(count,id);
-    if (peer == rank) sites[i] = shard->sites[id-shard->first];
-    else out[route.cursor[peer]++] = id;
+    int64_t slot = p->slots[i];
+    sites[i] = slot >= 0 ? shard->sites[slot] : recv[~slot];
   }
-  mdrtMPIExchangeRecords(out,route.send,route.sendOffset,in,route.recv,route.recvOffset,sizeof *in);
-  for (int i = 0; i < route.receives; ++i) s[i] = shard->sites[in[i]-shard->first];
-  mdrtMPIExchangeRecords(s,route.recv,route.recvOffset,r,route.send,route.sendOffset,sizeof *s);
-  memcpy(route.cursor,route.sendOffset,mdrtMPISize()*sizeof *route.cursor);
-  for (int64_t i = 0; i < n; ++i) {
-    int peer = mdrtMPIOwner(count,memberAt(m,i));
-    if (peer != rank) sites[i] = r[route.cursor[peer]++];
-  }
-  free(r); free(s); free(in); free(out); free(route.send);
+  free(recv);
+  free(send);
   return sites;
 }
 #endif
@@ -2678,7 +2727,7 @@ static int64_t groupSchedule(struct Layout *l, struct Members *m) {
 /* Assign contiguous input intervals to ranks. A peer's records retain input
    order, so concatenating received intervals preserves topology order even
    when several ranks contribute to the same midpoint domain. */
-int64_t _mlir_ciface_mdrtDistScheduleTuples(int64_t handle, int64_t groups, int64_t directory,
+int64_t _mlir_ciface_mdrtDistScheduleTuples(int64_t handle, int64_t groups, int64_t directory, int64_t plan,
     struct Memref3D *positions, struct Members *members) {
   struct Layout *l = groups ? (struct Layout *)(intptr_t)handle :
                               ((struct Halo *)(intptr_t)handle)->layout;
@@ -2697,7 +2746,7 @@ int64_t _mlir_ciface_mdrtDistScheduleTuples(int64_t handle, int64_t groups, int6
   if (!rows) fail("out of memory locating topology interval");
   struct Memref2I records = {rows,rows,0,{count,recordWidth},{recordWidth,1}};
   struct TopologySite *sites = directory ?
-      readSites((struct TopologyShard *)(intptr_t)directory,&slice,l->count) : NULL;
+      readSites((struct TuplePlan *)(intptr_t)plan,(struct TopologyShard *)(intptr_t)directory,&slice,l->count) : NULL;
   {
     #pragma omp parallel for schedule(static) if(count > 256)
     for (int64_t start = 0; start < count; start += 256) {
@@ -2745,6 +2794,7 @@ int64_t _mlir_ciface_mdrtDistScheduleTuples(int64_t handle, int64_t groups, int6
   schedule->rows = malloc((receives ? (size_t)receives : 1)*width*sizeof *rows);
   schedule->indices = malloc((receives ? (size_t)receives : 1)*sizeof *rows);
   if (!schedule->rows || !schedule->indices) fail("out of memory collecting local tuples");
+  #pragma omp parallel for schedule(static) if(receives > 1024)
   for (int i = 0; i < receives; ++i) {
     const int64_t *record = in+(recordWidth+1)*i;
     schedule->indices[i] = record[0];

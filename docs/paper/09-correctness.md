@@ -867,3 +867,9 @@ terms, consecutive input intervals route records to the rank of the
 interaction midpoint. Concatenating source intervals in rank order
 preserves topology order. The receiving rank resolves periodic images
 against its own ghost rows before summing member forces.
+
+D[distribute-cpu-threads] keeps immutable relation membership separate from
+geometry. Each rank sorts the remote atom identities required by its tuple
+interval and maps repeated members to the same response slot. It refreshes
+coordinates and spatial ownership every evaluation. Parallel expansion and
+image lookup write rows in their original topology order.
