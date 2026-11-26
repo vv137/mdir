@@ -14,6 +14,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <vector>
 
 using mdir::prolate::Function;
@@ -170,6 +171,21 @@ int main() {
                   static_cast<long long>(k.grid[2]), value, k.reference,
                   close ? "ok" : "FAIL");
     }
+    // A grid large enough to be summed on threads: the same bits on one
+    // thread and on four.
+    Function split(9.5392, 2, 8);
+    mdir::prolate::Influence table = mdir::prolate::getPolynomialInfluence(split);
+    auto spectrum = [&](double x) {
+      return mdir::prolate::evaluatePolynomialInfluence(table, x);
+    };
+    const double edges[3] = {62.23, 62.23, 62.23};
+    const int64_t grid[3] = {160, 160, 160};
+    double one = mdir::prolate::getSplineMeshError(spectrum, 4, edges, grid, 8.0, 1);
+    double four = mdir::prolate::getSplineMeshError(spectrum, 4, edges, grid, 8.0, 4);
+    bool same = std::memcmp(&one, &four, sizeof one) == 0;
+    failures += !same;
+    std::printf("spline mesh error 160x160x160 on 1 and 4 threads: %.17g %.17g %s\n",
+                one, four, same ? "ok" : "FAIL");
   }
   // The tables of the splitting, 64 cells of 10 terms, against the
   // functions at 1000 points; Φ by quadrature against the Legendre

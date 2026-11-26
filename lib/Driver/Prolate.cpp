@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "mdir/Driver/Prolate.h"
+#include "mdir/Driver/NeighborCount.h"
 #include "mdir/Driver/ProlateSpectrum.h"
 #include <array>
 #include <numeric>
@@ -525,7 +526,8 @@ double mdir::prolate::evaluatePolynomialInfluence(const Influence &influence,
 
 double mdir::prolate::getSplineMeshError(
     const std::function<double(double)> &spectrum, int64_t order,
-    const double (&edges)[3], const int64_t (&grid)[3], double cutoff) {
+    const double (&edges)[3], const int64_t (&grid)[3], double cutoff,
+    unsigned threads) {
   // The summand is even in each n_a (with j_a → −j_a), so the sums run over
   // 0 ≤ n_a ≤ K_a/2, counted twice inside, and |j_a| ≤ 1 for each: the
   // images beyond add below 1e-3 of Q at the grids of the rule.
@@ -591,21 +593,23 @@ double mdir::prolate::getSplineMeshError(
     exacts[i] = exact;
   };
   // Threads for the large grids of tight tolerances (8.4 × 10⁷ terms a
-  // second on one core); a small grid is summed on the calling thread.
+  // second on one core), as many as the other work of a build takes
+  // (driver::getBuildThreads); a small grid is summed on the calling
+  // thread.
   double terms = 27.0 * static_cast<double>(planes) *
                  static_cast<double>(axes[1].weight.size() * axes[2].weight.size());
-  size_t workers = terms < 1e7 ? 1
-                   : std::min<size_t>({planes, 16,
-                                       std::max(1u, std::thread::hardware_concurrency())});
-  std::vector<std::thread> threads;
+  size_t workers =
+      terms < 1e7 ? 1
+                  : std::min<size_t>(planes, driver::getBuildThreads(threads));
+  std::vector<std::thread> pool;
   for (size_t w = 1; w < workers; ++w)
-    threads.emplace_back([&, w] {
+    pool.emplace_back([&, w] {
       for (size_t i = w; i < planes; i += workers)
         plane(i);
     });
   for (size_t i = 0; i < planes; i += workers)
     plane(i);
-  for (std::thread &thread : threads)
+  for (std::thread &thread : pool)
     thread.join();
   double error = 0.0, exact = 0.0;
   for (size_t i = 0; i != planes; ++i) {

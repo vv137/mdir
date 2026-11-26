@@ -162,10 +162,14 @@ double evaluatePolynomialInfluence(const Influence &influence, double k);
 ///            + G(n)² Σ_{j≠l} ρ_j² ρ_l² |k_l|²],
 ///   R = Σ_n Σ_j G(k_j)² |k_j|²,
 /// over the grid and its images |j_a| ≤ 1. `spectrum` is χ̂ (χ̂(0) = 1),
-/// as the kernels take it. Lengths in any one unit.
+/// as the kernels take it. Lengths in any one unit. A large grid is summed
+/// on `threads` threads, 0 for those of driver::getBuildThreads; the sums
+/// of its planes are added in one order, so the result does not depend on
+/// their number.
 double getSplineMeshError(const std::function<double(double)> &spectrum,
                           int64_t order, const double (&edges)[3],
-                          const int64_t (&grid)[3], double cutoff);
+                          const int64_t (&grid)[3], double cutoff,
+                          unsigned threads = 0);
 
 /// The bound of getSplineMeshError for the automatic grid at the tolerance
 /// ε of [pme] (D[prolate-bspline-grid]): ε for the transform of the

@@ -13,6 +13,7 @@
 # CHECK: epsilon 1e-05 bandwidth 14.471
 # CHECK: spline spectrum: {{.*}} ok
 # CHECK-COUNT-5: spline mesh error {{.*}} ok
+# CHECK: spline mesh error 160x160x160 on 1 and 4 threads: {{.*}} ok
 # CHECK: series of (1 - Phi)/(1 - x) at epsilon 1e-05: 23 terms, {{.*}} ok
 # CHECK: C3 cutoff N=8 at c 9.5392: {{.*}} ok
 # CHECK: C3 cutoff N=8 at c 14.471: {{.*}} ok

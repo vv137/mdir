@@ -38,22 +38,6 @@ struct Cells {
   std::vector<double> x, y, z;
 };
 
-/// The threads of the search: those that the process may run on (its
-/// affinity), bounded by `given` or else by MDIR_COMPILE_THREADS, which
-/// bounds the threads of a process among those that run side by side, as
-/// the tests of a suite do.
-unsigned getThreads(unsigned given) {
-  if (given != 0)
-    return given;
-  unsigned threads = llvm::hardware_concurrency().compute_thread_count();
-  if (const char *bound = std::getenv("MDIR_COMPILE_THREADS")) {
-    unsigned value = 0;
-    if (!llvm::StringRef(bound).getAsInteger(10, value) && value != 0)
-      threads = std::min(threads, value);
-  }
-  return std::max(threads, 1u);
-}
-
 /// std::round (halfway cases away from zero) in operations that a vector
 /// unit has, without branches: below 2^52 in magnitude, x - trunc(x) is
 /// the fraction of x exactly (the two are within a factor of 2, or
@@ -108,6 +92,18 @@ int64_t countWithin(const double *xs, const double *ys, const double *zs,
 }
 
 } // namespace
+
+unsigned driver::getBuildThreads(unsigned given) {
+  if (given != 0)
+    return given;
+  unsigned threads = llvm::hardware_concurrency().compute_thread_count();
+  if (const char *bound = std::getenv("MDIR_COMPILE_THREADS")) {
+    unsigned value = 0;
+    if (!llvm::StringRef(bound).getAsInteger(10, value) && value != 0)
+      threads = std::min(threads, value);
+  }
+  return std::max(threads, 1u);
+}
 
 int64_t driver::countMostNeighbors(llvm::ArrayRef<double> positions,
                                    const double box[3], double reach,
@@ -210,7 +206,7 @@ int64_t driver::countMostNeighbors(llvm::ArrayRef<double> positions,
   };
 
   // Small systems in one thread; the result is the same.
-  unsigned numThreads = getThreads(threads);
+  unsigned numThreads = getBuildThreads(threads);
   if (count < 16384 || numCells < 2)
     numThreads = 1;
   numThreads = static_cast<unsigned>(
