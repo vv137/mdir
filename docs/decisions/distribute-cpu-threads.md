@@ -26,3 +26,8 @@ The halo plan stores the peer stream offset of each crossing row.
 Packing and forward delivery write disjoint rows. The transpose groups
 the existing stream by destination, preserving its order within each
 owned row for both floating-point and checked wide sums.
+
+Within a Verlet list, identities and exclusions determine the static
+candidate rows. The midpoint test still uses the current coordinates on
+each evaluation, since a midpoint can cross a domain face before the list
+is rebuilt. Selected entries retain their original list order.

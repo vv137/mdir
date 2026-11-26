@@ -113,6 +113,11 @@ struct DomainMatrix {
   double *reference, *shifts;
   int32_t *counts, *selectedCounts;
   int valid;
+  int64_t candidateRule, candidates;
+  int32_t *candidateCounts;
+  size_t exclusionCount;
+  uint64_t *exclusionKeys;
+  int candidatesValid;
 };
 
 struct TransferRow { int64_t domain, ghost, offset; int peer; };
@@ -387,22 +392,15 @@ static int64_t division(double u, int64_t g) {
 /* xi is the untranslated position of the lesser identity. Form its midpoint
    before choosing a grid. Of all common translations of this pair, use
    exactly the one that puts the midpoint in the primary cell. */
-int64_t mdrtDistMidpointOwns(int64_t handle, int64_t d, int64_t i,
-    double x, double y, double z, double dx, double dy, double dz) {
+struct ImageView {
+  int64_t *allocated, *aligned;
+  int64_t offset, sizes[3], strides[3];
+};
+
+void _mlir_ciface_mdrtDistHaloImageWords(struct ImageView *view, int64_t handle) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
-  struct Layout *l = h->layout;
-  double midpoint[3] = {x - 0.5*dx, y - 0.5*dy, z - 0.5*dz};
-  int64_t owner = 0;
-  for (int k = 2; k >= 0; --k) {
-    double u = midpoint[k] / l->edges[k];
-    double image = floor(u);
-    int64_t n = i < l->rows[d] ? 0 :
-        h->image[3*(d*h->capacity + i-l->rows[d]) + k];
-    if (image != -(double)n)
-      return 0;
-    owner = owner*l->grid[k] + division(u - image, l->grid[k]);
-  }
-  return owner == d;
+  *view = (struct ImageView){h->image,h->image,0,{h->layout->domains,h->capacity,3},
+                             {3*h->capacity,3,1}};
 }
 
 /* The rank visits its domains serially. The ordinary compiled builder and
@@ -469,6 +467,7 @@ int64_t _mlir_ciface_mdrtDistMatrixRebuild(int64_t matrix, struct Memref2D *x) {
   for (int c = 0; c < 3; ++c)
     m->box[c] = (m->rows ? hi[c]-lo[c] : 0.0) + 2*(m->cutoff + m->skin);
   m->valid = 1;
+  m->candidatesValid = 0;
   return 1;
 }
 
@@ -512,21 +511,6 @@ void _mlir_ciface_mdrtDistMatrixCounts(struct RowCounts *r, int64_t matrix, int6
   r->strides[0] = 1;
 }
 
-int64_t mdrtDistSelectMatrix(int64_t matrix, int64_t exclusions, int64_t rule) {
-  if (!rule && !exclusions) return 0;
-  struct DomainMatrix *m = (struct DomainMatrix *)(intptr_t)matrix;
-  struct HostBuffer2 src;
-  _mlir_ciface_mdrtHostMatrixEntries(&src, m->raw);
-  if (!m->selected) {
-    m->selected = mdrtHostMatrixAllocate(m->centers, src.sizes[1]);
-    m->selectedCounts = calloc(m->centers ? m->centers : 1, sizeof *m->selectedCounts);
-    if (!m->selectedCounts) fail("out of memory allocating filtered row counts");
-  }
-  mdrtHostMatrixGrow(m->selected, src.sizes[1]);
-  return 1;
-}
-
-
 static size_t firstKey(const struct Exclusions *e, uint64_t key) {
   size_t first = 0, end = e->count;
   while (first < end) {
@@ -537,56 +521,103 @@ static size_t firstKey(const struct Exclusions *e, uint64_t key) {
   return first;
 }
 
-void _mlir_ciface_mdrtDistSelectRows(int64_t handle, int64_t matrix,
-    int64_t exclusions, int64_t rule, int64_t first, int64_t end,
-    struct Memref3D *owned, struct Memref3D *ghost) {
+int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
+    int64_t exclusions, int64_t rule, struct Memref3D *owned, struct Memref3D *ghost) {
+  if (!rule && !exclusions) return 0;
   struct DomainMatrix *m = (struct DomainMatrix *)(intptr_t)matrix;
   struct Halo *h = (struct Halo *)(intptr_t)handle;
   struct Layout *l = h->layout;
   int64_t d = m->domain, n = l->rows[d];
   struct HostBuffer2 src, dst;
-  _mlir_ciface_mdrtHostMatrixEntries(&src, m->raw);
-  _mlir_ciface_mdrtHostMatrixEntries(&dst, m->selected);
-  struct Exclusions *e = (struct Exclusions *)(intptr_t)exclusions;
-  for (int64_t i = first; i < end; ++i) {
-    int64_t gi = d*h->capacity + i-n;
-    int64_t idi = i<n ? l->ids[d*l->stride+i] : h->ids[gi];
-    uint64_t prefix = (uint64_t)idi << 32;
-    size_t lo = 0, hi = 0;
-    if (e && rule) {
-      lo = firstKey(e, prefix);
-      hi = firstKey(e, prefix + (UINT64_C(1)<<32));
+  _mlir_ciface_mdrtHostMatrixEntries(&src,m->raw);
+  if (!m->selected) {
+    m->selected = mdrtHostMatrixAllocate(m->centers,src.sizes[1]);
+    m->selectedCounts = calloc(m->centers ? m->centers : 1,sizeof *m->selectedCounts);
+    if (!m->selectedCounts) fail("out of memory allocating selected row counts");
+  }
+  mdrtHostMatrixGrow(m->selected,src.sizes[1]);
+  _mlir_ciface_mdrtHostMatrixEntries(&dst,m->selected);
+  struct HostBuffer2 candidates = dst;
+  int32_t *counts = m->selectedCounts;
+  if (rule == 2) {
+    if (!m->candidates) {
+      m->candidates = mdrtHostMatrixAllocate(m->centers,src.sizes[1]);
+      m->candidateCounts = calloc(m->centers ? m->centers : 1,sizeof *m->candidateCounts);
+      if (!m->candidateCounts) fail("out of memory allocating midpoint row counts");
+    }
+    mdrtHostMatrixGrow(m->candidates,src.sizes[1]);
+    _mlir_ciface_mdrtHostMatrixEntries(&candidates,m->candidates);
+    counts = m->candidateCounts;
+  }
+  const struct Exclusions *e = (const struct Exclusions *)(intptr_t)exclusions;
+  size_t keys = e ? e->count : 0;
+  if (!m->candidatesValid || m->candidateRule != rule || keys != m->exclusionCount ||
+      (keys && memcmp(m->exclusionKeys,e->pairs,keys*sizeof *e->pairs))) {
+    #pragma omp parallel for schedule(static) if(m->centers > 256)
+    for (int64_t i = 0; i < m->centers; ++i) {
+      int64_t idi = i<n ? l->ids[d*l->stride+i] : h->ids[d*h->capacity+i-n];
+      uint64_t prefix = (uint64_t)idi << 32;
+      size_t lo = e && rule ? firstKey(e,prefix) : 0;
+      size_t hi = e && rule ? firstKey(e,prefix+(UINT64_C(1)<<32)) : 0;
+      int32_t count = 0;
+      for (int32_t k = 0; k < m->counts[i]; ++k) {
+        int32_t j = ((int32_t *)src.aligned)[i*src.strides[0]+k];
+        int64_t idj = j<n ? l->ids[d*l->stride+j] : h->ids[d*h->capacity+j-n];
+        if (rule && idi >= idj) continue;
+        if (e && rule) {
+          uint64_t key = prefix | (uint32_t)idj;
+          size_t t = lo;
+          while (t < hi && e->pairs[t] < key) ++t;
+          if (t < hi && e->pairs[t] == key) continue;
+        }
+        if (e && !rule && !mdrtDistPairAllowed(exclusions,idi<idj ? idi : idj,
+                                                idi<idj ? idj : idi)) continue;
+        ((int32_t *)candidates.aligned)[i*candidates.strides[0]+count++] = j;
+      }
+      counts[i] = count;
+    }
+    free(m->exclusionKeys);
+    m->exclusionKeys = NULL;
+    if (keys) {
+      m->exclusionKeys = malloc(keys*sizeof *m->exclusionKeys);
+      if (!m->exclusionKeys) fail("out of memory retaining list exclusion keys");
+      memcpy(m->exclusionKeys,e->pairs,keys*sizeof *e->pairs);
+    }
+    m->exclusionCount = keys;
+    m->candidateRule = rule;
+    m->candidatesValid = 1;
+  }
+  if (rule != 2) return 1;
+
+  int64_t cell[3] = {d%l->grid[0], (d/l->grid[0])%l->grid[1], d/(l->grid[0]*l->grid[1])};
+  #pragma omp parallel for schedule(static) if(m->centers > 256)
+  for (int64_t i = 0; i < m->centers; ++i) {
+    int64_t image[3] = {0,0,0};
+    double xi[3], a[3];
+    for (int c = 0; c < 3; ++c) {
+      if (i >= n) image[c] = h->image[3*(d*h->capacity+i-n)+c];
+      xi[c] = i<n ? *at3(owned,d,i,c) : *at3(ghost,d,i-n,c);
+      a[c] = image[c]*l->edges[c];
     }
     int32_t count = 0;
-    for (int32_t k = 0; k < m->counts[i]; ++k) {
-      int32_t j = ((int32_t *)src.aligned)[i*src.strides[0]+k];
-      int64_t gj = d*h->capacity + j-n;
-      int64_t idj = j<n ? l->ids[d*l->stride+j] : h->ids[gj];
-      if (rule && idi >= idj) continue;
-      if (e && rule) {
-        uint64_t key = prefix | (uint32_t)idj;
-        size_t t = lo;
-        while (t < hi && e->pairs[t] < key) ++t;
-        if (t < hi && e->pairs[t] == key) continue;
-      }
-      if (e && !rule && !mdrtDistPairAllowed(exclusions, idi < idj ? idi : idj,
-                                             idi < idj ? idj : idi)) continue;
-      if (rule == 2) {
-        double xi[3], dx[3];
-        for (int c = 0; c < 3; ++c) {
-          xi[c] = i<n ? *at3(owned,d,i,c) : *at3(ghost,d,i-n,c);
-          double xj = j<n ? *at3(owned,d,j,c) : *at3(ghost,d,j-n,c);
-          double a = i<n ? 0.0 : h->image[3*gi+c]*l->edges[c];
-          double b = j<n ? 0.0 : h->image[3*gj+c]*l->edges[c];
-          dx[c] = (xi[c]-xj)-(b-a);
+    for (int32_t k = 0; k < counts[i]; ++k) {
+      int32_t j = ((int32_t *)candidates.aligned)[i*candidates.strides[0]+k];
+      int keep = 1;
+      for (int c = 0; c < 3; ++c) {
+        double xj = j<n ? *at3(owned,d,j,c) : *at3(ghost,d,j-n,c);
+        double b = j<n ? 0.0 : h->image[3*(d*h->capacity+j-n)+c]*l->edges[c];
+        double dx = (xi[c]-xj)-(b-a[c]);
+        double u = (xi[c]-0.5*dx)/l->edges[c], shift = floor(u);
+        if (shift != -(double)image[c] || division(u-shift,l->grid[c]) != cell[c]) {
+          keep = 0;
+          break;
         }
-        if (!mdrtDistMidpointOwns(handle,d,i,xi[0],xi[1],xi[2],dx[0],dx[1],dx[2]))
-          continue;
       }
-      ((int32_t *)dst.aligned)[i*dst.strides[0]+count++] = j;
+      if (keep) ((int32_t *)dst.aligned)[i*dst.strides[0]+count++] = j;
     }
     m->selectedCounts[i] = count;
   }
+  return 1;
 }
 
 /* Constraints in a group share the periodic image of the center atom.
@@ -2105,6 +2136,9 @@ void mdrtDistReleaseHalo(int64_t handle) {
     h->matrices = m->next;
     mdrtHostMatrixRelease(m->raw);
     mdrtHostMatrixRelease(m->selected);
+    mdrtHostMatrixRelease(m->candidates);
+    free(m->candidateCounts);
+    free(m->exclusionKeys);
     free(m->counts);
     free(m->selectedCounts);
     free(m->reference);

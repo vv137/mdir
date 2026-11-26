@@ -1646,10 +1646,14 @@ void Lowering::emitPairs(
   func::FuncOp allowed;
   if (exclusions)
     allowed = declare("mdrtDistPairAllowed", b.getFunctionType({i64, i64, i64}, {i64}), false);
-  func::FuncOp owns;
-  if (midpoint)
-    owns = declare("mdrtDistMidpointOwns",
-        b.getFunctionType({i64, i64, i64, f64, f64, f64, f64, f64, f64}, {i64}), false);
+  Value images, edges[3];
+  if (midpoint) {
+    // The neighborhood checked these cell operands when it was lowered.
+    (void)getHaloEdges(op, haloValue, edges);
+    auto imageType = MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic, 3}, i64);
+    auto view = declare("mdrtDistHaloImageWords", b.getFunctionType({i64}, {imageType}), true);
+    images = func::CallOp::create(b, loc, view, halo.handle).getResult(0);
+  }
   auto visitDomain = [&](OpBuilder &bd, Value d) {
         Value owned = arith::IndexCastOp::create(
             bd, loc, bd.getIndexType(),
@@ -1718,12 +1722,22 @@ void Lowering::emitPairs(
                 spanCount = arith::SelectOp::create(bi, loc, active, spanCount,
                                                     c(bi, 0));
               }
-              Value xi, idi, centerShift;
+              Value xi, idi, centerShift, centerImage[3];
               SmallVector<Value> gi;
               if (midpoint) {
                 Value localCenter = arith::CmpIOp::create(
                     bi, loc, arith::CmpIPredicate::ult, i, owned);
                 Value ghost = arith::SubIOp::create(bi, loc, i, owned);
+                for (int axis = 0; axis < 3; ++axis) {
+                  centerImage[axis] = scf::IfOp::create(bi, loc, localCenter,
+                      [&](OpBuilder &yes, Location) {
+                        scf::YieldOp::create(yes, loc, real(yes, 0));
+                      }, [&](OpBuilder &no, Location) {
+                        Value v = memref::LoadOp::create(no, loc, images, ValueRange{d,ghost,c(no,axis)});
+                        Value f = arith::SIToFPOp::create(no, loc, f64, v);
+                        scf::YieldOp::create(no, loc, arith::NegFOp::create(no, loc, f).getResult());
+                      }).getResult(0);
+                }
                 auto side = readSide(bi, i, localCenter, ghost);
                 xi = side.getResult(0);
                 llvm::append_range(gi, side.getResults().slice(1, types.size()));
@@ -1790,16 +1804,26 @@ void Lowering::emitPairs(
                     if (midpoint) {
                       auto owner = scf::IfOp::create(bk, loc, take,
                           [&](OpBuilder &t, Location) {
-                            SmallVector<Value> args{halo.handle};
-                            for (Value idx : {d, i})
-                              args.push_back(arith::IndexCastOp::create(t, loc, i64, idx));
-                            for (Value vec : {xi, dvec})
-                              for (int axis = 0; axis < 3; ++axis)
-                                args.push_back(vector::ExtractOp::create(t, loc, vec, axis));
-                            auto result = func::CallOp::create(t, loc, owns, args);
-                            Value include = result.getResult(0);
-                            scf::YieldOp::create(t, loc, arith::TruncIOp::create(
-                                t, loc, t.getI1Type(), include).getResult());
+                            Value owner = c(t,0), matches = take;
+                            auto grid = decomposition.getGrid();
+                            for (int axis = 2; axis >= 0; --axis) {
+                              Value x = vector::ExtractOp::create(t, loc, xi, axis);
+                              Value dx = vector::ExtractOp::create(t, loc, dvec, axis);
+                              Value mid = arith::SubFOp::create(t, loc, x,
+                                  arith::MulFOp::create(t, loc, real(t,0.5), dx));
+                              Value u = arith::DivFOp::create(t, loc, mid, edges[axis]);
+                              Value shift = math::FloorOp::create(t, loc, u);
+                              matches = arith::AndIOp::create(t, loc, matches, arith::CmpFOp::create(t,
+                                  loc, arith::CmpFPredicate::OEQ, shift, centerImage[axis]));
+                              Value frac = arith::SubFOp::create(t, loc, u, shift);
+                              Value cell = toIndex(t, arith::FPToSIOp::create(t, loc, i64,
+                                  arith::MulFOp::create(t, loc, frac, real(t,grid[axis]))));
+                              cell = arith::MinUIOp::create(t, loc, cell, c(t,grid[axis]-1));
+                              owner = arith::AddIOp::create(t, loc, cell,
+                                  arith::MulIOp::create(t, loc, owner, c(t,grid[axis])));
+                            }
+                            Value same = arith::CmpIOp::create(t, loc, arith::CmpIPredicate::eq, owner, d);
+                            scf::YieldOp::create(t, loc, arith::AndIOp::create(t, loc, same, matches).getResult());
                           }, [&](OpBuilder &e, Location) { scf::YieldOp::create(e, loc, take); });
                       take = owner.getResult(0);
                     }

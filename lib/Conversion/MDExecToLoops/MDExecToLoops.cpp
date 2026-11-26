@@ -963,24 +963,8 @@ LogicalResult Lowering::lowerDomainMatrix(mdrt::DomainMatrixOp op) {
     return failure();
   markBuild(-DistList);
   Value rule = word(op.getRule());
-  Value selected = call("mdrtDistSelectMatrix", i64, {matrix, op.getExclusions(), rule});
-  Value filter = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne, selected, word(0));
-  scf::IfOp::create(b, loc, filter, [&](OpBuilder &at, Location) {
-    Value zero = createIndex(at, loc, 0), chunk = createIndex(at, loc, 64);
-    scf::ParallelOp::create(at, loc, ValueRange{zero}, ValueRange{op.getCenters()},
-        ValueRange{chunk}, [&](OpBuilder &body, Location, ValueRange ivs) {
-          Value end = arith::MinUIOp::create(body, loc, op.getCenters(),
-              arith::AddIOp::create(body, loc, ivs[0], chunk));
-          SmallVector<Value> args{op.getHalo(), matrix, op.getExclusions(), rule,
-              arith::IndexCastOp::create(body, loc, i64, ivs[0]),
-              arith::IndexCastOp::create(body, loc, i64, end),
-              op.getOwnedPositions(), op.getGhostPositions()};
-          auto fn = getOrDeclare("mdrtDistSelectRows", body.getFunctionType(ValueRange(args).getTypes(), {}));
-          fn->setAttr("llvm.emit_c_interface", body.getUnitAttr());
-          func::CallOp::create(body, loc, fn, args);
-        });
-    scf::YieldOp::create(at, loc);
-  });
+  Value selected = call("mdrtDistFilterMatrix", i64, {op.getHalo(), matrix, op.getExclusions(),
+      rule, op.getOwnedPositions(), op.getGhostPositions()}, true);
   view(selected);
   neighbors[op.getResult()] = list;
   return success();
