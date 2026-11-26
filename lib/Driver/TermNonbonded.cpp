@@ -946,10 +946,13 @@ llvm::Error NonbondedWork::collectProlate() {
             "B-spline window stays above its bound %g for the tolerance %g "
             "of [pme]: it is %g at %lld x %lld x %lld points, %g times finer "
             "than the grid of eq. 15; give a looser 'tolerance' or the "
-            "grid in 'grid'",
+            "grid in 'grid'%s",
             bound, epsilon, finest, static_cast<long long>(trial[0]),
             static_cast<long long>(trial[1]), static_cast<long long>(trial[2]),
-            prolate::SplineRefinementLimit);
+            prolate::SplineRefinementLimit,
+            control.pmeBandwidth > 0.0
+                ? " ('tolerance' sets this bound also when 'bandwidth' is given)"
+                : "");
       while (coarse > fine * (1.0 + 1e-6)) {
         double middle = std::sqrt(coarse * fine);
         spaced(middle, trial);

@@ -1443,7 +1443,12 @@ Gaussian kernel at $\mathrm{erfc}(\beta r_c) = 10^{-10}$ (TIP3P water of
 9,989 atoms, JAC, Factor IX, Cellulose; up to 0.46 in mixed precision at
 $10^{-5}$; the table is in the white paper). Before this rule
 the grid of eq. 15 gave $\Delta$ = 1.7 to 3.6 × 10⁻³ at every $\eta$
-(#985). The bound is conservative at tight tolerances: at the default
+(#985). The measurements are for continuity 2, eight terms, and $c$ from
+$\eta$. With an explicit `bandwidth` below $c(\eta)$, or with 40 terms,
+$\Delta$ can exceed $\eta$: JAC with `bandwidth = 9.5392` and $\eta =
+10^{-4}$ takes 108³ and gives $1.69\times10^{-4}$. With `bandwidth` alone,
+the default $\eta = 10^{-5}$ is the bound and is refused there. The bound
+is conservative at tight tolerances with $c$ from $\eta$: at the default
 $\eta = 10^{-5}$ the grid of JAC is 216³, and that of Cellulose 882 × 420 ×
 420. `scripts/benchmarks/prolate-ewald/spline_grid.py` makes and reports
 the measurement, and gives the reference value of $E_B$ that

@@ -57,6 +57,18 @@ double precision, and the same in mixed precision but at $10^{-5}$, up to
 0.46 (the table is in the white paper). Before, the grid of eq. 15 gave
 1.7 to 3.6 × 10⁻³ on the same systems.
 
+*Limits.* The measurements are for continuity 2 and eight terms with $c$
+from $\eta$. `tolerance` sets the bound also with an explicit `bandwidth`,
+as for the prolate window. Below $c(\eta)$, $\Delta$ can exceed $\eta$
+(JAC, `bandwidth = 9.5392`, $\eta = 10^{-4}$: 108³, $1.69\times10^{-4}$),
+and with `bandwidth` alone the default $10^{-5}$ is refused, with a message
+that says so. $\Delta/E_B$ on JAC at $c$ = 9.5392 and 120³ is 1.14 for
+continuity 3 and 2.4 for 40 terms. The excess of 1.10 to 1.19 on
+uncorrelated charges falls with their number (1.07 for 4800 in the same
+cube), the trend of the force of a charge on itself, which $Q$ leaves out.
+In mixed precision on the CPU, $\Delta$ at $10^{-5}$ rises to up to
+$0.91\,\eta$ from the rounding of binary32.
+
 *Not taken.* A bound fitted to $\Delta$ rather than to $E_B$: the ratio
 $\Delta/E_B$ of molecular systems runs from 0.2 to 1.7 over the grids and
 bandwidths measured, since the charges of neutral molecules are

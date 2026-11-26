@@ -1182,7 +1182,12 @@ density and quadrature to $10^{-6}$ (`test/Driver/prolate-function.test`).
 On 1200 charges $\pm1$ at uncorrelated places in a cube of 40 Å
 ($r_c$ = 9 Å, $c$ = 9.5392 and 14.471, one to three times the grid of eq.
 15), the error of the reciprocal force, measured against a grid six times
-that of eq. 15, is 1.10 to 1.19 times $E_B$.
+that of eq. 15, is 1.10 to 1.19 times $E_B$. The excess falls as the
+charges in the same cube grow in number: 1.68 to 1.70 for 300 and 1.07 for
+4800 ($c$ = 14.471). That is the trend of the force of a charge on itself
+through the mesh, which $Q$, an average over pairs, leaves out, as the
+average of Section 5.2 does; its share falls with the number density
+(`spline_grid.py uncorrelated` measures it).
 
 The charges of a molecular system are correlated. The charges of a
 neutral molecule cancel at small wave vectors, which shrinks the dominant
@@ -1223,7 +1228,8 @@ with the bound and the source of the grid. The manifest records it as
 | | $10^{-4}$ | 126 × 60 × 60, 3.60e-3 | 420 × 196 × 192, 9.8e-5, 4.14e-5 | 0.41 |
 | | $10^{-5}$ | 150 × 72 × 72, 2.17e-3 | 882 × 420 × 420, 9.8e-6, 3.40e-6 | 0.34 |
 
-Continuity 2, eight terms, $c$ from $\eta$. $\Delta$ is over the Coulomb
+Continuity 2, eight terms, $c$ from $\eta$ (`spline_grid.py make`, `run`,
+`report`). $\Delta$ is over the Coulomb
 forces of the topology (a copy of it with every other term set to zero),
 on a GPU in double precision, against MDIR's Gaussian kernel in double
 precision at $\mathrm{erfc}(\beta r_c) = 10^{-10}$, order 8, and 0.5 Å.
@@ -1232,14 +1238,29 @@ tolerance of $10^{-6}$ to 1.7 to $2.1\times10^{-6}$ on the water, JAC and
 Cellulose; on Factor IX the two differ by $2.8\times10^{-5}$, the error of
 OpenMM's setting there, which every grid finer than about 2.5 times eq. 15
 reached as a floor against it. The CPU in double gives the same $\Delta$
-to $10^{-10}$ of its value; mixed precision changes $\Delta$ by less than
-$1.5\times10^{-7}$ at $10^{-3}$ and $10^{-4}$, and raises it by 0.1 to
-$1.4\times10^{-6}$ at $10^{-5}$ ($\Delta/\eta$ up to 0.46). For the prolate density with the B-spline
+to $10^{-10}$ of its value. Mixed precision changes $\Delta$ by less than
+$1.5\times10^{-7}$ on the GPU and $1.0\times10^{-6}$ on the CPU at
+$10^{-3}$ and $10^{-4}$. At $10^{-5}$ it raises $\Delta$ by 0.1 to
+$1.4\times10^{-6}$ on the GPU ($\Delta/\eta$ up to 0.46) and by 1.1 to
+$5.8\times10^{-6}$ on the CPU ($\Delta/\eta$ up to 0.91), the rounding of
+binary32 rather than the grid. For the prolate density with the B-spline
 window ($\eta/2$): JAC at $10^{-3}$, 54³, $\Delta = 5.30\times10^{-4}$, and
 at $10^{-4}$, 126³, $5.53\times10^{-5}$; the water at $10^{-3}$, 36 × 40
 × 36, $4.66\times10^{-4}$, and at $10^{-4}$, 84 × 90 × 84,
 $4.89\times10^{-5}$. The prolate window's automatic grid is unchanged
 (JAC at the default: 50³, $\Delta = 1.05\times10^{-5}$).
+
+The bound holds for $c$ from $\eta$. With an explicit `bandwidth` below
+$c(\eta)$ the grid is finer relative to eq. 15, where $\Delta/E_B$ grows at
+small $c$. On JAC, `bandwidth = 9.5392` with $\eta = 10^{-4}$ takes 108³
+with $E_B = 9.2\times10^{-5}$, and $\Delta = 1.69\times10^{-4}$. With
+`bandwidth` alone the default $\eta = 10^{-5}$ is the bound, which that
+$c$ does not reach on eight times the grid of eq. 15 ($2.2\times10^{-5}$ at
+192³), so the run is refused. On the same grids $\Delta/E_B$ depends on the
+density as well (JAC, $c$ = 9.5392, 120³): 1.14 for continuity 3 and eight
+terms, 1.85 for continuity 2 and eight terms, 2.4 for continuity 2 and 40
+terms, whose larger $\chi''(1)$ makes the tail of $\hat\chi$ longer. The
+table is for continuity 2 and eight terms, the defaults.
 
 The bound errs to the safe side by a factor that grows as $\eta$ falls.
 At $\eta = 10^{-4}$ JAC reaches $\Delta = 7.7\times10^{-5}$ on 80³, 0.41

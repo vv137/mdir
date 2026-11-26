@@ -10,6 +10,13 @@ spline_grid.py functional C K0 K1 K2 L0 L1 L2 RC [CONTINUITY TERMS]
     sinc kernel, as test/Driver/Inputs/prolate_continuity_forces.py builds
     it) and its transform by Gauss-Legendre quadrature: the reference of
     test/Driver/prolate-function.test.
+spline_grid.py uncorrelated COUNT EDGE CUTOFF C...
+    COUNT charges +1 and -1 at uncorrelated places in a cube of EDGE nm,
+    cutoff CUTOFF nm, on the CPU in double precision through the Python
+    API: for each bandwidth C, at 1, 1.5, 2, and 3 times the grid of eq. 15,
+    the error of the reciprocal force (against six times that grid) over
+    the reciprocal force (that grid less the direct sum by NumPy), and its
+    ratio to the estimate (`functional`).
 spline_grid.py make DIR NAME PRMTOP INPCRD CUTOFF [TARGET:PRECISION...]
     DIR/NAME/: the topology with every term but the charges set to zero
     (ParmEd), so that the forces are the Coulomb forces of the topology with
@@ -94,6 +101,70 @@ def functional(c, grid, edges, cutoff, continuity=2, terms=8, order=4):
     return math.sqrt(error.sum() / exact.sum())
 
 
+def uncorrelated(count, edge, cutoff, bandwidths, work):
+    import mdir
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from mdir_physical_constants import COULOMB_NATIVE
+    work.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(985)
+    q = np.where(np.arange(count) % 2 == 0, 1.0, -1.0)
+    gro = work / 'ions.gro'
+    gro.write_text(f'ions\n{count}\n' + ''.join(
+        f'{(i + 1) % 100000:5d}ION     X{(i + 1) % 100000:5d}{p[0]:8.3f}{p[1]:8.3f}{p[2]:8.3f}\n'
+        for i, p in enumerate(rng.uniform(0, edge, size=(count, 3)))) + f'{edge:10.5f}' * 3 + '\n')
+    x = np.array([[float(l[20:28]), float(l[28:36]), float(l[36:44])]
+                  for l in gro.read_text().splitlines()[2:2 + count]])
+    top = work / 'ions.top'
+    top.write_text('[ defaults ]\n1 2 no 1 1\n[ atomtypes ]\nX 1 1.0 0 A 0.3 0\n'
+                   '[ moleculetype ]\nions 0\n[ atoms ]\n' +
+                   ''.join(f'{i} X 1 ION X {i} {c} 1.0\n' for i, c in enumerate(q, 1)) +
+                   '[ system ]\nions\n[ molecules ]\nions 1\n')
+    loaded = mdir.load_gromacs(str(top), str(gro))
+    system, state = loaded.make_system(), loaded.make_state()
+    system.electrostatics = mdir.Electrostatics.PME
+    system.cutoff, system.pairlist_distance = cutoff, cutoff + 0.1
+    system.pme_kernel = mdir.PMEKernel.Prolate
+    system.pme_continuity, system.pme_basis_terms = 2, 8
+    state.velocities = np.zeros_like(x)
+
+    def forces(c, k):
+        system.pme_bandwidth, system.pme_grid = c, [k] * 3
+        execution = mdir.Execution()
+        execution.target, execution.precision = mdir.Target.CPU, mdir.Precision.Double
+        integrator = mdir.Integrator()
+        integrator.method = mdir.IntegratorMethod.VelocityVerlet
+        integrator.timestep = 1e-12
+        simulation = mdir.Simulation(mdir.compile(system, state, integrator, mdir.Ensemble(),
+                                                  execution, mdir.Schedule()))
+        simulation.run(1)
+        return np.asarray(simulation.state().forces, dtype=float)
+
+    for c in bandwidths:
+        chi = density(c, 2, 8)
+        phi = chi.integ(lbnd=0)
+        direct = np.zeros((count, 3))
+        for i in range(count - 1):
+            d = x[i] - x[i + 1:]
+            d -= edge * np.rint(d / edge)
+            r = np.linalg.norm(d, axis=1)
+            inside = r < cutoff
+            d, r, t = d[inside], r[inside], r[inside] / cutoff
+            pair = (q[i] * q[i + 1:][inside] *
+                    ((1 - phi(t)) / r ** 3 + chi(t) / (cutoff * r ** 2)))[:, None] * d
+            direct[i] += pair.sum(0)
+            np.subtract.at(direct, np.arange(i + 1, count)[inside], pair)
+        start = math.ceil(edge / (math.pi * cutoff / c) - 1e-9)
+        fine = forces(c, 6 * start + 6 * start % 2)
+        reciprocal = fine - COULOMB_NATIVE * direct
+        for scale in (1.0, 1.5, 2.0, 3.0):
+            k = math.ceil(start * scale)
+            k += k % 2
+            error = np.sqrt(np.mean((forces(c, k) - fine) ** 2) / np.mean(reciprocal ** 2))
+            estimate = functional(c, [k] * 3, [10 * edge] * 3, 10 * cutoff)
+            print(f'c {c} grid {k}^3: error {error:.4e}, estimate {estimate:.4e}, '
+                  f'ratio {error / estimate:.3f}', flush=True)
+
+
 def smooth(n):
     while True:
         if n % 2 == 0:
@@ -150,18 +221,19 @@ def make(d, name, prmtop, inpcrd, cutoff, modes):
     import parmed
     root = Path(d) / name
     root.mkdir(parents=True, exist_ok=True)
-    s = parmed.load_file(prmtop, inpcrd)
-    for b in s.bond_types:
-        b.k = 0.0
-    for a in s.angle_types:
-        a.k = 0.0
-    for t in s.dihedral_types:
-        t.phi_k = 0.0
-    for t in getattr(s, 'improper_types', []):
-        t.psi_k = 0.0
-    for a in s.atoms:
-        a.epsilon = a.epsilon_14 = 0.0
-    s.save(str(root / 'charges.prmtop'), overwrite=True)
+    # The force constants and the Lennard-Jones coefficients set to zero in
+    # the tables of the file, which are written as they are, so that the
+    # charges, the exclusions, and the 1-4 scaling stay.
+    parm = parmed.amber.AmberFormat(prmtop)
+    for flag in ('BOND_FORCE_CONSTANT', 'ANGLE_FORCE_CONSTANT',
+                 'DIHEDRAL_FORCE_CONSTANT', 'LENNARD_JONES_ACOEF',
+                 'LENNARD_JONES_BCOEF', 'LENNARD_JONES_14_ACOEF',
+                 'LENNARD_JONES_14_BCOEF', 'UREY_BRADLEY_FORCE_CONSTANT',
+                 'CHARMM_IMPROPER_FORCE_CONSTANT', 'HBOND_ACOEF', 'HBOND_BCOEF'):
+        if flag in parm.parm_data:
+            parm.parm_data[flag] = [0.0] * len(parm.parm_data[flag])
+    assert not any(f.startswith('CMAP') for f in parm.parm_data), 'CMAP left'
+    parm.write_parm(str(root / 'charges.prmtop'))
     top = (root / 'charges.prmtop').resolve()
     crd = Path(inpcrd).resolve()
     edges = [float(v) for v in open(inpcrd).read().splitlines()[-1].split()[:3]]
@@ -199,6 +271,10 @@ def main():
         c, grid, edges, rc = float(a[0]), [int(v) for v in a[1:4]], [float(v) for v in a[4:7]], float(a[7])
         extra = [int(v) for v in a[8:10]]
         print(f'{functional(c, grid, edges, rc, *extra):.12e}')
+    elif mode == 'uncorrelated':
+        count, edge, cutoff = int(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4])
+        uncorrelated(count, edge, cutoff, [float(v) for v in sys.argv[5:]],
+                     Path(os.environ.get('TMPDIR', '/tmp')) / f'spline-grid-{os.getpid()}')
     elif mode == 'make':
         make(*sys.argv[2:6], float(sys.argv[6]), sys.argv[7:] or ['GPU:MIXED', 'GPU:DOUBLE'])
     elif mode == 'run':
