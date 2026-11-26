@@ -1362,3 +1362,13 @@ the two binaries reduced Factor IX double from 7.120 to 5.985 ms/step
 and JAC-RF from 3.598 to 3.458 ms/step. Both repetitions of both proteins
 stayed within 0.00000101 kcal/mol of the ordinary potential and virial at
 every frame.
+
+The packed state proves a displacement bound from its epoch reference.
+When both endpoints move at most half the halo margin, their separation
+can change by at most that margin. Building the single-domain list at
+the reference therefore needs the cutoff plus one margin. Building at
+another evaluation in the epoch requires allowance for motion on both
+sides of that evaluation. The force and energy kernels use current
+coordinates in either case. On the same allocation the reference search
+reduced Factor IX double from 6.014 to 5.625 ms/step and JAC-RF double
+from 3.455 to 3.346 ms/step.

@@ -505,3 +505,9 @@ indices after every rebuild. The exclusion relation owns these members
 and their device incidence while the particle count is unchanged. Each
 halo keeps its own neighbor list. A new exclusion relation has its own
 members and incidence, even when it appears within the same halo.
+
+When every packed physical neighborhood uses the state's verified position
+field, the single-domain MATRIX can search at the epoch reference
+coordinates. The candidate radius is the cutoff plus the halo margin.
+The pair evaluation uses current positions. For other cached layouts the
+search still uses current positions with twice that margin.

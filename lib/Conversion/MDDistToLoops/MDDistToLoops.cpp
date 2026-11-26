@@ -96,6 +96,7 @@ public:
 
   bool fixedPoint = false;
   bool devicePairFaces = false, physicalEpoch = false;
+  bool referencePairs = false;
   bool matrixPairs = false, gpuPairs = false, gpuImageGeometry = false;
   double matrixSkin = 0;
   LogicalResult run(func::FuncOp function);
@@ -3028,6 +3029,7 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
   double cutoff = op.getCutoff().convertToDouble();
   // The structure is built at every evaluation, with the halo: no skin.
   double skin = 0.0;
+  Value searchPositions;
   MLIRContext *context = module.getContext();
   DomainRelation relation;
   relation.cell = cellOf(op.getHalo());
@@ -3036,14 +3038,17 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
   // The local rows, owned then ghost; the ghosts carry their images.
   Value positions;
   bool periodicOwned = usesOwnedPairs(op);
-  if (periodicOwned) {
+  auto viewOwnedPositions = [&](Value buffer) -> Value {
     auto type = md::FieldType::get(context, set, 3, b.getF64Type());
     auto device = MemRefType::get({ShapedType::kDynamic, 3}, b.getF64Type(),
                                   MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
-    SmallVector<Value> args{d, nOwned, owned, externalStream(b)};
+    SmallVector<Value> args{d, nOwned, buffer, externalStream(b)};
     auto view = declare("mdrtDistTupleOwnedVectors", b.getFunctionType(ValueRange(args).getTypes(), {device}), true);
     Value data = func::CallOp::create(b, loc, view, args).getResult(0);
-    positions = mdrt::FromBufferOp::create(b, loc, type, data);
+    return mdrt::FromBufferOp::create(b, loc, type, data);
+  };
+  if (periodicOwned) {
+    positions = viewOwnedPositions(owned);
   } else if (Value device = devicePositions.lookup(op.getGhosts())) {
     auto type = md::FieldType::get(context, set, 3, b.getF64Type());
     if (overlapPositions.contains(op.getGhosts())) {
@@ -3124,8 +3129,15 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
     // Within this Verlet epoch each row moves at most half the halo
     // margin from its reference. Between two evaluations the separation
     // can therefore change by twice the margin.
-    auto state = op.getHalo().getDefiningOp<UnpackOp>().getState().getType();
-    skin = 2*(state.getReach().convertToDouble()-state.getCutoff().convertToDouble());
+    auto unpack = op.getHalo().getDefiningOp<UnpackOp>();
+    auto state = unpack.getState().getType();
+    double margin = state.getReach().convertToDouble() - state.getCutoff().convertToDouble();
+    skin = 2 * margin;
+    if (referencePairs && periodicOwned) {
+      searchPositions = viewOwnedPositions(storage[unpack.getReference()].buffer);
+      // Each endpoint moves at most half the margin from this reference.
+      skin = margin;
+    }
     Type wide = b.getI64Type();
     Value exclusions = excludedPairs.lookup(op.getResult());
     if (!exclusions) exclusions = arith::ConstantIntOp::create(b,loc,0,64);
@@ -3134,15 +3146,16 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
     func::CallOp::create(b,loc,fn,ValueRange{halo.handle,real(b,cutoff),exclusions});
   }
   auto images = periodicOwned ? md_exec::Images::Minimum : md_exec::Images::Explicit;
+  if (!searchPositions) searchPositions = positions;
   Value cells = md_exec::BuildCellsOp::create(
-      b, loc, mdrt::CellsType::get(context, set), positions,
+      b, loc, mdrt::CellsType::get(context, set), searchPositions,
       relation.cell,
       APFloat((cutoff + skin) / static_cast<double>(cellsPerReach)));
   Value structure = md_exec::BuildNeighborsOp::create(
       b, loc,
       md_exec::getBuildType(set, md_exec::NeighborKind::Matrix,
                             images),
-      cells, positions, relation.cell, excluded, periodicOwned ? Value() : nOwned,
+      cells, searchPositions, relation.cell, excluded, periodicOwned ? Value() : nOwned,
       APFloat(cutoff),
       APFloat(skin), md_exec::NeighborKind::Matrix,
       static_cast<uint64_t>(width), images);
@@ -4039,6 +4052,13 @@ LogicalResult Lowering::run(func::FuncOp function) {
               !isa<GatherPairsOp,SumPairsOp>(u)) return false;
         return true;
       });
+  // Every packed list sharing a halo slot must agree on its reference.
+  referencePairs = physicalEpoch && llvm::all_of(ops, [](Operation *u) {
+    auto n = dyn_cast<NeighborhoodOp>(u);
+    if (!n) return true;
+    auto unpack = n.getHalo().getDefiningOp<UnpackOp>();
+    return !unpack || (!unpack.getFields().empty() && n.getPositions() == unpack.getFields().front());
+  });
   auto deviceSum = [&](SumParticlesOp sum) {
     return sharedState() && sum && llvm::all_of(sum.getGathered(), [](Value field) {
       auto type = cast<FieldType>(field.getType());
