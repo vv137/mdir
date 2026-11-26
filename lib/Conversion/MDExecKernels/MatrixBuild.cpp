@@ -32,10 +32,10 @@ public:
   void emitBuildNeighborsMatrixTriclinic();
   void emitSpatialOrder();
   void emitSearch(StringRef symbol, bool triclinic, bool testAllImages,
-                  bool useExplicitImages = false);
+                  bool useExplicitImages = false, bool useUniqueOwned = false);
 
 private:
-  bool tilted, allImages, explicitImages;
+  bool tilted, allImages, explicitImages, uniqueOwned;
   // Common arguments and SSA values captured by the build's launches.
   Value x, box, widths, reach, cellWidth, excluded, counts, entries, order;
   Value lx, ly, lz, ilx, ily, ilz, tbx, tcx, tcy;
@@ -730,7 +730,11 @@ void MatrixBuild::emitSearchRows() {
                           Value zj = load(sorted, {qc, secondIndex});
                           Value nearby = emitCandidateWithinReach(
                               xi, yi, zi, xj, yj, zj, inRun);
-                          Value other = cmpi(CmpIPredicate::ne, p32, q32);
+                          // A full single-domain layout is in global identity order.
+                          // Compare particle identities before compacting the list.
+                          Value other = uniqueOwned
+                              ? cmpi(CmpIPredicate::slt, particle32, load(order, {qc}))
+                              : cmpi(CmpIPredicate::ne, p32, q32);
                           Value nearOther = andi(nearby, other);
                           Value neighbor = andi(nearOther, inRun);
                           Value ballot =
@@ -938,7 +942,9 @@ Value MatrixBuild::emitCandidateWithinReach(Value xi, Value yi, Value zi,
 }
 
 void MatrixBuild::emitSearch(StringRef symbol, bool triclinic,
-                             bool testAllImages, bool useExplicitImages) {
+                             bool testAllImages, bool useExplicitImages,
+                             bool useUniqueOwned) {
+  uniqueOwned = useUniqueOwned;
   explicitImages = useExplicitImages;
   tilted = triclinic;
   allImages = testAllImages;
@@ -1228,7 +1234,7 @@ void MatrixBuild::emitSpatialOrder() {
 
 } // namespace
 
-void kernels::emitMatrixBuild(ModuleOp module, bool explicitImages) {
+void kernels::emitMatrixBuild(ModuleOp module, bool explicitImages, bool uniqueOwned) {
   OpBuilder builder = OpBuilder::atBlockEnd(module.getBody());
   MatrixBuild matrix(builder, module.getLoc());
   matrix.emitCellCount();
@@ -1238,6 +1244,8 @@ void kernels::emitMatrixBuild(ModuleOp module, bool explicitImages) {
   matrix.emitExcludedPartner("mdrt_gpu_excluded_partner");
   matrix.emitMatrixSort();
   matrix.emitSearch("mdrt_gpu_build_neighbors_matrix", false, false);
+  if (uniqueOwned)
+    matrix.emitSearch("mdrt_gpu_build_neighbors_matrix_unique", false, false, false, true);
   if (explicitImages)
     matrix.emitSearch("mdrt_gpu_build_neighbors_matrix_explicit", false, false, true);
   matrix.emitSearch("mdrt_gpu_build_neighbors_matrix_triclinic_pass", true,

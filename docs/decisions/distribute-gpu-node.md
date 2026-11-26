@@ -491,3 +491,11 @@ Precision assignment first isolates the storage and kernel roles. After
 those roles are fixed, it removes an input copy only if the two field
 types agree and the copy kernel returns its argument directly. Storage
 assignment then protects the borrowed buffer from in-place writes.
+
+A cached single-domain periodic MATRIX applies the global identity test
+while compacting its candidate neighbors. Every row is local and the
+physical row index equals the particle identity. The builder therefore
+stores each eligible pair once, in increasing identity order, before
+the force or observable evaluation. Each consumer reads that list
+directly. The uncached single-domain evaluation still applies the
+identity test at traversal.

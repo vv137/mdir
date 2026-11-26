@@ -1344,3 +1344,13 @@ in 265 scalar or vector identity kernels. Reusing an immutable device
 input when its assigned precision already matches the requested type
 reduced the alternating Factor IX double mean from 10.403 to 9.353
 ms/step. The JAC-RF mean fell from 5.272 to 4.150 ms/step.
+
+For a single domain with a cached periodic MATRIX, the neighbor builder
+can compare particle identities before it compacts a row. If the
+neighbor has a larger identity, the builder records it. The resulting
+list visits each eligible unordered pair once, and the pair evaluations
+can reuse it without preparing identity fields. Alternating the two
+executables at 2 fs reduced the Factor IX double mean from 9.340 to
+7.208 ms/step and the JAC-RF mean from 4.207 to 3.579 ms/step. The
+largest potential or virial difference from the ordinary double
+trajectory in either system was 0.00000101 kcal/mol over 205 frames.

@@ -80,6 +80,7 @@ struct Storage {
 struct DomainRelation {
   Value positions, neighbors, owned, cell, centers, shifts;
   bool periodicOwned = false;
+  bool uniqueMatrix = false;
 };
 
 class Lowering {
@@ -3117,8 +3118,9 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
     excluded = md_exec::BuildIncidenceOp::create(b, loc,
         mdrt::IncidenceType::get(context, set, 2, tupleSet), pairs, Value());
   }
-  if (sharedState() && op.getHalo().getDefiningOp<UnpackOp>() &&
-      module->hasAttr("md_dist.driver") && matrixSkin > 0) {
+  bool cachedMatrix = sharedState() && op.getHalo().getDefiningOp<UnpackOp>() &&
+                      module->hasAttr("md_dist.driver") && matrixSkin > 0;
+  if (cachedMatrix) {
     // Within this Verlet epoch each row moves at most half the halo
     // margin from its reference. Between two evaluations the separation
     // can therefore change by twice the margin.
@@ -3153,7 +3155,8 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
   } else if (gpuImageGeometry && !periodicOwned)
     shifts = makeField(b, set, 3, b.getF64Type(), d,
         {Value(), imageShifts.lookup(op.getGhosts())}, {nOwned, nGhosts});
-  return {positions, structure, nOwned, relation.cell, periodicOwned ? Value() : nOwned, shifts, periodicOwned};
+  return {positions, structure, nOwned, relation.cell, periodicOwned ? Value() : nOwned, shifts,
+          periodicOwned, periodicOwned && cachedMatrix};
 }
 
 void Lowering::addPairKernel(md_exec::PairForOp loop, Operation *op,
@@ -3209,7 +3212,8 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, Value d, FlatSymbolRefAttr
                          double scale) {
   Value relationValue = op->getOperand(0);
   auto relationType = cast<RelationType>(relationValue.getType());
-  bool unique = (!matrixPairs || gpuPairs) && relationType.getTraversal() == Traversal::Unique;
+  bool unique = !relation.uniqueMatrix && (!matrixPairs || gpuPairs) &&
+      relationType.getTraversal() == Traversal::Unique;
   auto neighborhood = relationValue.getDefiningOp<NeighborhoodOp>();
   Storage &halo = storage[neighborhood.getHalo()];
   Storage &layout = storage[layoutOf(neighborhood.getHalo())];

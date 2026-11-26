@@ -5,7 +5,8 @@
 #include "mlir/IR/BuiltinOps.h"
 
 namespace mdir::kernels {
-void emitMatrixBuild(mlir::ModuleOp module, bool explicitImages = false);
+void emitMatrixBuild(mlir::ModuleOp module, bool explicitImages = false,
+                     bool uniqueOwned = false);
 }
 
 #endif
