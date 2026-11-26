@@ -410,13 +410,71 @@ def round_trip(precision, pme):
     assert np.array_equal(a.positions, b.positions) and np.array_equal(a.velocities, b.velocities)
     assert np.array_equal(a.cell.tilt, b.cell.tilt)
     forces = float(np.abs(a.forces - b.forces).max())
-    sim.run(12, energy=True)
-    twin.run(12, energy=True)
+    bounds = (1e-9, 1e-13) if precision == "Double" else (5e-2, 1e-6)
+    if precision == "Double" or pme:
+        sim.run(12, energy=True)
+        twin.run(12, energy=True)
+    else:
+        # The plain cutoff makes the pair force jump at r_c. Two runs whose
+        # positions differ by rounding can put a pair on either side of it,
+        # and which pairs come that near follows the trajectory, here that
+        # of the binary32 step cell (D[box-f32-exact]). Steps of one part
+        # each, the same to the bit as one part, show such pairs.
+        allowance = crossings(sim, twin, program, 12)
+        bounds = (bounds[0], bounds[1] + allowance)
     a, b = sim.state(), twin.state()
     later = float(np.abs(a.positions - b.positions).max())
-    bounds = (1e-9, 1e-13) if precision == "Double" else (5e-2, 1e-6)
-    assert forces < bounds[0] and later < bounds[1], (precision, forces, later)
+    assert forces < bounds[0] and later < bounds[1], (precision, forces, later, bounds)
     return forces, later
+
+
+# TIP3P of Inputs/triclinic/water.top: OW sigma and epsilon (nm, kJ/mol);
+# the Coulomb constant 1/(4 pi eps0) in kJ/mol nm/e^2, rounded up.
+OW_SIGMA, OW_EPSILON, COULOMB_BOUND = 0.315061, 0.636386, 138.936
+
+
+def crossings(sim, twin, program, steps):
+    """Runs sim and twin `steps` steps of one part each and returns the
+    displacement that the jumps at the cutoff can explain: for every pair
+    of the twin within delta of r_c at a step, its jump in force J (Coulomb
+    plus Lennard-Jones at r_c, both of which the plain cutoff drops), held
+    for the rest of the run of time T, moves the lighter particle at most
+    J T^2 / (2 m). delta covers the difference of the two runs' positions
+    and the binary32 rounding of both coordinates of a pair in each run."""
+    topology = program.topology
+    charges, masses = np.asarray(topology.charges), np.asarray(topology.masses)
+    oxygen = np.array([name == "OW" for name in topology.atom_names])
+    sr6 = (OW_SIGMA / CUTOFF) ** 6
+    lj = abs(24 * OW_EPSILON * (2 * sr6 * sr6 - sr6) / CUTOFF)
+    dt = 0.0005
+    shifts = np.array([[i, j, k] for i in (-1, 0, 1) for j in (-1, 0, 1) for k in (-1, 0, 1)],
+                      dtype=np.float64)
+    seen, allowance = set(), 0.0
+    for step in range(steps):
+        sim.run(1, energy=True)
+        twin.run(1, energy=True)
+        a, b = sim.state(), twin.state()
+        xa, xb = np.asarray(a.positions), np.asarray(b.positions)
+        cell = np.asarray(b.cell.vectors)
+        spacing = float(np.spacing(np.float32(np.abs(xb).max() + cell.max())))
+        delta = 2 * float(np.abs(xa - xb).max()) + 4 * spacing
+        images = shifts @ cell
+        remaining = (steps - step) * dt
+        for first in range(0, len(xb), 128):
+            d = xb[None, :, :] - xb[first:first + 128, None, :]
+            frac = np.floor(np.linalg.solve(cell.T, d.reshape(-1, 3).T).T + 0.5).reshape(d.shape)
+            d = d - frac @ cell
+            r = np.min(np.linalg.norm(d[:, :, None, :] + images[None, None], axis=-1), axis=-1)
+            for i, j in zip(*np.nonzero(np.abs(r - CUTOFF) <= delta)):
+                i, j = int(i) + first, int(j)
+                if i >= j or (i, j) in seen:
+                    continue
+                seen.add((i, j))
+                jump = COULOMB_BOUND * abs(charges[i] * charges[j]) / CUTOFF ** 2
+                if oxygen[i] and oxygen[j]:
+                    jump += lj
+                allowance += jump * remaining ** 2 / (2 * min(masses[i], masses[j]))
+    return allowance
 
 
 def thermostat(precision):
