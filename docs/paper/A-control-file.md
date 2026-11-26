@@ -320,8 +320,7 @@ coulomb_modifier  = "POTENTIAL_SHIFT"  # NONE, POTENTIAL_SHIFT: the direct
 # bandwidth   = 14.47           # c, instead (PROLATE)
 # window_bandwidth = 15.2       # c1 of the window (PROLATE; from ε/2)
 # max_spacing = 1.2             # largest spacing of the grid (Å);
-                                # PROLATE: by its aliasing estimate, or
-                                # its mesh error estimate (BSPLINE window)
+                                # PROLATE: by its aliasing estimate
 # grid        = [48, 48, 48]    # the grid, instead
 # order       = 4               # of the B-splines: 4, 6, 8; PROLATE:
                                 # points of the window, 5 to 8 (6)
