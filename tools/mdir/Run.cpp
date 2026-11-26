@@ -2316,7 +2316,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     bool opened = distLog->error.empty() && distLog->open(prefix, control->restartOutput);
 #ifdef MDIR_ENABLE_MPI
     if (control->distribution->transport == "mpi") {
-      distLog->gather = mdrtMPIGatherTimes;
+      distLog->gather = mdrtMPIGatherMetrics;
       opened = mdrtMPIAllTrue(opened);
     }
 #endif

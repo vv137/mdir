@@ -3,6 +3,8 @@
 # RUN: cp %S/../../examples/ala3/ala3.prmtop %S/../../examples/ala3/ala3.inpcrd %t
 # RUN: cd %t && mdir run run.toml > out && FileCheck %s < out
 # CHECK: PME mesh 24 x 24 x 24, pencil decomposition 1 x 1, 1 mesh ranks
+# CHECK: DIST: total step [[STEP:[0-9]+]] pme_overlap_sent_bytes 0
+# CHECK-NEXT: DIST: total step [[STEP]] pme_transpose_sent_bytes 0
 # CHECK: pme_solve min/mean/max
 # RUN: sed '/^pme_ranks=/a pme_decomposition=[2, 2]' %t/run.toml > %t/bad.toml
 # RUN: cd %t && not mdir run bad.toml 2>&1 | FileCheck %s --check-prefix=COUNT

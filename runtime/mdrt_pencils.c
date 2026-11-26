@@ -139,6 +139,7 @@ static void transpose(struct PmePencils *p, int from, int to, double *src,
     sent += ns[r];
     received += nr[r];
   }
+  mdrtDistMeshBytes(DistTransposeBytes, (int64_t)(sent - ns[p->rank]) * sizeof(double));
   mdrtMPIExchange(p->send, ns, os, p->recv, nr, or, 0);
   for (int r = 0; r < p->peers; ++r)
     transfer(next, intersect(next, bounds(p, from, r)), dst, p->recv + or[r],

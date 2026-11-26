@@ -632,6 +632,10 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
   mdrtDistPhase(DistOverlap);
   struct Exchange e =
       schedule(domains, rows->size, first, past, n, mesh, peers, rank);
+  /* Off-rank payload sent by this rank. Metadata is the six box values
+     delivered to each peer. The reverse exchange sends the incoming rows. */
+  mdrtDistMeshBytes(DistOverlapBytes, (int64_t)e.sent * width +
+      (int64_t)e.received * sizeof(double) + (past-first)*6*(peers-1)*sizeof(double));
   void *send = alloc(e.sent, width), *recv = alloc(e.received, width);
   for (int r = 0; r < peers; ++r)
     if (r != rank)

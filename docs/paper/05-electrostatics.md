@@ -1349,3 +1349,15 @@ $2^{-32}$ in native observable units before integer reduction. The
 self term depends only on the squared charge norm, and the neutralizing
 background on the squared total charge and inverse volume. A single
 evaluation in canonical charge order at setup supplies every rank.
+
+For Factor IX we compared a Gaussian mesh of $120 \times 70 \times 70$
+with a $90 \times 50 \times 50$ mesh using `kernel="PROLATE"`,
+`continuity=2`, `basis_terms=8`, and `window="BSPLINE"` with order four.
+Against a refined order-eight reference, the root mean square force
+component errors at the same coordinates were 0.901 and 0.916
+kJ mol⁻¹ nm⁻¹, respectively. Over four nodes the smaller mesh reduced
+transpose traffic from 14,515,200 to 5,612,288 bytes per step and overlap
+traffic from 13,451,520 to 5,888,340 bytes per step. These counts include
+messages between ranks on the same node. The corresponding two-run mean
+step times were 174.3 and 157.5 ms. They include direct interactions and
+particle migration as well as the measured mesh work.

@@ -39,7 +39,12 @@ spectrum first so each axis rounds in ordinary CPU order. Returning the
 potential along the reversed subgrid exchange supplies every stencil of
 an owned particle. Mixed assignment computes the fractional coordinate from
 the input image, avoiding a second periodic subtraction at a binary32
-rounding boundary. Only pencil data and overlap points move between mesh owners.
+rounding boundary. The distribution log counts logical bytes sent to other ranks, including
+other ranks on the same node. The overlap counter includes the subgrid
+bounds and the charge and potential rows. The transpose counter includes
+the complex pencil intersections sent during forward and inverse transforms.
+Local copies contribute zero bytes. An interval reports totals across
+ranks and steps.
 
 In deterministic mode each Fourier mode contributes a Q32 energy and
 virial word per observable component. Mesh ranks sum in signed 128-bit

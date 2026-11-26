@@ -6,6 +6,14 @@
 enum DistPhase { DistPairs = 1, DistOther, DistCopy, DistSum, DistReduce,
                  DistMigration, DistWait, DistList, DistPack, DistIntra, DistInter,
                  DistIntegrate, DistOutput, DistState, DistHaloBuild, DistSpread, DistOverlap, DistFFT, DistTranspose, DistSolve, DistGather, DistPhaseCount, DistStep };
+enum DistMeshTraffic { DistOverlapBytes, DistTransposeBytes, DistMeshTrafficCount };
+#ifdef __cplusplus
+extern "C" {
+#endif
+void mdrtDistMeshBytes(enum DistMeshTraffic kind, int64_t bytes);
+#ifdef __cplusplus
+}
+#endif
 struct DistObserver {
   void *context;
   void (*domain)(void *, int64_t, int64_t, int64_t, const double *,
@@ -13,5 +21,6 @@ struct DistObserver {
   void (*migration)(void *, int64_t, int64_t);
   void (*transfer)(void *, int64_t, int64_t, int64_t);
   void (*phase)(void *, int64_t);
+  void (*meshBytes)(void *, enum DistMeshTraffic, int64_t);
 };
 #endif

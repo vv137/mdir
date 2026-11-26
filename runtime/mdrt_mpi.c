@@ -39,8 +39,8 @@ static void arrival(void) {
     mdrtDistPhase(-DistWait);
   }
 }
-void mdrtMPIGatherTimes(const double *send, double *recv, int count) {
-  MPI_Allgather(send, count, MPI_DOUBLE, recv, count, MPI_DOUBLE, comm);
+void mdrtMPIGatherMetrics(const void *send, void *recv, int bytes) {
+  MPI_Allgather(send, bytes, MPI_BYTE, recv, bytes, MPI_BYTE, comm);
 }
 
 int mdrtMPIMax(int value) {
