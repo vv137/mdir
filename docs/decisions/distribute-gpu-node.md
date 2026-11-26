@@ -561,3 +561,47 @@ The single-domain reference-list implementation exceeded both Factor IX
 limits at one, two, four and eight domains. Its two-domain peaks were
 2.958531 and 9.855857 kcal/mol. On JAC-RF the one-domain virial reached
 1.522593 kcal/mol. Both quantities passed on two, four and eight domains.
+
+### Large reaction-field benchmarks
+
+Cellulose has 408,609 atoms and STMV has 1,067,095. Use the prepared
+Amber topology and restart from `cellulose_nve` and `stmv_npt_4fs`.
+The latter retains its benchmark masses. Both runs use the restart
+velocities and orthorhombic cell, periodic NVE velocity Verlet at 2 fs,
+rigid water and analytic constraints on bonds to hydrogen. The reaction-field
+dielectric is zero, the cutoff is 8 Å, and the list distance is 10 Å.
+The control generator takes a prepared directory and a precision.
+Omitting the domain count selects ordinary MATRIX. The preparation
+interpreter needs ParmEd.
+
+```sh
+python scripts/benchmarks/amber/bench.py --work inputs prepare --parmed-python python3
+python scripts/validation/distributed/large-rf.py inputs/cellulose_nve --precision double --domains 4 > run.toml
+```
+
+The following V100 times are ms/step over the last 102 of 204 steps.
+Each cell represents one unprofiled trajectory. The distributed runs
+use unique traversal with one NCCL rank per device. Eight devices span
+two nodes.
+
+| System | Precision | Ordinary | One | Two | Four | Eight | One/ordinary |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Cellulose | double | 8.353 | 18.730 | 51.202 | 40.912 | 49.859 | 2.242 |
+| Cellulose | mixed | 6.578 | 16.562 | 51.271 | 40.093 | 48.175 | 2.518 |
+| STMV | double | 21.657 | 48.129 | 124.950 | 120.330 | 133.408 | 2.222 |
+| STMV | mixed | 16.518 | 42.704 | 126.084 | 121.413 | 136.338 | 2.585 |
+
+For Cellulose double the two ranks held 0.886 and 0.888 ghost rows per
+owned row. The pair phase rose from 8.211 ms/step on one rank to
+21.296 and 21.535 ms/step. The two migration clocks averaged 4.510 and
+4.593 ms/step. Halo construction took 5.166 and 5.217 ms/step.
+On eight ranks halo construction ranged from 13.47 to 15.07 ms/step.
+For STMV double the pair phase rose from 23.494 ms/step on one rank to
+50.092 and 51.179 ms/step on two.
+
+Separate Cellulose double traces measured 51.15 kernel launches per
+step for ordinary execution, 176.40 on one distributed rank and
+279.61 on each of two ranks. The corresponding device-to-host transfer
+counts were 2.13, 29.13 and 30.51. At two ranks, rank zero uploaded
+22.19 MB/step. The owned and ghost rows together accounted for 385,403
+identities at step 103. Four 64-bit copies at that size transfer 12.33 MB.

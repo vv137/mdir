@@ -1389,3 +1389,24 @@ kcal/mol. All four layouts exceeded both limits. At two domains the
 maxima were 2.958531 and 9.855857 kcal/mol. The JAC-RF limits were
 0.100906 and 1.098365 kcal/mol. The single-domain virial reached
 1.522593 kcal/mol. Both quantities passed on two, four and eight domains.
+
+The large-system reaction-field measurements used Cellulose
+(408,609 atoms) and STMV (1,067,095 atoms). We timed steps 102 to 204
+at 2 fs with an 8 Å cutoff and a 10 Å list distance. On V100 devices the
+times were as follows, in ms/step.
+
+| System | Precision | Ordinary | One | Two | Four | Eight | One/ordinary |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Cellulose | double | 8.353 | 18.730 | 51.202 | 40.912 | 49.859 | 2.242 |
+| Cellulose | mixed | 6.578 | 16.562 | 51.271 | 40.093 | 48.175 | 2.518 |
+| STMV | double | 21.657 | 48.129 | 124.950 | 120.330 | 133.408 | 2.222 |
+| STMV | mixed | 16.518 | 42.704 | 126.084 | 121.413 | 136.338 | 2.585 |
+
+For Cellulose in double precision, the one-domain pair phase took
+8.211 ms/step. On two domains it took 21.296 and 21.535 ms/step.
+Each rank held about 0.89 ghost rows per owned row, in addition to its
+share of the physical particles. On four domains the halo-build clocks
+were 6.57–6.86 ms/step and on eight they were 13.47–15.07.
+For STMV on two domains, migration took 16.09 and 16.11 ms/step.
+The rank clocks include steps that rebuilt the halo. Rates in the
+table come from separate unprofiled runs.
