@@ -540,6 +540,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     auto &d = *control->distribution;
     d.ownsPmeConstants = writer;
     d.broadcastPmeConstants = mdrtMPIBroadcast;
+    if (!d.gridGiven) d.domains = ranks;
     auto domains = d.domains ? d.domains : d.grid[0]*d.grid[1]*d.grid[2];
     if (domains < ranks)
       return writer ? refuse(*control, llvm::createStringError("each rank needs at least one domain")) : 1;
@@ -1624,10 +1625,10 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   llvm::json::Object distribution;
   if (const auto &dist = control->distribution) {
     const auto &grid = program->domainGrid;
-    const char *source = dist->domains
-                             ? "minimum surface area; lexicographic ties"
-                         : dist->gridGiven ? "explicit grid"
-                                           : "default one domain";
+    bool rankDefault = !dist->gridGiven && dist->domains;
+    const char *source = rankDefault ? "one domain per MPI rank" :
+        dist->domains ? "minimum surface area; lexicographic ties" :
+        dist->gridGiven ? "explicit grid" : "default one domain";
     llvm::json::Array candidates;
     if (dist->domains)
       mdir::md_dist::selectGrid(
@@ -1641,12 +1642,9 @@ static int runControlImpl(StringRef controlFile, Emit emit,
                 (long long)x, (long long)y, (long long)z, double(score));
           });
     distribution = llvm::json::Object{
-        {"grid", llvm::json::Array{grid[0], grid[1], grid[2]}},
-        {"grid_reason", source},
-        {"requested_count", dist->domains ? llvm::json::Value(dist->domains)
-                                          : llvm::json::Value(nullptr)},
-        {"candidates", std::move(candidates)},
-        {"transport", dist->transport},
+        {"grid", llvm::json::Array{grid[0],grid[1],grid[2]}}, {"grid_reason", source},
+        {"requested_count", dist->gridGiven && dist->domains ? llvm::json::Value(dist->domains) : llvm::json::Value(nullptr)},
+        {"candidates", std::move(candidates)}, {"transport", dist->transport},
         {"transport_source", dist->transportGiven ? "requested" : "default"},
         {"traversal", dist->traversal},
         {"traversal_source", dist->traversalGiven ? "requested" : "default"},
@@ -1654,10 +1652,11 @@ static int runControlImpl(StringRef controlFile, Emit emit,
         {"cutoff_angstrom", control->cutoffDistance},
         {"skin_angstrom", control->pairlistDistance - control->cutoffDistance},
         {"reach_angstrom", domainReach}};
-    output.log.print(
-        "MDIR: grid choice %s, requested count %lld, ranks %d; %s transport "
-        "(%s), %s traversal (%s); reach %g Ang, cutoff %g Ang, skin %g Ang\n",
-        source, (long long)dist->domains, distRanks, dist->transport.c_str(),
+    if (rankDefault && program->pme)
+      output.log.print("MDIR: using %d MPI ranks from the launcher; "
+                       "one rank per NUMA node is recommended for threaded PME\n", distRanks);
+    output.log.print("MDIR: grid choice %s, requested count %lld, ranks %d; %s transport (%s), %s traversal (%s); reach %g Ang, cutoff %g Ang, skin %g Ang\n",
+        source, (long long)(dist->gridGiven ? dist->domains : 0), distRanks, dist->transport.c_str(),
         dist->transportGiven ? "requested" : "default", dist->traversal.c_str(),
         dist->traversalGiven ? "requested" : "default", domainReach,
         control->cutoffDistance,

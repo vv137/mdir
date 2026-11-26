@@ -580,7 +580,8 @@ D350 formalizes the internal neighbor-group buffer ABI and adds no control-file 
 ### CPU decomposition (D447)
 
 Within `[distribute]`, `domains` accepts a positive count or three positive
-axis counts and defaults to 1. A count chooses the factorization with the
+axis counts. It defaults to one domain for local transport and one domain
+per launched rank for MPI. A count chooses the factorization with the
 smallest domain surface area for the input cell. The traversal is
 `"directed"` (default), `"unique"`, or `"midpoint"` (D[distribute-midpoint]). The
 in-process transport is `"local"`. Without the table the ordinary single-domain

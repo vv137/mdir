@@ -64,3 +64,10 @@ counts. Each packed observable exchanges all domain partials in a single
 collective and adds them in domain order. One-rank halo transfers use the local copy and transpose kernels
 directly. Mesh ranks begin the charge exchange before processing the
 subgrid intersections they own.
+
+With MPI transport and no explicit particle grid, the driver uses the
+communicator size as the particle-domain count and logs the choice.
+The launcher determines process placement. For threaded PME the launch
+recommendation is one rank per NUMA node, with its OpenMP threads bound
+within the node. An explicit domain count or factor grid overrides the
+particle grid independently of the mesh pencil count.
