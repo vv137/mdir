@@ -117,6 +117,14 @@ static bool isDeviceTableBuffer(Type type, mdir::md::TableType table) {
                                    MemRefLayoutAttrInterface(), space);
 }
 
+LogicalResult ScheduledRelationOp::verify() {
+  auto type = getIncidence().getType();
+  if (type.getRank() != 1 || !type.getElementType().isInteger(32) ||
+      type.getMemorySpaceAsInt() != 1 || !getResult().getType().getTupleSet())
+    return emitOpError("requires device i32 incidence storage and a named tuple set");
+  return success();
+}
+
 LogicalResult FromBufferOp::verify() {
   // Device frame boundaries lend a field directly. Its address space is
   // explicit in the buffer type; it is not a host pointer to copy.

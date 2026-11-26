@@ -113,6 +113,8 @@ private:
   LogicalResult lowerPairGroup(Operation *anchor, DominanceInfo &dominance);
   scf::ForOp domainLoop;
   llvm::DenseSet<Value> overlapPositions;
+  llvm::DenseMap<Value, Value> scheduledMembers, tupleParameters;
+  Value deviceTupleParameter(Value field);
   Value pairPhase, centerMask, computeStream;
   DomainRelation domainRelation;
   md_exec::PairForOp lastPair;
@@ -140,7 +142,7 @@ private:
   /// Copies `count` rows of `field`, a field of md_exec, from row `first`
   /// on, to the rows of domain `d` of `buffer`, a buffer of all domains.
   void copyBack(OpBuilder &b, Value field, Value first, Value count,
-                Value buffer, Value d);
+                Value buffer, Value d, Value producer = {});
   /// Gives `loop`, a loop over pairs of md_exec, the kernel of the pair op
   /// `op` of md_dist: the distance from its square, the kernel inlined, and
   /// its value, for a unique relation, where the identity of the center is
@@ -1147,7 +1149,7 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
         halo.handle,owned,arith::ConstantIntOp::create(b,loc,scalarSite++,64)}).getResult(0);
     return success();
   }
-  hostRows(b, owned);
+  if (!sharedState() || fixedPoint) hostRows(b, owned);
   Value ghosts = allocate(b, halo.capacity, k);
   if (haloEvents && !sharedState()) {
     auto start = mdrt::HaloCopyStartOp::create(
@@ -1159,7 +1161,7 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
     storage[op.getResult()].buffer = wait.getResult();
   } else {
     func::FuncOp copy = declare(
-        "mdrtDistHaloCopy",
+        sharedState() && !fixedPoint ? "mdrtDistResidentCopy" : "mdrtDistHaloCopy",
         b.getFunctionType({i64, owned.getType(), ghosts.getType(), i64}, {}),
         true);
     func::CallOp::create(b, loc, copy,
@@ -1201,6 +1203,13 @@ LogicalResult Lowering::lowerHaloSum(HaloSumOp op) {
     storage[op.getResult()].buffer = result;
     return success();
   }
+  if (sharedState() && !fixedPoint) {
+    SmallVector<Value> args{halo.handle,owned,ghosts,result};
+    auto fn = declare("mdrtDistResidentSum", b.getFunctionType(ValueRange(args).getTypes(), {}),true);
+    func::CallOp::create(b,loc,fn,args);
+    storage[op.getResult()].buffer=result;
+    return success();
+  }
   memref::CopyOp::create(b, loc, owned, result);
   if (haloEvents && !sharedState()) {
     auto start = mdrt::HaloSumStartOp::create(
@@ -1234,6 +1243,36 @@ LogicalResult Lowering::lowerZeros(ZerosOp op) {
 
 // The local tuples keep the member order and parameter row of the global
 // relation. Outline one ordinary tuple program for each participating rank.
+Value Lowering::deviceTupleParameter(Value field) {
+  if (Value cached = tupleParameters.lookup(field)) return cached;
+  // The SSA lifetime determines the upload lifetime. An immutable topology
+  // parameter supplied at entry stays on the device across Verlet epochs.
+  OpBuilder b(module.getContext());
+  b.setInsertionPointAfterValue(field);
+  auto type = mdrt::getBufferType(cast<md::FieldType>(field.getType()));
+  auto device = MemRefType::get(type.getShape(),type.getElementType(),
+                                MemRefLayoutAttrInterface(),b.getI64IntegerAttr(1));
+  Value host = mdrt::SnapshotOp::create(b,loc,type,field);
+  bool scalar = type.getRank()==1;
+  auto dynamic = MemRefType::get(SmallVector<int64_t>(type.getRank(),ShapedType::kDynamic),
+                                 type.getElementType());
+  auto view = MemRefType::get(dynamic.getShape(),type.getElementType(),
+                              MemRefLayoutAttrInterface(),b.getI64IntegerAttr(1));
+  Value src = memref::CastOp::create(b,loc,dynamic,host);
+  auto fn=declare(scalar ? "mdrtDistUploadTupleScalars" : "mdrtDistUploadTupleVectors",
+                  b.getFunctionType({dynamic},{view}),true);
+  fn.setArgAttr(0,"mdrt.read_only",b.getUnitAttr());
+  Value data=func::CallOp::create(b,loc,fn,src).getResult(0);
+  memref::DeallocOp::create(b,loc,host);
+  Value result=memref::CastOp::create(b,loc,device,data);
+  OpBuilder cleanup(data.getParentBlock()->getTerminator());
+  auto release=declare(scalar ? "mdrtDistReleaseTupleScalars" : "mdrtDistReleaseTupleVectors",
+                       cleanup.getFunctionType({view},{}),true);
+  func::CallOp::create(cleanup,loc,release,ValueRange{data});
+  tupleParameters[field]=result;
+  return result;
+}
+
 LogicalResult Lowering::lowerDeviceTuples(TupleKernelOp op) {
   OpBuilder setup(op);
   bool reduce = isa<PartialType>(op.getResult(0).getType());
@@ -1266,6 +1305,7 @@ LogicalResult Lowering::lowerDeviceTuples(TupleKernelOp op) {
   SmallVector<Value> parameterInputs;
   for (Value field : op.getParameters())
     parameterInputs.push_back(
+        scheduledMembers.count(op.getRows()) ? deviceTupleParameter(field) :
         inputSnapshot(setup, cast<md::FieldType>(field.getType()), field));
   auto enter = declare("mdrtDeviceDomainEnter",
                        setup.getFunctionType({}, {setup.getI64Type()}), false);
@@ -1288,6 +1328,13 @@ LogicalResult Lowering::lowerDeviceTuples(TupleKernelOp op) {
       md::RelationType::get(ctx, set, arity, md::Orientation::Ordered, tuples);
   Value n = countOf(b, layout, d);
   Value g = group ? Value() : countOf(b, halo, d);
+  SmallVector<Value> joinedFields;
+  Value tupleStream;
+  if (scheduledMembers.count(op.getRows())) {
+    auto fn = declare("mdrtDeviceExternalStream", b.getFunctionType({},
+                      {LLVM::LLVMPointerType::get(ctx)}), false);
+    tupleStream = func::CallOp::create(b,loc,fn).getResult(0);
+  }
   auto localField = [&](Value owned, Value ghosts) -> Value {
     auto type = cast<FieldType>(owned.getType());
     int k = type.getNumComponents();
@@ -1298,10 +1345,24 @@ LogicalResult Lowering::lowerDeviceTuples(TupleKernelOp op) {
           MemRefType::get(host.getShape(), host.getElementType(),
                           MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
       SmallVector<Value> args{d, n, storage[owned].buffer};
+      if (tupleStream) args.push_back(tupleStream);
       auto fn = declare(
-          k == 1 ? "mdrtDistScalarDeviceView" : "mdrtDistVectorDeviceView",
+          tupleStream ? (k == 1 ? "mdrtDistTupleOwnedScalars" : "mdrtDistTupleOwnedVectors") :
+                        (k == 1 ? "mdrtDistScalarDeviceView" : "mdrtDistVectorDeviceView"),
           b.getFunctionType(ValueRange(args).getTypes(), {device}), true);
       Value data = func::CallOp::create(b, loc, fn, args).getResult(0);
+      return mdrt::FromBufferOp::create(b, loc, field, data);
+    }
+    if (scheduledMembers.count(op.getRows())) {
+      auto field = md::FieldType::get(ctx, set, k, type.getElementType());
+      auto host = mdrt::getBufferType(field);
+      auto view = MemRefType::get(host.getShape(), host.getElementType(),
+                                  MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
+      SmallVector<Value> args{d, n, g, storage[owned].buffer, storage[ghosts].buffer, tupleStream};
+      auto fn = declare(k == 1 ? "mdrtDistTupleScalars" : "mdrtDistTupleVectors",
+                        b.getFunctionType(ValueRange(args).getTypes(), {view}), true);
+      Value data = func::CallOp::create(b, loc, fn, args).getResult(0);
+      joinedFields.push_back(data);
       return mdrt::FromBufferOp::create(b, loc, field, data);
     }
     return makeField(b, set, k, type.getElementType(), d,
@@ -1313,64 +1374,84 @@ LogicalResult Lowering::lowerDeviceTuples(TupleKernelOp op) {
     inputs.push_back(localField(op.getGathered()[i], op.getGathered()[i + 1]));
   // Compact only local tuples. The map indexes the original parameter
   // buffers even when consecutive global tuples have different owners.
-  auto wide = MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
-                              b.getI64Type());
-  Value schedule = memref::CastOp::create(b, loc, wide, op.getRows());
-  auto idsType = MemRefType::get({ShapedType::kDynamic}, b.getI64Type());
-  auto compact =
-      declare("mdrtDistCompactTupleIds",
-              b.getFunctionType({wide, b.getIndexType()}, {idsType}), true);
-  Value ids = func::CallOp::create(b, loc, compact, ValueRange{schedule, d})
-                  .getResult(0);
-  Value count = memref::DimOp::create(b, loc, ids, 0);
-  auto membersType = mdrt::getMembersType(relationType);
-  Value members =
-      memref::AllocOp::create(b, loc, membersType, ValueRange{count});
-  SmallVector<Value> params;
-  for (Value original : op.getParameters()) {
-    auto type = cast<md::FieldType>(original.getType());
-    auto field = md::FieldType::get(ctx, tuples, type.getNumComponents(),
-                                    type.getElementType());
-    Value data = memref::AllocOp::create(b, loc, mdrt::getBufferType(field),
-                                         ValueRange{count});
-    params.push_back(data);
-  }
-  scf::ForOp::create(
-      b, loc, index(b, 0), count, index(b, 1), ValueRange(),
-      [&](OpBuilder &at, Location, Value row, ValueRange) {
-        Value t = toIndex(at, memref::LoadOp::create(at, loc, ids, row));
-        for (int64_t a = 0; a < arity; ++a) {
-          Value value = memref::LoadOp::create(at, loc, schedule,
-                                               ValueRange{t, index(at, a + 1)});
-          memref::StoreOp::create(
-              at, loc, arith::TruncIOp::create(at, loc, at.getI32Type(), value),
-              members, ValueRange{row, index(at, a)});
-        }
-        for (auto [src, dst] : llvm::zip(parameterInputs, params)) {
-          auto type = cast<MemRefType>(src.getType());
-          if (type.getRank() == 1)
+  Value ids, members, rel;
+  if (Value topology = scheduledMembers.lookup(op.getRows())) {
+    Value count = memref::DimOp::create(b, loc, topology, 0);
+    auto device = MemRefType::get({ShapedType::kDynamic}, b.getI32Type(),
+                                  MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
+    SmallVector<Value> args{group ? layout.handle : halo.handle, storage[op.getPositions()].buffer,
+                            topology, arith::ConstantIntOp::create(b,loc,tupleSite,64),
+                            arith::ConstantIntOp::create(b,loc,group,64),tupleStream};
+    auto fn = declare("mdrtDistTupleIncidence", b.getFunctionType(ValueRange(args).getTypes(),
+                       {device}), true);
+    fn.setArgAttr(2,"mdrt.read_only",b.getUnitAttr());
+    Value data = func::CallOp::create(b,loc,fn,args).getResult(0);
+    rel = mdrt::ScheduledRelationOp::create(b,loc,relationType,data,count);
+    for (auto [original, input] : llvm::zip(op.getParameters(),parameterInputs)) {
+      auto type = cast<md::FieldType>(original.getType());
+      auto field = md::FieldType::get(ctx,tuples,type.getNumComponents(),type.getElementType());
+      parameters.push_back(mdrt::FromBufferOp::create(b,loc,field,input));
+    }
+  } else {
+    auto wide = MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
+                                b.getI64Type());
+    Value schedule = memref::CastOp::create(b, loc, wide, op.getRows());
+    auto idsType = MemRefType::get({ShapedType::kDynamic}, b.getI64Type());
+    auto compact =
+        declare("mdrtDistCompactTupleIds",
+                b.getFunctionType({wide, b.getIndexType()}, {idsType}), true);
+    ids = func::CallOp::create(b, loc, compact, ValueRange{schedule, d})
+                    .getResult(0);
+    Value count = memref::DimOp::create(b, loc, ids, 0);
+    auto membersType = mdrt::getMembersType(relationType);
+    members =
+        memref::AllocOp::create(b, loc, membersType, ValueRange{count});
+    SmallVector<Value> params;
+    for (Value original : op.getParameters()) {
+      auto type = cast<md::FieldType>(original.getType());
+      auto field = md::FieldType::get(ctx, tuples, type.getNumComponents(),
+                                      type.getElementType());
+      Value data = memref::AllocOp::create(b, loc, mdrt::getBufferType(field),
+                                           ValueRange{count});
+      params.push_back(data);
+    }
+    scf::ForOp::create(
+        b, loc, index(b, 0), count, index(b, 1), ValueRange(),
+        [&](OpBuilder &at, Location, Value row, ValueRange) {
+          Value t = toIndex(at, memref::LoadOp::create(at, loc, ids, row));
+          for (int64_t a = 0; a < arity; ++a) {
+            Value value = memref::LoadOp::create(at, loc, schedule,
+                                                 ValueRange{t, index(at, a + 1)});
             memref::StoreOp::create(
-                at, loc, memref::LoadOp::create(at, loc, src, t), dst, row);
-          else
-            for (int64_t c = 0; c < type.getDimSize(1); ++c) {
-              Value k = index(at, c);
+                at, loc, arith::TruncIOp::create(at, loc, at.getI32Type(), value),
+                members, ValueRange{row, index(at, a)});
+          }
+          for (auto [src, dst] : llvm::zip(parameterInputs, params)) {
+            auto type = cast<MemRefType>(src.getType());
+            if (type.getRank() == 1)
               memref::StoreOp::create(
-                  at, loc,
-                  memref::LoadOp::create(at, loc, src, ValueRange{t, k}), dst,
-                  ValueRange{row, k});
-            }
-        }
-        scf::YieldOp::create(at, loc);
-      });
-  for (auto [original, data] : llvm::zip(op.getParameters(), params)) {
-    auto type = cast<md::FieldType>(original.getType());
-    auto field = md::FieldType::get(ctx, tuples, type.getNumComponents(),
-                                    type.getElementType());
-    auto wrap = mdrt::FromBufferOp::create(b, loc, field, data);
-    wrap->setAttr("mdrt.collect_buffer", b.getUnitAttr());
-    parameters.push_back(wrap);
+                  at, loc, memref::LoadOp::create(at, loc, src, t), dst, row);
+            else
+              for (int64_t c = 0; c < type.getDimSize(1); ++c) {
+                Value k = index(at, c);
+                memref::StoreOp::create(
+                    at, loc,
+                    memref::LoadOp::create(at, loc, src, ValueRange{t, k}), dst,
+                    ValueRange{row, k});
+              }
+          }
+          scf::YieldOp::create(at, loc);
+        });
+    for (auto [original, data] : llvm::zip(op.getParameters(), params)) {
+      auto type = cast<md::FieldType>(original.getType());
+      auto field = md::FieldType::get(ctx, tuples, type.getNumComponents(),
+                                      type.getElementType());
+      auto wrap = mdrt::FromBufferOp::create(b, loc, field, data);
+      wrap->setAttr("mdrt.collect_buffer", b.getUnitAttr());
+      parameters.push_back(wrap);
+    }
+    rel = mdrt::FromBufferOp::create(b, loc, relationType, members);
   }
-  Value rel = mdrt::FromBufferOp::create(b, loc, relationType, members);
   Value cell = cellOf(op.getHalo());
   Operation *kernel;
   if (reduce)
@@ -1398,17 +1479,23 @@ LogicalResult Lowering::lowerDeviceTuples(TupleKernelOp op) {
                               ValueRange{d, index(b, c)});
     }
   } else {
-    copyBack(b, kernel->getResult(0), index(b, 0), n, ownedOut, d);
+    copyBack(b, kernel->getResult(0), index(b, 0), n, ownedOut, d, tupleStream);
     if (!group)
-      copyBack(b, kernel->getResult(0), n, g, ghostOut, d);
+      copyBack(b, kernel->getResult(0), n, g, ghostOut, d, tupleStream);
     if (flagged)
       memref::StoreOp::create(
           b, loc,
           arith::ExtUIOp::create(b, loc, b.getI32Type(), kernel->getResult(1)),
           flags, index(b, 0));
   }
-  memref::DeallocOp::create(b, loc, members);
-  memref::DeallocOp::create(b, loc, ids);
+  for (Value data : joinedFields) {
+    auto release = declare(cast<MemRefType>(data.getType()).getRank()==1 ?
+          "mdrtDistReleaseTupleScalars" : "mdrtDistReleaseDevicePositions",
+          b.getFunctionType({data.getType()},{}),true);
+    func::CallOp::create(b,loc,release,ValueRange{data});
+  }
+  if (members) memref::DeallocOp::create(b, loc, members);
+  if (ids) memref::DeallocOp::create(b, loc, ids);
   auto leave = declare("mdrtDeviceDomainLeave",
                        setup.getFunctionType({setup.getI64Type()}, {}), false);
   func::CallOp::create(setup, loc, leave, ValueRange{parent});
@@ -1611,6 +1698,12 @@ LogicalResult Lowering::lowerTupleRows(TupleRowsOp op) {
   auto dynamic = [&](Type type) {
     return MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, type);
   };
+  if (sharedState() && !fixedPoint && module->hasAttr("md_dist.driver") &&
+      llvm::all_of(op.getRows().getUsers(), [](Operation *u) { return isa<TupleKernelOp>(u); })) {
+    scheduledMembers[op.getRows()] =
+        memref::CastOp::create(b, loc, dynamic(b.getI32Type()), members);
+    return success();
+  }
   Value count = memref::DimOp::create(b, loc, members, 0);
   Value rows = allocate(b, op.getRows().getType(), {count});
   Value source = memref::CastOp::create(b, loc, dynamic(b.getI32Type()), members);
@@ -2645,7 +2738,7 @@ Value Lowering::makeField(OpBuilder &b, FlatSymbolRefAttr set, int64_t k,
 }
 
 void Lowering::copyBack(OpBuilder &b, Value field, Value first, Value count,
-                        Value buffer, Value d) {
+                        Value buffer, Value d, Value producer) {
   auto fieldType = cast<md::FieldType>(field.getType());
   MemRefType type = mdrt::getBufferType(fieldType);
   int64_t k = fieldType.getNumComponents();
@@ -2661,7 +2754,9 @@ void Lowering::copyBack(OpBuilder &b, Value field, Value first, Value count,
       return;
     }
     SmallVector<Value> args{buffer, d, count, first, flat};
-    auto fn = declare("mdrtDistImportForces", b.getFunctionType(ValueRange(args).getTypes(), {}), true);
+    if (producer) args.push_back(producer);
+    auto fn = declare(producer ? "mdrtDistImportTupleForces" : "mdrtDistImportForces",
+                      b.getFunctionType(ValueRange(args).getTypes(), {}), true);
     func::CallOp::create(b, loc, fn, args);
     return;
   }
@@ -3251,7 +3346,8 @@ LogicalResult Lowering::lower(Operation *op) {
   // Native host consumers materialize the local slice on first read.
   // Packing, coverage and integration can pass the device version on.
   if (sharedState() && !isa<PackOp, UnpackOp, CoveredOp, MapParticlesOp,
-                             HaloCopyOp, NeighborhoodOp, RedistributeOp, MigrateOp, HaloOp, TupleRowsOp, TupleKernelOp>(op)) {
+                             HaloCopyOp, NeighborhoodOp, RedistributeOp, MigrateOp, HaloOp, TupleRowsOp, TupleKernelOp>(op) &&
+      !(isa<HaloSumOp>(op) && !fixedPoint)) {
     OpBuilder b(op);
     for (Value operand : op->getOperands())
       if (isa<FieldType>(operand.getType())) hostRows(b, storage[operand].buffer);
@@ -3469,6 +3565,8 @@ static LogicalResult outlineSteps(ModuleOp module, func::FuncOp function, String
 
 LogicalResult Lowering::run(func::FuncOp function) {
   fieldSnapshots.clear();
+  tupleParameters.clear();
+  scheduledMembers.clear();
   if (fixedPoint && module->hasAttr("md_dist.driver")) {
     SmallVector<md::SumParticlesOp> sums;
     function.walk([&](md::SumParticlesOp op) { sums.push_back(op); });

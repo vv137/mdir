@@ -75,6 +75,93 @@ __device__ int prefix(int count, int *warps) {
   for (int w=0; w<warp; ++w) first+=warps[w];
   return first;
 }
+// The rank-indexed coordinates are unshifted. Resolve the midpoint and
+// the canonical image of each member before building particle incidences.
+extern "C" __global__ void scheduleTuples(const int *members, int count, int arity,
+    const int *locations, const int *particles, const double *x, Box box,
+    int domain, int group, int *mapped) {
+  int t = blockIdx.x * blockDim.x + threadIdx.x;
+  if (t >= count) return;
+  int base = t * arity;
+  int anchor = members[base];
+  for (int a=1; a<arity; ++a) anchor=min(anchor,members[base+a]);
+  int owner = locations[3*anchor+2];
+  int translation[3] = {};
+  if (!group) {
+    owner = 0;
+    for (int k=2; k>=0; --k) {
+      double origin = x[3LL*locations[3*anchor]+k];
+      double lo=0., hi=0., length=box.length[k];
+      for (int a=0; a<arity; ++a) {
+        double delta=x[3LL*locations[3*members[base+a]]+k]-origin;
+        delta=__dsub_rn(delta,__dmul_rn(floor(delta/length+.5),length));
+        lo=fmin(lo,delta); hi=fmax(hi,delta);
+      }
+      double u=__dadd_rn(origin,.5*(lo+hi))/length;
+      translation[k]=(int)floor(u);
+      int cell=max(0,min(box.grid[k]-1,(int)floor((u-floor(u))*box.grid[k])));
+      owner=owner*box.grid[k]+cell;
+    }
+  }
+  for (int a=0; a<arity; ++a) {
+    int j=members[base+a], row=-1;
+    if (group && locations[3*j+2]!=owner) {
+      printf("constraint group split across domains at tuple %d\n",t+1);
+      asm("trap;");
+    }
+    if (owner==domain) {
+      int image[3]={};
+      if (!group)
+        for (int k=0; k<3; ++k) {
+          double delta=x[3LL*locations[3*j]+k]-x[3LL*locations[3*anchor]+k];
+          image[k]=-(int)floor(delta/box.length[k]+.5)-translation[k];
+        }
+      for (row=locations[3*j+1]; row>=0; row=particles[5*row+1])
+        if (particles[5*row+2]==image[0] && particles[5*row+3]==image[1] &&
+            particles[5*row+4]==image[2]) break;
+      if (row<0) {
+        printf("missing tuple owner coverage: tuple %d domain %d lacks atom %d\n",t+1,domain,j+1);
+        asm("trap;");
+      }
+    }
+    mapped[base+a]=row;
+  }
+}
+
+extern "C" __global__ void tupleRows(const int *particles, const int *starts,
+    const int *entries, const int *mapped, int rows, int arity, int *blocks,
+    int *csr, int fill) {
+  int row=blockIdx.x*blockDim.x+threadIdx.x;
+  int begin=0,end=0,count=0;
+  if (row<rows) {
+    int id=particles[5*row];
+    begin=starts[id]; end=starts[id+1];
+    for (int i=begin;i<end;++i) count+=(mapped[entries[i]]==row);
+  }
+  __shared__ int warps[8];
+  int offset=prefix(count,warps);
+  if (!fill) {
+    if (threadIdx.x==255) blocks[blockIdx.x]=offset+count;
+    return;
+  }
+  if (row>=rows) return;
+  offset+=blocks[blockIdx.x];
+  csr[1+row]=offset;
+  for (int i=begin;i<end;++i) {
+    int m=entries[i];
+    if (mapped[m]!=row) continue;
+    int t=m/arity;
+    int *dest=csr+rows+2+(long long)(arity+2)*offset++;
+    dest[0]=t; dest[1]=m%arity;
+    for (int a=0;a<arity;++a) dest[a+2]=mapped[t*arity+a];
+  }
+}
+extern "C" __global__ void prefixTupleRows(int *blocks,int n,int *csr,int rows,int arity) {
+  int sum=0;
+  for (int i=0;i<n;++i) { int k=blocks[i]; blocks[i]=sum; sum+=k; }
+  csr[0]=rows; csr[1+rows]=sum;
+  for (int i=0;i<arity+2;++i) csr[rows+2+(long long)sum*(arity+2)+i]=0;
+}
 extern "C" __global__ void selfFaceCounts(const double *x, long long rows, Box box,
     double reach, unsigned *masks, int *blocks) {
   long long r=(long long)blockIdx.x*blockDim.x+threadIdx.x;
@@ -183,7 +270,7 @@ void check(CUresult status) {
   mdrtMPIAbort(message);
 }
 
-CUfunction indexPlaces, writeCenters;
+CUfunction indexPlaces, writeCenters, scheduleTuples, tupleRows, prefixTupleRows;
 
 void compile() {
   CUdevice device;
@@ -211,6 +298,9 @@ void compile() {
   verify(nvrtcGetPTX(program, ptx.data()));
   verify(nvrtcDestroyProgram(&program));
   check(cuModuleLoadData(&module, ptx.data()));
+  check(cuModuleGetFunction(&scheduleTuples, module, "scheduleTuples"));
+  check(cuModuleGetFunction(&tupleRows, module, "tupleRows"));
+  check(cuModuleGetFunction(&prefixTupleRows, module, "prefixTupleRows"));
   check(cuModuleGetFunction(&indexPlaces, module, "indexPlaces"));
   check(cuModuleGetFunction(&writeCenters, module, "writeCenters"));
   check(cuModuleGetFunction(&pack, module, "pack"));
@@ -363,4 +453,23 @@ extern "C" void mdrtNCCLWriteCenters(double *out, const double *forces,
                        (CUstream)stream,args,nullptr));
   check(cuEventRecord(handoff, (CUstream)stream));
   check(cuStreamWaitEvent(nullptr, handoff, 0));
+}
+
+extern "C" void mdrtNCCLBuildTupleRows(const int *members, int count, int arity,
+    const int *locations, const int *particles, const double *x,
+    const int64_t *grid, const double *edges, int domain, int group,
+    const int *starts, const int *entries, int rows, int *mapped,
+    int *blocks, int *csr) {
+  if (!module) compile();
+  Box box;
+  for (int k=0; k<3; ++k) { box.grid[k]=grid[k]; box.length[k]=edges[k]; }
+  void *args[]={&members,&count,&arity,&locations,&particles,&x,&box,&domain,&group,&mapped};
+  if (count) check(cuLaunchKernel(scheduleTuples,(count+255)/256,1,1,256,1,1,0,nullptr,args,nullptr));
+  int n=(rows+255)/256,fill=0;
+  void *rowArgs[]={&particles,&starts,&entries,&mapped,&rows,&arity,&blocks,&csr,&fill};
+  if (n) check(cuLaunchKernel(tupleRows,n,1,1,256,1,1,0,nullptr,rowArgs,nullptr));
+  void *prefixArgs[]={&blocks,&n,&csr,&rows,&arity};
+  check(cuLaunchKernel(prefixTupleRows,1,1,1,1,1,1,0,nullptr,prefixArgs,nullptr));
+  fill=1;
+  if (n) check(cuLaunchKernel(tupleRows,n,1,1,256,1,1,0,nullptr,rowArgs,nullptr));
 }

@@ -743,7 +743,8 @@ private:
   /// (D103), which groups them otherwise than the rows of the particles do:
   /// a `fixed_order` sum (the deterministic mode) takes the rows.
   bool evaluatesOnce(md_exec::TupleForOp op) {
-    if (!tuplesOnce || op.getDisjoint() || !everythingAllowsReorder(op))
+    if (!tuplesOnce || op.getDisjoint() || op->hasAttr("md_exec.scheduled_rows") ||
+        !everythingAllowsReorder(op))
       return false;
     for (unsigned i = 0, e = op.getOuts().size(); i != e; ++i)
       if (op.overwrites(i))

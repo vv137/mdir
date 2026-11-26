@@ -14,6 +14,14 @@ class MDRT_Op<string mnemonic, list<Trait> traits = []>
 def MDRT_FieldOrRelation
     : AnyTypeOf<[MD_FieldType, MD_RelationType, MD_TableType]>;
 
+def MDRT_ScheduledRelationOp : MDRT_Op<"scheduled_relation", [Pure]> {
+  let summary = "Borrow a device incidence buffer indexed by original tuple number";
+  let arguments = (ins AnyMemRef:$incidence, Index:$count);
+  let results = (outs MD_RelationType:$result);
+  let assemblyFormat = "$incidence `count` $count attr-dict `:` type($incidence) `to` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
 def MDRT_FromBufferOp : MDRT_Op<"from_buffer", [Pure]> {
   let summary = "The field or the tuples that a buffer holds";
   let description = [{

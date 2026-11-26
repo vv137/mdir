@@ -102,6 +102,7 @@ struct Layout {
   int64_t *migrantOffsets, *migrantIds; /* Old rank, then particle identity. */
 #endif
 #ifdef MDIR_ENABLE_NCCL
+  struct TuplePlan *tuplePlans;
   struct Layout *identityOwner; /* Borrow immutable numberings across stationary epochs. */
   uint32_t *faceMasks;
   int selfFaces;
@@ -143,6 +144,9 @@ struct Halo {
   struct TransferPlan plans[2];
 #endif
 #ifdef MDIR_ENABLE_NCCL
+  struct TuplePlan *tuplePlans;
+  double *tupleCoordinates;
+  struct Memref3D tupleInput;
   struct NCCLPlan *ncclPlan;
   struct DistDeviceMatrix deviceMatrix;
   double deviceCutoff;
@@ -1014,6 +1018,9 @@ int64_t mdrtDistLayoutCount(int64_t handle) {
   return l->count;
 }
 
+#ifdef MDIR_ENABLE_NCCL
+static void freeTuplePlans(struct TuplePlan *);
+#endif
 void mdrtDistReleaseLayout(int64_t handle) {
   struct Layout *l = (struct Layout *)(intptr_t)handle;
   if (!l || l->references <= 0)
@@ -1025,6 +1032,7 @@ void mdrtDistReleaseLayout(int64_t handle) {
   free(l->migrantIds);
 #endif
 #ifdef MDIR_ENABLE_NCCL
+  freeTuplePlans(l->tuplePlans);
   if (l->deviceMigrationMap) mdrtNCCLFreePositions((double *)l->deviceMigrationMap);
 #endif
   free(l->migratedPositions);
@@ -2227,6 +2235,204 @@ void _mlir_ciface_mdrtDistDeviceScalar(struct Memref1D *out, int64_t handle,
 }
 
 struct DeviceKinds { int32_t *allocated, *aligned; int64_t offset, rows, stride; };
+/* The epoch fixes row identities and periodic images. Keep the immutable
+   topology adjacency; the device selects its active incidences at the
+   current coordinates in the original tuple order. */
+struct TuplePlan {
+  struct TuplePlan *next;
+  int64_t site, extent;
+  int count, arity, rows, built;
+  int *topology, *locations, *particles, *starts, *entries;
+  int *mapped, *blocks, *csr;
+};
+
+static void freeTuplePlans(struct TuplePlan *p) {
+  while (p) {
+    struct TuplePlan *next = p->next;
+    int *buffers[] = {p->topology,p->locations,p->particles,p->starts,p->entries,
+                      p->mapped,p->blocks,p->csr};
+    for (size_t i=0; i<sizeof buffers/sizeof *buffers; ++i)
+      mdrtNCCLFreePositions((double *)buffers[i]);
+    free(p);
+    p=next;
+  }
+}
+
+static int *tupleInts(size_t count) {
+  int *values=calloc(count ? count : 1,sizeof(*values));
+  if (!values) fail("out of memory indexing distributed tuples");
+  return values;
+}
+
+static struct TuplePlan *newTuplePlan(struct Layout *l, struct Halo *h,
+    struct Members *members, int64_t site, int64_t d) {
+  int64_t count=members->sizes[0], arity=members->sizes[1];
+  int64_t owned=l->rows[d], rows=owned+(h ? h->rows[d] : 0);
+  if (arity<2 || arity>INT_MAX-2 || count<0 || count>INT_MAX/arity ||
+      rows>INT_MAX-256 || l->count>INT_MAX/3 || rows>INT_MAX/5 ||
+      l->stride>INT_MAX/l->domains)
+    fail("distributed tuple map exceeds device index range");
+  int64_t memberships=count*arity;
+  struct TuplePlan *p=calloc(1,sizeof(*p));
+  if (!p) fail("out of memory allocating distributed tuple plan");
+  p->site=site; p->count=count; p->arity=arity; p->rows=rows;
+  p->extent=rows+2+(arity+2)*(memberships+1);
+  int *locations=tupleInts(3*l->count), *particles=tupleInts(5*rows);
+  for (int64_t j=0; j<l->count; ++j) {
+    locations[3*j]=(int)(mdrtMPIOwner(l->domains,l->owner[j])*l->stride+l->row[j]);
+    locations[3*j+1]=-1;
+    locations[3*j+2]=(int)l->owner[j];
+  }
+  for (int r=rows; r-- > 0;) {
+    int64_t g=d*(h ? h->capacity : 0)+r-owned;
+    int j=r<owned ? l->ids[d*l->stride+r] : h->ids[g];
+    particles[5*r]=j;
+    particles[5*r+1]=locations[3*j+1];
+    locations[3*j+1]=r;
+    if (r>=owned)
+      for (int k=0; k<3; ++k) particles[5*r+2+k]=h->image[3*g+k];
+  }
+  int *topology=tupleInts(memberships), *starts=tupleInts(l->count+1);
+  for (int t=0;t<count;++t)
+    for (int a=0;a<arity;++a) {
+      int j=members->aligned[members->offset+t*members->strides[0]+a*members->strides[1]];
+      if (j<0 || j>=l->count) fail("tuple member outside particle set");
+      topology[t*arity+a]=j;
+      ++starts[j+1];
+    }
+  for (int j=0;j<l->count;++j) starts[j+1]+=starts[j];
+  int *cursor=tupleInts(l->count), *entries=tupleInts(memberships);
+  memcpy(cursor,starts,l->count*sizeof(*cursor));
+  for (int m=0;m<memberships;++m) entries[cursor[topology[m]]++]=m;
+  p->locations=mdrtNCCLUploadIndices(locations,3*l->count);
+  p->particles=mdrtNCCLUploadIndices(particles,5*rows);
+  p->topology=mdrtNCCLUploadIndices(topology,memberships);
+  p->starts=mdrtNCCLUploadIndices(starts,l->count+1);
+  p->entries=mdrtNCCLUploadIndices(entries,memberships);
+  free(locations); free(particles); free(topology); free(starts); free(entries); free(cursor);
+  p->mapped=(int *)mdrtNCCLAllocate(memberships*sizeof(int));
+  p->blocks=(int *)mdrtNCCLAllocate(((rows+255)/256)*sizeof(int));
+  p->csr=(int *)mdrtNCCLAllocate(p->extent*sizeof(int));
+  return p;
+}
+
+static double *tupleCoordinates(struct Halo *h, struct Memref3D *x, int64_t d) {
+  struct Layout *l=h->layout;
+  if (h->tupleInput.allocated!=x->allocated) {
+    if (!h->tupleCoordinates)
+      h->tupleCoordinates=mdrtNCCLAllocate(3*l->stride*l->domains*sizeof(double));
+    if (h->tupleInput.allocated) _mlir_ciface_mdrtDistReleaseField(&h->tupleInput);
+    h->tupleInput=*x;
+    _mlir_ciface_mdrtDistRetainField(x);
+    mdrtNCCLGatherCoordinates(h->tupleCoordinates,deviceRows(x,d,l->rows[d],0),l->rows[d],l->stride);
+  }
+  return h->tupleCoordinates;
+}
+
+void _mlir_ciface_mdrtDistTupleIncidence(struct DeviceKinds *out,int64_t handle,
+    struct Memref3D *x,struct Members *members,int64_t site,int64_t group,void *stream) {
+  struct Halo *h=group ? NULL : (void *)(intptr_t)handle;
+  struct Layout *l=group ? (void *)(intptr_t)handle : h->layout;
+  int64_t d=mdrtMPIDomainBound(l->domains,0);
+  struct TuplePlan **slot=group ? &l->tuplePlans : &h->tuplePlans;
+  while (*slot && (*slot)->site!=site) slot=&(*slot)->next;
+  if (!*slot) *slot=newTuplePlan(l,h,members,site,d);
+  struct TuplePlan *p=*slot;
+  if (!group || !p->built) {
+    double *coordinates=group ? NULL : tupleCoordinates(h,x,d);
+    mdrtNCCLBuildTupleRows(p->topology,p->count,p->arity,p->locations,p->particles,coordinates,
+        l->grid,l->edges,d,group,p->starts,p->entries,p->rows,p->mapped,p->blocks,p->csr);
+    p->built=1;
+  }
+  mdrtNCCLWaitForRows(stream);
+  *out=(struct DeviceKinds){p->csr,p->csr,0,p->extent,1};
+}
+
+static void residentHalo(struct Halo *h,struct Memref3D *owned,struct Memref3D *ghosts,
+                         int image,int reverse,struct Memref3D *initial) {
+  int64_t d=mdrtMPIDomainBound(h->layout->domains,0), n=h->layout->rows[d];
+  int64_t k=owned->sizes[2];
+  double *x=deviceRows(owned,d,n,reverse), *g=deviceRows(ghosts,d,h->rows[d],!reverse);
+  if (initial) mdrtNCCLJoin(x,deviceRows(initial,d,n,0),n*k,NULL,0);
+  if (observer)
+    for (size_t i=0;i<h->edgeCount;++i) {
+      struct Edge e=h->edges[i];
+      observer->transfer(observer->context,reverse ? e.to : e.from,reverse ? e.from : e.to,
+                         e.rows*k*sizeof(double),reverse);
+    }
+  mdrtNCCLResidentHalo(devicePlan(h),x,n,g,k,image,reverse);
+}
+
+void _mlir_ciface_mdrtDistResidentCopy(int64_t handle,struct Memref3D *owned,
+                                        struct Memref3D *ghosts,int64_t image) {
+  residentHalo((void *)(intptr_t)handle,owned,ghosts,image,0,NULL);
+}
+
+void _mlir_ciface_mdrtDistResidentSum(int64_t handle,struct Memref3D *initial,
+                                       struct Memref3D *ghosts,struct Memref3D *out) {
+  residentHalo((void *)(intptr_t)handle,out,ghosts,0,1,initial);
+}
+
+static double *joinTupleFields(int64_t d,int64_t n,int64_t g,struct Memref3D *owned,
+                                struct Memref3D *ghost,int width,void *stream) {
+  if (owned->sizes[2]!=width || ghost->sizes[2]!=width) fail("invalid tuple field width");
+  double *result=mdrtNCCLAllocate((n+g)*width*sizeof(double));
+  mdrtNCCLJoin(result,deviceRows(owned,d,n,0),n*width,deviceRows(ghost,d,g,0),g*width);
+  mdrtNCCLWaitForRows(stream);
+  return result;
+}
+void _mlir_ciface_mdrtDistTupleVectors(struct Memref2D *out,int64_t d,int64_t n,int64_t g,
+    struct Memref3D *owned,struct Memref3D *ghost,void *stream) {
+  double *data=joinTupleFields(d,n,g,owned,ghost,3,stream);
+  *out=(struct Memref2D){data,data,0,{n+g,3},{3,1}};
+}
+void _mlir_ciface_mdrtDistTupleScalars(struct Memref1D *out,int64_t d,int64_t n,int64_t g,
+    struct Memref3D *owned,struct Memref3D *ghost,void *stream) {
+  double *data=joinTupleFields(d,n,g,owned,ghost,1,stream);
+  *out=(struct Memref1D){data,data,0,{n+g},{1}};
+}
+void _mlir_ciface_mdrtDistTupleOwnedVectors(struct Memref2D *out,int64_t d,int64_t n,
+    struct Memref3D *field,void *stream) {
+  if (field->sizes[2]!=3) fail("invalid tuple vector field");
+  double *data=deviceRows(field,d,n,0);
+  mdrtNCCLWaitForRows(stream);
+  *out=(struct Memref2D){data,data,0,{n,3},{3,1}};
+}
+void _mlir_ciface_mdrtDistTupleOwnedScalars(struct Memref1D *out,int64_t d,int64_t n,
+    struct Memref3D *field,void *stream) {
+  if (field->sizes[2]!=1) fail("invalid tuple scalar field");
+  double *data=deviceRows(field,d,n,0);
+  mdrtNCCLWaitForRows(stream);
+  *out=(struct Memref1D){data,data,0,{n},{1}};
+}
+void _mlir_ciface_mdrtDistImportTupleForces(struct Memref3D *field,int64_t domain,
+    int64_t rows,int64_t start,struct Memref2D *forces,void *stream) {
+  if (forces->sizes[1]!=3 || start<0 || rows>forces->sizes[0]-start)
+    fail("invalid distributed force slice");
+  mdrtNCCLImportOnStream(deviceRows(field,domain,rows,1),at2(forces,start,0),
+                         rows*3*sizeof(double),stream);
+}
+void _mlir_ciface_mdrtDistUploadTupleScalars(struct Memref1D *out,struct Memref1D *src) {
+  if (src->strides[0]!=1) fail("expected contiguous tuple parameters");
+  size_t bytes=src->sizes[0]*sizeof(double);
+  double *data=mdrtNCCLAllocate(bytes);
+  mdrtNCCLUpload(data,src->aligned+src->offset,bytes);
+  *out=(struct Memref1D){data,data,0,{src->sizes[0]},{1}};
+}
+void _mlir_ciface_mdrtDistUploadTupleVectors(struct Memref2D *out,struct Memref2D *src) {
+  if (src->strides[1]!=1 || src->strides[0]!=src->sizes[1]) fail("expected contiguous tuple parameters");
+  size_t bytes=src->sizes[0]*src->sizes[1]*sizeof(double);
+  double *data=mdrtNCCLAllocate(bytes);
+  mdrtNCCLUpload(data,src->aligned+src->offset,bytes);
+  *out=(struct Memref2D){data,data,0,{src->sizes[0],src->sizes[1]},{src->sizes[1],1}};
+}
+void _mlir_ciface_mdrtDistReleaseTupleVectors(struct Memref2D *view) {
+  mdrtNCCLFreePositions(view->allocated);
+}
+void _mlir_ciface_mdrtDistReleaseTupleScalars(struct Memref1D *view) {
+  mdrtNCCLFreePositions(view->allocated);
+}
+
 void _mlir_ciface_mdrtDistDeviceKinds(struct DeviceKinds *out, int64_t handle,
     struct Memref3D *owned, int64_t site) {
   int64_t n;
@@ -2529,6 +2735,9 @@ void mdrtDistReleaseHalo(int64_t handle) {
     free(m);
   }
 #ifdef MDIR_ENABLE_NCCL
+  freeTuplePlans(h->tuplePlans);
+  if (h->tupleInput.allocated) _mlir_ciface_mdrtDistReleaseField(&h->tupleInput);
+  if (h->tupleCoordinates) mdrtNCCLFreePositions(h->tupleCoordinates);
   while (h->scalarFields) {
     struct ScalarHaloField *s = h->scalarFields;
     h->scalarFields = s->next;

@@ -138,8 +138,8 @@ velocity, force, mass and potential parameters. At the force neighborhood
 it tests coverage and, on a rebuild, redistributes each live field by
 particle identity. Position and velocity projections read the members
 of each disjoint group on their common owner. Each rank compacts its
-bonded and constraint tuple rows in original tuple order and gathers the
-matching parameter rows. The ordinary device tuple lowering evaluates
+bonded and constraint incidences in original topology order. Original
+tuple identities address the device parameter arrays. The ordinary device tuple lowering evaluates
 these local relations. Constraint failure flags are agreed across ranks
 and virial terms reduce per-domain partials. Only the live global fields
 consumed outside the packed loop are collected at its boundary.
@@ -194,3 +194,25 @@ runs changed from 13.169 to 14.517 ms. The corresponding migration
 phase changed from 25.777 to 21.710 ms. Each run contributed 19 rebuild
 intervals between steps 103 and 203. The change in the wait timer above
 precludes attributing the migration reduction to a shorter measured wait.
+
+### Device scheduling of bonded tuples
+
+At a rebuild, the rank uploads the global topology adjacency and an
+epoch-specific lookup from particle identity to owner row and local
+images. For each new position field, NCCL gathers the unshifted owner
+coordinates into a padded device buffer. This exchange lets every rank
+determine the canonical midpoint owner even when one of the members is
+absent from its halo. A schedule kernel selects the owner and addresses
+the corresponding imaged rows. Each local particle counts its active
+incidences in original topology order. A block prefix sum and a second
+particle pass write compressed rows directly into device memory. The
+bonded kernels consume those rows and use the original tuple numbers to
+index the parameters. A constraint group uses its common owner and
+reuses its incidence rows for the lifetime of the layout.
+
+Device events order the joined owned and ghost fields, tuple evaluation,
+and reverse force exchange. Immutable parameter fields upload once per
+field lifetime. The schedule, coordinates, and tuple forces stay on
+the device during covered steps. Scalar observations and constraint
+failure flags still have host consumers. The padded coordinate gather
+communicates all owners' positions for each new bonded position field.

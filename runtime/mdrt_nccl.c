@@ -11,6 +11,7 @@
 
 static ncclComm_t peers;
 static cudaStream_t stream;
+static cudaEvent_t tupleReady;
 static cudaMemPool_t rowPool;
 static int size;
 static int *nodes;
@@ -285,7 +286,7 @@ extern void mdrtNCCLRows(int gather, const double *input, const int *rows,
     double *output, long long n, int k, const double *shift, int transpose, CUstream stream);
 
 static void exchange(const struct NCCLPlan *p, double *owned, int64_t nOwned,
-    double *ghosts, int k, int image, int reverse, double *packed, int asynchronous) {
+    double *ghosts, int k, int image, int reverse, double *packed, int asynchronous, int resident) {
   if (image && k != 3) mdrtMPIAbort("imaged halo positions require three components");
   size_t row = (size_t)k * sizeof(double);
   if (packed && size==1 && !reverse) {
@@ -295,18 +296,18 @@ static void exchange(const struct NCCLPlan *p, double *owned, int64_t nOwned,
     if (!asynchronous) checkCuda(cudaStreamSynchronize(stream));
     return;
   }
-  if (!packed) {
+  if (!packed && !resident) {
     reserve(&ownedField, &ownedCapacity, nOwned*row);
     reserve(&ghostField, &ghostCapacity, p->recvRows*row);
   }
-  double *ownedDevice = packed ? packed : ownedField;
-  double *ghostDevice = packed ? packed + nOwned*k : ghostField;
+  double *ownedDevice = packed ? packed : resident ? owned : ownedField;
+  double *ghostDevice = packed ? packed + nOwned*k : resident ? ghosts : ghostField;
   int send = reverse ? p->recvRows : p->sendRows;
   int recv = reverse ? p->sendRows : p->recvRows;
   reserve(&outgoing, &outCapacity, send*row);
   reserve(&incoming, &inCapacity, recv*row);
-  if (nOwned) checkCuda(cudaMemcpyAsync(ownedDevice, owned, nOwned*row, packed ? cudaMemcpyDeviceToDevice : cudaMemcpyHostToDevice, stream));
-  if (reverse && p->recvRows)
+  if (!resident && nOwned) checkCuda(cudaMemcpyAsync(ownedDevice, owned, nOwned*row, packed ? cudaMemcpyDeviceToDevice : cudaMemcpyHostToDevice, stream));
+  if (!resident && reverse && p->recvRows)
     checkCuda(cudaMemcpyAsync(ghostDevice, ghosts, p->recvRows*row, cudaMemcpyHostToDevice, stream));
   mdrtNCCLRows(1, reverse ? ghostDevice : ownedDevice, reverse ? p->dest : p->source,
                outgoing, (long long)send*k, k, NULL, reverse, stream);
@@ -337,14 +338,22 @@ static void exchange(const struct NCCLPlan *p, double *owned, int64_t nOwned,
   mdrtNCCLRows(0, incoming, reverse ? p->source : p->dest, result,
                (long long)recv*k, k, image ? p->shifts : NULL, reverse, stream);
   size_t bytes = (reverse ? nOwned : p->recvRows)*row;
-  if (!packed && bytes) checkCuda(cudaMemcpyAsync(reverse ? owned : ghosts, result, bytes,
+  if (!packed && !resident && bytes) checkCuda(cudaMemcpyAsync(reverse ? owned : ghosts, result, bytes,
                                        cudaMemcpyDeviceToHost, stream));
   if (!asynchronous) checkCuda(cudaStreamSynchronize(stream));
 }
 
+void mdrtNCCLResidentHalo(const struct NCCLPlan *plan,double *owned,int64_t rows,
+                          double *ghosts,int k,int image,int reverse) {
+  mdrtNCCLWaitForRows(stream);
+  exchange(plan,owned,rows,ghosts,k,image,reverse,NULL,1,1);
+  checkCuda(cudaEventRecord(tupleReady,stream));
+  checkCuda(cudaStreamWaitEvent(0,tupleReady,0));
+}
+
 void mdrtNCCLHalo(const struct NCCLPlan *plan, double *owned, int64_t rows,
     double *ghosts, int k, int image, int reverse) {
-  exchange(plan, owned, rows, ghosts, k, image, reverse, NULL, 0);
+  exchange(plan, owned, rows, ghosts, k, image, reverse, NULL, 0, 0);
 }
 
 /* The outlined MATRIX borrows this immutable buffer until its block ends.
@@ -355,7 +364,7 @@ double *mdrtNCCLPackedRows(const struct NCCLPlan *plan, double *owned, int64_t r
   positions = mdrtNCCLAllocate((count ? count : 1)*k*sizeof(double));
   // The integration kernel writes owned rows on the default stream.
   checkCuda(cudaStreamSynchronize(0));
-  exchange(plan, owned, rows, NULL, k, image, 0, positions, 0);
+  exchange(plan, owned, rows, NULL, k, image, 0, positions, 0, 0);
   return positions;
 }
 
@@ -368,7 +377,7 @@ double *mdrtNCCLBeginPositions(struct NCCLPlan *p, double *owned, int64_t n) {
   double *positions = mdrtNCCLAllocate(bytes);
   checkCuda(cudaEventRecord(p->producerReady, 0));
   checkCuda(cudaStreamWaitEvent(stream, p->producerReady, 0));
-  exchange(p, owned, n, NULL, 3, 1, 0, positions, 1);
+  exchange(p, owned, n, NULL, 3, 1, 0, positions, 1, 0);
   checkCuda(cudaEventRecord(p->haloReady, stream));
   return positions;
 }
@@ -447,6 +456,34 @@ void mdrtNCCLImport(double *dest, const double *device, size_t bytes) {
   checkCuda(cudaStreamSynchronize(0));
 }
 
+// Use rank order for the all-gather. The tuple map translates global
+// identities to this rank-major storage even with geometric rank placement.
+void mdrtNCCLWaitForRows(void *compute) {
+  if (!tupleReady) checkCuda(cudaEventCreateWithFlags(&tupleReady,cudaEventDisableTiming));
+  checkCuda(cudaEventRecord(tupleReady,0));
+  checkCuda(cudaStreamWaitEvent(compute,tupleReady,0));
+}
+
+void mdrtNCCLImportOnStream(double *dest,const double *source,size_t bytes,void *compute) {
+  mdrtNCCLWaitForRows(compute);
+  if (bytes) checkCuda(cudaMemcpyAsync(dest,source,bytes,cudaMemcpyDeviceToDevice,compute));
+  checkCuda(cudaEventRecord(tupleReady,compute));
+  checkCuda(cudaStreamWaitEvent(0,tupleReady,0));
+}
+
+void mdrtNCCLGatherCoordinates(double *all, const double *owned, int64_t rows,
+                               int64_t stride) {
+  double *mine = all + 3 * stride * mdrtMPIRank();
+  if (rows) checkCuda(cudaMemcpyAsync(mine,owned,3*rows*sizeof(double),cudaMemcpyDeviceToDevice,0));
+  if (stride > rows) checkCuda(cudaMemsetAsync(mine+3*rows,0,3*(stride-rows)*sizeof(double),0));
+  if (size>1) checkNCCL(ncclAllGather(mine,all,3*stride,ncclDouble,peers,0));
+}
+
+void mdrtNCCLJoin(double *out,const double *owned,size_t n,const double *ghost,size_t g) {
+  if (n) checkCuda(cudaMemcpyAsync(out,owned,n*sizeof(double),cudaMemcpyDeviceToDevice,0));
+  if (g) checkCuda(cudaMemcpyAsync(out+n,ghost,g*sizeof(double),cudaMemcpyDeviceToDevice,0));
+}
+
 int *mdrtNCCLUploadIndices(const int *rows, int64_t n) {
   int *device = (int *)mdrtNCCLAllocate(n*sizeof(int));
   if (n) checkCuda(cudaMemcpy(device,rows,n*sizeof(int),cudaMemcpyHostToDevice));
@@ -490,6 +527,7 @@ void mdrtNCCLFinish(void) {
   checkCuda(cudaFree(outgoing));
   checkCuda(cudaFree(incoming));
   checkCuda(cudaStreamDestroy(stream));
+  if (tupleReady) { checkCuda(cudaEventDestroy(tupleReady)); tupleReady=NULL; }
   if (rowPool) {
     checkCuda(cudaStreamSynchronize(0));
     checkCuda(cudaMemPoolDestroy(rowPool));

@@ -1235,6 +1235,9 @@ LogicalResult Assignment::convertTupleFor(TupleForOp op, Scope &scope,
   if (auto tupleSet =
           cast<mdrt::IncidenceType>(op.getIncidence().getType()).getTupleSet())
     loop->setAttr("md_exec.tuple_set", tupleSet);
+  if (auto build = op.getIncidence().getDefiningOp<BuildIncidenceOp>())
+    if (build.getRelation().getDefiningOp<mdrt::ScheduledRelationOp>())
+      loop->setAttr("md_exec.scheduled_rows", builder.getUnitAttr());
   algebra::carry(op, loop);
   copyKernel(loop, op.getKernel().front());
   for (Value buffer : scratch)
@@ -1278,6 +1281,10 @@ LogicalResult Assignment::convertBuildIncidence(BuildIncidenceOp op,
       SetLayoutAttr::get(context, incidenceType.getParticleSet(),
                          plain.getRank()),
       plain.getMemorySpace());
+  if (op.getRelation().getDefiningOp<mdrt::ScheduledRelationOp>()) {
+    mapping.map(op.getResult(), tagInputBuffer(scope.builder, op.getLoc(), tagged, members));
+    return success();
+  }
   Value incidence = BuildIncidenceOp::create(
       scope.builder, op.getLoc(), tagged,
       members, size);
@@ -2007,6 +2014,13 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
 
   if (auto domain = dyn_cast<mdrt::DomainMatrixOp>(op)) {
     neighbors[domain.getResult()] = builder.clone(*op, mapping)->getResult(0);
+    return success();
+  }
+
+  if (auto relation = dyn_cast<mdrt::ScheduledRelationOp>(op)) {
+    if (!onDevice) return op->emitOpError("requires device storage");
+    mapping.map(relation.getResult(), mapping.lookup(relation.getIncidence()));
+    sizes[relation.getResult().getType().getTupleSet()] = mapping.lookup(relation.getCount());
     return success();
   }
 

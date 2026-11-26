@@ -1069,3 +1069,14 @@ At a face rebuild, local identity remapping runs during the count
 all-gather. Each rank posts the payload receives and sends before waiting
 for the records. Rank-ordered receive slices preserve the migration
 ordering even when peers finish out of order.
+
+For bonded terms, each device gathers unshifted owner coordinates and
+applies the periodic midpoint rule to the original tuple members.
+Each accepted tuple maps to local owned or imaged rows. A particle
+counts its active incidences, then fills its slice of a compressed
+row buffer after a device prefix sum. Traversing the immutable
+adjacency in topology order retains the ordering of contributions
+within that particle's force sum. The original tuple number selects
+the parameter. Constraint groups keep one owner and reuse their rows
+until ownership changes. This removes host scheduling from covered
+bonded steps at the cost of gathering the padded owner coordinates.
