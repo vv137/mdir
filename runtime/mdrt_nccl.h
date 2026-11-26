@@ -14,7 +14,10 @@ struct NCCLPlan *mdrtNCCLSelfPlan(double *x, int64_t rows, const double *edges,
 struct NCCLPlan *mdrtNCCLPlan(int64_t ownedRows, int64_t domains, const int64_t *ghosts,
     int64_t capacity, const int64_t *offsets, const int64_t *sourceDomain, const int64_t *sourceRow,
     const int64_t *image, const double *edges);
-double *mdrtNCCLBeginPositions(struct NCCLPlan *, double *, int64_t);
+int64_t *mdrtNCCLFaceState(const int64_t *, const int64_t *, int, const int64_t *, int);
+struct NCCLPlan *mdrtNCCLFacePlan(int, int, int64_t, const int64_t *, const unsigned *,
+    const unsigned *, const int64_t *, const int64_t *, unsigned *, const int64_t *, const double *);
+double *mdrtNCCLBeginPositions(struct NCCLPlan *, double *, int64_t, const uint32_t *, const int64_t *);
 int *mdrtNCCLPairPlaces(struct NCCLPlan *, const int *, int64_t, int, int,
                         void *, int64_t *);
 int *mdrtNCCLCenterMask(struct NCCLPlan *, int64_t, int);
@@ -35,6 +38,7 @@ void mdrtNCCLGatherCoordinates(double *all, const double *owned, int64_t rows, i
 void mdrtNCCLJoin(double *out, const double *owned, size_t n, const double *ghost, size_t g);
 void mdrtNCCLBuildTupleRows(const int *, int, int, const int *, const int *, const double *,
     const int64_t *, const double *, int, int, const int *, const int *, int, int *, int *, int *);
+int *mdrtNCCLMigrationSpans(const void *, int, int);
 int *mdrtNCCLUploadIndices(const int *rows, int64_t n);
 void mdrtNCCLDownloadRows(const double *source, const int *indices, int64_t rows,
                           int width, double *host);

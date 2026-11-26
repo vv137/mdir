@@ -170,8 +170,88 @@ struct NCCLPlan *mdrtNCCLPlan(int64_t ownedRows, int64_t domains, const int64_t 
   return p;
 }
 
+extern void mdrtNCCLUpdateFaceState(int64_t *, const int64_t *, int, int);
+extern void mdrtNCCLFaceColumns(const int64_t *, int, int, const unsigned *,
+    const void *, int, int *, int *, int *, unsigned *, int *, int *, double *,
+    const int64_t *, const double *);
+
+int64_t *mdrtNCCLFaceState(const int64_t *previous, const int64_t *owners,
+    int count, const int64_t *records, int changes) {
+  size_t bytes = (size_t)count*sizeof(*owners);
+  int64_t *state = (int64_t *)mdrtNCCLAllocate(bytes);
+  if (previous) {
+    if (bytes) checkCuda(cudaMemcpyAsync(state,previous,bytes,cudaMemcpyDeviceToDevice,0));
+  } else {
+    mdrtNCCLUpload((double *)state,(const double *)owners,bytes);
+    mdrtNCCLUpdateFaceState(state,NULL,count,1);
+  }
+  if (changes) {
+    size_t deltaBytes = 2*(size_t)changes*sizeof(*records);
+    double *delta = mdrtNCCLAllocate(deltaBytes);
+    mdrtNCCLUpload(delta,(const double *)records,deltaBytes);
+    mdrtNCCLUpdateFaceState(state,(const int64_t *)delta,changes,0);
+    mdrtNCCLFreePositions(delta);
+  }
+  return state;
+}
+
+struct NCCLPlan *mdrtNCCLFacePlan(int local, int count, int64_t ownedRows,
+    const int64_t *state, const unsigned *incoming, const unsigned *outgoingMasks,
+    const int64_t *send, const int64_t *receive, unsigned *previous,
+    const int64_t *grid, const double *edges) {
+  struct NCCLPlan *p = calloc(1,sizeof(*p));
+  if (!p || !(p->counts = calloc(4*(size_t)size,sizeof(int))))
+    mdrtMPIAbort("out of memory indexing device faces");
+  p->pooled = 1;
+  p->ownedRows = ownedRows;
+  p->ns = p->counts; p->nr = p->ns+size;
+  p->os = p->nr+size; p->offsetRecv = p->os+size;
+  struct Column { int kind, domain, offset; unsigned mask; };
+  struct Column *columns = calloc(2+2*(size_t)size,sizeof(*columns));
+  if (!columns) mdrtMPIAbort("out of memory indexing device face columns");
+  columns[1].kind = 1;
+  int nc = 2;
+  // Physical rank order determines the start of each contiguous message.
+  for (int d=0; d<size; ++d) {
+    int peer = mdrtMPIOwner(size,d);
+    if (send[d]>INT_MAX || receive[d]>INT_MAX) mdrtMPIAbort("too many face rows");
+    p->ns[peer]=send[d]; p->nr[peer]=receive[d];
+  }
+  for (int peer=0; peer<size; ++peer) {
+    p->os[peer]=p->sendRows; p->offsetRecv[peer]=p->recvRows;
+    if (p->ns[peer]>INT_MAX-p->sendRows || p->nr[peer]>INT_MAX-p->recvRows)
+      mdrtMPIAbort("face rows exceed device index range");
+    p->sendRows+=p->ns[peer]; p->recvRows+=p->nr[peer];
+    if (p->ns[peer] || p->nr[peer]) p->hasPeers[nodes[peer]!=nodes[mdrtMPIRank()]]=1;
+  }
+  for (int d=0; d<size; ++d) {
+    int peer = mdrtMPIOwner(size,d);
+    if (send[d]) columns[nc++] = (struct Column){2,local,p->os[peer],outgoingMasks[d]};
+    if (receive[d]) columns[nc++] = (struct Column){3,d,p->offsetRecv[peer],incoming[d]};
+  }
+  p->source = (int *)mdrtNCCLAllocate((size_t)p->sendRows*sizeof(int));
+  p->dest = (int *)mdrtNCCLAllocate((size_t)p->recvRows*sizeof(int));
+  p->shifts = mdrtNCCLAllocate(3*(size_t)p->recvRows*sizeof(double));
+  size_t blockBytes = nc*((count+255LL)/256)*sizeof(int);
+  double *blocks = mdrtNCCLAllocate(blockBytes);
+  double *rows = mdrtNCCLAllocate(2*(size_t)count*sizeof(int));
+  double *masks = mdrtNCCLAllocate(size*sizeof(*incoming));
+  double *deviceColumns = mdrtNCCLAllocate(nc*sizeof(*columns));
+  mdrtNCCLUpload(masks,(const double *)incoming,size*sizeof(*incoming));
+  mdrtNCCLUpload(deviceColumns,(const double *)columns,nc*sizeof(*columns));
+  mdrtNCCLFaceColumns(state,count,local,(unsigned *)masks,deviceColumns,nc,
+      (int *)blocks,(int *)rows,(int *)rows+count,previous,p->source,p->dest,
+      p->shifts,grid,edges);
+  mdrtNCCLFreePositions(blocks);
+  mdrtNCCLFreePositions(rows);
+  mdrtNCCLFreePositions(masks);
+  mdrtNCCLFreePositions(deviceColumns);
+  free(columns);
+  return p;
+}
+
 // Plans used only by ordinary exchanges do not allocate split-row storage.
-static void preparePairRows(struct NCCLPlan *p) {
+static void preparePairRows(struct NCCLPlan *p, const uint32_t *faces, const int64_t *ids) {
   if (p->producerReady) return;
   int64_t ownedRows = p->ownedRows;
   size_t rows = ownedRows + p->recvRows;
@@ -179,9 +259,16 @@ static void preparePairRows(struct NCCLPlan *p) {
   if (!masks) mdrtMPIAbort("out of memory classifying halo centers");
   for (int64_t r = 0; r < ownedRows; ++r)
     masks[r] = masks[2*rows+r] = 1;
-  for (int r = 0; r < p->sendRows; ++r) {
-    masks[p->exported[r]] = 0;
-    masks[rows+p->exported[r]] = 1;
+  if (faces) {
+    for (int64_t r = 0; r < ownedRows; ++r) {
+      masks[r] = !faces[ids[r]];
+      masks[rows+r] = !masks[r];
+    }
+  } else {
+    for (int r = 0; r < p->sendRows; ++r) {
+      masks[p->exported[r]] = 0;
+      masks[rows+p->exported[r]] = 1;
+    }
   }
   p->centerMasks = upload(masks, 3*(rows ? rows : 1)*sizeof(int));
   // Each owned row has one slot in the two compact launch lists. Reserve
@@ -371,8 +458,9 @@ double *mdrtNCCLPackedRows(const struct NCCLPlan *plan, double *owned, int64_t r
 /* An epoch's export rows include every center within the halo reach of a
    remote or periodic face. An interior center cannot acquire a ghost
    neighbor before the half-skin displacement test expires. */
-double *mdrtNCCLBeginPositions(struct NCCLPlan *p, double *owned, int64_t n) {
-  preparePairRows(p);
+double *mdrtNCCLBeginPositions(struct NCCLPlan *p, double *owned, int64_t n,
+                               const uint32_t *faces, const int64_t *ids) {
+  preparePairRows(p,faces,ids);
   size_t bytes = (size_t)(n+p->recvRows)*3*sizeof(double);
   double *positions = mdrtNCCLAllocate(bytes);
   checkCuda(cudaEventRecord(p->producerReady, 0));
@@ -482,6 +570,18 @@ void mdrtNCCLGatherCoordinates(double *all, const double *owned, int64_t rows,
 void mdrtNCCLJoin(double *out,const double *owned,size_t n,const double *ghost,size_t g) {
   if (n) checkCuda(cudaMemcpyAsync(out,owned,n*sizeof(double),cudaMemcpyDeviceToDevice,0));
   if (g) checkCuda(cudaMemcpyAsync(out+n,ghost,g*sizeof(double),cudaMemcpyDeviceToDevice,0));
+}
+
+extern void mdrtNCCLExpandMigration(const void *, int, int *, int);
+
+int *mdrtNCCLMigrationSpans(const void *host, int spans, int rows) {
+  size_t bytes=2*(size_t)spans*sizeof(int);
+  double *device=mdrtNCCLAllocate(bytes);
+  mdrtNCCLUpload(device,host,bytes);
+  int *map=(int *)mdrtNCCLAllocate((size_t)rows*sizeof(int));
+  mdrtNCCLExpandMigration(device,spans,map,rows);
+  mdrtNCCLFreePositions(device);
+  return map;
 }
 
 int *mdrtNCCLUploadIndices(const int *rows, int64_t n) {

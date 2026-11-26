@@ -308,3 +308,29 @@ speedup over one distributed device. The eight-device time was 1.204
 times the four-device time. All 16 original precision and layout
 comparisons and all four mixed cross-backend comparisons passed at
 their original bounds. The 53 focused regressions passed.
+
+### Directed halo rebuilds
+
+On four V100s the two runs above had 19 rebuilds in 102 intervals each.
+The rebuilds averaged 27.84 and 27.09 ms. Migration accounted for 11.79
+and 11.46 ms, and halo construction for 6.34 and 6.28 ms. Covered
+intervals averaged 3.43 and 3.46 ms including final output, and 2.10
+and 2.09 ms when that interval was dropped.
+
+For the directed face path, apply the exchanged owner and direction
+changes to a device snapshot indexed by particle identity. Each rank
+keeps per-direction counts for communication and reporting. A changed
+owner splits the sorted identity lists of the sending and receiving
+domains. Copy the intervening runs. Describe each local run by its
+new first row and old first row, with a separate slot for each arrival.
+The GPU expands these spans into the gather map for all migrating fields.
+A host consumer looking up a crossing row searches the sorted domain
+list by identity. The old layout remains valid for the
+fields still being redistributed.
+
+Device prefix sums over blocks of identities assign owned rows, ghost
+rows, and offsets within each nonempty peer message. The device fills
+the send indices, receive indices, and periodic shifts directly. It also
+writes the next face classification in local owned order. Device message
+slots preserve the destination's identity and image order even when
+physical rank placement permutes the geometric domains.

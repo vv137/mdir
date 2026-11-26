@@ -35,6 +35,17 @@ extern "C" __global__ void unpack(const double *wire, const int *row,
   if (transpose) atomicAdd(field + dest, wire[i]);
   else field[dest] = wire[i] + (shift ? shift[(i/k)*3+i%k] : 0.);
 }
+extern "C" __global__ void expandMigration(const int2 *spans, int n, int *map, int rows) {
+  int r=blockIdx.x*blockDim.x+threadIdx.x;
+  if (r>=rows) return;
+  int lo=0, hi=n;
+  while (lo+1<hi) {
+    int mid=lo+(hi-lo)/2;
+    if (spans[mid].x<=r) lo=mid; else hi=mid;
+  }
+  int2 s=spans[lo];
+  map[r]=s.y<0 ? s.y : s.y+(r-s.x);
+}
 extern "C" __global__ void reorder(const double *owned, const double *incoming,
     const int *map, double *result, long long rows, int width) {
   long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
@@ -74,6 +85,79 @@ __device__ int prefix(int count, int *warps) {
   int first=total-count;
   for (int w=0; w<warp; ++w) first+=warps[w];
   return first;
+}
+extern "C" __global__ void applyFaces(long long *faces, const long long *records, int n) {
+  int i = blockIdx.x*blockDim.x+threadIdx.x;
+  if (i < n) faces[records[2LL*i]] = records[2LL*i+1];
+}
+extern "C" __global__ void initialFaces(long long *owners, int n) {
+  int i = blockIdx.x*blockDim.x+threadIdx.x;
+  if (i < n) owners[i] <<= 32;
+}
+// Two columns number local owned and ghost rows. Additional columns
+// number each nonempty peer message in identity and descending bit order.
+struct Column { int kind, domain, offset; unsigned mask; };
+extern "C" __global__ void faceColumns(const long long *faces, int n, int local,
+    const unsigned *incoming, const Column *columns, int *blocks, int stage,
+    int *owned, int *ghost, unsigned *previous, int *source, int *dest,
+    double *shifts, Box box) {
+  int j = blockIdx.x*blockDim.x+threadIdx.x;
+  long long face = j < n ? faces[j] : -1;
+  int owner = face >> 32;
+  unsigned mask = (unsigned)face;
+  int c = blockIdx.y + (stage == 2 ? 2 : 0);
+  Column col = columns[c];
+  unsigned bits = 0;
+  if (col.kind == 1 && owner >= 0) bits = mask & incoming[owner];
+  if (col.kind >= 2 && owner == col.domain) bits = mask & col.mask;
+  int count = col.kind == 0 ? owner == local : __popc(bits);
+  __shared__ int warps[8];
+  int place = prefix(count,warps);
+  long long block = (long long)c*gridDim.x+blockIdx.x;
+  if (stage == 0) {
+    if (threadIdx.x == 255) blocks[block] = place+count;
+    return;
+  }
+  if (!count) return;
+  place += blocks[block];
+  if (col.kind == 0) {
+    owned[j] = place;
+    previous[place] = mask;
+  } else if (col.kind == 1) {
+    ghost[j] = place;
+  } else if (col.kind == 2) {
+    for (int k=0; k<count; ++k) source[place+k] = owned[j];
+  } else {
+    int row = ghost[j];
+    while (bits) {
+      int bit = 31-__clz(bits);
+      bits ^= 1u<<bit;
+      dest[place] = row++;
+      int code = local;
+      for (int k=0; k<3; ++k) {
+        int rel = (k==0 ? bit/9 : k==1 ? bit/3%3 : bit%3)-1;
+        int cell = code%box.grid[k]-rel;
+        code /= box.grid[k];
+        shifts[3LL*place+k] = ((cell >= box.grid[k])-(cell < 0))*box.length[k];
+      }
+      ++place;
+    }
+  }
+}
+extern "C" __global__ void prefixFaces(int *blocks, int n, const Column *columns) {
+  int col = blockIdx.x, sum = columns[col].offset;
+  __shared__ int warps[8], chunk;
+  for (int i=0; i<n; i+=256) {
+    int b = i+threadIdx.x;
+    long long index = (long long)col*n+b;
+    int count = b<n ? blocks[index] : 0;
+    int offset = prefix(count,warps);
+    if (b<n) blocks[index] = sum+offset;
+    if (threadIdx.x == 255) chunk = offset+count;
+    __syncthreads();
+    sum += chunk;
+    __syncthreads();
+  }
 }
 // The rank-indexed coordinates are unshifted. Resolve the midpoint and
 // the canonical image of each member before building particle incidences.
@@ -261,6 +345,7 @@ extern "C" __global__ void coverage(const double *x, const double *ref,
 })";
 CUmodule module;
 CUfunction pack, unpack, advance, coverage, narrow, reorder, faceRecords, wrapRows;
+CUfunction expandMigration, initialFaces, applyFaces, faceColumns, prefixFaces;
 CUfunction selfFaceCounts, selfFaceFill, selfGather;
 
 void check(CUresult status) {
@@ -305,6 +390,11 @@ void compile() {
   check(cuModuleGetFunction(&writeCenters, module, "writeCenters"));
   check(cuModuleGetFunction(&pack, module, "pack"));
   check(cuModuleGetFunction(&unpack, module, "unpack"));
+  check(cuModuleGetFunction(&expandMigration,module,"expandMigration"));
+  check(cuModuleGetFunction(&initialFaces,module,"initialFaces"));
+  check(cuModuleGetFunction(&applyFaces,module,"applyFaces"));
+  check(cuModuleGetFunction(&faceColumns,module,"faceColumns"));
+  check(cuModuleGetFunction(&prefixFaces,module,"prefixFaces"));
   check(cuModuleGetFunction(&selfFaceCounts,module,"selfFaceCounts"));
   check(cuModuleGetFunction(&selfFaceFill,module,"selfFaceFill"));
   check(cuModuleGetFunction(&selfGather,module,"selfGather"));
@@ -358,6 +448,13 @@ extern "C" void mdrtNCCLNarrow(const double *source, void *target, long long row
   check(cuStreamSynchronize(nullptr));
 }
 
+extern "C" void mdrtNCCLExpandMigration(const void *spans, int n, int *map, int rows) {
+  if (!rows) return;
+  if (!module) compile();
+  void *args[]={&spans,&n,&map,&rows};
+  check(cuLaunchKernel(expandMigration,(rows+255LL)/256,1,1,256,1,1,0,nullptr,args,nullptr));
+}
+
 extern "C" void mdrtNCCLReorderKernel(const double *owned, const double *incoming,
     const int *map, double *result, long long rows, int width) {
   if (!rows) return;
@@ -370,6 +467,37 @@ namespace {
 struct Box { double length[3]; int grid[3]; };
 }
 
+extern "C" void mdrtNCCLUpdateFaceState(int64_t *faces, const int64_t *records,
+                                        int n, int initial) {
+  if (!n) return;
+  if (!module) compile();
+  void *initArgs[] = {&faces,&n};
+  void *deltaArgs[] = {&faces,&records,&n};
+  check(cuLaunchKernel(initial ? initialFaces : applyFaces, (n+255LL)/256,1,1,
+      256,1,1,0,nullptr,initial ? initArgs : deltaArgs,nullptr));
+}
+
+extern "C" void mdrtNCCLFaceColumns(const int64_t *faces, int n, int local,
+    const unsigned *incoming, const void *columns, int columnCount, int *blocks,
+    int *owned, int *ghost, unsigned *previous, int *source, int *dest,
+    double *shifts, const int64_t *grid, const double *edges) {
+  if (!n) return;
+  if (!module) compile();
+  Box box;
+  for (int k=0; k<3; ++k) { box.grid[k]=grid[k]; box.length[k]=edges[k]; }
+  int numBlocks=(n+255LL)/256;
+  for (int stage=0; stage<3; ++stage) {
+    int height = stage==0 ? columnCount : stage==1 ? 2 : columnCount-2;
+    if (!height) continue;
+    void *args[] = {&faces,&n,&local,&incoming,&columns,&blocks,&stage,
+                    &owned,&ghost,&previous,&source,&dest,&shifts,&box};
+    check(cuLaunchKernel(faceColumns,numBlocks,height,1,256,1,1,0,nullptr,args,nullptr));
+    if (stage==0) {
+      void *scan[] = {&blocks,&numBlocks,&columns};
+      check(cuLaunchKernel(prefixFaces,columnCount,1,1,256,1,1,0,nullptr,scan,nullptr));
+    }
+  }
+}
 extern "C" int64_t *mdrtNCCLFaceRecords(const double *positions, long long rows,
     int domain, const int64_t *grid, const double *length, double reach, const unsigned *previous, int64_t *size) {
   *size=0;

@@ -1139,5 +1139,19 @@ liquid used 5.545 ms/step of kernel time on one ordinary device and
 rank zero during halo construction, 0.854 during the layout rebuild
 and 0.785 during global row numbering. After the changes, the clean
 wall times averaged 8.347, 7.521 and 9.053 ms/step on one, four and
-eight devices. The rebuild still scans global identities when ownership
-changes.
+eight devices. In these runs the host renumbered all identities after
+an ownership change. On four devices the covered interval took 2.09
+to 2.10 ms on average when the final output interval was excluded.
+
+A directed halo can be constructed from the owner and direction bits of
+each identity. Within a contiguous block of identities, the population
+count of each particle's incoming direction bits gives its number of
+ghost images. An exclusive scan of the counts assigns each identity its
+first ghost slot. Enumerating its direction bits in descending order
+then gives the established periodic image order. Applying the same scan
+to just the directions exchanged with one peer numbers that message.
+The receive map links its message slots to the destination ghost slots.
+The owned-row scan also writes the next reference mask in local order.
+This construction transfers the changed face records and small peer
+descriptors between host and device at rebuild. Each rank still holds
+an identity-indexed device snapshot and scans it in parallel.
