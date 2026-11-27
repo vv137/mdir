@@ -2834,7 +2834,12 @@ struct TupleGeometry {
 #ifdef MDIR_ENABLE_MPI
 /* A geometry snapshot owns one contiguous identity interval per rank.
    Tuple intervals gather only their member sites from this directory. */
-struct TopologyShard { int64_t first, count; struct TopologySite sites[]; };
+static _Atomic uint64_t lastTopologySnapshot;
+struct TopologyShard {
+  int64_t first, count;
+  uint64_t snapshot;
+  struct TopologySite sites[];
+};
 int64_t _mlir_ciface_mdrtDistTopologyShard(int64_t layout, struct Memref3D *x) {
   struct Layout *l = (struct Layout *)(intptr_t)layout;
   int peers = mdrtMPISize(), rank = mdrtMPIRank();
@@ -2844,6 +2849,8 @@ int64_t _mlir_ciface_mdrtDistTopologyShard(int64_t layout, struct Memref3D *x) {
   if (!shard) fail("out of memory storing topology sites");
   shard->first = rank*q+(rank < rem ? rank : rem);
   shard->count = n;
+  shard->snapshot = atomic_fetch_add_explicit(&lastTopologySnapshot,1,memory_order_relaxed)+1;
+  if (!shard->snapshot) fail("topology snapshot version exhausted");
   struct Route route = beginRoute();
   int64_t first = mdrtMPIDomainBound(l->domains,0), past = mdrtMPIDomainBound(l->domains,1);
   for (int64_t d = first; d < past; ++d)
@@ -2879,22 +2886,68 @@ static int64_t memberAt(const struct Members *m, int64_t i) {
 /* Relations are immutable across iterations of their enclosing step loop.
    Map every member once to a local slot or a unique remote request. */
 struct TuplePlan {
-  struct Route route;
-  int64_t *slots, *incoming;
+  struct TuplePlan *next;
+  struct SiteRequests *requests;
+  struct Members slice;
+  int64_t *slots;
 };
 
-int64_t mdrtDistNewTuplePlan(void) {
+struct SiteRequests {
+  struct TuplePlan *plans;
+  struct Route route;
+  int64_t *incoming;
+  struct TopologySite *replies;
+  uint64_t snapshot;
+};
+
+int64_t mdrtDistNewSiteRequests(void) {
+  struct SiteRequests *requests = calloc(1,sizeof *requests);
+  if (!requests) fail("out of memory starting tuple site requests");
+  return (int64_t)(intptr_t)requests;
+}
+
+static struct TuplePlan *addTuplePlan(struct SiteRequests *requests) {
   struct TuplePlan *p = calloc(1,sizeof *p);
   if (!p) fail("out of memory starting tuple plan");
+  p->requests = requests;
+  p->next = requests->plans;
+  requests->plans = p;
+  return p;
+}
+
+int64_t mdrtDistNewTuplePlan(void) {
+  return (int64_t)(intptr_t)addTuplePlan((struct SiteRequests *)(intptr_t)mdrtDistNewSiteRequests());
+}
+
+int64_t _mlir_ciface_mdrtDistRegisterTuplePlan(int64_t handle, struct Members *members) {
+  struct TuplePlan *p = addTuplePlan((struct SiteRequests *)(intptr_t)handle);
+  int rank = mdrtMPIRank(), peers = mdrtMPISize();
+  int64_t q = members->sizes[0]/peers, rem = members->sizes[0]%peers;
+  int64_t first = q*rank+(rank < rem ? rank : rem);
+  p->slice = *members;
+  p->slice.offset += first*p->slice.strides[0];
+  p->slice.sizes[0] = q+(rank < rem);
   return (int64_t)(intptr_t)p;
+}
+
+void mdrtDistFreeSiteRequests(int64_t handle) {
+  struct SiteRequests *requests = (struct SiteRequests *)(intptr_t)handle;
+  struct TuplePlan *p = requests->plans;
+  while (p) {
+    struct TuplePlan *next = p->next;
+    free(p->slots);
+    free(p);
+    p = next;
+  }
+  free(requests->route.send);
+  free(requests->incoming);
+  free(requests->replies);
+  free(requests);
 }
 
 void mdrtDistFreeTuplePlan(int64_t handle) {
   struct TuplePlan *p = (struct TuplePlan *)(intptr_t)handle;
-  free(p->route.send);
-  free(p->slots);
-  free(p->incoming);
-  free(p);
+  mdrtDistFreeSiteRequests((int64_t)(intptr_t)p->requests);
 }
 
 static int compareId(const void *x, const void *y) {
@@ -2902,55 +2955,79 @@ static int compareId(const void *x, const void *y) {
   return (a > b) - (a < b);
 }
 
-static void planSites(struct TuplePlan *p, const struct TopologyShard *shard,
-                      struct Members *m, int64_t count) {
-  int64_t n = m->sizes[0]*m->sizes[1], remote = 0;
-  p->slots = malloc((n ? n : 1)*sizeof *p->slots);
-  int64_t *ids = malloc((n ? n : 1)*sizeof *ids);
-  if (!p->slots || !ids) fail("out of memory planning tuple members");
-  for (int64_t i = 0; i < n; ++i) {
-    int64_t id = memberAt(m,i);
-    if (id < 0 || id >= count) fail("tuple member outside particle set");
-    if (id >= shard->first && id-shard->first < shard->count)
-      p->slots[i] = id-shard->first;
-    else {
-      ids[remote++] = id;
-      p->slots[i] = ~id;
+static void planSites(struct SiteRequests *requests, const struct TopologyShard *shard,
+                      int64_t count) {
+  size_t total = 0;
+  for (struct TuplePlan *p = requests->plans; p; p = p->next) {
+    int64_t rows = p->slice.sizes[0], arity = p->slice.sizes[1];
+    if (rows < 0 || arity < 2 || (uint64_t)rows > (SIZE_MAX/sizeof(int64_t)-total)/arity)
+      fail("tuple site request extent exceeds address range");
+    total += (size_t)rows*arity;
+  }
+  int64_t *ids = malloc((total ? total : 1)*sizeof *ids);
+  if (!ids) fail("out of memory planning tuple sites");
+  int64_t remote = 0;
+  for (struct TuplePlan *p = requests->plans; p; p = p->next) {
+    int64_t n = p->slice.sizes[0]*p->slice.sizes[1];
+    p->slots = malloc((n ? n : 1)*sizeof *p->slots);
+    if (!p->slots) fail("out of memory planning tuple members");
+    for (int64_t i = 0; i < n; ++i) {
+      int64_t id = memberAt(&p->slice,i);
+      if (id < 0 || id >= count) fail("tuple member outside particle set");
+      if (id >= shard->first && id-shard->first < shard->count)
+        p->slots[i] = id-shard->first;
+      else {
+        ids[remote++] = id;
+        p->slots[i] = ~id;
+      }
     }
   }
   qsort(ids,remote,sizeof *ids,compareId);
-  p->route = beginRoute();
+  requests->route = beginRoute();
   int64_t unique = 0;
   for (int64_t i = 0; i < remote; ++i)
     if (!i || ids[i] != ids[i-1]) {
-      countRoute(&p->route,mdrtMPIOwner(count,ids[i]));
+      countRoute(&requests->route,mdrtMPIOwner(count,ids[i]));
       ids[unique++] = ids[i];
     }
-  finishRoute(&p->route);
-  p->incoming = malloc((p->route.receives ? p->route.receives : 1)*sizeof *p->incoming);
-  if (!p->incoming) fail("out of memory planning remote tuple members");
-  mdrtMPIExchangeRecords(ids,p->route.send,p->route.sendOffset,p->incoming,
-      p->route.recv,p->route.recvOffset,sizeof *ids);
-  for (int64_t i = 0; i < n; ++i)
-    if (p->slots[i] < 0) {
-      int64_t id = ~p->slots[i];
-      const int64_t *found = bsearch(&id,ids,unique,sizeof *ids,compareId);
-      p->slots[i] = ~(int64_t)(found-ids);
-    }
+  finishRoute(&requests->route);
+  requests->incoming = malloc((requests->route.receives ? requests->route.receives : 1)*sizeof *requests->incoming);
+  if (!requests->incoming) fail("out of memory planning remote tuple members");
+  mdrtMPIExchangeRecords(ids,requests->route.send,requests->route.sendOffset,requests->incoming,
+      requests->route.recv,requests->route.recvOffset,sizeof *ids);
+  for (struct TuplePlan *p = requests->plans; p; p = p->next) {
+    int64_t n = p->slice.sizes[0]*p->slice.sizes[1];
+    for (int64_t i = 0; i < n; ++i)
+      if (p->slots[i] < 0) {
+        int64_t id = ~p->slots[i];
+        const int64_t *found = bsearch(&id,ids,unique,sizeof *ids,compareId);
+        p->slots[i] = ~(int64_t)(found-ids);
+      }
+  }
   free(ids);
 }
 
-static struct TopologySite *readRemoteSites(struct TuplePlan *p, const struct TopologyShard *shard,
-                                     struct Members *m, int64_t count) {
-  if (!p->slots) planSites(p,shard,m,count);
-  struct Route *route = &p->route;
+static const struct TopologySite *readRemoteSites(struct TuplePlan *p, const struct TopologyShard *shard,
+    struct Members *slice, int64_t count, struct TopologySite **temporary) {
+  struct SiteRequests *requests = p->requests;
+  if (!p->slice.sizes[1]) p->slice = *slice;
+  if (!p->slots) planSites(requests,shard,count);
+  if (requests->snapshot == shard->snapshot) return requests->replies;
+  struct Route *route = &requests->route;
   struct TopologySite *send = malloc((route->receives ? route->receives : 1)*sizeof *send);
-  struct TopologySite *recv = malloc((route->sends ? route->sends : 1)*sizeof *recv);
+  struct TopologySite *recv = requests->replies;
+  if (!recv) recv = malloc((route->sends ? route->sends : 1)*sizeof *recv);
   if (!send || !recv) fail("out of memory gathering tuple geometry");
   for (int i = 0; i < route->receives; ++i)
-    send[i] = shard->sites[p->incoming[i]-shard->first];
+    send[i] = shard->sites[requests->incoming[i]-shard->first];
   mdrtMPIExchangeRecords(send,route->recv,route->recvOffset,recv,route->send,route->sendOffset,sizeof *send);
   free(send);
+  if (requests->plans->next) {
+    requests->snapshot = shard->snapshot;
+    requests->replies = recv;
+  } else {
+    *temporary = recv;
+  }
   return recv;
 }
 
@@ -3155,8 +3232,8 @@ int64_t _mlir_ciface_mdrtDistScheduleTuples(int64_t handle, int64_t groups, int6
   if (directory) {
     struct TuplePlan *p = (struct TuplePlan *)(intptr_t)plan;
     struct TopologyShard *shard = (struct TopologyShard *)(intptr_t)directory;
-    remote = readRemoteSites(p,shard,&slice,l->count);
-    geometry = (struct TupleGeometry){p->slots,shard->sites,remote};
+    const struct TopologySite *sites = readRemoteSites(p,shard,&slice,l->count,&remote);
+    geometry = (struct TupleGeometry){p->slots,shard->sites,sites};
   }
   int compact = directory != 0;
   {

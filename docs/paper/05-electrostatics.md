@@ -1541,3 +1541,9 @@ midpoint arithmetic. If that magnitude exceeds one sixteenth of the
 largest finite binary64 number, the filter checks current coordinates.
 In a paired Cellulose measurement this reduced mixed step time by
 2.52 ms and double step time by 2.98 ms.
+
+The five bonded relations can request the same particle from the identity
+directory. Sharing their requests reduced the Cellulose coordinate reply
+from 29.82 to 18.43 MB per step in a one-node trace. Across the same
+eight-step measurement window, each rank made 48 tuple-schedule record
+exchanges, down from 80. Row routing still takes place for each relation.

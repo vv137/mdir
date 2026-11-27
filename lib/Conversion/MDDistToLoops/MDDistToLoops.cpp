@@ -173,6 +173,7 @@ private:
   // numbers depend on the group layout alone.
   using TupleRowKey = std::tuple<Block *, Value, Value, Value, Type>;
   llvm::DenseMap<TupleRowKey, Value> sharedTupleRows;
+  llvm::DenseMap<std::tuple<Operation *, Block *, Value>, Value> tupleSiteRequests;
   llvm::DenseSet<std::pair<Block *, Value>> sharedTuplePositions;
   LogicalResult lowerPartition(PartitionOp op);
   LogicalResult lowerMigrate(MigrateOp op);
@@ -1671,12 +1672,28 @@ LogicalResult Lowering::lowerTupleRows(TupleRowsOp op) {
         scope = loop;
       }
       OpBuilder init(scope);
-      plan = func::CallOp::create(init,loc,declare("mdrtDistNewTuplePlan",
-          b.getFunctionType({}, {i64}),false)).getResult(0);
       OpBuilder cleanup(end);
-      if (scope != op) cleanup.setInsertionPointAfter(scope);
-      func::CallOp::create(cleanup,loc,declare("mdrtDistFreeTuplePlan",
-          b.getFunctionType({i64},{}),false),plan);
+      if (scope == op) {
+        plan = func::CallOp::create(init,loc,declare("mdrtDistNewTuplePlan",
+            b.getFunctionType({}, {i64}),false)).getResult(0);
+        func::CallOp::create(cleanup,loc,declare("mdrtDistFreeTuplePlan",
+            b.getFunctionType({i64},{}),false),plan);
+      } else {
+        auto key = std::make_tuple(scope,op->getBlock(),op.getPositions());
+        Value &requests = tupleSiteRequests[key];
+        if (!requests) {
+          requests = func::CallOp::create(init,loc,declare("mdrtDistNewSiteRequests",
+              b.getFunctionType({}, {i64}),false)).getResult(0);
+          cleanup.setInsertionPointAfter(scope);
+          func::CallOp::create(cleanup,loc,declare("mdrtDistFreeSiteRequests",
+              b.getFunctionType({i64},{}),false),requests);
+        }
+        Value table = mdrt::ToBufferOp::create(init,loc,mdrt::getMembersType(relation),op.getTuples());
+        Value invariant = memref::CastOp::create(init,loc,source.getType(),table);
+        plan = func::CallOp::create(init,loc,declare("mdrtDistRegisterTuplePlan",
+            b.getFunctionType({i64,source.getType()},{i64}),true),
+            ValueRange{requests,invariant}).getResult(0);
+      }
     }
     auto build = declare("mdrtDistScheduleTuples",
         b.getFunctionType({i64,i64,i64,i64,positions.getType(),source.getType()}, {i64}), true);
@@ -3903,6 +3920,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
   sharedTuplePositions.clear();
   tupleSchedules.clear();
   sharedTupleRows.clear();
+  tupleSiteRequests.clear();
   topologyShards.clear();
   ownedEpochs.clear();
   localEpochs.clear();

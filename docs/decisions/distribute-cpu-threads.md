@@ -281,3 +281,10 @@ error margin covers both endpoint evaluation and the subtraction sequence
 used by the pair kernel. A near-face or extreme-scale result falls back
 to the current-coordinate ownership check. This proves stable ownership
 for more pairs while preserving force coverage at a rounded face.
+
+Immutable bonded relations in the same loop block share remote site
+requests when their rows use the same coordinate snapshot. The first
+schedule gathers the union of remote particle identities. Each relation
+maps its members into the reply in its original tuple order. The next
+snapshot refreshes the coordinates even if the allocator reused an
+address. Loop-local relations use a plan with their own lifetime.
