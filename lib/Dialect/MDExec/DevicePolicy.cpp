@@ -234,12 +234,15 @@ static const ArrayRef<Measured> kTraversalDefaultMeasured = {};
 // A box of 3,072 atoms ran 3% slower than the matrix, so the entry starts
 // at the smallest box measured faster.
 static const Measured kTraversal89Measured[] = {{8, 9}};
+// The entry is keyed by the device model, not the architecture alone: a
+// performance threshold of one model is not borrowed by another of the same
+// compute capability (L4, L40), which keeps the default.
 static const Entry<TraversalPolicy> kTraversalTable[] = {
-    {{8, 9, ""},
+    {{8, 9, "RTX 4090"},
      {/*towersLeast=*/4608},
      {"D[best-defaults]",
-      "TIP3P boxes of 3,072 to 19,880 atoms, JAC, Factor IX, Cellulose and "
-      "STMV, RTX 4090",
+      "main 03506508 and the branch at c0c015d8: TIP3P boxes of 3,072 to "
+      "19,880 atoms, JAC, Factor IX, Cellulose and STMV, RTX 4090",
       "2026-11-27"},
      kTraversal89Measured},
 };

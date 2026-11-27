@@ -580,9 +580,9 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   bool autoTowers = false;
   if (control->neighborStructureRequested == NeighborStructure::Auto) {
     AutoTowers rule = options.segments
-                          ? AutoTowers{false, "segmented execution", {}}
+                          ? AutoTowers{false, false, "segmented execution", {}}
                           : resolveAutoTowers(*control, *system);
-    traversalChoice = llvm::json::Object{{"category", "rule"},
+    traversalChoice = llvm::json::Object{{"category", rule.unmeasured ? "fallback" : "rule"},
                              {"requested", "AUTO"},
                              {"towers_rule", std::move(rule.record)}};
     if (rule.take) {
@@ -1009,6 +1009,86 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   auto program = buildProgram(*control, *system);
   if (!program)
     return fail(program.takeError());
+  // What the run resolved from its keys and defaults, which its
+  // checkpoints record (D[pme-default-tolerance]): the tolerance, beta and
+  // grid of Gaussian PME, and the traversal. A continuation whose resolved
+  // values differ from the checkpoint's runs on its own and says so: a
+  // default may change between builds while the keys of the control file,
+  // and so the rest of the fingerprint, stay the same.
+  llvm::json::Array resolvedChanges;
+  {
+    Fingerprint resolved;
+    auto printed = [](double value, int digits) {
+      char text[64];
+      std::snprintf(text, sizeof(text), "%.*g", digits, value);
+      return std::string(text);
+    };
+    auto addResolved = [&](std::string name, std::string value) {
+      resolved.push_back({"resolved", std::move(name), std::move(value)});
+    };
+    bool gaussian = program->pme && !program->pmeProlate;
+    if (gaussian && control->pmeAlpha == 0.0)
+      addResolved("[pme] tolerance", printed(control->pmeAlphaTolerance, 6));
+    if (gaussian) {
+      addResolved("[pme] beta", printed(program->pmeBeta * units::length, 9));
+      addResolved("[pme] grid", llvm::formatv("{0} {1} {2}", program->pmeGrid[0],
+                                              program->pmeGrid[1], program->pmeGrid[2])
+                                    .str());
+    }
+    addResolved("[execution] neighbor_structure",
+                getNeighborStructureName(control->neighborStructure));
+    const Checkpoint *stored =
+        own ? &*own : (isRestart && checkpoint ? &*checkpoint : nullptr);
+    if (stored && !fingerprint.empty()) {
+      Fingerprint before;
+      for (const FingerprintEntry &entry : stored->fingerprint)
+        if (entry.group == "resolved")
+          before.push_back(entry);
+      // A checkpoint written before these entries were recorded: its PME
+      // took the default tolerance of that build, 10^-5, where its keys
+      // gave neither a tolerance nor beta.
+      bool inferred = before.empty();
+      if (inferred && gaussian && control->pmeAlpha == 0.0 &&
+          llvm::none_of(stored->fingerprint, [](const FingerprintEntry &entry) {
+            return entry.name == "[pme] tolerance" || entry.name == "[pme] beta";
+          })) {
+        double rc = control->cutoffDistance, tolerance = 1.0e-5;
+        double low = 0.0, high = 1.0;
+        while (std::erfc(high * rc) > tolerance)
+          high *= 2.0;
+        for (int i = 0; i != 100; ++i) {
+          double middle = 0.5 * (low + high);
+          (std::erfc(middle * rc) > tolerance ? low : high) = middle;
+        }
+        before.push_back({"resolved", "[pme] tolerance", "1e-05"});
+        before.push_back({"resolved", "[pme] beta",
+                          printed(0.5 * (low + high), 9)});
+      }
+      std::string text;
+      for (const FingerprintEntry &now : resolved)
+        for (const FingerprintEntry &then : before)
+          if (then.name == now.name && then.value != now.value) {
+            text += "\n  " + now.name + ": " + then.value + " -> " + now.value;
+            resolvedChanges.push_back(llvm::json::Object{
+                {"name", now.name}, {"checkpoint", then.value},
+                {"run", now.value}, {"inferred", inferred}});
+          }
+      if (!text.empty())
+        notes.push_back("the run resolves other values than '" +
+                        (own ? control->restartOutput : control->restartInput) +
+                        "'" +
+                        (inferred ? " (a checkpoint that records none: those "
+                                    "of the defaults of its time)"
+                                  : "") +
+                        "; it runs with its own (checkpoint -> this run):" +
+                        text);
+    }
+    // MDIR_CHECKPOINT_UNRESOLVED writes checkpoints without these entries,
+    // as builds before them did, for the tests of the continuation.
+    const char *unresolved = std::getenv("MDIR_CHECKPOINT_UNRESOLVED");
+    if (!unresolved || !*unresolved)
+      fingerprint.insert(fingerprint.end(), resolved.begin(), resolved.end());
+  }
   if (emit == Emit::Module) {
     llvm::outs() << printModuleForReading(*program);
     // The profile map is of the lowered program (D398).
@@ -1597,6 +1677,10 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     }
     if (towersShapeReport.getAsObject())
       effective["towers_shape"] = towersShapeReport;
+    // The resolved values that differ from those of the checkpoint the run
+    // continues (D[pme-default-tolerance]).
+    if (!resolvedChanges.empty())
+      effective["resolved_changes"] = std::move(resolvedChanges);
     if (!towersCellHeight.empty())
       effective["towers_cell_height"] = towersCellHeight;
     resolvedChoices["step_graph"] = std::move(graphChoice);

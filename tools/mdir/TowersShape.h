@@ -12,6 +12,9 @@ namespace mdir::tool {
 /// device was queried.
 struct AutoTowers {
   bool take = false;
+  /// The device model has no measured entry: the manifest records the
+  /// choice as a fallback.
+  bool unmeasured = false;
   std::string reason;
   llvm::json::Object record;
 };

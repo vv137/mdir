@@ -38,6 +38,9 @@ llvm::Error refusal(llvm::StringRef reason) {
 struct Limits {
   bool supportsMma;
   int major, minor;
+  /// The device model, the name of the driver without the vendor and the
+  /// product line ("RTX 4090"), which keys performance thresholds.
+  std::string model;
   std::string uuid;
   int driver;
   int device, blockBytes, smBytes, reserved, threads, smThreads, blocks;
@@ -89,6 +92,15 @@ llvm::Expected<std::optional<Limits>> deviceLimits(bool requireMma) {
           version(&l.driver) != CUDA_SUCCESS)
         return refusal("could not query CUDA device identity");
       l.uuid = llvm::toHex(llvm::StringRef(uuid.bytes, sizeof(uuid.bytes)));
+      auto name = reinterpret_cast<decltype(&cuDeviceGetName)>(
+          lib.getAddressOfSymbol("cuDeviceGetName"));
+      char text[256] = {};
+      if (name && name(text, sizeof(text) - 1, device) == CUDA_SUCCESS) {
+        llvm::StringRef model(text);
+        model.consume_front("NVIDIA ");
+        model.consume_front("GeForce ");
+        l.model = model.trim().str();
+      }
       l.device = device;
       return l;
     }
@@ -778,26 +790,39 @@ mdir::tool::resolveAutoTowers(const Control &control, const System &system) {
     return no("no visible CUDA device");
   std::string arch = "sm_" + std::to_string((**limits).major) +
                      std::to_string((**limits).minor);
-  auto policy = md_exec::policy::getDevicePolicy(arch);
+  // The TOWERS threshold is a performance rule, keyed by the device model
+  // (the maintainer's ruling of 2026-11-27, D[best-defaults]): a model
+  // without an entry of its own does not borrow another's, and keeps the
+  // rule of D261. MDIR_DEVICE_MODEL names another model, for the tests.
+  std::string model = (**limits).model;
+  if (const char *given = std::getenv("MDIR_DEVICE_MODEL"); given && *given)
+    model = given;
+  auto policy = md_exec::policy::getDevicePolicy(arch, model);
   int64_t least = policy.traversal.towersLeast;
+  bool unmeasured = least < 0 || policy.traversalFallback;
   result.record = Object{
       {"rule", "towers_least"},
       {"device_architecture", arch},
-      {"towers_least", least < 0 ? Value(nullptr) : Value(least)},
-      {"fallback", policy.traversalFallback},
+      {"device_model", model},
+      {"towers_least", unmeasured ? Value(nullptr) : Value(least)},
+      {"fallback", unmeasured},
       {"basis", Object{{"decision", policy.traversalBasis.decision},
                        {"measured", policy.traversalBasis.measured},
                        {"date", policy.traversalBasis.date}}}};
   size_t count = system.getNumParticles();
-  if (least < 0 || policy.traversalFallback)
-    return no("TOWERS was not measured as the choice of AUTO on " + arch);
+  if (unmeasured) {
+    result.unmeasured = true;
+    return no("unmeasured device: " + model + " (" + arch +
+              ") has no measured TOWERS threshold; the rule of D261 applies "
+              "(`mdir tune`, #790, or a setup trial would measure one)");
+  }
   if (count < size_t(least))
-    return no(llvm::formatv("{0} particles, fewer than {1} on {2}", count,
-                            least, arch)
+    return no(llvm::formatv("{0} particles, fewer than {1} on the {2}", count,
+                            least, model)
                   .str());
   result.take = true;
-  result.reason = llvm::formatv("{0} particles, at least {1} on {2} ({3})",
-                                count, least, arch,
+  result.reason = llvm::formatv("{0} particles, at least {1} on the {2} ({3})",
+                                count, least, model,
                                 policy.traversalBasis.decision)
                       .str();
   return result;
