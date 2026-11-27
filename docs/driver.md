@@ -1756,9 +1756,16 @@ At each energy interval, `DIST:` rows give the latest occupancy,
 migrations since the last interval, and logical bytes per directed domain
 edge. Self-image copies count toward logical bytes. Only edges between
 different ranks count toward network payload. Rank shares divide by the sum
-over ranks for that counter. Phase times in seconds cover pair loops, other
-particle terms, halo copy and sum, ordered reduction, migration, and
-collective wait. The wall clock also includes unclassified work. The end
+over ranks for that counter. Phase times in seconds are exclusive. The CPU MATRIX builder records
+`list_build` on steps that reconstruct candidate rows. `pairs` includes
+candidate selection and pair evaluation. Forward MPI halo operations report
+`halo_pack`, `halo_intra` (copies and exchanges within a shared-memory
+node), and `halo_inter` (exchange and unpack between nodes). Remaining transfer overhead appears under `halo_copy`.
+`halo_sum` includes the reverse pack, exchange, and ordered addition.
+`halo_build` covers membership construction, and `state` covers packing
+and consuming loop state. `integration` covers marked kicks, drifts, and
+owner-local constraint rows and kernels. `output` times writer calls.
+Barriers appear under `wait`. The wall clock includes unclassified work. The end
 table includes setup and the last partial interval. For strong-scaling
 efficiency divide a measured one-rank time by the rank count times the
 critical (maximum) wall time for the same system, grid, and step count.

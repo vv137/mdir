@@ -15,6 +15,10 @@ int mdrtMPISize(void);
 void mdrtMPIRowsToRoot(double *values, int64_t count, int owner);
 void mdrtMPIBroadcastWords(void *values, int64_t count, int root);
 void mdrtMPIBroadcast(double *values, int64_t count, int root);
+int mdrtMPISameNode(int peer);
+void mdrtMPIForwardHalo(double *send, int *sendCounts, int *sendOffsets,
+                        double *recv, int *recvCounts, int *recvOffsets);
+void mdrtMPIShareBlocks(void *values, const int *counts, const int *offsets, int words);
 void mdrtMPIExchange(void *send, int *sendCounts, int *sendOffsets,
                      void *recv, int *recvCounts, int *recvOffsets, int words);
 int mdrtMPIAllTrue(int predicate);

@@ -6,6 +6,8 @@
 #include <stdlib.h>
 
 static MPI_Comm comm = MPI_COMM_NULL;
+static MPI_Comm nodeComm = MPI_COMM_NULL;
+static int nodeSize, *nodeRanks, *rankNodes;
 static MPI_Datatype wideWord = MPI_DATATYPE_NULL;
 static int initializedHere, rank, size;
 
@@ -14,6 +16,9 @@ static void finish(void) {
   MPI_Finalized(&done);
   if (!done) {
     MPI_Type_free(&wideWord);
+    free(nodeRanks);
+    free(rankNodes);
+    MPI_Comm_free(&nodeComm);
     MPI_Comm_free(&comm);
     if (initializedHere)
       MPI_Finalize();
@@ -73,6 +78,13 @@ static void initialize(void) {
   MPI_Type_commit(&wideWord);
   MPI_Comm_rank(comm, &rank);
   MPI_Comm_size(comm, &size);
+  MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, rank, MPI_INFO_NULL, &nodeComm);
+  MPI_Comm_size(nodeComm, &nodeSize);
+  nodeRanks = malloc(nodeSize*sizeof *nodeRanks);
+  rankNodes = malloc(size*sizeof *rankNodes);
+  if (!nodeRanks || !rankNodes) mdrtMPIAbort("out of memory indexing shared-memory ranks");
+  MPI_Allgather(&rank, 1, MPI_INT, nodeRanks, 1, MPI_INT, nodeComm);
+  MPI_Allgather(nodeRanks, 1, MPI_INT, rankNodes, 1, MPI_INT, comm);
   atexit(finish);
 }
 
@@ -129,6 +141,14 @@ void mdrtMPIBroadcast(double *values, int64_t count, int root) {
   }
 }
 
+// Each rank has already filled its contiguous interval in domain order.
+void mdrtMPIShareBlocks(void *values, const int *counts, const int *offsets, int words) {
+  if (size == 1) return;
+  arrival();
+  MPI_Allgatherv(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, values, counts, offsets,
+                 words ? wideWord : MPI_DOUBLE, comm);
+}
+
 int mdrtMPIAllTrue(int predicate) {
   int result;
   arrival();
@@ -142,4 +162,40 @@ void mdrtMPIExchange(void *send, int *sendCounts, int *sendOffsets,
   MPI_Datatype type = words ? wideWord : MPI_DOUBLE;
   MPI_Alltoallv(send, sendCounts, sendOffsets, type,
                 recv, recvCounts, recvOffsets, type, comm);
+}
+
+
+int mdrtMPISameNode(int peer) { return rankNodes[peer] == rankNodes[rank]; }
+
+// Use the shared-memory communicator for nearby peers. World-rank
+// displacements still refer to the original consecutive packing order.
+void mdrtMPIForwardHalo(double *send, int *ns, int *os, double *recv, int *nr, int *or) {
+  if (nodeSize > 1) {
+    int *local = malloc((size_t)4*nodeSize*sizeof *local);
+    if (!local) mdrtMPIAbort("out of memory routing shared-memory halo");
+    for (int k = 0; k < nodeSize; ++k) {
+      int p = nodeRanks[k];
+      local[k] = ns[p];
+      local[nodeSize+k] = os[p];
+      local[2*nodeSize+k] = nr[p];
+      local[3*nodeSize+k] = or[p];
+    }
+    mdrtDistPhase(DistIntra);
+    if (mdrtDistObserving()) {
+      mdrtDistPhase(DistWait);
+      MPI_Barrier(nodeComm);
+      mdrtDistPhase(-DistWait);
+    }
+    MPI_Alltoallv(send, local, local+nodeSize, MPI_DOUBLE,
+                  recv, local+2*nodeSize, local+3*nodeSize, MPI_DOUBLE, nodeComm);
+    mdrtDistPhase(-DistIntra);
+    free(local);
+  }
+  if (size > nodeSize) {
+    for (int k = 0; k < nodeSize; ++k)
+      ns[nodeRanks[k]] = nr[nodeRanks[k]] = 0;
+    mdrtDistPhase(DistInter);
+    mdrtMPIExchange(send, ns, os, recv, nr, or, 0);
+    mdrtDistPhase(-DistInter);
+  }
 }

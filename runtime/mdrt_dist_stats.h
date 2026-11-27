@@ -3,17 +3,9 @@
 #include <stdint.h>
 
 // The compiled step and its host runtime share these event codes.
-enum DistPhase {
-  DistPairs = 1,
-  DistOther,
-  DistCopy,
-  DistSum,
-  DistReduce,
-  DistMigration,
-  DistWait,
-  DistPhaseCount,
-  DistStep
-};
+enum DistPhase { DistPairs = 1, DistOther, DistCopy, DistSum, DistReduce,
+                 DistMigration, DistWait, DistList, DistPack, DistIntra, DistInter,
+                 DistIntegrate, DistOutput, DistState, DistHaloBuild, DistPhaseCount, DistStep };
 /* The quantities of the fixed-point words of the deterministic mode
    (D447); a range error names its quantity. */
 enum DistQuantity {

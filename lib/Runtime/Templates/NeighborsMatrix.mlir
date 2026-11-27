@@ -510,74 +510,102 @@ func.func private @mdrt.build_neighbors_matrix_centers(
   // Counting sort of the particles by cell
   //===--------------------------------------------------------------------===//
 
+  // Count contiguous particle blocks independently. Cap the number of
+  // private histograms so their combined size is O(cells + particles).
+  %block_limit = arith.constant 32 : index
+  %grain = arith.constant 1024 : index
+  %by_rows = arith.ceildivui %n, %grain : index
+  %by_cells = arith.ceildivui %n, %cells : index
+  %budget = arith.minui %block_limit, %by_cells : index
+  %wanted = arith.minui %budget, %by_rows : index
+  %blocks = arith.maxui %wanted, %c1 : index
+  %block_size = arith.ceildivui %n, %blocks : index
   %key = memref.alloc(%n) : memref<?xindex>
   %start = memref.alloc(%cells1) : memref<?xindex>
-  %cursor = memref.alloc(%cells) : memref<?xindex>
+  %cursor = memref.alloc(%blocks, %cells) : memref<?x?xindex>
   %order = memref.alloc(%n) : memref<?xindex>
   %wrapped = memref.alloc(%n) : memref<?x3xf32>
   %sorted = memref.alloc(%n) : memref<?x3xf32>
 
-  scf.for %c = %c0 to %cells1 step %c1 {
-    memref.store %c0, %start[%c] : memref<?xindex>
+  scf.parallel (%block) = (%c0) to (%blocks) step (%c1) {
+    scf.for %c = %c0 to %cells step %c1 {
+      memref.store %c0, %cursor[%block, %c] : memref<?x?xindex>
+    }
+    %begin = arith.muli %block, %block_size : index
+    %stop = arith.addi %begin, %block_size : index
+    %end = arith.minui %stop, %n : index
+    scf.for %i = %begin to %end step %c1 {
+      %xi = memref.load %x[%i, %c0] : memref<?x3xf64>
+      %yi = memref.load %x[%i, %c1] : memref<?x3xf64>
+      %zi = memref.load %x[%i, %c2] : memref<?x3xf64>
+      %wx = func.call @mdrt.wrap(%xi, %lx, %ilx) : (f64, f64, f64) -> f64
+      %wy = func.call @mdrt.wrap(%yi, %ly, %ily) : (f64, f64, f64) -> f64
+      %wz = func.call @mdrt.wrap(%zi, %lz, %ilz) : (f64, f64, f64) -> f64
+      %narrow_x = arith.truncf %wx : f64 to f32
+      %narrow_y = arith.truncf %wy : f64 to f32
+      %narrow_z = arith.truncf %wz : f64 to f32
+      memref.store %narrow_x, %wrapped[%i, %c0] : memref<?x3xf32>
+      memref.store %narrow_y, %wrapped[%i, %c1] : memref<?x3xf32>
+      memref.store %narrow_z, %wrapped[%i, %c2] : memref<?x3xf32>
+
+      %cx = func.call @mdrt.cell_coordinate(%wx, %ilx, %nx)
+          : (f64, f64, index) -> index
+      %cy = func.call @mdrt.cell_coordinate(%wy, %ily, %ny)
+          : (f64, f64, index) -> index
+      %cz = func.call @mdrt.cell_coordinate(%wz, %ilz, %nz)
+          : (f64, f64, index) -> index
+      %zy = arith.muli %cz, %ny : index
+      %row = arith.addi %zy, %cy : index
+      %rows = arith.muli %row, %nx : index
+      %k = arith.addi %rows, %cx : index
+      memref.store %k, %key[%i] : memref<?xindex>
+
+      %old = memref.load %cursor[%block, %k] : memref<?x?xindex>
+      %new = arith.addi %old, %c1 : index
+      memref.store %new, %cursor[%block, %k] : memref<?x?xindex>
+    }
   }
 
-  // The position of each particle in the cell, its cell, and the number of
-  // particles of each cell: start[k + 1] counts the particles of cell k.
-  scf.for %i = %c0 to %n step %c1 {
-    %xi = memref.load %x[%i, %c0] : memref<?x3xf64>
-    %yi = memref.load %x[%i, %c1] : memref<?x3xf64>
-    %zi = memref.load %x[%i, %c2] : memref<?x3xf64>
-    %wx = func.call @mdrt.wrap(%xi, %lx, %ilx) : (f64, f64, f64) -> f64
-    %wy = func.call @mdrt.wrap(%yi, %ly, %ily) : (f64, f64, f64) -> f64
-    %wz = func.call @mdrt.wrap(%zi, %lz, %ilz) : (f64, f64, f64) -> f64
-    %narrow_x = arith.truncf %wx : f64 to f32
-    %narrow_y = arith.truncf %wy : f64 to f32
-    %narrow_z = arith.truncf %wz : f64 to f32
-    memref.store %narrow_x, %wrapped[%i, %c0] : memref<?x3xf32>
-    memref.store %narrow_y, %wrapped[%i, %c1] : memref<?x3xf32>
-    memref.store %narrow_z, %wrapped[%i, %c2] : memref<?x3xf32>
-
-    %cx = func.call @mdrt.cell_coordinate(%wx, %ilx, %nx)
-        : (f64, f64, index) -> index
-    %cy = func.call @mdrt.cell_coordinate(%wy, %ily, %ny)
-        : (f64, f64, index) -> index
-    %cz = func.call @mdrt.cell_coordinate(%wz, %ilz, %nz)
-        : (f64, f64, index) -> index
-    %zy = arith.muli %cz, %ny : index
-    %row = arith.addi %zy, %cy : index
-    %rows = arith.muli %row, %nx : index
-    %k = arith.addi %rows, %cx : index
-    memref.store %k, %key[%i] : memref<?xindex>
-
-    %next = arith.addi %k, %c1 : index
-    %old = memref.load %start[%next] : memref<?xindex>
-    %new = arith.addi %old, %c1 : index
-    memref.store %new, %start[%next] : memref<?xindex>
+  // A block's offset in its cell is the sum of all earlier blocks'
+  // counts. Filling those disjoint ranges preserves particle index order.
+  scf.parallel (%c) = (%c0) to (%cells) step (%c1) {
+    %total = scf.for %block = %c0 to %blocks step %c1
+        iter_args(%before = %c0) -> (index) {
+      %count = memref.load %cursor[%block, %c] : memref<?x?xindex>
+      memref.store %before, %cursor[%block, %c] : memref<?x?xindex>
+      %sum = arith.addi %before, %count : index
+      scf.yield %sum : index
+    }
+    memref.store %total, %start[%c] : memref<?xindex>
   }
-
-  scf.for %c = %c0 to %cells step %c1 {
-    %next = arith.addi %c, %c1 : index
-    %before = memref.load %start[%c] : memref<?xindex>
-    %here = memref.load %start[%next] : memref<?xindex>
-    %sum = arith.addi %before, %here : index
-    memref.store %sum, %start[%next] : memref<?xindex>
-    memref.store %before, %cursor[%c] : memref<?xindex>
+  %total = scf.for %c = %c0 to %cells step %c1
+      iter_args(%before = %c0) -> (index) {
+    %count = memref.load %start[%c] : memref<?xindex>
+    memref.store %before, %start[%c] : memref<?xindex>
+    %sum = arith.addi %before, %count : index
+    scf.yield %sum : index
   }
+  memref.store %total, %start[%cells] : memref<?xindex>
 
-  // The particles in the order of the cells, and their positions in that
-  // order. The particles of a cell are in the order of their indices.
-  scf.for %i = %c0 to %n step %c1 {
-    %k = memref.load %key[%i] : memref<?xindex>
-    %p = memref.load %cursor[%k] : memref<?xindex>
-    memref.store %i, %order[%p] : memref<?xindex>
-    %q = arith.addi %p, %c1 : index
-    memref.store %q, %cursor[%k] : memref<?xindex>
-    %wx = memref.load %wrapped[%i, %c0] : memref<?x3xf32>
-    %wy = memref.load %wrapped[%i, %c1] : memref<?x3xf32>
-    %wz = memref.load %wrapped[%i, %c2] : memref<?x3xf32>
-    memref.store %wx, %sorted[%p, %c0] : memref<?x3xf32>
-    memref.store %wy, %sorted[%p, %c1] : memref<?x3xf32>
-    memref.store %wz, %sorted[%p, %c2] : memref<?x3xf32>
+  scf.parallel (%block) = (%c0) to (%blocks) step (%c1) {
+    %begin = arith.muli %block, %block_size : index
+    %stop = arith.addi %begin, %block_size : index
+    %end = arith.minui %stop, %n : index
+    scf.for %i = %begin to %end step %c1 {
+      %k = memref.load %key[%i] : memref<?xindex>
+      %base = memref.load %start[%k] : memref<?xindex>
+      %offset = memref.load %cursor[%block, %k] : memref<?x?xindex>
+      %p = arith.addi %base, %offset : index
+      memref.store %i, %order[%p] : memref<?xindex>
+      %next = arith.addi %offset, %c1 : index
+      memref.store %next, %cursor[%block, %k] : memref<?x?xindex>
+      %wx = memref.load %wrapped[%i, %c0] : memref<?x3xf32>
+      %wy = memref.load %wrapped[%i, %c1] : memref<?x3xf32>
+      %wz = memref.load %wrapped[%i, %c2] : memref<?x3xf32>
+      memref.store %wx, %sorted[%p, %c0] : memref<?x3xf32>
+      memref.store %wy, %sorted[%p, %c1] : memref<?x3xf32>
+      memref.store %wz, %sorted[%p, %c2] : memref<?x3xf32>
+    }
   }
 
   //===--------------------------------------------------------------------===//
@@ -718,7 +746,7 @@ func.func private @mdrt.build_neighbors_matrix_centers(
 
   memref.dealloc %key : memref<?xindex>
   memref.dealloc %start : memref<?xindex>
-  memref.dealloc %cursor : memref<?xindex>
+  memref.dealloc %cursor : memref<?x?xindex>
   memref.dealloc %order : memref<?xindex>
   memref.dealloc %wrapped : memref<?x3xf32>
   memref.dealloc %sorted : memref<?x3xf32>

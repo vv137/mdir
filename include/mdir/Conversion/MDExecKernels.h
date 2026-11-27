@@ -38,7 +38,7 @@ mlir::Value convertReal(mlir::OpBuilder &builder, mlir::Location loc,
 /// the host minimum-image kernel when image translations are available.
 mlir::Value pairDifference(mlir::OpBuilder &b, mlir::Location loc,
                            mlir::Value center, mlir::Value other,
-                           mlir::Type computed, mlir::Type stored, mlir::Value centerImage = {},
+                           mlir::Type computed,
                            mlir::Value otherImage = {});
 
 /// One over each edge length of `box`. A kernel finds the minimum image

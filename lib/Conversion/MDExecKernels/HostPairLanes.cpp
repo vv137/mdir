@@ -303,13 +303,9 @@ SmallVector<Value> kernels::emitPairRowLanes(OpBuilder &builder,
   Value cutoff2Lanes = setup.splat(cutoff2);
   Value centralLanes = setup.splat(central);
   Value centralPosition = loadElement(builder, loc, positions, central);
-  Type storedPosition = getElementTypeOrSelf(centralPosition);
   if (imagePositions)
     centralPosition = loadElement(builder, loc, imagePositions, central);
   SmallVector<Value> centralParts = splatComponents(centralPosition);
-  SmallVector<Value> centralImages;
-  if (imageShifts)
-    centralImages = splatComponents(loadElement(builder, loc, imageShifts, central));
   SmallVector<Value> centralValues;
   for (Value buffer : insBuffers)
     centralValues.push_back(loadElement(builder, loc, buffer, central));
@@ -371,8 +367,7 @@ SmallVector<Value> kernels::emitPairRowLanes(OpBuilder &builder,
     if (imageShifts)
       otherImages = gather(imageShifts);
     for (int64_t k = 0; k != 3; ++k)
-      d.push_back(pairDifference(b, loc, centralParts[k], otherPosition[k], computed, storedPosition,
-                                 imageShifts ? centralImages[k] : Value(),
+      d.push_back(pairDifference(b, loc, centralParts[k], otherPosition[k], computed,
                                  imageShifts ? otherImages[k] : Value()));
     if (op.getImages() != md_exec::Images::Explicit)
       emitLaneMinimumImage(b, loc, d, boxParts, inverseParts);

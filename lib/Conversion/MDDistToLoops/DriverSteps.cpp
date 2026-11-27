@@ -55,6 +55,7 @@ Value Segment::advance(OpBuilder &b, Value field, Value slope, Value dt,
   if (mass)
     inputs.push_back(mass);
   auto map = dd::MapParticlesOp::create(b, loc, field.getType(), inputs);
+  map->setAttr("md_dist.integration", b.getUnitAttr());
   Block *body = new Block;
   map.getKernel().push_back(body);
   for (Value input : inputs)
@@ -111,62 +112,69 @@ Epoch Segment::rebuild(OpBuilder &b, Epoch e) {
   return unpack(b, branch.getResult(0));
 }
 
-Value Segment::loop(OpBuilder &b, scf::ForOp source, Value state,
-                    IRMapping map) {
-  auto result = scf::ForOp::create(
-      b, loc, map.lookupOrDefault(source.getLowerBound()),
-      map.lookupOrDefault(source.getUpperBound()),
-      map.lookupOrDefault(source.getStep()), ValueRange{state},
-      [&](OpBuilder &body, Location, Value iv, ValueRange args) {
-        map.map(source.getInductionVar(), iv);
-        Epoch e = unpack(body, args[0]);
-        // Map logical inputs to slots so a field used after a migration reads
-        // its new rows. Observations materialize a global field only at the
-        // use.
-        DenseMap<Value, unsigned> slot;
-        for (auto [i, v] : llvm::enumerate(source.getRegionIterArgs()))
-          slot[v] = i;
-        for (auto [i, v] : llvm::enumerate(parameters))
-          slot[v] = i + 3;
-        for (Operation &op : source.getBody()->without_terminator()) {
-          if (auto nested = dyn_cast<scf::ForOp>(op)) {
-            e = unpack(body, loop(body, nested, pack(body, e), map));
-            for (auto [i, v] : llvm::enumerate(nested.getResults()))
-              slot[v] = i;
-          } else if (auto kick = dyn_cast<dyn::KickOp>(op)) {
-            e.fields[1] =
-                advance(body, e.fields[1], e.fields[2],
-                        map.lookupOrDefault(kick.getDt()), e.fields[3]);
-            slot[kick.getResult()] = 1;
-          } else if (auto drift = dyn_cast<dyn::DriftOp>(op)) {
-            e.fields[0] = advance(body, e.fields[0], e.fields[1],
-                                  map.lookupOrDefault(drift.getDt()), {});
-            e = rebuild(body, e);
-            slot[drift.getResult()] = 0;
-          } else if (auto part = dyn_cast<dd::PartitionOp>(op)) {
-            map.map(part.getLayout(), e.layout);
-          } else if (auto field = dyn_cast<dd::DistributeOp>(op)) {
-            map.map(field.getResult(),
-                    e.fields[slot.find(field.getField())->second]);
-          } else if (auto halo = dyn_cast<dd::HaloOp>(op)) {
-            map.map(halo.getResult(), e.halo);
-          } else if (auto collect = dyn_cast<dd::CollectOp>(op)) {
-            e.fields[2] = map.lookup(collect.getField());
-            slot[collect.getResult()] = 2;
-          } else {
-            for (Value operand : op.getOperands()) {
-              auto it = slot.find(operand);
-              if (it != slot.end())
-                map.map(operand,
-                        dd::CollectOp::create(body, loc, operand.getType(),
-                                              e.fields[it->second], e.layout)
-                            .getResult());
-            }
-            body.clone(op, map);
-          }
+Value Segment::loop(OpBuilder &b, scf::ForOp source, Value state, IRMapping map) {
+  auto result = scf::ForOp::create(b, loc, map.lookupOrDefault(source.getLowerBound()),
+      map.lookupOrDefault(source.getUpperBound()), map.lookupOrDefault(source.getStep()),
+      ValueRange{state}, [&](OpBuilder &body, Location, Value iv, ValueRange args) {
+    map.map(source.getInductionVar(), iv);
+    Epoch e = unpack(body, args[0]);
+    // Map logical inputs to slots so a field used after a migration reads its
+    // new rows. Observations materialize a global field only at the use.
+    DenseMap<Value, unsigned> slot;
+    for (auto [i, v] : llvm::enumerate(source.getRegionIterArgs())) slot[v] = i;
+    for (auto [i, v] : llvm::enumerate(parameters)) slot[v] = i + 3;
+    for (Operation &op : source.getBody()->without_terminator()) {
+      if (auto nested = dyn_cast<scf::ForOp>(op)) {
+        e = unpack(body, loop(body, nested, pack(body, e), map));
+        for (auto [i, v] : llvm::enumerate(nested.getResults())) slot[v] = i;
+      } else if (auto kick = dyn_cast<dyn::KickOp>(op)) {
+        e.fields[1] = advance(body, e.fields[1], e.fields[2],
+                             map.lookupOrDefault(kick.getDt()), e.fields[3]);
+        slot[kick.getResult()] = 1;
+      } else if (auto drift = dyn_cast<dyn::DriftOp>(op)) {
+        e.fields[0] = advance(body, e.fields[0], e.fields[1],
+                             map.lookupOrDefault(drift.getDt()), {});
+        e = rebuild(body, e);
+        slot[drift.getResult()] = 0;
+      } else if (auto part = dyn_cast<dd::PartitionOp>(op)) {
+        map.map(part.getLayout(), e.layout);
+      } else if (auto field = dyn_cast<dd::DistributeOp>(op)) {
+        map.map(field.getResult(), e.fields[slot.find(field.getField())->second]);
+      } else if (auto halo = dyn_cast<dd::HaloOp>(op)) {
+        map.map(halo.getResult(), e.halo);
+      } else if (auto collect = dyn_cast<dd::CollectOp>(op)) {
+        e.fields[2] = map.lookup(collect.getField());
+        slot[collect.getResult()] = 2;
+      } else if (auto sum = dyn_cast<md::SumParticlesOp>(op);
+                 sum && !wrapDrift && llvm::all_of(sum.getGathered(),
+                     [&](Value field) { return slot.contains(field); })) {
+        // Reporting a sum needs only one partial per domain. Keep its
+        // fields in owned-row order throughout the integration loop.
+        SmallVector<Value> fields;
+        for (Value field : sum.getGathered()) fields.push_back(e.fields[slot.lookup(field)]);
+        Type type = sum.getResult().getType();
+        auto local = dd::SumParticlesOp::create(body, loc,
+            dd::PartialType::get(body.getContext(), type), fields);
+        IRMapping kernelMap(map);
+        sum.getKernel().cloneInto(&local.getKernel(), kernelMap);
+        Operation *term = local.getKernel().front().getTerminator();
+        OpBuilder inside(term);
+        dd::YieldOp::create(inside, loc, term->getOperands());
+        term->erase();
+        auto total = dd::AllReduceOp::create(body, loc, type, local.getResult());
+        map.map(sum.getResult(), total.getResult());
+      } else {
+        for (Value operand : op.getOperands()) {
+          auto it = slot.find(operand);
+          if (it != slot.end())
+            map.map(operand, dd::CollectOp::create(body, loc, operand.getType(),
+                e.fields[it->second], e.layout).getResult());
         }
-        scf::YieldOp::create(body, loc, pack(body, e));
-      });
+        body.clone(op, map);
+      }
+    }
+    scf::YieldOp::create(body, loc, pack(body, e));
+  });
   return result.getResult(0);
 }
 

@@ -22,3 +22,9 @@
 # CHECK: CMAP {{ *}}0.096326
 # BONDS: bonds 20, frames
 # BONDS: bonds ok
+
+# The constrained force loop retains its MATRIX epoch across small drifts.
+# RUN: mkdir -p %t/reuse
+# RUN: sed -e 's/deterministic = true/deterministic = false/' -e 's/^steps[[:space:]]*= 2$/steps = 4/' %t/four/run.toml > %t/reuse/run.toml
+# RUN: cd %t/reuse && mdir run run.toml | FileCheck %s --check-prefix=REUSE
+# REUSE: DIST: interval step 2 list_build min/mean/max 0 0 0 s

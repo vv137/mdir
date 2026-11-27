@@ -814,3 +814,10 @@ partition these visits as above. Selection must use the current midpoint
 because the displacement bound permits a midpoint to cross a domain
 face. SIMD groups consecutive candidates of the resulting rows. The
 deterministic implementation retains the integer reduction of ruling B.
+
+A cached MPI schedule (D[distribute-steady]) records a source and destination
+row for the lifetime of one halo. Its reverse visits the same ordered
+sequence of contributions to each owner, including those on the same rank.
+For a disjoint constraint group the partition places every member at one
+owner. The verified tuple schedule then contains only owned row indices,
+so its calculation needs no forward ghost payload.

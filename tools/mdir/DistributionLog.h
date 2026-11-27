@@ -30,16 +30,16 @@ class DistributionLog {
   bool setup = true;
   bool enteredStep = false;
   double reach;
-  int enclosing = 0;
+  llvm::SmallVector<unsigned, 4> active;
   FILE *trace = nullptr;
   std::vector<int64_t> owned, ghosts;
   llvm::json::Array boxes;
   Sample current, interval, total;
   Clock::time_point started = Clock::now(), began = started;
   std::array<Clock::time_point, DistPhaseCount> starts;
-  static constexpr const char *names[] = {
-      "wall",     "pairs",      "other_terms", "halo_copy",
-      "halo_sum", "all_reduce", "migration",   "wait"};
+  static constexpr const char *names[] = {"wall", "pairs", "other_terms",
+      "halo_copy", "halo_sum", "all_reduce", "migration", "wait", "list_build",
+      "halo_pack", "halo_intra", "halo_inter", "integration", "output", "state", "halo_build"};
   int owner(int64_t d) const {
     auto q = domains / ranks, r = domains % ranks;
     return d < r * (q + 1) ? d / (q + 1) : r + (d - r * (q + 1)) / q;
@@ -219,12 +219,13 @@ class DistributionLog {
       began = Clock::now();
     } else if (code > 0) {
       starts[code] = now;
-      if (code != DistWait) enclosing = code;
+      active.push_back(code);
     } else {
       double duration = std::chrono::duration<double>(now-starts[-code]).count();
       current.seconds[-code] += duration;
-      if (code == -DistWait && enclosing) current.seconds[enclosing] -= duration;
-      if (code != -DistWait) enclosing = 0;
+      assert(!active.empty() && active.back() == unsigned(-code));
+      active.pop_back();
+      if (!active.empty()) current.seconds[active.back()] -= duration;
     }
   }
 
