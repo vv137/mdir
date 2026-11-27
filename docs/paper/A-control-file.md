@@ -63,10 +63,11 @@ or output format, or overwrite behavior.
 
 D308 adds `mdir-opt --md-dist-print-schedule`, a compiler
 inspection pass over distributed halo dependencies. It adds no control-file
-key and changes no output file or overwrite behavior. The diagnostic
-environment setting `MDIR_DIST_HALO_OVERLAP=0` makes MPI particle halo waits
-immediate. Distributed execution
-continues to use the synchronous in-process transport.
+key and changes no output file or overwrite behavior. For MPI transport,
+`MDIR_DIST_HALO_OVERLAP=0` makes each particle halo wait immediately after
+posting the messages. The default handles rank-local ghost copies and
+force rows whose contributions are all local before waiting. Local
+transport remains synchronous.
 
 D310 adds the opt-in compiler pass option
 `halo-events=true` to `--convert-md-dist-to-loops` and
@@ -588,7 +589,8 @@ smallest domain surface area for the input cell. The traversal is
 `"directed"` (default), `"unique"`, or `"midpoint"` (D[distribute-midpoint]). The
 in-process transport is `"local"`. Without the table the ordinary single-domain
 pipeline runs. Unique and midpoint traversal of a topology support NVE and
-V-rescale NVT with a fixed orthorhombic cell.
+V-rescale NVT with a fixed orthorhombic cell. A distributed NPT control
+fails with `distributed execution requires a fixed periodic cell`.
 
 The run log reports the selected factors, domain bounds, imports and
 interval traffic. Set `MDIR_DIST_STEP_TRACE` to a fresh prefix for
