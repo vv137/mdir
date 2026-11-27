@@ -1,6 +1,6 @@
 # Appendix A. The control file
 
-D435 and D[prolate-axis-fft] use the Gaussian or prolate mesh selected by `[pme]`. The device
+D435 and D445 use the Gaussian or prolate mesh selected by `[pme]`. The device
 convolution choice and its validation override are described in
 the PME reference for [Gaussian](../pme.md#five-pass-gaussian-convolution-on-a-device) and [prolate](../pme.md#cutoff-continuity-of-the-prolate-splitting) splitting.
 

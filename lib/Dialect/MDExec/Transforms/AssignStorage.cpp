@@ -1450,7 +1450,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       (grid[0] == 144 && grid[1] == 84 && grid[2] == 80);
   bool measuredCuFFT = false;
   if (op.getProlate()) {
-    // D[prolate-axis-fft]. At setup the driver has already checked the
+    // D445. At setup the driver has already checked the
     // target and density. Qualify the assignment and grid together: only
     // the four-point B-spline window was timed; the prolate window keeps
     // cuFFT under AUTO.

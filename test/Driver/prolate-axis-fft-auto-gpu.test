@@ -1,5 +1,5 @@
 # The driver's part of AUTO for the prolate splits on the axis transform
-# (D[prolate-axis-fft]): only the timed target and split, mixed TOWERS on
+# (D445): only the timed target and split, mixed TOWERS on
 # sm_89 with continuity 2, 8 basis terms and the B-spline window, pass
 # `auto` to the storage pass, which then checks the mesh. Every other
 # target or split passes `auto-cufft`, whose reason the plan records

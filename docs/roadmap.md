@@ -82,7 +82,7 @@ remaining Python consumers and the duplicate-definition check follow in part 2.
 | CHARMM force fields | Done (D121, D122, [charmm.md](charmm.md)). Next: CHARMM-GUI's triclinic cells and cell files, VSWITCH (done since as D175, F3), the lone pairs of CGenFF, and a bilayer at constant pressure against GROMACS and CHARMM |
 | PME stage emitters | Implemented in D427 (#908). The C² splitting and four-point window of #466 build on these stages. |
 | Force-only Gaussian PME product (#959) | Implemented for eligible mixed-precision GPU transforms (D433). |
-| Prolate PME convolution | D[prolate-axis-fft] applies the selected radial influence in the X transform for either assignment window. |
+| Prolate PME convolution | D445 applies the selected radial influence in the X transform for either assignment window. |
 | Gaussian PME convolution (#961) | D435 generates five device passes and reduces reciprocal observables in the fused X transform. See [PME](pme.md#five-pass-gaussian-convolution-on-a-device). |
 | PME grid axes | TODO: the longest edge as the contiguous axis of the grid, with the tables of D104 and the other stages on the permuted axes ([pme.md](pme.md#the-axes-of-the-grid)) |
 | Ewald summation with prolates | Done (D266, #334; measured again with tiles, D282, #336; the direct sum as a table, D280, #380; [pme.md](pme.md#7-the-prolate-kernel-d266), Section 7) |

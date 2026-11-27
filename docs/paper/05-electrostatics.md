@@ -1096,7 +1096,7 @@ of this density. The default assignment for positive continuity is a four-point 
 Its deconvolution corrects the spline assignment while the radial factor
 retains the cosine transform of the constrained density. For either window the
 five-pass FFT applies this same diagonal product in the X pass
-(D[prolate-axis-fft]). At fixed fractional sites a cell strain changes
+(D445). At fixed fractional sites a cell strain changes
 the inverse volume and the wave vector $\mathbf m$, and nothing else: the
 charge power and the window deconvolution, a product over the axes of the
 squared transform of the window at the integer index $k_a/K_a$, do not

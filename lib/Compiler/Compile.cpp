@@ -430,7 +430,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
         control.neighborStructure == NeighborStructure::Towers && program.pme &&
         !control.deterministic;
     os << "md-exec-assign-storage{memory=device";
-    // D[prolate-axis-fft] qualifies the radial spectrum and assignment
+    // D445 qualifies the radial spectrum and assignment
     // together. The storage pass checks the mesh of each evaluation. Only
     // this split was timed; the prolate window keeps cuFFT under AUTO.
     bool measuredProlate = control.pmeContinuity == 2 &&

@@ -1384,7 +1384,7 @@ zero and `"BSPLINE"` otherwise. The prolate window takes orders 5–8
 order 4. On the GPU, positive continuity with this window uses the Gaussian
 order-4 charge assignment and force gathering kernels. The radial influence
 uses the cosine transform of the constrained density and the inverse squared
-B-spline transform on each axis. D[prolate-axis-fft] uses the same tables between the forward and inverse X
+B-spline transform on each axis. D445 uses the same tables between the forward and inverse X
 transforms for either assignment window. The double mesh uses binary64
 butterflies and cross phases. On observed steps the X pass accumulates the
 energy and six independent virials before scaling the coefficient. The

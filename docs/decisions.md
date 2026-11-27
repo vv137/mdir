@@ -740,6 +740,7 @@ specification follow those made with it.
 | [D442](decisions/D442.md) | The optional `[execution] towers_shape.screen` selects `"AUTO"`, `"MMA"`, or `"SCALAR"`. | 2026-11-26 |
 | [D443](decisions/D443.md) | Use one representable periodic cell per step. | 2026-11-26 |
 | [D444](decisions/D444.md) | **With `kernel = "PROLATE"` and `window = "BSPLINE"`, the automatic grid is refined until the mesh error estimate $E_B$ of the B-spline window is at most `tolerance` $\eta$ (at most $\eta/2$ for the original density with this window), from the grid of eq. | 2026-11-27 |
+| [D445](decisions/D445.md) | Apply the prolate reciprocal multiplier between the forward and inverse X transforms of D435. | 2026-11-27 |
 <!-- end decisions-table -->
 
 

@@ -108,7 +108,7 @@ def mesh_force(continuity, terms, window, observables=False, shape=None, edges=N
         # The stored half mesh assigns +N/2 to the Nyquist index of each
         # axis. This copies the convention of the implementation and so does
         # not check it: it fixes only the sign of the off-diagonal virial
-        # terms that have one Nyquist index (D[prolate-axis-fft]).
+        # terms that have one Nyquist index (D445).
         for a, n in zip(axes, shape):
             a[n//2] = n//2
         nz = shape[2]//2 + 1
