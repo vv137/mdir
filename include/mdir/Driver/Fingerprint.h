@@ -23,9 +23,8 @@ namespace driver {
 ///   - coupling: the keys of [dynamics] but `steps`, and of [ensemble],
 ///     [thermostat], and [barostat];
 ///   - execution: the keys of [execution] and of [performance], and with
-///     [distribute] its traversal and transport, and its grid as resolved
-///     for the cell outside the deterministic mode, whose trajectory the
-///     grid does not change (D[distribute-driver]).
+///     [distribute] its traversal, its transport, and its grid as resolved
+///     for the cell (D[distribute-driver]).
 /// A value that names a choice is recorded in the spelling that the reader
 /// documents for it, whatever its case in the file (#702): `control` must be
 /// the control file read from `controlFile`, whose choiceSpellings say which

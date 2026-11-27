@@ -664,30 +664,43 @@ static int runControlImpl(StringRef controlFile, Emit emit,
               change.after;
     return text;
   };
+  // The differences that `--continue --force` overrides (D[distribute-driver]):
+  // the log notes them, the manifest and the new checkpoint record them.
+  std::vector<FingerprintChange> forcedChanges;
+  bool forcedRecompute = false;
   if (own) {
     // A run continues as it was: another physics or coupling is another
     // run, which begins from the checkpoint as 'checkpoint' of [input].
+    // --force continues it anyway, evaluating its forces and coupling state
+    // anew as such a run does.
     std::vector<FingerprintChange> changes =
         compareFingerprints(own->fingerprint, fingerprint, "physics");
     std::vector<FingerprintChange> coupling =
         compareFingerprints(own->fingerprint, fingerprint, "coupling");
     changes.insert(changes.end(), coupling.begin(), coupling.end());
-    if (!changes.empty())
-      return fail("'" + control->restartInput + "' was written by a run of "
-                  "other physics or coupling, which --continue does not "
-                  "change; begin a new run from it as 'checkpoint' of "
-                  "[input] instead. What differs (checkpoint -> control "
-                  "file):" + describe(changes));
+    if (!changes.empty()) {
+      if (!options.forced)
+        return fail("'" + control->restartInput +
+                    "' was written by a run of "
+                    "other physics or coupling, which --continue does not "
+                    "change; begin a new run from it as 'checkpoint' of "
+                    "[input] instead, or override it with --continue "
+                    "--force. What differs (checkpoint -> control file):" +
+                    describe(changes));
+      forcedChanges.insert(forcedChanges.end(), changes.begin(), changes.end());
+      forcedRecompute = true;
+    }
     // A deterministic distributed run gives the same bits on every grid,
     // so --continue may take another (D[distribute-driver]); without
     // [distribute], or with it where the run had none, the sums are of
     // another arithmetic, and the run would not reproduce its uninterrupted
     // course, which a deterministic continuation promises.
-    auto distributed = [](const Fingerprint &entries) {
-      return llvm::any_of(entries, [](const FingerprintEntry &entry) {
-        return entry.group == "execution" &&
-               StringRef(entry.name).starts_with("[distribute]");
-      });
+    auto isDistribution = [](const FingerprintEntry &entry) {
+      return entry.group == "execution" &&
+             StringRef(entry.name).starts_with("[distribute]");
+    };
+    auto distributed = [&](const Fingerprint &entries) {
+      return llvm::any_of(entries, isDistribution);
     };
     auto deterministic = [](const Fingerprint &entries) {
       return llvm::any_of(entries, [](const FingerprintEntry &entry) {
@@ -695,24 +708,52 @@ static int runControlImpl(StringRef controlFile, Emit emit,
                entry.value == "true";
       });
     };
-    if (deterministic(own->fingerprint) && control->deterministic &&
-        distributed(own->fingerprint) != distributed(fingerprint))
-      return fail("'" + control->restartInput + "' was written by a " +
-                  "deterministic run " +
-                  (distributed(own->fingerprint) ? "with" : "without") +
-                  " [distribute], whose fixed-point sums --continue keeps; "
-                  "continue it " +
-                  (distributed(own->fingerprint)
-                       ? "with [distribute], on any grid,"
-                       : "without [distribute]") +
-                  " or begin a new run from it as 'checkpoint' of [input]");
     std::vector<FingerprintChange> execution =
         compareFingerprints(own->fingerprint, fingerprint, "execution");
-    if (!execution.empty())
+    bool bitwise = deterministic(own->fingerprint) && control->deterministic;
+    if (bitwise && distributed(own->fingerprint) != distributed(fingerprint)) {
+      if (!options.forced)
+        return fail("'" + control->restartInput + "' was written by a " +
+                    "deterministic run " +
+                    (distributed(own->fingerprint) ? "with" : "without") +
+                    " [distribute], whose fixed-point sums --continue keeps; "
+                    "continue it " +
+                    (distributed(own->fingerprint)
+                         ? "with [distribute], on any grid,"
+                         : "without [distribute]") +
+                    " or begin a new run from it as 'checkpoint' of [input], "
+                    "or override it with --continue --force");
+      for (const FingerprintChange &change : execution)
+        if (StringRef(change.name).starts_with("[distribute]"))
+          forcedChanges.push_back(change);
+    }
+    // Another grid under the deterministic contract keeps the bits.
+    std::vector<FingerprintChange> grid, other;
+    for (const FingerprintChange &change : execution)
+      (bitwise && change.name == "[distribute] domains" &&
+               change.before != "(none)" && change.after != "(none)"
+           ? grid
+           : other)
+          .push_back(change);
+    if (!grid.empty())
+      notes.push_back("the run continues on another grid of domains, whose "
+                      "bits the deterministic contract keeps (checkpoint -> "
+                      "control file):" +
+                      describe(grid));
+    if (!other.empty())
       notes.push_back("the run continues with other settings of its "
                       "execution, whose bits follow them (checkpoint -> "
                       "control file):" +
-                      describe(execution));
+                      describe(other));
+    if (!forcedChanges.empty())
+      notes.push_back("--force continues the run past the differences of its "
+                      "fingerprint that --continue refuses; the checkpoints "
+                      "and the manifest record them (checkpoint -> control "
+                      "file):" +
+                      describe(forcedChanges));
+  } else if (options.forced) {
+    notes.push_back("--force overrides nothing: there is no checkpoint to "
+                    "continue");
   }
 
   StringRef integrator =
@@ -788,7 +829,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     // and are taken only where this run has the same
     // (D172). Otherwise the run evaluates them at its
     // first step, as production after equilibration with restraints must.
-    if (!own) {
+    if (!own || forcedRecompute) {
       std::vector<FingerprintChange> physics =
           compareFingerprints(checkpoint->fingerprint, fingerprint, "physics");
       std::vector<FingerprintChange> coupling = compareFingerprints(
@@ -1674,6 +1715,15 @@ static int runControlImpl(StringRef controlFile, Emit emit,
         {"part", part}, {"continued", options.continues},
         {"compile_seconds", compileTime},
         {"compile_cache", std::move(cacheRecord)}};
+    if (!forcedChanges.empty()) {
+      llvm::json::Array overridden;
+      for (const FingerprintChange &change : forcedChanges)
+        overridden.push_back(llvm::json::Object{{"group", change.group},
+                                                {"name", change.name},
+                                                {"checkpoint", change.before},
+                                                {"control", change.after}});
+      metadata["forced_overrides"] = std::move(overridden);
+    }
     if (llvm::Error error = manifest.start(getOutputPath(control->manifestFile),
                                             options.continues, std::move(metadata)))
       return fail(std::move(error));
@@ -1907,6 +1957,14 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     output.checkpointPath = control->restartOutput;
     Checkpoint &checkpoint = output.checkpoint;
     checkpoint.omitObjectTimes = output.distributedWordEnergy;
+    // A forced continuation is recorded in every checkpoint that follows
+    // it, with the earlier ones of the run.
+    if (own)
+      checkpoint.forcedContinuations = own->forcedContinuations;
+    for (const FingerprintChange &change : forcedChanges)
+      checkpoint.forcedContinuations +=
+          "part " + std::to_string(part) + ": " + change.group + " " +
+          change.name + ": " + change.before + " -> " + change.after + "\n";
     checkpoint.masses = system->masses;
     checkpoint.species.assign(system->types.begin(), system->types.end());
     for (int i = 0; i != 3; ++i) {

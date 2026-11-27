@@ -85,10 +85,19 @@ def run(name, domains, ranks, *, stop=False, resume=False, trace=False):
     return path
 
 
+def grid(path):
+    """The grid that the fingerprint of the checkpoint names."""
+    with h5py.File(path / "state.h5") as state:
+        text = state["parameters/mdir/fingerprint/execution"][()].decode()
+    return [e for e in text.splitlines() if e.startswith("[distribute] domains")]
+
+
 def compare(a, b):
     assert (a / "traj.h5").read_bytes() == (b / "traj.h5").read_bytes()
-    # Continuations increment the checkpoint part even for an identical physical state.
-    if (a / "resume.log").exists() == (b / "resume.log").exists():
+    # Continuations increment the checkpoint part even for an identical
+    # physical state, and the fingerprint names the grid of the run.
+    same = (a / "resume.log").exists() == (b / "resume.log").exists()
+    if same and grid(a) == grid(b):
         assert (a / "state.h5").read_bytes() == (b / "state.h5").read_bytes()
     assert (a / "energy.dat").read_bytes() == (b / "energy.dat").read_bytes()
     for filename in ["state.h5", "traj.h5"]:
@@ -104,6 +113,13 @@ def compare(a, b):
                 current.visit(names.append)
                 words = {"domain", "domains", "grid", "owner", "ownership", "ghosts", "epoch"}
                 assert not any(words.intersection(path.split("/")) for path in names)
+                # The fingerprints differ in the grid alone.
+                for group in ["physics", "coupling", "execution"]:
+                    key = f"parameters/mdir/fingerprint/{group}"
+                    x, y = ([e for e in h[key][()].decode().splitlines()
+                             if not e.startswith("[distribute] domains")]
+                            for h in (ref, current))
+                    assert x == y, (a.name, b.name, group)
             other_datasets = []
             current.visititems(lambda name, obj: other_datasets.append(name)
                                if isinstance(obj, h5py.Dataset) and obj.dtype.kind in 'iuf' else None)

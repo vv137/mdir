@@ -1025,6 +1025,28 @@
         "continued": {
           "type": "boolean"
         },
+        "forced_overrides": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "group": {
+                "enum": ["physics", "coupling", "execution"]
+              },
+              "name": {
+                "type": "string"
+              },
+              "checkpoint": {
+                "type": "string"
+              },
+              "control": {
+                "type": "string"
+              }
+            },
+            "required": ["group", "name", "checkpoint", "control"],
+            "additionalProperties": false
+          }
+        },
         "compile_seconds": {
           "type": "number",
           "minimum": 0
