@@ -175,6 +175,7 @@
                 "requested": {
                   "enum": [
                     "LAUNCH",
+                    "SPANS",
                     "GRAPH",
                     "AUTO"
                   ]
@@ -182,6 +183,7 @@
                 "value": {
                   "enum": [
                     "LAUNCH",
+                    "SPANS",
                     "GRAPH"
                   ]
                 },

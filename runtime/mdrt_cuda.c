@@ -470,6 +470,7 @@ CUmodule mgpuModuleLoadJIT(void *data, int optLevel, size_t size) {
 void mgpuModuleUnload(CUmodule module) {
   /* This runs when the program ends, possibly after the driver has shut
      down. */
+  mdrtSpansFlush();
   if (isPending && (sharedStream || borrowedStreamDepth))
     cuStreamSynchronize(sharedStream);
   isPending = 0;
@@ -510,6 +511,14 @@ CUfunction mgpuModuleGetFunction(CUmodule module, const char *name) {
 
 static void finish(void);
 static void endKernel(void);
+static int recordLaunch(CUfunction function, intptr_t gridX, intptr_t gridY,
+                        intptr_t gridZ, intptr_t blockX, intptr_t blockY,
+                        intptr_t blockZ, int32_t sharedMemory,
+                        CUstream stream, void **parameters, void **extra,
+                        int cooperative, intptr_t clusterX, intptr_t clusterY,
+                        intptr_t clusterZ);
+void mdrtSpansFlush(void);
+static int isRecording(void);
 
 static void launchKernel(CUfunction function, intptr_t gridX, intptr_t gridY,
                          intptr_t gridZ, intptr_t blockX, intptr_t blockY,
@@ -517,10 +526,14 @@ static void launchKernel(CUfunction function, intptr_t gridX, intptr_t gridY,
                          void **parameters, void **extra, int cooperative,
                          intptr_t clusterX, intptr_t clusterY,
                          intptr_t clusterZ) {
-  enter();
   /* A launch over no particles is no launch. The driver rejects it. */
   if (gridX <= 0 || gridY <= 0 || gridZ <= 0)
     return;
+  if (recordLaunch(function, gridX, gridY, gridZ, blockX, blockY, blockZ,
+                   sharedMemory, stream, parameters, extra, cooperative,
+                   clusterX, clusterY, clusterZ))
+    return;
+  enter();
   double start = begin();
   static long traceCount = 0;
   if (getenv("MDRT_TRACE"))
@@ -626,6 +639,7 @@ CUstream mgpuStreamCreate(void) {
 
 void mdrtSideBegin(void) {
   mgpuStreamCreate();
+  mdrtSpansFlush();
   if (!sideStream) {
     check(cuStreamCreate(&sideStream, CU_STREAM_NON_BLOCKING),
           "cuStreamCreate");
@@ -656,6 +670,7 @@ void mdrtSideJoin(void) {
    host. An event wait observes the most recent record at the time it is
    issued; the same event can therefore serve nested, serialized scopes. */
 static void changeStream(CUstream next) {
+  mdrtSpansFlush();
   mdrtSideJoin();
   if (next != sharedStream) {
     if (!streamScopeEvent)
@@ -683,6 +698,412 @@ void mdrtRestoreStream(void *previous) {
 }
 
 void mgpuStreamDestroy(CUstream stream) { (void)stream; }
+
+/*===----------------------------------------------------------------------===
+  Recorded spans (D[step-no-host-wait])
+  ===----------------------------------------------------------------------===
+
+  With spans on (mdrtSpansEnable), the work that the host issues on
+  the stream of the kernels between two host boundaries is not issued at
+  once: the launches, the transforms of cuFFT, the sets of memory and the
+  events of the flags are recorded, with the values of their arguments,
+  and issued together at the next boundary. A boundary is any call that
+  waits for the device, reads or writes memory that the device uses, or
+  issues work outside the record: the wait of a flag (mdrtFlagFinish), a
+  copy, a change of stream, a growth of a structure. A sequence that was
+  recorded before, with the same kernels, grids and argument bytes, is
+  issued as the CUDA graph made from it at its second recording; another is
+  issued as it was recorded. The device runs the same kernels in the same
+  order, with the same arguments, on the one stream, so the results are
+  bitwise those of the launches one by one. What the graph removes is the
+  gap of the device between two launches and the host's time in each
+  launch (#60, #62).
+
+  The record is filled only from the thread of the steps and drained before
+  any wait, so no work the host waits for is held back. */
+
+enum { SPAN_KERNEL, SPAN_EVENT, SPAN_FFT, SPAN_MEMSET32, SPAN_MEMSET16 };
+
+struct SpanOp {
+  int kind;
+  /* A kernel: its function, grid, block, dynamic shared memory, whether it
+     is cooperative, its cluster, and its argument bytes in the arena. */
+  CUfunction function;
+  uint32_t grid[3], block[3], cluster[3];
+  uint32_t shared;
+  int32_t cooperative;
+  uint32_t offset, bytes;
+  /* An event of a flag; a transform: its kind (0 D2Z, 1 Z2D, 2 R2C, 3 C2R)
+     and plan; a set: its value and count. */
+  CUevent event;
+  int32_t fft, plan;
+  uint64_t a, b, count;
+  uint32_t value;
+};
+
+/* The layout of the arguments of a kernel (cuFuncGetParamInfo). */
+struct ParamLayout {
+  CUfunction function;
+  uint32_t count, total;
+  uint32_t *sizes;
+};
+
+struct Span {
+  uint64_t hash;
+  int numOps;
+  struct SpanOp *ops;
+  uint32_t numBytes;
+  unsigned char *bytes;
+  CUgraphExec exec;
+  uint64_t lastUse;
+  int64_t launches;
+};
+
+enum { SPAN_CACHE = 256, SPAN_SEEN = 4096, LAYOUTS = 4096 };
+static int spansOn = 0;
+static int spansSuspended = 0;
+static struct SpanOp *spanOps = NULL;
+static int numSpanOps = 0, roomSpanOps = 0;
+static unsigned char *spanBytes = NULL;
+static uint32_t numSpanBytes = 0, roomSpanBytes = 0;
+static struct Span spanCache[SPAN_CACHE];
+static int numSpans = 0;
+static uint64_t spanSeen[SPAN_SEEN];
+static uint64_t spanClock = 0;
+static struct ParamLayout layouts[LAYOUTS];
+static int64_t spanCounts[6];
+
+static int issueFFT(int fft, int plan, uint64_t in, uint64_t out);
+static void retainFFTPlanHandle(int plan, int delta);
+
+static int spanSplitAtFlags(void) {
+  static int split = -1;
+  if (split < 0) {
+    const char *value = getenv("MDRT_SPANS_SPLIT");
+    split = !(value && strcmp(value, "0") == 0);
+  }
+  return split;
+}
+
+/* MDRT_SPANS=0 or 1 overrides mdrtSpansEnable; MDRT_WAIT, MDRT_PROFILE
+   and MDRT_TRACE, which observe each launch, turn the record off. */
+static int spansOverride(int on) {
+  const char *value = getenv("MDRT_SPANS");
+  if (value && *value)
+    on = strcmp(value, "0") != 0;
+  if (getenv("MDRT_WAIT") || getenv("MDRT_PROFILE") || getenv("MDRT_TRACE"))
+    on = 0;
+  return on;
+}
+
+static int isRecording(void) {
+  return spansOn > 0 && !spansSuspended && !onSide && !joinPending &&
+         !borrowedStreamDepth;
+}
+
+static struct ParamLayout *getLayout(CUfunction function) {
+  uint64_t h = ((uint64_t)(uintptr_t)function >> 4) * 0x9E3779B97F4A7C15ull;
+  for (uint32_t probe = 0; probe != LAYOUTS; ++probe) {
+    struct ParamLayout *l = &layouts[(h + probe) % LAYOUTS];
+    if (l->function == function)
+      return l;
+    if (l->function)
+      continue;
+    size_t offset, size;
+    uint32_t count = 0, room = 16;
+    uint32_t *sizes = malloc(room * sizeof *sizes), total = 0;
+    while (cuFuncGetParamInfo(function, count, &offset, &size) ==
+           CUDA_SUCCESS) {
+      if (count == room)
+        sizes = realloc(sizes, (room *= 2) * sizeof *sizes);
+      sizes[count++] = (uint32_t)size;
+      total += ((uint32_t)size + 7u) & ~7u;
+    }
+    l->function = function;
+    l->count = count;
+    l->total = total;
+    l->sizes = sizes;
+    return l;
+  }
+  return NULL;
+}
+
+static struct SpanOp *appendOp(int kind) {
+  if (numSpanOps == roomSpanOps) {
+    roomSpanOps = roomSpanOps ? 2 * roomSpanOps : 64;
+    spanOps = realloc(spanOps, roomSpanOps * sizeof *spanOps);
+  }
+  struct SpanOp *op = &spanOps[numSpanOps++];
+  memset(op, 0, sizeof *op);
+  op->kind = kind;
+  return op;
+}
+
+static unsigned char *appendBytes(uint32_t size) {
+  if (numSpanBytes + size > roomSpanBytes) {
+    while (numSpanBytes + size > roomSpanBytes)
+      roomSpanBytes = roomSpanBytes ? 2 * roomSpanBytes : 16384;
+    spanBytes = realloc(spanBytes, roomSpanBytes);
+  }
+  unsigned char *at = spanBytes + numSpanBytes;
+  numSpanBytes += size;
+  return at;
+}
+
+/* Records a launch; 0 if it must be issued now instead. */
+static int recordLaunch(CUfunction function, intptr_t gridX, intptr_t gridY,
+                        intptr_t gridZ, intptr_t blockX, intptr_t blockY,
+                        intptr_t blockZ, int32_t sharedMemory,
+                        CUstream stream, void **parameters, void **extra,
+                        int cooperative, intptr_t clusterX, intptr_t clusterY,
+                        intptr_t clusterZ) {
+  if (!isRecording() || extra || (stream && stream != sharedStream))
+    return 0;
+  struct ParamLayout *layout = getLayout(function);
+  if (!layout)
+    return 0;
+  struct SpanOp *op = appendOp(SPAN_KERNEL);
+  op->function = function;
+  op->grid[0] = (uint32_t)gridX, op->grid[1] = (uint32_t)gridY,
+  op->grid[2] = (uint32_t)gridZ;
+  op->block[0] = (uint32_t)blockX, op->block[1] = (uint32_t)blockY,
+  op->block[2] = (uint32_t)blockZ;
+  op->shared = (uint32_t)sharedMemory;
+  op->cooperative = cooperative && (gridX > 1 || gridY > 1 || gridZ > 1);
+  if (clusterX > 0 && clusterY > 0 && clusterZ > 0) {
+    op->cluster[0] = (uint32_t)clusterX, op->cluster[1] = (uint32_t)clusterY,
+    op->cluster[2] = (uint32_t)clusterZ;
+    op->cooperative = cooperative;
+  }
+  op->offset = numSpanBytes;
+  op->bytes = layout->total;
+  unsigned char *at = appendBytes(layout->total);
+  /* The padding is zero, so that equal arguments compare equal. */
+  memset(at, 0, layout->total);
+  for (uint32_t i = 0; i != layout->count; ++i) {
+    memcpy(at, parameters[i], layout->sizes[i]);
+    at += (layout->sizes[i] + 7u) & ~7u;
+  }
+  lastFunction = function;
+  isPending = 1;
+  return 1;
+}
+
+static uint64_t hashBytes(uint64_t h, const void *data, size_t size) {
+  const unsigned char *p = data;
+  for (size_t i = 0; i != size; ++i)
+    h = (h ^ p[i]) * 0x100000001B3ull;
+  return h;
+}
+
+/* Issues the ops of the record on the stream of the kernels; inside a
+   capture the events are external, so that the host can wait for them. */
+static CUresult issueOps(const struct SpanOp *ops, int numOps,
+                         const unsigned char *bytes, int capturing) {
+  void *args[1024];
+  for (int i = 0; i != numOps; ++i) {
+    const struct SpanOp *op = &ops[i];
+    CUresult result = CUDA_SUCCESS;
+    switch (op->kind) {
+    case SPAN_KERNEL: {
+      struct ParamLayout *layout = getLayout(op->function);
+      if (layout->count > 1024)
+        return CUDA_ERROR_INVALID_VALUE;
+      const unsigned char *at = bytes + op->offset;
+      for (uint32_t k = 0; k != layout->count; ++k) {
+        args[k] = (void *)at;
+        at += (layout->sizes[k] + 7u) & ~7u;
+      }
+      if (op->cluster[0]) {
+        CUlaunchAttribute attrs[2];
+        memset(attrs, 0, sizeof attrs);
+        attrs[0].id = CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION;
+        attrs[0].value.clusterDim.x = op->cluster[0];
+        attrs[0].value.clusterDim.y = op->cluster[1];
+        attrs[0].value.clusterDim.z = op->cluster[2];
+        attrs[1].id = CU_LAUNCH_ATTRIBUTE_COOPERATIVE;
+        attrs[1].value.cooperative = op->cooperative;
+        CUlaunchConfig config = {.gridDimX = op->grid[0],
+                                 .gridDimY = op->grid[1],
+                                 .gridDimZ = op->grid[2],
+                                 .blockDimX = op->block[0],
+                                 .blockDimY = op->block[1],
+                                 .blockDimZ = op->block[2],
+                                 .sharedMemBytes = op->shared,
+                                 .hStream = sharedStream,
+                                 .attrs = attrs,
+                                 .numAttrs = 2};
+        result = cuLaunchKernelEx(&config, op->function, args, NULL);
+      } else if (op->cooperative) {
+        result = cuLaunchCooperativeKernel(
+            op->function, op->grid[0], op->grid[1], op->grid[2], op->block[0],
+            op->block[1], op->block[2], op->shared, sharedStream, args);
+      } else {
+        result = cuLaunchKernel(op->function, op->grid[0], op->grid[1],
+                                op->grid[2], op->block[0], op->block[1],
+                                op->block[2], op->shared, sharedStream, args,
+                                NULL);
+      }
+      break;
+    }
+    case SPAN_EVENT:
+      result = capturing ? cuEventRecordWithFlags(op->event, sharedStream,
+                                                  CU_EVENT_RECORD_EXTERNAL)
+                         : cuEventRecord(op->event, sharedStream);
+      break;
+    case SPAN_FFT:
+      if (!issueFFT(op->fft, op->plan, op->a, op->b))
+        return CUDA_ERROR_UNKNOWN;
+      break;
+    case SPAN_MEMSET32:
+      result = cuMemsetD32Async((CUdeviceptr)op->a, op->value,
+                                (size_t)op->count, sharedStream);
+      break;
+    case SPAN_MEMSET16:
+      result = cuMemsetD16Async((CUdeviceptr)op->a, (unsigned short)op->value,
+                                (size_t)op->count, sharedStream);
+      break;
+    }
+    if (result != CUDA_SUCCESS)
+      return result;
+  }
+  return CUDA_SUCCESS;
+}
+
+static void releaseSpan(struct Span *s) {
+  for (int i = 0; i != s->numOps; ++i)
+    if (s->ops[i].kind == SPAN_FFT)
+      retainFFTPlanHandle(s->ops[i].plan, -1);
+  if (s->exec)
+    cuGraphExecDestroy(s->exec);
+  free(s->ops);
+  free(s->bytes);
+  memset(s, 0, sizeof *s);
+}
+
+/* Makes the graph of the record by capturing its ops; NULL if the capture
+   fails, and the ops are then issued as they are. */
+static CUgraphExec captureSpan(void) {
+  CUgraph graph = NULL;
+  CUgraphExec exec = NULL;
+  if (cuStreamBeginCapture(sharedStream, CU_STREAM_CAPTURE_MODE_THREAD_LOCAL) !=
+      CUDA_SUCCESS)
+    return NULL;
+  CUresult issued = issueOps(spanOps, numSpanOps, spanBytes, 1);
+  CUresult ended = cuStreamEndCapture(sharedStream, &graph);
+  if (issued == CUDA_SUCCESS && ended == CUDA_SUCCESS && graph &&
+      cuGraphInstantiate(&exec, graph, 0) != CUDA_SUCCESS)
+    exec = NULL;
+  if (graph)
+    cuGraphDestroy(graph);
+  if (issued != CUDA_SUCCESS || ended != CUDA_SUCCESS)
+    return NULL;
+  return exec;
+}
+
+static void flushSpan(void) {
+  if (!numSpanOps)
+    return;
+  int kernels = 0;
+  for (int i = 0; i != numSpanOps; ++i)
+    kernels += spanOps[i].kind == SPAN_KERNEL || spanOps[i].kind == SPAN_FFT;
+  uint64_t hash = 0xCBF29CE484222325ull;
+  hash = hashBytes(hash, spanOps, numSpanOps * sizeof *spanOps);
+  hash = hashBytes(hash, spanBytes, numSpanBytes);
+  struct Span *found = NULL;
+  if (kernels >= 2)
+    for (int i = 0; i != numSpans; ++i) {
+      struct Span *s = &spanCache[i];
+      if (s->hash == hash && s->numOps == numSpanOps &&
+          s->numBytes == numSpanBytes &&
+          !memcmp(s->ops, spanOps, numSpanOps * sizeof *spanOps) &&
+          !memcmp(s->bytes, spanBytes, numSpanBytes)) {
+        found = s;
+        break;
+      }
+    }
+  if (!found && kernels >= 2) {
+    uint64_t *seen = &spanSeen[hash % SPAN_SEEN];
+    if (*seen == hash) {
+      /* The second recording: make the graph. */
+      if (numSpans == SPAN_CACHE) {
+        /* The graph used least recently gives its place, once the device
+           has run what was issued from it. */
+        int oldest = 0;
+        for (int i = 1; i != numSpans; ++i)
+          if (spanCache[i].lastUse < spanCache[oldest].lastUse)
+            oldest = i;
+        check(cuStreamSynchronize(sharedStream), "cuStreamSynchronize");
+        releaseSpan(&spanCache[oldest]);
+        spanCache[oldest] = spanCache[--numSpans];
+        ++spanCounts[5];
+      }
+      CUgraphExec exec = captureSpan();
+      if (exec) {
+        found = &spanCache[numSpans++];
+        found->hash = hash;
+        found->numOps = numSpanOps;
+        found->ops = malloc(numSpanOps * sizeof *spanOps);
+        memcpy(found->ops, spanOps, numSpanOps * sizeof *spanOps);
+        found->numBytes = numSpanBytes;
+        found->bytes = malloc(numSpanBytes ? numSpanBytes : 1);
+        memcpy(found->bytes, spanBytes, numSpanBytes);
+        found->exec = exec;
+        found->launches = 0;
+        for (int i = 0; i != numSpanOps; ++i)
+          if (spanOps[i].kind == SPAN_FFT)
+            retainFFTPlanHandle(spanOps[i].plan, +1);
+        ++spanCounts[2];
+      } else {
+        ++spanCounts[3];
+      }
+      *seen = 0;
+    } else {
+      *seen = hash;
+    }
+  }
+  if (found) {
+    found->lastUse = ++spanClock;
+    ++found->launches;
+    check(cuGraphLaunch(found->exec, sharedStream), "cuGraphLaunch");
+    ++spanCounts[0];
+  } else {
+    check(issueOps(spanOps, numSpanOps, spanBytes, 0),
+          "a recorded launch");
+    ++spanCounts[1];
+  }
+  spanCounts[4] += kernels;
+  numSpanOps = 0;
+  numSpanBytes = 0;
+}
+
+/* Issues what was recorded: every boundary of the host calls it first. */
+void mdrtSpansFlush(void) {
+  if (numSpanOps)
+    flushSpan();
+}
+
+/* Turns spans on or off for the thread of the steps (the driver, from
+   `[execution] step_graph`). Off issues what was recorded. */
+void mdrtSpansEnable(int32_t on) {
+  mdrtSpansFlush();
+  spansOn = spansOverride(on != 0);
+}
+
+/* Holds the record off while other code captures the stream itself (the
+   TOWERS graph, D439). */
+void mdrtSpansSuspend(int32_t suspend) {
+  mdrtSpansFlush();
+  spansSuspended += suspend ? 1 : -1;
+}
+
+/* The counts for the log: graph launches, sequences issued as recorded,
+   graphs made, captures that failed, kernels and transforms recorded,
+   graphs evicted. */
+void mdrtSpansCounts(int64_t counts[6]) {
+  for (int i = 0; i != 6; ++i)
+    counts[i] = spanCounts[i];
+}
 
 /* The descriptor of a memref of one dimension, as the C interface of MLIR
    passes it. */
@@ -714,6 +1135,9 @@ enum { FLAG_SLOTS = 32 };
 static int32_t *flagSlots = NULL;
 static CUevent flagEvents[FLAG_SLOTS];
 static volatile int32_t *flagSources[FLAG_SLOTS];
+/* The event that each slot waits for: its own, or that of the place of a
+   mapped flag while spans record (mdrtSpansEnable). */
+static CUevent flagEventOf[FLAG_SLOTS];
 static int64_t nextFlagSlot = 0;
 
 /* The flags themselves are in memory of the host that is mapped for the
@@ -728,6 +1152,7 @@ static int64_t nextFlagSlot = 0;
    no other function's flag. */
 enum { MAPPED_FLAGS = 1024 };
 static volatile int32_t *mappedFlags = NULL;
+static CUevent placeEvents[MAPPED_FLAGS];
 static CUdeviceptr mappedDevice = 0;
 
 void _mlir_ciface_mdrtFlagMemory(struct Buffer1 *result, int64_t place) {
@@ -772,22 +1197,43 @@ int64_t mdrtFlagStart(void *device) {
   CUdeviceptr address = (CUdeviceptr)device;
   if (mappedFlags && address >= mappedDevice &&
       address < mappedDevice + MAPPED_FLAGS * sizeof(int32_t)) {
-    flagSources[slot] = mappedFlags + (address - mappedDevice) / sizeof(int32_t);
+    int64_t place = (int64_t)((address - mappedDevice) / sizeof(int32_t));
+    flagSources[slot] = mappedFlags + place;
+    if (isRecording()) {
+      /* The event of a mapped flag is its place's own, so that a
+         recorded sequence repeats from step to step; a place has one
+         read in flight at a time. The record is issued here, so that the
+         device runs what precedes the flag while the host records the
+         work issued before the wait. */
+      if (!placeEvents[place])
+        check(cuEventCreate(&placeEvents[place], CU_EVENT_DISABLE_TIMING),
+              "cuEventCreate");
+      flagEventOf[slot] = placeEvents[place];
+      struct SpanOp *op = appendOp(SPAN_EVENT);
+      op->event = placeEvents[place];
+      isPending = 1;
+      if (spanSplitAtFlags())
+        mdrtSpansFlush();
+      return slot;
+    }
   } else {
+    mdrtSpansFlush();
     flagSources[slot] = NULL;
     if (copyAudit) copyAudit->metadataDownloads += sizeof(*flagSlots);
     check(cuMemcpyDtoHAsync(&flagSlots[slot], address, sizeof(*flagSlots),
                             sharedStream),
           "cuMemcpyDtoHAsync");
   }
+  flagEventOf[slot] = flagEvents[slot];
   check(cuEventRecord(flagEvents[slot], sharedStream), "cuEventRecord");
   isPending = 1;
   return slot;
 }
 
 int32_t mdrtFlagFinish(int64_t slot) {
+  mdrtSpansFlush();
   double start = begin();
-  check(cuEventSynchronize(flagEvents[slot]), "cuEventSynchronize");
+  check(cuEventSynchronize(flagEventOf[slot]), "cuEventSynchronize");
   end(WAIT, start);
   volatile int32_t *source = flagSources[slot];
   if (!source)
@@ -817,6 +1263,7 @@ int32_t mdrtFlagTake(void *device) {
 
 /* Waits until the device has run everything that was issued. */
 static void finish(void) {
+  mdrtSpansFlush();
   if (!isPending || (!sharedStream && !borrowedStreamDepth))
     return;
   double start = begin();
@@ -847,6 +1294,7 @@ void mgpuStreamSynchronize(CUstream stream) {
 }
 
 void mgpuStreamWaitEvent(CUstream stream, CUevent event) {
+  mdrtSpansFlush();
   check(cuStreamWaitEvent(stream, event, 0), "cuStreamWaitEvent");
 }
 
@@ -862,10 +1310,12 @@ void mgpuEventDestroy(CUevent event) {
 }
 
 void mgpuEventSynchronize(CUevent event) {
+  mdrtSpansFlush();
   check(cuEventSynchronize(event), "cuEventSynchronize");
 }
 
 void mgpuEventRecord(CUevent event, CUstream stream) {
+  mdrtSpansFlush();
   check(cuEventRecord(event, stream), "cuEventRecord");
 }
 
@@ -1520,6 +1970,7 @@ void mgpuMemcpy(void *destination, void *source, size_t size,
                 CUstream stream) {
   if (size == 0)
     return;
+  mdrtSpansFlush();
   auditGenericCopy(destination, source, size);
   double start = begin();
   check(cuMemcpyAsync((CUdeviceptr)destination, (CUdeviceptr)source, size,
@@ -1538,6 +1989,7 @@ void mgpuMemcpy(void *destination, void *source, size_t size,
 /* Completion on one actual producer queue, without draining the other.
    MDRT_WAIT retains its explicitly requested debugging synchronization. */
 static void waitScoped(CUstream stream) {
+  mdrtSpansFlush();
   double start = begin();
   CUevent completed = mgpuEventCreate();
   mgpuEventRecord(completed, stream);
@@ -1558,6 +2010,7 @@ void mdrtCudaMemcpyScoped(uintptr_t destination, uintptr_t source,
     return;
   auditGenericCopy((void *)destination, (const void *)source, size);
   CUstream stream = mgpuStreamCreate();
+  mdrtSpansFlush();
   double start = begin();
   check(cuMemcpyAsync((CUdeviceptr)destination, (CUdeviceptr)source,
                       (size_t)size, stream),
@@ -1574,6 +2027,15 @@ void mdrtCudaWaitScoped(void) {
 
 void mgpuMemset32(void *destination, unsigned int value, size_t count,
                   CUstream stream) {
+  if (isRecording() && (!stream || stream == sharedStream)) {
+    struct SpanOp *op = appendOp(SPAN_MEMSET32);
+    op->a = (uint64_t)(uintptr_t)destination;
+    op->value = value;
+    op->count = count;
+    isPending = 1;
+    return;
+  }
+  mdrtSpansFlush();
   check(cuMemsetD32Async((CUdeviceptr)destination, value, count, stream),
         "cuMemsetD32Async");
   isPending = 1;
@@ -1581,6 +2043,15 @@ void mgpuMemset32(void *destination, unsigned int value, size_t count,
 
 void mgpuMemset16(void *destination, unsigned short value, size_t count,
                   CUstream stream) {
+  if (isRecording() && (!stream || stream == sharedStream)) {
+    struct SpanOp *op = appendOp(SPAN_MEMSET16);
+    op->a = (uint64_t)(uintptr_t)destination;
+    op->value = value;
+    op->count = count;
+    isPending = 1;
+    return;
+  }
+  mdrtSpansFlush();
   check(cuMemsetD16Async((CUdeviceptr)destination, value, count, stream),
         "cuMemsetD16Async");
   isPending = 1;
@@ -1908,6 +2379,53 @@ void mdrtDeviceMemoryCounts(int64_t counts[8]) {
                   : -1;
 }
 
+/* Records a transform while spans record (SPAN_FFT); 1 if recorded. */
+static int recordFFT(int fft, cufftHandle plan, const void *in, void *out) {
+  if (!isRecording())
+    return 0;
+  struct SpanOp *op = appendOp(SPAN_FFT);
+  op->fft = fft;
+  op->plan = plan;
+  op->a = (uint64_t)(uintptr_t)in;
+  op->b = (uint64_t)(uintptr_t)out;
+  isPending = 1;
+  return 1;
+}
+
+/* Issues a recorded transform; 0 if cuFFT failed. */
+static int issueFFT(int fft, int plan, uint64_t in, uint64_t out) {
+  cufftResult result = CUFFT_SUCCESS;
+  switch (fft) {
+  case 0:
+    result = cufftExecD2Z(plan, (cufftDoubleReal *)(uintptr_t)in,
+                          (cufftDoubleComplex *)(uintptr_t)out);
+    break;
+  case 1:
+    result = cufftExecZ2D(plan, (cufftDoubleComplex *)(uintptr_t)in,
+                          (cufftDoubleReal *)(uintptr_t)out);
+    break;
+  case 2:
+    result = cufftExecR2C(plan, (cufftReal *)(uintptr_t)in,
+                          (cufftComplex *)(uintptr_t)out);
+    break;
+  case 3:
+    result = cufftExecC2R(plan, (cufftComplex *)(uintptr_t)in,
+                          (cufftReal *)(uintptr_t)out);
+    break;
+  }
+  return result == CUFFT_SUCCESS;
+}
+
+/* The graph of a span holds the plans of its transforms (graphUsers), so
+   that a trim or the budget does not destroy them under it. */
+static void retainFFTPlanHandle(int plan, int delta) {
+  for (int64_t i = 0; i != numFFTPlans; ++i)
+    if (fftPlans[i].plan == plan) {
+      fftPlans[i].graphUsers += delta;
+      return;
+    }
+}
+
 /* The forward transform of the real grid of k1 x k2 x k3 points into the
    half-complex grid of k1 x k2 x (k3 / 2 + 1) numbers, interleaved, as
    mdrtFFTForward3D of the host computes it. */
@@ -1917,12 +2435,15 @@ void _mlir_ciface_mdrtCudaFFTForward3D(DeviceBuffer1D *real,
   enter();
   double start = begin();
   cufftHandle plan;
-  if (getFFTPlan(k1, k2, k3, 1, 0, NULL, &plan))
-    checkFFT(cufftExecD2Z(plan,
-                          (cufftDoubleReal *)(real->aligned + real->offset),
-                          (cufftDoubleComplex *)(complex->aligned +
-                                                 complex->offset)),
+  double *in = real->aligned + real->offset;
+  double *out = complex->aligned + complex->offset;
+  if (getFFTPlan(k1, k2, k3, 1, 0, NULL, &plan) &&
+      !recordFFT(0, plan, in, out)) {
+    mdrtSpansFlush();
+    checkFFT(cufftExecD2Z(plan, (cufftDoubleReal *)in,
+                          (cufftDoubleComplex *)out),
              "cufftExecD2Z", k1, k2, k3);
+  }
   isPending = 1;
   end(LAUNCH, start);
 }
@@ -1935,12 +2456,15 @@ void _mlir_ciface_mdrtCudaFFTBackward3D(DeviceBuffer1D *complex,
   enter();
   double start = begin();
   cufftHandle plan;
-  if (getFFTPlan(k1, k2, k3, 0, 0, NULL, &plan))
-    checkFFT(cufftExecZ2D(plan,
-                          (cufftDoubleComplex *)(complex->aligned +
-                                                 complex->offset),
-                          (cufftDoubleReal *)(real->aligned + real->offset)),
+  double *in = complex->aligned + complex->offset;
+  double *out = real->aligned + real->offset;
+  if (getFFTPlan(k1, k2, k3, 0, 0, NULL, &plan) &&
+      !recordFFT(1, plan, in, out)) {
+    mdrtSpansFlush();
+    checkFFT(cufftExecZ2D(plan, (cufftDoubleComplex *)in,
+                          (cufftDoubleReal *)out),
              "cufftExecZ2D", k1, k2, k3);
+  }
   isPending = 1;
   end(LAUNCH, start);
 }
@@ -1953,11 +2477,14 @@ void _mlir_ciface_mdrtCudaFFTForward3DF32(DeviceBuffer1DF32 *real,
   enter();
   double start = begin();
   cufftHandle plan;
-  if (getFFTPlan(k1, k2, k3, 1, 1, NULL, &plan))
-    checkFFT(cufftExecR2C(plan, (cufftReal *)(real->aligned + real->offset),
-                          (cufftComplex *)(complex->aligned +
-                                           complex->offset)),
+  float *in = real->aligned + real->offset;
+  float *out = complex->aligned + complex->offset;
+  if (getFFTPlan(k1, k2, k3, 1, 1, NULL, &plan) &&
+      !recordFFT(2, plan, in, out)) {
+    mdrtSpansFlush();
+    checkFFT(cufftExecR2C(plan, (cufftReal *)in, (cufftComplex *)out),
              "cufftExecR2C", k1, k2, k3);
+  }
   isPending = 1;
   end(LAUNCH, start);
 }
@@ -1968,11 +2495,14 @@ static void fftBackwardF32(DeviceBuffer1DF32 *complex, DeviceBuffer1DF32 *real,
   enter();
   double start = begin();
   cufftHandle plan;
-  if (getFFTPlan(k1, k2, k3, 0, 1, tables, &plan))
-    checkFFT(cufftExecC2R(plan,
-                          (cufftComplex *)(complex->aligned + complex->offset),
-                          (cufftReal *)(real->aligned + real->offset)),
+  float *in = complex->aligned + complex->offset;
+  float *out = real->aligned + real->offset;
+  if (getFFTPlan(k1, k2, k3, 0, 1, tables, &plan) &&
+      !recordFFT(3, plan, in, out)) {
+    mdrtSpansFlush();
+    checkFFT(cufftExecC2R(plan, (cufftComplex *)in, (cufftReal *)out),
              "cufftExecC2R", k1, k2, k3);
+  }
   isPending = 1;
   end(LAUNCH, start);
 }
@@ -2128,7 +2658,7 @@ void _mlir_ciface_mdrtGroupsBuffer(struct Buffer1 *result, int64_t handle,
    dump-segments, D419): writes the list of `handle`, of
    `places` places and `records` records, after `builds` builds of it and
    `prunes` prunings of every list, to dump_<n>.bin in the directory
-   that MDRT_SEGMENTS_DUMP names, n counting the dumps from 0. The file holds
+   that MDRT_SPANS_DUMP names, n counting the dumps from 0. The file holds
    six i64 (n, places, records, segments, the builds and the prunings so
    far), then for each buffer of SEGMENT_ORDER, SHIFTS, RECORD_ENTRIES,
    RECORD_MASKS, RECORD_GROUPS, RECORD_COUNTS, SEGMENT_OFFSETS,
@@ -2137,12 +2667,13 @@ void _mlir_ciface_mdrtGroupsBuffer(struct Buffer1 *result, int64_t handle,
    i32 (0 where the list has not allocated it) and its values. */
 void mdrtSegmentsDump(int64_t handle, int64_t places, int64_t records,
                       int64_t builds, int64_t prunes) {
-  const char *dir = getenv("MDRT_SEGMENTS_DUMP");
+  const char *dir = getenv("MDRT_SPANS_DUMP");
   if (!dir)
     return;
   static int64_t serial = 0;
   struct Groups *groups = (struct Groups *)(intptr_t)handle;
   enter();
+  mdrtSpansFlush();
   check(cuCtxSynchronize(), "cuCtxSynchronize");
   char path[4096];
   snprintf(path, sizeof path, "%s/dump_%06lld.bin", dir, (long long)serial);
@@ -2168,6 +2699,7 @@ void mdrtSegmentsDump(int64_t handle, int64_t places, int64_t records,
     if (!length)
       continue;
     int32_t *host = malloc((size_t)length * sizeof(int32_t));
+    mdrtSpansFlush();
     check(cuMemcpyDtoH(host, (CUdeviceptr)groups->data[parts[k].slot],
                        (size_t)length * sizeof(int32_t)),
           "cuMemcpyDtoH");
@@ -2187,6 +2719,7 @@ void mdrtGroupsGrow(int64_t handle, int64_t places, int64_t blocks) {
     return;
   /* No kernel may still use the buffers that are freed. */
   enter();
+  mdrtSpansFlush();
   check(cuCtxSynchronize(), "cuCtxSynchronize");
   releaseGroups(groups);
   if (places > groups->places)
@@ -2222,6 +2755,7 @@ void mdrtGroupsReserveBlockOf(int64_t handle, int64_t length) {
   if (groups->data[GROUPS_BLOCK_OF]) {
     /* No kernel may still use the buffer that is freed. */
     enter();
+    mdrtSpansFlush();
     check(cuCtxSynchronize(), "cuCtxSynchronize");
     releaseReplaced(groups->data[GROUPS_BLOCK_OF]);
     groups->data[GROUPS_BLOCK_OF] = NULL;
@@ -2360,6 +2894,7 @@ void mdrtMatrixGrow(int64_t handle, int64_t width) {
   if (width <= matrix->width)
     return;
   enter();
+  mdrtSpansFlush();
   check(cuCtxSynchronize(), "cuCtxSynchronize");
   releaseReplaced(matrix->data);
   matrix->width = width + width / 4;
@@ -2422,6 +2957,7 @@ int64_t mdrtEdgesReserve(int64_t handle, int64_t length) {
   }
   if (length > edges->capacity) {
     enter();
+    mdrtSpansFlush();
     check(cuCtxSynchronize(), "cuCtxSynchronize");
     releaseReplaced(edges->candidates);
     releaseReplaced(edges->slots);
@@ -2547,6 +3083,7 @@ void mdrtDeviceCopyWithin(void *destination, const void *source,
   if (!size)
     return;
   mgpuStreamCreate();
+  mdrtSpansFlush();
   check(cuMemcpyAsync((CUdeviceptr)destination, (CUdeviceptr)source, size,
                       sharedStream),
         "cuMemcpyAsync");
@@ -2561,6 +3098,7 @@ void mdrtDeviceCopyToHost(void *destination, const void *source,
     return;
   if (copyAudit) copyAudit->metadataDownloads += size;
   mgpuStreamCreate();
+  mdrtSpansFlush();
   check(cuMemcpyDtoHAsync(destination, (CUdeviceptr)source, size,
                           sharedStream),
         "cuMemcpyDtoHAsync");
@@ -2674,6 +3212,7 @@ void *mdrtStagingCopy(void *opaque, int32_t part, const void *source,
     slot->parts[part].room = size;
   }
   if (size) {
+    mdrtSpansFlush();
     check(cuMemcpyAsync(slot->parts[part].device, (CUdeviceptr)source, size,
                         stream),
           "cuMemcpyAsync");
@@ -2714,6 +3253,7 @@ static void launchTrap(void) {
   check(cuModuleLoadData(&module, trap), "cuModuleLoadData");
   check(cuModuleGetFunction(&function, module, "mdrtFault"),
         "cuModuleGetFunction");
+  mdrtSpansFlush();
   check(cuLaunchKernel(function, 1, 1, 1, 1, 1, 1, 0, mgpuStreamCreate(),
                        NULL, NULL),
         "cuLaunchKernel");
@@ -2749,6 +3289,7 @@ void mdrtStagingEnd(void *opaque) {
     check(cuStreamSynchronize(copyStream), "cuStreamSynchronize");
     launchTrap();
   }
+  mdrtSpansFlush();
   check(cuEventRecord(slot->produced, stream), "cuEventRecord");
   check(cuStreamWaitEvent(copyStream, slot->produced, 0),
         "cuStreamWaitEvent");
@@ -2844,6 +3385,7 @@ void mdrtStagingDestroy(void *opaque) {
    for it before it reads what the device computed. */
 void *mdrtDeviceExternalStream(void) {
   mgpuStreamCreate();
+  mdrtSpansFlush();
   isPending = 1;
   return (void *)sharedStream;
 }
@@ -2910,6 +3452,7 @@ void mdrtDeviceHandOff(uint64_t consumer) {
   CUstream stream = consumer == 1   ? CU_STREAM_LEGACY
                     : consumer == 2 ? CU_STREAM_PER_THREAD
                                     : (CUstream)(uintptr_t)consumer;
+  mdrtSpansFlush();
   check(cuEventRecord(handoffEvent, sharedStream), "cuEventRecord");
   check(cuStreamWaitEvent(stream, handoffEvent, 0), "cuStreamWaitEvent");
 }
@@ -2920,6 +3463,7 @@ void mdrtDeviceHandOff(uint64_t consumer) {
 void mdrtDeviceWaitAll(void) {
   if (isDriverGone())
     return;
+  mdrtSpansFlush();
   check(cuCtxSynchronize(), "cuCtxSynchronize");
   isPending = 0;
 }
@@ -3011,6 +3555,7 @@ static void tuplesToDevice(void *device, const void *host, size_t bytes) {
   if (copyAudit) copyAudit->metadataUploads += bytes;
   mgpuStreamCreate();
   double start = begin();
+  mdrtSpansFlush();
   check(cuMemcpyHtoDAsync((CUdeviceptr)device, host, bytes, sharedStream),
         "cuMemcpyHtoDAsync");
   isPending = 1;
@@ -3024,6 +3569,7 @@ static void tuplesToHost(void *host, const void *device, size_t bytes) {
   if (copyAudit) copyAudit->metadataDownloads += bytes;
   mgpuStreamCreate();
   double start = begin();
+  mdrtSpansFlush();
   check(cuMemcpyDtoHAsync(host, (CUdeviceptr)device, bytes, sharedStream),
         "cuMemcpyDtoHAsync");
   isPending = 1;
@@ -3308,6 +3854,7 @@ void _mlir_ciface_mdrtDeviceTuplesOrderKept(struct MdrtMemref1 *result,
     store->deviceIds = tuplesDeviceKept((size_t)n * sizeof(int32_t));
     store->deviceIdsCount = n;
     store->deviceBytes[3] += n * (int64_t)sizeof(int32_t) + 4;
+    mdrtSpansFlush();
     if (n)
       check(cuMemsetD32Async((CUdeviceptr)store->deviceIds, 0xFFFFFFFFu,
                              (size_t)n, sharedStream),
@@ -3316,6 +3863,7 @@ void _mlir_ciface_mdrtDeviceTuplesOrderKept(struct MdrtMemref1 *result,
   }
   if (!store->deviceFlag)
     store->deviceFlag = tuplesDeviceKept(sizeof(int32_t));
+  mdrtSpansFlush();
   check(cuMemsetD32Async((CUdeviceptr)store->deviceFlag, 0, 1, sharedStream),
         "cuMemsetD32Async");
   isPending = 1;
@@ -3336,6 +3884,7 @@ void _mlir_ciface_mdrtDeviceTuplesOrderEnd(struct MdrtMemref1 *ids) {
   int32_t differs = 0;
   tuplesToHost(&differs, store->deviceFlag, sizeof(int32_t));
   if (differs) {
+    mdrtSpansFlush();
     if (ids->size)
       check(cuMemcpyDtoDAsync(
                 (CUdeviceptr)store->deviceIds,
@@ -3617,6 +4166,7 @@ void mdrtGemmF32(int64_t m, int64_t n, int64_t k, int64_t a, int64_t lda,
   float one = 1.0f;
   cublasOperation_t opA = transA ? CUBLAS_OP_T : CUBLAS_OP_N;
   cublasOperation_t opB = transB ? CUBLAS_OP_T : CUBLAS_OP_N;
+  mdrtSpansFlush();
   if (batch == 1)
     checkBlas(cublasSgemm(blasHandle, opB, opA, (int)n, (int)m, (int)k, &one,
                           (const float *)(intptr_t)b, (int)ldb,
@@ -3694,6 +4244,7 @@ int64_t mdrtDeviceConstant(int64_t host, int64_t bytes) {
   check(allocateDevice(&device, (size_t)bytes), "cuMemAlloc");
   endAccount(ACCOUNT_CONSTANTS, before, bytes);
   if (copyAudit) copyAudit->metadataUploads += bytes;
+  mdrtSpansFlush();
   check(cuMemcpyHtoD(device, (const void *)(intptr_t)host, (size_t)bytes),
         "cuMemcpyHtoD");
   /* From pageable memory the copy may still be under way when it returns,

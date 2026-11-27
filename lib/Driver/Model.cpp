@@ -508,6 +508,9 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
       execution.neighborStructure != driver::NeighborStructure::Auto)
     return unsupported("unsupported neighbor structure");
   c.stepGraph = execution.stepGraph;
+  if (c.stepGraph == "SPANS")
+    return unsupported("step_graph SPANS is not available in a simulation of "
+                       "the Python interface; it takes LAUNCH, GRAPH or AUTO");
   if (c.stepGraph != "LAUNCH" && c.stepGraph != "GRAPH" && c.stepGraph != "AUTO")
     return input("step_graph requires LAUNCH, GRAPH or AUTO");
   c.neighborStructure = execution.neighborStructure;

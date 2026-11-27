@@ -712,9 +712,23 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
 }
 
 llvm::json::Object mdir::tool::initialStepGraphChoice(llvm::StringRef request,
-    llvm::StringRef refusal, size_t particles) {
+    llvm::StringRef refusal, size_t particles, bool given,
+    llvm::StringRef spansRefusal) {
   Object choice{{"requested", request.str()}, {"value", request.str()},
                 {"category", "setup trial"}, {"reason", "fixed choice"}};
+  // SPANS, the default, records the work between host boundaries and
+  // replays a sequence that repeats as a CUDA graph (D[step-no-host-wait]).
+  // Without the key it is a rule of the target; a given SPANS that the
+  // target refuses is an error of the caller.
+  if (request == "SPANS" && !given) {
+    choice["category"] = "rule";
+    choice["reason"] = spansRefusal.empty()
+                           ? "the default on the GPU target"
+                           : spansRefusal.str();
+    if (!spansRefusal.empty())
+      choice["value"] = "LAUNCH";
+    choice["inputs"] = Object{{"given", false}};
+  }
   if (request != "AUTO")
     return choice;
   // Smallest measured LAUNCH winner in the six-input RTX 4090 comparison.

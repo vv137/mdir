@@ -444,9 +444,16 @@ struct Control {
   /// default). NOT A DEFAULT: at an interval, the structures are not
   /// tested between builds and may miss pairs within the cutoff (D88).
   int64_t rebuildPeriod = 0;
-  std::string stepGraph = "LAUNCH";
+  /// `[execution] step_graph`: LAUNCH, SPANS, GRAPH or AUTO (D439,
+  /// D[step-no-host-wait]). The default is SPANS.
+  std::string stepGraph = "SPANS";
+  /// Whether the control file gave `step_graph`.
+  bool stepGraphGiven = false;
   /// Empty when ordinary steps can use graph replay.
   llvm::StringRef stepGraphRefusal(size_t constraints) const;
+  /// Empty when the work between host boundaries can be recorded and
+  /// replayed as CUDA graphs (SPANS, and GRAPH outside the TOWERS chunks).
+  llvm::StringRef spansRefusal() const;
   TowersShape towersShape;
   TowersSetup towersSetup;
   bool towersShapeGiven = false, towersShapeTable = false;

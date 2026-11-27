@@ -3050,11 +3050,13 @@ Error Reader::readExecution(const toml::table &table) {
                                    "spatial_order", "deterministic",
                                    "neighbor_structure", "towers_shape", "step_graph"}))
     return error;
-  StringRef mode = "LAUNCH";
+  StringRef mode = "SPANS";
   if (Error error = readChoice<StringRef>(table, "step_graph", mode,
-          {{"LAUNCH", "LAUNCH"}, {"GRAPH", "GRAPH"}, {"AUTO", "AUTO"}}))
+          {{"LAUNCH", "LAUNCH"}, {"SPANS", "SPANS"}, {"GRAPH", "GRAPH"},
+           {"AUTO", "AUTO"}}))
     return error;
   control.stepGraph = mode.str();
+  control.stepGraphGiven = table.contains("step_graph");
   if (Error error = readTowersShape(table))
     return error;
   if (Error error = readChoice<Target>(
@@ -3392,6 +3394,11 @@ Error Reader::read(const toml::table &root) {
   }
 
   return validateControl(control, path);
+}
+
+StringRef mdir::driver::Control::spansRefusal() const {
+  if (target != Target::GPU) return "SPANS requires the GPU target";
+  return {};
 }
 
 StringRef mdir::driver::Control::stepGraphRefusal(size_t constraints) const {

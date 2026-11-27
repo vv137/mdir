@@ -880,9 +880,16 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
   auto refusal = control->stepGraphRefusal(system->numConstraints);
   if (control->stepGraph == "GRAPH" && !refusal.empty())
     return fail(llvm::createStringError("step_graph: %s", refusal.str().c_str()), json);
+  if (control->stepGraph == "SPANS" && control->stepGraphGiven &&
+      !control->spansRefusal().empty())
+    return fail(llvm::createStringError("step_graph: %s",
+                                        control->spansRefusal().str().c_str()),
+                json);
   using llvm::StringRef;
   auto graphChoice = initialStepGraphChoice(control->stepGraph, refusal,
-                                            system->getNumParticles());
+                                            system->getNumParticles(),
+                                            control->stepGraphGiven,
+                                            control->spansRefusal());
   std::optional<llvm::json::Object> towers;
   if (control->towersShapeGiven || control->neighborStructure == NeighborStructure::Towers) {
     auto shape = checkTowersShape(*control, *system, /*setup=*/false);

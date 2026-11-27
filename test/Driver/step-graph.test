@@ -10,11 +10,19 @@
 # PIN: step_graph = "LAUNCH"
 # RUN: sed -i 's/step_graph = "AUTO"/step_graph = "GRAPH"/' %t/control.toml
 # RUN: not mdir check %t/control.toml 2>&1 | FileCheck %s --check-prefix=REFUSE
-# RUN: sed -i 's/"GRAPH"/"WHILE"/' %t/control.toml
+# RUN: sed -i 's/step_graph = "GRAPH"/step_graph = "SPANS"/' %t/control.toml
+# RUN: not mdir check %t/control.toml 2>&1 | FileCheck %s --check-prefix=SPANS
+# RUN: not mdir run %t/control.toml 2>&1 | FileCheck %s --check-prefix=SPANS
+# RUN: sed -i 's/"SPANS"/"WHILE"/' %t/control.toml
 # RUN: not mdir check %t/control.toml 2>&1 | FileCheck %s --check-prefix=INVALID
 # RUN: %python %S/Inputs/check_step_graph_scope.py %t/scope.toml mdir
-# DEFAULT: "requested": "LAUNCH"
+# DEFAULT: "step_graph": {
+# DEFAULT: "category": "rule"
+# DEFAULT: "reason": "SPANS requires the GPU target"
+# DEFAULT: "requested": "SPANS"
+# DEFAULT: "value": "LAUNCH"
 # AUTO: MDIR: step_graph
 # AUTO-SAME: GRAPH requires the GPU target
 # REFUSE: step_graph: GRAPH requires the GPU target
+# SPANS: step_graph: SPANS requires the GPU target
 # INVALID: step_graph
