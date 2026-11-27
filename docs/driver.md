@@ -1737,7 +1737,9 @@ Electrostatic PME uses the distributed mesh described below. Analytic EAM has an
 Section 15. The particle-halo exchange posts MPI receives and sends
 before handling rank-local copies and force rows that have only local
 contributions. Set `MDIR_DIST_HALO_OVERLAP=0` on every rank to wait
-before this work for a timing comparison.
+before this work for a timing comparison. In V-rescale NVT the reporting
+step can reuse the neighbor list from the plain steps immediately
+preceding it.
 
 The setup log and the manifest start event give the requested domain count,
 factor grids and their scores in inverse nm, the source of each choice, and

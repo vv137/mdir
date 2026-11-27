@@ -1420,7 +1420,9 @@ requires its own force-law arithmetic but no second exchange to locate
 the same members.
 
 The final step of a reporting interval can use the same reference positions
-and candidate matrix as the preceding plain steps. Both sites test the
+and candidate matrix as the preceding plain steps. With thermostat
+subperiods, the reporting step selects the nearest compatible epoch
+in its interval. Both sites test the
 maximum displacement against half the skin before reuse. The scope of
 their shared cache fixes the cell, constraint relations, and halo geometry.
 The exclusion projection refers to the same immutable topology version

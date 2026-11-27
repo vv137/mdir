@@ -718,7 +718,10 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
         Type haloType = pairHalo.getResult().getType();
         int64_t mode = haloMode(pairHalo);
         if (op->getParentOp() == scope) {
-          for (auto it = innerEpochs.begin(); it != innerEpochs.end(); ++it) {
+          // A reporting interval can contain a coupling-only loop as well
+          // as the plain steps that directly precede the reporting step.
+          for (auto it = innerEpochs.end(); it != innerEpochs.begin();) {
+            --it;
             PartitionOp prior = it->partition;
             if (it->loop->getParentOp() == scope && it->loop->isBeforeInBlock(op) &&
                 prior.getPositions().getType() == fieldType &&

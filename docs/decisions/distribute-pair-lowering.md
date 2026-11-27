@@ -31,4 +31,7 @@ constraint relations, halo reach, and halo construction mode match. The
 inner loop completes before the reporting step uses its cache. The same
 displacement test runs at both sites. An invariant exclusion relation
 has one directory version within its common loop scope, so alternating
-the two sites preserves its projection on a live halo.
+the two sites preserves its projection on a live halo. When several
+preceding loops have compatible epochs, a reporting step uses the nearest
+one. This shares the list with the plain steps immediately before a
+thermostat and energy report, even when an earlier coupling loop is empty.
