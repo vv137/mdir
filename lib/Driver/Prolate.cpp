@@ -16,9 +16,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "mdir/Driver/Prolate.h"
+#include "mdir/Driver/NeighborCount.h"
 #include "mdir/Driver/ProlateSpectrum.h"
 #include <array>
 #include <numeric>
+#include <thread>
 
 #include <algorithm>
 #include <cmath>
@@ -495,6 +497,126 @@ double mdir::prolate::getAliasing(const Function &psi, const Window &window,
   if (total == 0.0)
     return 0.0;
   return 6.0 * std::max({aliased[0], aliased[1], aliased[2]}) / total;
+}
+
+double mdir::prolate::evaluatePolynomialInfluence(const Influence &influence,
+                                                  double k) {
+  k = std::fabs(k);
+  if (k < SpectrumTransition) {
+    // The cubic of the cell in its place u, from the values and the slopes
+    // in units of the cell at its two ends (PMEProlateSpectrum.h).
+    double scaled = k * SpectrumSamplesPerUnit;
+    auto cell = static_cast<int64_t>(scaled);
+    double u = scaled - static_cast<double>(cell);
+    double v = influence.value[cell], m = influence.slope[cell];
+    double delta = influence.value[cell + 1] - v, end = influence.slope[cell + 1];
+    double quadratic = 3 * delta - 2 * m - end, cubic = m + end - 2 * delta;
+    return v + u * (m + u * (quadratic + u * cubic));
+  }
+  // Σ_i (T/k)^{2i} (a_i sin k / k + b_i cos k / k²), by Horner in (T/k)².
+  double inverse = 1.0 / k, x = SpectrumTransition * inverse;
+  x *= x;
+  double a = 0.0, b = 0.0;
+  for (int i = SpectrumBasis - 1; i >= 0; --i) {
+    a = influence.value[SpectrumKnots + i] + x * a;
+    b = influence.slope[SpectrumKnots + i] + x * b;
+  }
+  return std::sin(k) * a * inverse + std::cos(k) * b * inverse * inverse;
+}
+
+double mdir::prolate::getSplineMeshError(
+    const std::function<double(double)> &spectrum, int64_t order,
+    const double (&edges)[3], const int64_t (&grid)[3], double cutoff,
+    unsigned threads) {
+  // The summand is even in each n_a (with j_a → −j_a), so the sums run over
+  // 0 ≤ n_a ≤ K_a/2, counted twice inside, and |j_a| ≤ 1 for each: the
+  // images beyond add below 1e-3 of Q at the grids of the rule.
+  struct Axis {
+    std::vector<double> weight;   // of n_a
+    std::vector<double> wave[3];  // (n_a + j K_a)/L_a, j = −1, 0, 1
+    std::vector<double> ratio[3]; // ρ² of the axis, 1 for j = 0
+  } axes[3];
+  for (int a = 0; a != 3; ++a) {
+    int64_t count = grid[a], half = count / 2;
+    for (int64_t n = 0; n <= half; ++n) {
+      axes[a].weight.push_back(n == 0 || 2 * n == count ? 1.0 : 2.0);
+      for (int j = -1; j <= 1; ++j) {
+        double image = static_cast<double>(n + j * count);
+        axes[a].wave[j + 1].push_back(image / edges[a]);
+        double r = j == 0 ? 1.0 : static_cast<double>(n) / image;
+        axes[a].ratio[j + 1].push_back(std::pow(r, 2 * order));
+      }
+    }
+  }
+  double scale = 2.0 * M_PI * cutoff;
+  // The sums of each plane n_0 = i, summed in order of i after the threads,
+  // so that the estimate does not depend on their number.
+  size_t planes = axes[0].weight.size();
+  std::vector<double> errors(planes, 0.0), exacts(planes, 0.0);
+  auto plane = [&](size_t i) {
+    double error = 0.0, exact = 0.0;
+    for (size_t l = 0; l != axes[1].weight.size(); ++l)
+      for (size_t n = 0; n != axes[2].weight.size(); ++n) {
+        double weight = axes[0].weight[i] * axes[1].weight[l] * axes[2].weight[n];
+        // G(n) = χ̂/|k|², 0 at n = 0, where the mesh takes no mode either.
+        double x0 = axes[0].wave[1][i], y0 = axes[1].wave[1][l],
+               z0 = axes[2].wave[1][n];
+        double base2 = x0 * x0 + y0 * y0 + z0 * z0;
+        double g = base2 > 0.0 ? spectrum(scale * std::sqrt(base2)) / base2 : 0.0;
+        // Over the modes k_j = n + jK, j = 0 included (ρ_0 = 1): the mean
+        // kernel of the mesh at k_j is ρ_j² G(n), against G(k_j); and the
+        // fluctuating products of two different images, Σ_{j≠l} ρ_j² ρ_l²
+        // |k_l|² G(n)², which are (Σ ρ²)(Σ ρ² |k|²) − Σ ρ⁴ |k|².
+        double mean = 0.0, lost = 0.0, sum = 0.0, moment = 0.0, fourth = 0.0;
+        for (int p = 0; p != 3; ++p)
+          for (int q = 0; q != 3; ++q)
+            for (int r = 0; r != 3; ++r) {
+              double x = axes[0].wave[p][i], y = axes[1].wave[q][l],
+                     z = axes[2].wave[r][n];
+              double image2 = x * x + y * y + z * z;
+              double rho2 = axes[0].ratio[p][i] * axes[1].ratio[q][l] *
+                            axes[2].ratio[r][n];
+              sum += rho2;
+              moment += rho2 * image2;
+              fourth += rho2 * rho2 * image2;
+              if (p == 1 && q == 1 && r == 1)
+                continue;
+              double exactImage = spectrum(scale * std::sqrt(image2)) / image2;
+              double difference = rho2 * g - exactImage;
+              mean += difference * difference * image2;
+              lost += exactImage * exactImage * image2;
+            }
+        error += weight * (mean + g * g * (sum * moment - fourth));
+        exact += weight * (g * g * base2 + lost);
+      }
+    errors[i] = error;
+    exacts[i] = exact;
+  };
+  // Threads for the large grids of tight tolerances (8.4 × 10⁷ terms a
+  // second on one core), as many as the other work of a build takes
+  // (driver::getBuildThreads); a small grid is summed on the calling
+  // thread.
+  double terms = 27.0 * static_cast<double>(planes) *
+                 static_cast<double>(axes[1].weight.size() * axes[2].weight.size());
+  size_t workers =
+      terms < 1e7 ? 1
+                  : std::min<size_t>(planes, driver::getBuildThreads(threads));
+  std::vector<std::thread> pool;
+  for (size_t w = 1; w < workers; ++w)
+    pool.emplace_back([&, w] {
+      for (size_t i = w; i < planes; i += workers)
+        plane(i);
+    });
+  for (size_t i = 0; i < planes; i += workers)
+    plane(i);
+  for (std::thread &thread : pool)
+    thread.join();
+  double error = 0.0, exact = 0.0;
+  for (size_t i = 0; i != planes; ++i) {
+    error += errors[i];
+    exact += exacts[i];
+  }
+  return exact > 0.0 ? std::sqrt(error / exact) : 0.0;
 }
 
 double mdir::prolate::getSplitting(const Function &psi, Part part, double x) {

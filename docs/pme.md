@@ -1386,8 +1386,9 @@ order-4 charge assignment and force gathering kernels. The radial influence
 uses the cosine transform of the constrained density and the inverse squared
 B-spline transform on each axis. The split bandwidth comes from `bandwidth` or the usual
 `tolerance` rule. The initial automatic grid spacing is $\pi r_c/c$.
-The original aliasing refinement applies to the original density and
-prolate window. Gaussian inputs reject all three new keys. Prolate inputs
+The aliasing refinement of eq. 10 applies to the original density with the
+prolate window; the B-spline window has a refinement of its own
+([below](#the-grid-of-the-b-spline-window), D[prolate-bspline-grid]). Gaussian inputs reject all three new keys. Prolate inputs
 reject explicit `beta` and `influence`.
 
 **Construction.** The density is $\chi(x)=\sum_{j=0}^{N-1}a_jP_{2j}(x)$ on $x=r/r_c\in[0,1]$, the split is $\phi(r)=(1-\Phi(r/r_c))/r$ with $\Phi(x)=\int_0^x\chi$ and $\Phi(1)=1$. The coefficients maximize the band concentration $a^{\mathsf T}Aa/a^{\mathsf T}Ga$ (sinc kernel of bandwidth $c$) subject to $\chi^{(m)}(1)=0$ for $m<k$. Then $\phi$ is $C^k$ at $r_c$, and the first nonzero jump is $\Delta\phi^{(k+1)}(r_c)=-\chi^{(k)}(1)/r_c^{k+2}$, from $r\phi^{(k)}+k\phi^{(k-1)}=-\chi^{(k-1)}/r_c^k$. With $k=0$ the maximizer is the prolate function of the current kernel; $\phi(r_c)=0$ holds for every $k$, so `coulomb_modifier` changes nothing for this kernel.
@@ -1413,6 +1414,49 @@ At $N=8$, $r_c=8$ Å and $c=9.5392$, the table gives maximum absolute errors per
 | 3 | 3.41e−8 | 3.03e−11 | 9.93e−9 | 1.22e−10 | 1.73e−10 |
 
 Storing a separate factored density improves the radial force for $k=0,1,2$. The implementation differentiates the endpoint-factored energy, which also gives the smaller force error for $k=3$. For $k=2$, plain Horner without the endpoint factor gave energy and force errors of 1.87e−8 Å⁻¹ and 3.79e−9 Å⁻². In the moving force-only Cellulose kernel on RTX 4090, the D430 common path took 186 SASS instructions per candidate with Clenshaw, 155 with plain Horner, and 180 with the endpoint factor. The corresponding static loop sizes were 226, 195 and 220 instructions. Gaussian used 106 on the D430 common path.
+
+### The grid of the B-spline window
+
+With `window = "BSPLINE"` and neither `grid` nor `max_spacing`, the
+automatic grid is the coarsest at one spacing for the three edges, from the
+spacing $\pi r_c/c$ of eq. 15 down to an eighth of it, whose mesh error
+estimate $E_B$ is at most `tolerance` $\eta$ (at most $\eta/2$ for the
+original density with this window, whose transform is cut at its band).
+$E_B = \sqrt{Q/R}$ is the expected error of the reciprocal force between two
+charges at uncorrelated places, relative to that force: $Q$ is the error
+functional of analytic differentiation [[HockneyEastwood1988]](references.md#hockneyeastwood1988)
+[[Ballenegger2012]](references.md#ballenegger2012) for the cubic B-spline
+with the deconvolution $\prod_a\hat U^{-2}$ and the transform $\hat\chi$ of
+the density as the kernels take it, summed over the grid and its aliases
+$\lvert J_a\rvert \le 1$ (`prolate::getSplineMeshError`; the derivation
+is in the white paper, Section 5.6). The spacing is found by bisection; the
+sizes are the even 7-smooth ones of every automatic grid. A bound that eight
+times the grid of eq. 15 does not meet is refused. The log line of the
+kernel gives the grid, its source, $E_B$, and the bound; the manifest records
+`aliasing_estimate`, `aliasing_bound`, and `grid_source`.
+
+On uncorrelated charges the measured error is 1.10 to 1.19 times $E_B$. On
+the Coulomb forces of molecular systems it is smaller at the automatic
+grids: $\Delta/\eta$ = 0.66 to 0.77 at $10^{-3}$, 0.31 to 0.41 at
+$10^{-4}$, and 0.27 to 0.34 at $10^{-5}$ in double precision, against the
+Gaussian kernel at $\mathrm{erfc}(\beta r_c) = 10^{-10}$ (TIP3P water of
+9,989 atoms, JAC, Factor IX, Cellulose; up to 0.46 in mixed precision at
+$10^{-5}$; the table is in the white paper). Before this rule
+the grid of eq. 15 gave $\Delta$ = 1.7 to 3.6 × 10⁻³ at every $\eta$
+(#985). The measurements are for continuity 2, eight terms, and $c$ from
+$\eta$. With an explicit `bandwidth` below $c(\eta)$, or with 40 terms,
+$\Delta$ can exceed $\eta$: JAC with `bandwidth = 9.5392` and $\eta =
+10^{-4}$ takes 108³ and gives $1.69\times10^{-4}$. With `bandwidth` alone,
+the default $\eta = 10^{-5}$ is the bound and is refused there. The bound
+is conservative at tight tolerances with $c$ from $\eta$: at the default
+$\eta = 10^{-5}$ the grid of JAC is 216³, and that of Cellulose 882 × 420 ×
+420. `scripts/benchmarks/prolate-ewald/spline_grid.py` makes and reports
+the measurement, and gives the reference value of $E_B$ that
+`test/Driver/prolate-function.test` checks;
+`test/Driver/prolate-bspline-grid*.test` checks the rule on uncorrelated
+charges, the error against the tolerance and against the $E_B$ of the
+manifest, and `test/Driver/prolate-bspline-manifest.test` the fields of the
+manifest and the log.
 
 ### Prototype measurements
 

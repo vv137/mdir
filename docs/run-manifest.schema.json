@@ -844,7 +844,12 @@
                     "aliasing_estimate": {
                       "type": "number",
                       "minimum": 0
-                    }
+                    },
+                    "aliasing_bound": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "grid_source": {"enum": ["grid", "max_spacing", "automatic"]}
                   },
                   "required": [
                     "kernel",

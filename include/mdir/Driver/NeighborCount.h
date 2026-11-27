@@ -18,6 +18,14 @@
 namespace mdir {
 namespace driver {
 
+/// The threads of work that the driver does while it builds a program, such
+/// as this count and the mesh error estimate of the prolate kernel
+/// (prolate::getSplineMeshError): `given` if it is not 0, or else those
+/// that the process may run on (its affinity), bounded by
+/// MDIR_COMPILE_THREADS, which bounds the threads of a process among those
+/// that run side by side, as the tests of a suite do.
+unsigned getBuildThreads(unsigned given = 0);
+
 /// The largest number of other particles j with |x_i - x_j|^2 < reach^2 in
 /// the minimum image of the orthorhombic box `box` (the diagonal a_x, b_y,
 /// c_z alone for a triclinic cell), over every particle i of `positions`

@@ -22,6 +22,7 @@
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
 #include "mdir/Driver/H5MD.h"
 #include "mdir/Driver/Builder.h"
+#include "mdir/Driver/Prolate.h"
 #include "mdir/Compiler/Compile.h"
 #include "mdir/Compiler/JITEngine.h"
 #include "mdir/Compiler/ProfileMap.h"
@@ -1465,6 +1466,15 @@ static int runControlImpl(StringRef controlFile, Emit emit,
         object["window_bandwidth"] = program->pmeWindowBandwidth;
         if (!control->pmeBasisTerms)
           object["aliasing_estimate"] = program->pmeAliasing;
+      } else {
+        // The mesh error estimate of the B-spline window on this grid, and
+        // the bound the automatic grid meets (D[prolate-bspline-grid]).
+        object["aliasing_estimate"] = program->pmeAliasing;
+        object["aliasing_bound"] = mdir::prolate::getSplineBound(
+            control->pmeAlphaTolerance, control->pmeBasisTerms > 0);
+        object["grid_source"] = control->pmeGrid[0]          ? "grid"
+                                : control->pmeMaxSpacing > 0.0 ? "max_spacing"
+                                                               : "automatic";
       }
     }
     llvm::json::Object effective{
@@ -1829,6 +1839,19 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     if (control->pmeBasisTerms)
       output.log.print("MDIR: %lld even Legendre terms\n",
                        static_cast<long long>(control->pmeBasisTerms));
+    if (control->pmeWindow == "BSPLINE")
+      output.log.print(
+          "MDIR: a grid of %lld x %lld x %lld (%s), the mesh error estimate "
+          "%.2g, the bound of the automatic grid %.2g (D[prolate-bspline-grid])\n",
+          static_cast<long long>(program->pmeGrid[0]),
+          static_cast<long long>(program->pmeGrid[1]),
+          static_cast<long long>(program->pmeGrid[2]),
+          control->pmeGrid[0]           ? "given"
+          : control->pmeMaxSpacing > 0.0 ? "from max_spacing"
+                                         : "automatic",
+          program->pmeAliasing,
+          mdir::prolate::getSplineBound(control->pmeAlphaTolerance,
+                                        control->pmeBasisTerms > 0));
   } else if (program->pmeProlate)
     output.log.print("MDIR: the prolate kernel of PME: c = %.6g, c1 = %.6g, "
                      "%lld points of the window, a grid of %lld x %lld x "

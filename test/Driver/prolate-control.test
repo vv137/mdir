@@ -35,6 +35,22 @@
 # RUN: not mdir run %t/floor5.toml 2>&1 | FileCheck %s --check-prefix=FLOOR5
 # FLOOR5: with 5 points of the window stays above half the tolerance 1e-09 of [pme] on every grid: {{.*}}; give more points of the window in 'order' (up to 8), a looser 'tolerance', or 'grid'
 
+# The B-spline window (D[prolate-bspline-grid]): a tolerance that its mesh
+# error estimate does not reach on eight times the grid of eq. 15: refused.
+# RUN: sed 's/^#PME$/kernel = "PROLATE"\ncontinuity = 2\ntolerance = 1e-9/' %t/base.toml > %t/spline.toml
+# RUN: not mdir run %t/spline.toml 2>&1 | FileCheck %s --check-prefix=SPLINE
+# SPLINE: the mesh error estimate of the prolate kernel with the B-spline window stays above its bound 1e-09 for the tolerance 1e-09 of [pme]: it is {{.*}} at {{[0-9]+}} x {{[0-9]+}} x {{[0-9]+}} points, 8 times finer than the grid of eq. 15; give a looser 'tolerance' or the grid in 'grid'{{$}}
+# The same tolerance with the grid given: not refused, and the log gives
+# the estimate on that grid against the bound.
+# RUN: sed 's/^#PME$/kernel = "PROLATE"\ncontinuity = 2\ntolerance = 1e-9\ngrid = [24, 24, 24]/' %t/base.toml > %t/spline-grid.toml
+# RUN: mdir run %t/spline-grid.toml 2>&1 | FileCheck %s --check-prefix=SPLINE-GRID
+# SPLINE-GRID: MDIR: a grid of 24 x 24 x 24 (given), the mesh error estimate {{[0-9.e-]+}}, the bound of the automatic grid 1e-09 (D[prolate-bspline-grid])
+# With 'bandwidth' alone the default tolerance 1e-5 is the bound, which
+# c = 9.5392 does not reach there.
+# RUN: sed 's/^#PME$/kernel = "PROLATE"\ncontinuity = 2\nbandwidth = 9.5392/' %t/base.toml > %t/spline-bandwidth.toml
+# RUN: not mdir run %t/spline-bandwidth.toml 2>&1 | FileCheck %s --check-prefix=SPLINE-BANDWIDTH
+# SPLINE-BANDWIDTH: stays above its bound 1e-05 for the tolerance 1e-05 of [pme]: {{.*}}; give a looser 'tolerance' or the grid in 'grid' ('tolerance' sets this bound also when 'bandwidth' is given)
+
 # RUN: sed 's/^#PME$/continuity = 0/' %t/base.toml > %t/refused.toml
 # RUN: not mdir run %t/refused.toml 2>&1 | FileCheck %s --check-prefix=REFUSE-0
 # REFUSE-0: is for kernel

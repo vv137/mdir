@@ -14,6 +14,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <vector>
 
 using mdir::prolate::Function;
@@ -119,6 +120,72 @@ int main() {
     failures += !ok;
     std::printf("aliasing %.3g at 48, %.3g at 36 %s\n", a48, a36,
                 ok ? "ok" : "FAIL");
+  }
+  // The B-spline window (D[prolate-bspline-grid]): χ̂ of the constrained
+  // density as the kernels evaluate it, against the quadrature of the
+  // transform below the transition and continuous at it; and the mesh error
+  // estimate against `spline_grid.py functional`
+  // (scripts/benchmarks/prolate-ewald), which sums the whole grid with a
+  // density and a transform of its own, to 1e-6.
+  {
+    Function psi(9.5392, 2, 8);
+    mdir::prolate::Influence influence =
+        mdir::prolate::getPolynomialInfluence(psi);
+    double worst = 0.0;
+    for (double k = 0.01; k < 300.0; k *= 1.01)
+      worst = std::max(
+          worst, std::fabs(mdir::prolate::evaluatePolynomialInfluence(influence, k) -
+                           psi.transform(k) / (2.0 * psi.halfIntegral())));
+    double below = mdir::prolate::evaluatePolynomialInfluence(influence, 512.0 - 1e-9);
+    double above = mdir::prolate::evaluatePolynomialInfluence(influence, 512.0);
+    bool ok = worst < 1e-8 && std::fabs(below - above) < 1e-15;
+    failures += !ok;
+    std::printf("spline spectrum: largest difference %.1e, step at the transition "
+                "%.1e %s\n",
+                worst, std::fabs(below - above), ok ? "ok" : "FAIL");
+    struct Case {
+      double c;
+      int continuity, terms;
+      int64_t grid[3];
+      double edges[3], cutoff, reference;
+    };
+    const Case cases[] = {
+        {9.5392, 2, 8, {24, 24, 24}, {62.23, 62.23, 62.23}, 8.0, 9.776661733777e-03},
+        {14.471, 2, 8, {20, 18, 16}, {30.1, 27.4, 24.9}, 9.0, 1.575745593247e-03},
+        {12.024, 3, 8, {16, 16, 16}, {30.0, 30.0, 30.0}, 9.0, 3.157652485010e-03},
+        {9.5392, 1, 8, {20, 20, 18}, {40.0, 40.0, 36.0}, 8.0, 3.540370751036e-03},
+        {9.5392, 2, 40, {20, 20, 18}, {40.0, 40.0, 36.0}, 8.0, 3.508506844097e-03},
+    };
+    for (const Case &k : cases) {
+      Function split(k.c, k.continuity, k.terms);
+      mdir::prolate::Influence table = mdir::prolate::getPolynomialInfluence(split);
+      double value = mdir::prolate::getSplineMeshError(
+          [&](double x) { return mdir::prolate::evaluatePolynomialInfluence(table, x); },
+          4, k.edges, k.grid, k.cutoff);
+      bool close = std::fabs(value / k.reference - 1.0) < 1e-6;
+      failures += !close;
+      std::printf("spline mesh error C%d N=%d c %g %lldx%lldx%lld: %.10e reference "
+                  "%.10e %s\n",
+                  k.continuity, k.terms, k.c, static_cast<long long>(k.grid[0]),
+                  static_cast<long long>(k.grid[1]),
+                  static_cast<long long>(k.grid[2]), value, k.reference,
+                  close ? "ok" : "FAIL");
+    }
+    // A grid large enough to be summed on threads: the same bits on one
+    // thread and on four.
+    Function split(9.5392, 2, 8);
+    mdir::prolate::Influence table = mdir::prolate::getPolynomialInfluence(split);
+    auto spectrum = [&](double x) {
+      return mdir::prolate::evaluatePolynomialInfluence(table, x);
+    };
+    const double edges[3] = {62.23, 62.23, 62.23};
+    const int64_t grid[3] = {160, 160, 160};
+    double one = mdir::prolate::getSplineMeshError(spectrum, 4, edges, grid, 8.0, 1);
+    double four = mdir::prolate::getSplineMeshError(spectrum, 4, edges, grid, 8.0, 4);
+    bool same = std::memcmp(&one, &four, sizeof one) == 0;
+    failures += !same;
+    std::printf("spline mesh error 160x160x160 on 1 and 4 threads: %.17g %.17g %s\n",
+                one, four, same ? "ok" : "FAIL");
   }
   // The tables of the splitting, 64 cells of 10 terms, against the
   // functions at 1000 points; Φ by quadrature against the Legendre

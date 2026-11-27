@@ -142,6 +142,49 @@ double getAliasing(const Function &psi, const Window &window,
                    const double (&edges)[3], const int64_t (&grid)[3],
                    double cutoff);
 
+/// χ̂(k) of the polynomial splitting from the table of
+/// getPolynomialInfluence, as the kernels evaluate it
+/// (PMEProlateSpectrum.h): the cubic Hermite interpolant of the knots below
+/// SpectrumTransition, the endpoint expansion beyond.
+double evaluatePolynomialInfluence(const Influence &influence, double k);
+
+/// The mesh error of the B-spline window of `order` points p with the
+/// deconvolution 1/sinc^{2p} of each axis and the forces of the gradient of
+/// the mesh energy (D[prolate-bspline-grid]): the root of Q/R, where Q is
+/// the mean square error of the reciprocal force between two charges at
+/// uncorrelated places, the error functional of [HockneyEastwood1988] for
+/// this scheme [Ballenegger2012], and R the mean square of the exact
+/// reciprocal force between them. With k_j = (n + jK)/L the images of the
+/// mode n of the grid (j = 0 the mode itself), ρ_j = Π_a (n_a/(n_a +
+/// j_a K_a))^p the ratio of the window's transforms (up to the sign
+/// (−1)^{j_a p}, which ρ² drops), and G(k) =
+/// χ̂(2π r_c |k|)/|k|²,
+///   Q = Σ_n [Σ_{j≠0} (ρ_j² G(n) − G(k_j))² |k_j|²
+///            + G(n)² Σ_{j≠l} ρ_j² ρ_l² |k_l|²],
+///   R = Σ_n Σ_j G(k_j)² |k_j|²,
+/// over the grid and its images |j_a| ≤ 1. `spectrum` is χ̂ (χ̂(0) = 1),
+/// as the kernels take it. Lengths in any one unit. A large grid is summed
+/// on `threads` threads, 0 for those of driver::getBuildThreads; the sums
+/// of its planes are added in one order, so the result does not depend on
+/// their number.
+double getSplineMeshError(const std::function<double(double)> &spectrum,
+                          int64_t order, const double (&edges)[3],
+                          const int64_t (&grid)[3], double cutoff,
+                          unsigned threads = 0);
+
+/// The bound of getSplineMeshError for the automatic grid at the tolerance
+/// ε of [pme] (D[prolate-bspline-grid]): ε for the transform of the
+/// constrained density taken in full, whose reciprocal sum the grid alone
+/// limits; ε/2 for the prolate's taken within its band, whose cut leaves a
+/// floor of 0.6 to 0.9 ε, as the bound of getAliasing.
+inline double getSplineBound(double epsilon, bool polynomial) {
+  return polynomial ? epsilon : 0.5 * epsilon;
+}
+
+/// The finest automatic grid of the B-spline window, as a factor of the
+/// spacing of eq. 15 of [Liang2026]; a bound not met there is refused.
+inline constexpr double SplineRefinementLimit = 8.0;
+
 } // namespace prolate
 } // namespace mdir
 
