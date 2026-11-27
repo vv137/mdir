@@ -65,14 +65,17 @@ from pathlib import Path
 import h5py
 import numpy as np
 
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import COULOMB_CONTROL, KJ_PER_KCAL  # noqa: E402
+
 root = Path(sys.argv[1]).resolve()
 control_file = Path(sys.argv[2]).resolve()
 program = shutil.which(sys.argv[3]) or sys.argv[3]
 without_override = "--without-override" in sys.argv[4:]
 root.mkdir(parents=True, exist_ok=True)
 
-KCAL = 4.184  # kJ/mol per kcal/mol
-COULOMB = 332.0637130741  # kcal/mol Angstrom / e^2
+KCAL = KJ_PER_KCAL
+COULOMB = COULOMB_CONTROL  # kcal/mol Angstrom / e^2
 C = 32
 spec = tomllib.loads(control_file.read_text())
 cutoff = spec["energy"]["cutoff"]
