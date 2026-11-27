@@ -1,0 +1,17 @@
+# REQUIRES: cuda, nccl
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/shake.test | sed -e '1d;$d' -e 's|= "vacuum|= "%S/Inputs/ff19sb/vacuum|' -e 's/= 500/= 10/' -e 's/= 100/= 2/g' -e 's/= 28.0/= 8.0/' -e 's/= 29.0/= 11.0/' -e 's/"CUTOFF"/"REACTION_FIELD"/' -e '/^electrostatics/a reaction_field_dielectric = 0' -e 's/"NVE"/"NVT"/' -e '/^\[dynamics\]/a seed = 314159' > %t/ordinary.toml
+# RUN: printf '\n[thermostat]\nmethod = "V-RESCALE"\ntime_constant = 1.0\ninterval = 2\n[execution]\ntarget = "GPU"\nprecision = "MIXED"\nneighbor_structure = "MATRIX"\n' >> %t/ordinary.toml
+# RUN: sed "s/shake.dcd/local.dcd/" %t/ordinary.toml > %t/local.toml
+# RUN: printf '\n[distribute]\ntransport = "nccl"\ntraversal = "unique"\n' >> %t/local.toml
+# RUN: cd %t && env MDRT_PROFILE=1 mdir run ordinary.toml > ordinary.log 2>ordinary.profile
+# RUN: cd %t && env MDRT_PROFILE=1 mdir run local.toml > local.log 2>local.profile
+# RUN: FileCheck %s < %t/local.log
+# RUN: %python %S/Inputs/check_bonds.py %S/Inputs/ff19sb/vacuum.prmtop %t/local.dcd | FileCheck %s --check-prefix=BONDS
+# RUN: awk '/^mdrt: launches / { n[FILENAME] = $3 } END { exit !(n[ARGV[1]] && n[ARGV[2]] && n[ARGV[2]] <= n[ARGV[1]] + 20) }' %t/ordinary.profile %t/local.profile
+
+# Each run reports every other step, including the V-rescale application.
+# Allow two extra launches per step for the periodic half MATRIX.
+# CHECK: domain grid 1 x 1 x 1, nccl transport, unique traversal
+# CHECK: INFO: 10
+# BONDS: bonds ok

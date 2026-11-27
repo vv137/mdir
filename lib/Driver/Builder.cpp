@@ -500,11 +500,13 @@ llvm::Expected<Program> mdir::driver::buildProgram(const Control &control,
     const auto &grid = program.domainGrid;
     // Without a foreign owner the physical row order is the global
     // identity order. The periodic half matrix therefore needs no halo.
+    // V-rescale uses only the local kinetic sum and a velocity scale.
     program.localUniquePairs = program.domainGroupSteps &&
         grid == std::array<int64_t, 3>{1, 1, 1} &&
         control.distribution->transport == "nccl" &&
         control.distribution->traversal == "unique" && control.reactionField &&
-        !control.thermostat && control.pairs.empty() && control.triplets.empty() &&
+        (!control.thermostat || control.thermostatMethod == ThermostatMethod::VRescale) &&
+        control.pairs.empty() && control.triplets.empty() &&
         control.models.empty() && control.stagedModels.empty();
     program.domainSplitPairs = control.distribution->pairOverlap == "split" &&
                                grid[0] * grid[1] * grid[2] > 1;

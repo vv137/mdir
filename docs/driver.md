@@ -1724,6 +1724,10 @@ atom identity. Hydrogen groups and rigid waters migrate together. Reciprocal
 space needs a distributed mesh. Analytic EAM has an IR oracle in ML2
 Section 15.
 
+Eligible one-domain NCCL reaction-field runs with unique traversal use
+the periodic half MATRIX and the device-local Verlet and constraint
+kernels in both NVE and V-rescale NVT.
+
 The setup log and the manifest start event give the requested domain count,
 factor grids and their scores in inverse nm, the source of each choice, and
 the real-space cutoff and skin in Ang. The first halo adds a
