@@ -572,9 +572,10 @@ static void checkCutoffJump(const Control &control, const System &system,
                                  : 0.0;
   std::string advice =
       control.pmeAlpha > 0.0
-          ? "remove 'beta' of [pme], so that 'tolerance' (10^-5 by "
+          ? "remove 'beta' of [pme], so that 'tolerance' (5x10^-5 by "
             "default) sets erfc(beta r_c)"
-          : "set 'tolerance' of [pme] to 10^-5 (the default) or less";
+          : "set 'tolerance' of [pme] to 10^-5 or less (5x10^-5 by "
+            "default)";
   warnings.push_back(
       {"pme_cutoff_jump",
        llvm::formatv(
@@ -679,14 +680,14 @@ static void describeRun(const Control &control, const System &system,
   if (control.neighborStructureRequested == NeighborStructure::Auto)
     std::printf(" (AUTO: %s)", control.neighborStructureReason.c_str());
   std::printf("\n");
-  if (!control.towersAutoReason.empty())
-    std::printf("AUTO traversal:     TOWERS %s\n",
-                control.towersAutoReason.c_str());
   // The reaches that are "AUTO" (D281): check measures nothing; it
   // names the defaults or the cache, and whether `mdir run` would search.
   if (control.isSkinAuto())
     std::printf("skins:              %s (%s)\n", control.skinSource.c_str(),
                 control.skinReason.c_str());
+  if (!control.towersAutoReason.empty())
+    std::printf("AUTO traversal:     TOWERS %s\n",
+                control.towersAutoReason.c_str());
   if (!control.restartInput.empty())
     std::printf("input checkpoint:   %s (not loaded by check)\n",
                 control.restartInput.c_str());

@@ -5,7 +5,9 @@
 # the inner reach wider in proportion to a longer step, each reach given
 # kept; a smaller one, the CPU, the deterministic mode, `rebuild_interval`,
 # or a reach of the groups beyond the cell takes the matrix with its own
-# reach. A structure that was given is kept as before.
+# reach. A structure that was given is kept as before. The device is
+# hidden, so that the rule of TOWERS (D[best-defaults],
+# neighbor-auto-towers.test) leaves these to D261 on any machine.
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %python %S/Inputs/argon_lattice.py 20 %t/small.pdb
@@ -26,22 +28,22 @@
 # RUN: sed -e 's|^target = "GPU"|target = "GPU"\nneighbor_structure = "GROUPS"|' %t/big.toml > %t/groups.toml
 # RUN: sed -e 's|^target = "GPU"|target = "GPU"\nneighbor_structure = "AUTO"|' %t/small.toml > %t/given.toml
 # RUN: sed -e 's|^target = "GPU"|target = "CPU"|' %t/inner.toml > %t/cpu-inner.toml
-# RUN: cd %t && mdir check big.toml | FileCheck %s --check-prefix=BIG
-# RUN: cd %t && mdir check small.toml | FileCheck %s --check-prefix=SMALL
-# RUN: cd %t && mdir check given.toml | FileCheck %s --check-prefix=SMALL
-# RUN: cd %t && mdir check dense.toml | FileCheck %s --check-prefix=DENSE
-# RUN: cd %t && mdir check cpu.toml | FileCheck %s --check-prefix=CPU
-# RUN: cd %t && mdir check deterministic.toml | FileCheck %s --check-prefix=DETERMINISTIC
-# RUN: cd %t && mdir check long-step.toml | FileCheck %s --check-prefix=LONG
-# RUN: cd %t && mdir check outer.toml | FileCheck %s --check-prefix=OUTER
-# RUN: cd %t && mdir check short.toml | FileCheck %s --check-prefix=SHORT
-# RUN: cd %t && mdir check inner.toml | FileCheck %s --check-prefix=INNER
-# RUN: cd %t && mdir check small-inner.toml | FileCheck %s --check-prefix=UNUSED
-# RUN: cd %t && mdir check interval.toml 2> /dev/null | FileCheck %s --check-prefix=INTERVAL
-# RUN: cd %t && mdir check matrix.toml | FileCheck %s --check-prefix=MATRIX
-# RUN: cd %t && mdir check groups.toml | FileCheck %s --check-prefix=GROUPS
-# RUN: cd %t && not mdir check cpu-inner.toml 2>&1 | FileCheck %s --check-prefix=REFUSED
-# RUN: cd %t && mdir check --json big.toml | %python -c "import json, sys; print(json.dumps(json.load(sys.stdin)['run']['neighbors'], sort_keys=True))" | FileCheck %s --check-prefix=JSON
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check big.toml | FileCheck %s --check-prefix=BIG
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check small.toml | FileCheck %s --check-prefix=SMALL
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check given.toml | FileCheck %s --check-prefix=SMALL
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check dense.toml | FileCheck %s --check-prefix=DENSE
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check cpu.toml | FileCheck %s --check-prefix=CPU
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check deterministic.toml | FileCheck %s --check-prefix=DETERMINISTIC
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check long-step.toml | FileCheck %s --check-prefix=LONG
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check outer.toml | FileCheck %s --check-prefix=OUTER
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check short.toml | FileCheck %s --check-prefix=SHORT
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check inner.toml | FileCheck %s --check-prefix=INNER
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check small-inner.toml | FileCheck %s --check-prefix=UNUSED
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check interval.toml 2> /dev/null | FileCheck %s --check-prefix=INTERVAL
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check matrix.toml | FileCheck %s --check-prefix=MATRIX
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check groups.toml | FileCheck %s --check-prefix=GROUPS
+# RUN: cd %t && not env CUDA_VISIBLE_DEVICES= mdir check cpu-inner.toml 2>&1 | FileCheck %s --check-prefix=REFUSED
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check --json big.toml | %python -c "import json, sys; print(json.dumps(json.load(sys.stdin)['run']['neighbors'], sort_keys=True))" | FileCheck %s --check-prefix=JSON
 
 # BIG: neighbors: groups of 16, reach 12 Ang, pruned to 9.6 Ang (AUTO: 64000 particles, at least {{[0-9]+}}, on a GPU)
 # SMALL: neighbors: matrix, reach 10.5 Ang (AUTO: 8000 particles, fewer than {{[0-9]+}})
@@ -57,7 +59,7 @@
 # MATRIX: neighbors: matrix, reach 10.5 Ang{{$}}
 # GROUPS: neighbors: groups of 16, reach 10.5 Ang{{$}}
 # REFUSED: 'pruned_distance' keeps a dual list, which needs 'neighbor_structure = "GROUPS"', or "AUTO" on a GPU and not 'deterministic'
-# JSON: {"pairlist_distance_angstrom": 12, "pruned_distance_angstrom": 9.6, "reason": "64000 particles, at least {{[0-9]+}}, on a GPU", "requested": "auto", "structure": "groups"}
+# JSON: {"pairlist_distance_angstrom": 12, "pruned_distance_angstrom": 9.6, "reason": "64000 particles, at least {{[0-9]+}}, on a GPU", "requested": "auto", "structure": "groups", "towers_auto": "not taken: no visible CUDA device"}
 
 #--- run.toml
 [input]

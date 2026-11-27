@@ -46,7 +46,7 @@
 # sm_89 alone, so sm_120 takes its entry as a fallback. The groups' build
 # takes 96 particles a column on sm_89, an entry measured there; every other
 # architecture, and none, takes D89's 64, a default measured on none. The
-# traversal of AUTO takes TOWERS from 3,000 particles on sm_89 alone
+# traversal of AUTO takes TOWERS from 4,608 particles on sm_89 alone
 # (D[best-defaults]); every other architecture keeps the rule of D261.
 # RUN: mdir-device-policy-test sm_120 | FileCheck %s --check-prefix=T120
 # RUN: mdir-device-policy-test sm_120a | FileCheck %s --check-prefix=T120
@@ -68,7 +68,7 @@
 # T89-NEXT: launch block-size=128 row-lanes=16 stage-block-size=256 block-memory=49152 gather-lanes=4,8,8 fallback=1
 # T89-NEXT: segments block-size=128 rotation=16 column-units=128 fallback=0
 # T89-NEXT: groups column-particles=96 fallback=0 (D423)
-# T89-NEXT: traversal towers-least=3000 fallback=0 (D[best-defaults])
+# T89-NEXT: traversal towers-least=4608 fallback=0 (D[best-defaults])
 # T80: pruning fused-groups=4096 fallback=1 (D284)
 # T80-NEXT: scatter tile-min-points=500000 {{.*}} fallback=1
 # T80: segments block-size=128 rotation=16 column-units=128 fallback=1

@@ -40,7 +40,7 @@
 # RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check water.toml | FileCheck %s --check-prefix=UNITS
 
 # NODEVICE: neighbors: matrix, reach 10.5 Ang (AUTO: 8000 particles, fewer than {{[0-9]+}})
-# NODEVICE-NEXT: AUTO traversal: TOWERS not taken: no visible CUDA device
+# NODEVICE: AUTO traversal: TOWERS not taken: no visible CUDA device
 # CPU: AUTO traversal: TOWERS not taken: the target is the CPU
 # PRECISION: AUTO traversal: TOWERS not taken: TOWERS takes mixed precision
 # DETERMINISTIC: AUTO traversal: TOWERS not taken: the deterministic mode

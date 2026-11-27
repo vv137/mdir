@@ -227,18 +227,19 @@ static const Measurement kTraversalDefaultBasis = {
     "2026-10-13"};
 static const ArrayRef<Measured> kTraversalDefaultMeasured = {};
 
-// On sm_89 TOWERS took less time a step than the structure of D261 on
-// every system measured, in NVT and NPT at 2 fs in mixed precision with
-// the default PME (D[best-defaults]): TIP3P boxes of 3,072, 9,989 and
-// 19,880 atoms, JAC, Factor IX, Cellulose and STMV, RTX 4090, two jobs in
-// opposite orders. The least size is that of the smallest box measured.
+// On sm_89 TOWERS with its derived launch took less time a step than the
+// structure of D261 from 4,608 atoms on (D[best-defaults], RTX 4090,
+// mixed precision, 2 fs, two jobs in opposite orders): TIP3P boxes of
+// 4,608, 6,912, 9,989 and 19,880 atoms, JAC, Factor IX, Cellulose and STMV.
+// A box of 3,072 atoms ran 3% slower than the matrix, so the entry starts
+// at the smallest box measured faster.
 static const Measured kTraversal89Measured[] = {{8, 9}};
 static const Entry<TraversalPolicy> kTraversalTable[] = {
     {{8, 9, ""},
-     {/*towersLeast=*/3000},
+     {/*towersLeast=*/4608},
      {"D[best-defaults]",
-      "TIP3P (3,072, 9,989 and 19,880 atoms), JAC, Factor IX, Cellulose and "
-      "STMV, NVT and NPT, RTX 4090",
+      "TIP3P boxes of 3,072 to 19,880 atoms, JAC, Factor IX, Cellulose and "
+      "STMV, RTX 4090",
       "2026-11-27"},
      kTraversal89Measured},
 };
