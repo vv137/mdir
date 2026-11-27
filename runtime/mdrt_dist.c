@@ -14,6 +14,7 @@
 
 #include "mdrt_dist_stats.h"
 #include "mdrt_host_matrix.h"
+#include "mdrt_midpoint.h"
 #ifdef MDIR_ENABLE_MPI
 #include "mdrt_mpi.h"
 #endif
@@ -426,14 +427,6 @@ static DistWide *wordAt(struct Memref3W *m, int64_t d, int64_t r, int64_t c) {
 
 /* The cell of the grid that fractional coordinate `u` along an axis of `g`
    divisions falls in. */
-static int64_t division(double u, int64_t g) {
-  int64_t a = (int64_t)floor(u * (double)g);
-  if (a < 0)
-    a = 0;
-  if (a >= g)
-    a = g - 1;
-  return a;
-}
 
 /* xi is the untranslated position of the lesser identity. Form its midpoint
    before choosing a grid. Of all common translations of this pair, use
@@ -626,13 +619,12 @@ static size_t firstKey(const struct Exclusions *e, uint64_t key) {
   return first;
 }
 
-/* Classify the fractional midpoint relative to the cell of this explicit
-   image, using the same primary-cell wrap and rounded division as selection. */
-static int compareMidpoint(double u, int64_t image, int64_t grid, int64_t cell) {
-  double whole = floor(u), target = -(double)image;
-  if (whole != target) return whole < target ? -1 : 1;
-  int64_t domain = division(u-whole, grid);
-  return (domain > cell) - (domain < cell);
+static void rowRanges(const struct Layout *l, const int64_t cell[3],
+                      const struct MidpointRange common[3][3], const int64_t image[3],
+                      struct MidpointRange ranges[3]) {
+  for (int c = 0; c < 3; ++c)
+    ranges[c] = image[c] >= -1 && image[c] <= 1 ? common[c][image[c]+1] :
+        midpointRange(l->edges[c],image[c],l->grid[c],cell[c]);
 }
 
 /* Bound each operation of (xi - .5*((xi-xj)-(b-a))) / L separately.
@@ -640,19 +632,17 @@ static int compareMidpoint(double u, int64_t image, int64_t grid, int64_t cell) 
    second. Using the same operations at the bounding endpoints also
    encloses rounded results at a domain face. */
 static int classifyMidpoint(const struct MidpointBounds *i, const struct MidpointBounds *j,
-                            const struct Layout *l, const int64_t cell[3]) {
+                            const struct MidpointRange ranges[3]) {
   int stable = 1;
   for (int c = 0; c < 3; ++c) {
     double shift = j->shift[c]-i->shift[c];
     double dxLow = (i->low[c]-j->high[c])-shift;
     double dxHigh = (i->high[c]-j->low[c])-shift;
-    double low = (i->low[c]-0.5*dxHigh)/l->edges[c];
-    double high = (i->high[c]-0.5*dxLow)/l->edges[c];
+    double low = i->low[c]-0.5*dxHigh;
+    double high = i->high[c]-0.5*dxLow;
     if (!isfinite(low) || !isfinite(high)) return 0;
-    int lower = compareMidpoint(low,i->image[c],l->grid[c],cell[c]);
-    int upper = compareMidpoint(high,i->image[c],l->grid[c],cell[c]);
-    if (lower > 0 || upper < 0) return -1;
-    stable &= lower == 0 && upper == 0;
+    if (low >= ranges[c].upper || high < ranges[c].lower) return -1;
+    stable &= low >= ranges[c].lower && high < ranges[c].upper;
   }
   return stable;
 }
@@ -690,7 +680,11 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
   uint64_t version = e ? e->version : 0;
   int64_t cell[3] = {d%l->grid[0], (d/l->grid[0])%l->grid[1], d/(l->grid[0]*l->grid[1])};
   int rebuild = !m->candidatesValid || m->candidateRule != rule || version != m->exclusionVersion;
+  struct MidpointRange common[3][3];
   if (rule == 2) {
+    for (int c = 0; c < 3; ++c)
+      for (int image = -1; image <= 1; ++image)
+        common[c][image+1] = midpointRange(l->edges[c],image,l->grid[c],cell[c]);
     if (!m->bounds) {
       m->bounds = calloc(m->rows ? m->rows : 1, sizeof *m->bounds);
       if (!m->bounds) fail("out of memory bounding midpoint candidates");
@@ -724,6 +718,8 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
       uint64_t prefix = (uint64_t)idi << 32;
       size_t lo = e && rule ? firstKey(e,prefix) : 0;
       size_t hi = e && rule ? firstKey(e,prefix+(UINT64_C(1)<<32)) : 0;
+      struct MidpointRange ranges[3];
+      if (rule == 2) rowRanges(l,cell,common,m->bounds[i].image,ranges);
       int32_t count = 0;
       for (int32_t k = 0; k < m->counts[i]; ++k) {
         int32_t j = ((int32_t *)src.aligned)[i*src.strides[0]+k];
@@ -738,7 +734,7 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
         if (e && !rule && !mdrtDistPairAllowed(exclusions,idi<idj ? idi : idj,
                                                 idi<idj ? idj : idi)) continue;
         if (rule == 2) {
-          int membership = classifyMidpoint(&m->bounds[i],&m->bounds[j],l,cell);
+          int membership = classifyMidpoint(&m->bounds[i],&m->bounds[j],ranges);
           if (membership < 0) continue;
           if (membership > 0) j = ~j;
         }
@@ -767,6 +763,8 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
       xi[c] = i<n ? *at3(owned,d,i,c) : *at3(ghost,d,i-n,c);
       a[c] = image[c]*l->edges[c];
     }
+    struct MidpointRange ranges[3];
+    rowRanges(l,cell,common,image,ranges);
     double center[3];
     for (int c = 0; c < 3; ++c) center[c] = *at2(packed,i,c);
     int32_t count = 0;
@@ -790,8 +788,8 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
         double xj = j<n ? *at3(owned,d,j,c) : *at3(ghost,d,j-n,c);
         double b = j<n ? 0.0 : h->image[3*((d-h->idBase)*h->capacity+j-n)+c]*l->edges[c];
         double dx = (xi[c]-xj)-(b-a[c]);
-        double u = (xi[c]-0.5*dx)/l->edges[c], shift = floor(u);
-        if (shift != -(double)image[c] || division(u-shift,l->grid[c]) != cell[c]) {
+        double midpoint = xi[c]-0.5*dx;
+        if (!(midpoint >= ranges[c].lower && midpoint < ranges[c].upper)) {
           keep = 0;
           break;
         }

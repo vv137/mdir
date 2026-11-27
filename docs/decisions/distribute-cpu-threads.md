@@ -200,3 +200,9 @@ the immutable input tuple and resolves the image to its local ghost row.
 If any sender needs a larger translation, all ranks use the full
 identity and three signed translations for that exchange. Complemented
 destination counts communicate this choice in the existing count exchange.
+
+Midpoint selection uses the exact binary64 coordinate thresholds for
+entering and leaving each domain along each axis. Bisection over ordered
+binary64 numerators evaluates the original division, wrapping and cell
+index at each probe. The resulting half-open interval serves both the
+Verlet membership bounds and the individual tests of ambiguous pairs.

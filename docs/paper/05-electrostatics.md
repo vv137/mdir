@@ -1443,3 +1443,9 @@ Each member word names an owned row or encodes a ghost image. The tuple
 index supplies the ghost's particle identity at the receiver. If a
 translation exceeds this range, the exchange uses $2+4a$ words per
 tuple and preserves all three full-width image components.
+
+For fixed box length, grid and periodic image, the cell classification
+of a finite Cartesian midpoint is monotone. The two binary64 thresholds
+at which it enters and leaves a domain therefore preserve the original
+rounded division at both faces. Tests of interval endpoints and individual
+midpoints use the same thresholds throughout a matrix selection.

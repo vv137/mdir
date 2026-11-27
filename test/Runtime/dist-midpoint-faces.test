@@ -1,0 +1,2 @@
+# RUN: cc -std=c11 -O2 -I%S/../../runtime %S/Inputs/dist-midpoint-faces.c -lm -o %t
+# RUN: %t
