@@ -1435,3 +1435,11 @@ neighbors across slices.
 | --- | ---: | ---: | ---: |
 | Contiguous | 3.16 | 2.40 | 1.74 |
 | Interleaved runs | 1.17 | 1.12 | 1.05 |
+
+For midpoint topology routing, a tuple of arity $a$ whose member image
+translations lie in $\{-1,0,1\}^3$ can travel in $2+a$ integer words.
+The first two words identify the input tuple and destination domain.
+Each member word names an owned row or encodes a ghost image. The tuple
+index supplies the ghost's particle identity at the receiver. If a
+translation exceeds this range, the exchange uses $2+4a$ words per
+tuple and preserves all three full-width image components.

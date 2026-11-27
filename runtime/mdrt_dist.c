@@ -2908,7 +2908,8 @@ static int64_t imageRow(struct Halo *h, int64_t d, int64_t id, const int64_t ima
   return -1;
 }
 
-static void tupleRows(int64_t handle, struct Memref3D *positions,
+/* Return whether all remote row references fit a neighboring periodic image. */
+static int tupleRows(int64_t handle, struct Memref3D *positions,
                       struct Members *members, struct Memref2I *out, int64_t begin, int64_t end,
                       int64_t firstTuple, int64_t pastTuple, const struct TopologySite *sites) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
@@ -2916,7 +2917,8 @@ static void tupleRows(int64_t handle, struct Memref3D *positions,
   int64_t count = members->sizes[0], arity = members->sizes[1];
   if (arity < 2 || out->sizes[0] != count || out->sizes[1] != 1 + (sites ? 4 : 1)*arity)
     fail("invalid tuple ownership schedule shape");
-  if (count == 0) return;
+  if (count == 0) return 1;
+  int compact = 1;
   int64_t *ids = malloc(arity*sizeof *ids);
   int64_t (*image)[3] = calloc(arity,sizeof *image);
   if (!ids || !image) fail("out of memory locating tuple members");
@@ -2975,6 +2977,9 @@ static void tupleRows(int64_t handle, struct Memref3D *positions,
         int64_t *ref = record+1+4*a;
         ref[0] = row >= 0 ? row : -1-j;
         memcpy(ref+1,image[a],3*sizeof *ref);
+        if (row < 0)
+          for (int k = 0; k < 3; ++k)
+            compact &= image[a][k] >= -1 && image[a][k] <= 1;
       } else {
         if (row < 0) row = imageRow(h,d,j,image[a],t);
         record[(a+1)*out->strides[1]] = row;
@@ -2983,6 +2988,7 @@ static void tupleRows(int64_t handle, struct Memref3D *positions,
   }
   free(image);
   free(ids);
+  return compact;
 }
 
 void _mlir_ciface_mdrtDistTupleRows(int64_t handle, struct Memref3D *positions,
@@ -3074,11 +3080,12 @@ int64_t _mlir_ciface_mdrtDistScheduleTuples(int64_t handle, int64_t groups, int6
   struct Memref2I records = {rows,rows,0,{count,recordWidth},{recordWidth,1}};
   struct TopologySite *sites = directory ?
       readSites((struct TuplePlan *)(intptr_t)plan,(struct TopologyShard *)(intptr_t)directory,&slice,l->count) : NULL;
+  int compact = directory != 0;
   {
-    #pragma omp parallel for schedule(static) if(count > 256)
+    #pragma omp parallel for schedule(static) reduction(&:compact) if(count > 256)
     for (int64_t start = 0; start < count; start += 256) {
       int64_t end = start+256 < count ? start+256 : count;
-      tupleRows(handle,positions,&slice,&records,0,l->domains,start,end,sites);
+      compact &= tupleRows(handle,positions,&slice,&records,0,l->domains,start,end,sites);
     }
   }
   free(sites);
@@ -3096,7 +3103,19 @@ int64_t _mlir_ciface_mdrtDistScheduleTuples(int64_t handle, int64_t groups, int6
   int *ns = counts, *nr = ns+peers, *os = nr+peers, *or = os+peers, *cursor = or+peers;
   for (int64_t i = 0; i < count; ++i)
     ++ns[mdrtMPIOwner(l->domains,rows[i*recordWidth])];
+  /* Communicate the format decision with the counts. Complement zero
+     counts too, so every rank sees a request for full-width images. */
+  if (!compact)
+    for (int p = 0; p < peers; ++p) ns[p] = ~ns[p];
   mdrtMPIExchangeCounts(ns,nr);
+  for (int p = 0; p < peers; ++p) {
+    if (ns[p] < 0) ns[p] = ~ns[p];
+    if (nr[p] < 0) {
+      nr[p] = ~nr[p];
+      compact = 0;
+    }
+  }
+  int64_t packetWidth = 1 + (compact ? width : recordWidth);
   int receives = 0;
   for (int p = 0; p < peers; ++p) {
     if (p) os[p] = os[p-1]+ns[p-1];
@@ -3105,16 +3124,26 @@ int64_t _mlir_ciface_mdrtDistScheduleTuples(int64_t handle, int64_t groups, int6
     receives += nr[p];
   }
   memcpy(cursor,os,peers*sizeof *cursor);
-  int64_t *out = malloc((count ? count : 1)*(recordWidth+1)*sizeof *out);
-  int64_t *in = malloc((receives ? (size_t)receives : 1)*(recordWidth+1)*sizeof *in);
+  int64_t *out = malloc((count ? count : 1)*packetWidth*sizeof *out);
+  int64_t *in = malloc((receives ? (size_t)receives : 1)*packetWidth*sizeof *in);
   if (!out || !in) fail("out of memory routing tuple rows");
   for (int64_t i = 0; i < count; ++i) {
     int dest = mdrtMPIOwner(l->domains,rows[i*recordWidth]);
-    int64_t *record = out+(recordWidth+1)*cursor[dest]++;
+    int64_t *record = out+packetWidth*cursor[dest]++;
     record[0] = first+i;
-    memcpy(record+1,rows+i*recordWidth,recordWidth*sizeof *rows);
+    const int64_t *src = rows+i*recordWidth;
+    if (compact) {
+      record[1] = src[0];
+      for (int64_t a = 0; a < width-1; ++a) {
+        const int64_t *ref = src+1+4*a;
+        record[2+a] = ref[0] >= 0 ? ref[0] :
+            ~((ref[1]+1)*9+(ref[2]+1)*3+ref[3]+1);
+      }
+    } else {
+      memcpy(record+1,src,recordWidth*sizeof *rows);
+    }
   }
-  mdrtMPIExchangeRecords(out,ns,os,in,nr,or,(recordWidth+1)*sizeof *in);
+  mdrtMPIExchangeRecords(out,ns,os,in,nr,or,packetWidth*sizeof *in);
   free(counts);
   free(rows);
   free(out);
@@ -3124,15 +3153,26 @@ int64_t _mlir_ciface_mdrtDistScheduleTuples(int64_t handle, int64_t groups, int6
   if (!schedule->rows || !schedule->indices) fail("out of memory collecting local tuples");
   #pragma omp parallel for schedule(static) if(receives > 1024)
   for (int i = 0; i < receives; ++i) {
-    const int64_t *record = in+(recordWidth+1)*i;
+    const int64_t *record = in+packetWidth*i;
     schedule->indices[i] = record[0];
     int64_t *local = schedule->rows+width*i;
     {
       local[0] = record[1];
       for (int64_t a = 0; a < width-1; ++a) {
-        const int64_t *ref = record+2+4*a;
-        local[1+a] = ref[0] >= 0 ? ref[0] :
-            imageRow((struct Halo *)(intptr_t)handle,local[0],-1-ref[0],ref+1,record[0]);
+        if (compact) {
+          int64_t code = record[2+a];
+          if (code < 0) {
+            int imageCode = (int)~code;
+            int64_t image[] = {imageCode/9-1, (imageCode/3)%3-1, imageCode%3-1};
+            int64_t id = memberAt(members,record[0]*(width-1)+a);
+            code = imageRow((struct Halo *)(intptr_t)handle,local[0],id,image,record[0]);
+          }
+          local[1+a] = code;
+        } else {
+          const int64_t *ref = record+2+4*a;
+          local[1+a] = ref[0] >= 0 ? ref[0] :
+              imageRow((struct Halo *)(intptr_t)handle,local[0],-1-ref[0],ref+1,record[0]);
+        }
       }
     }
   }

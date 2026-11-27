@@ -191,3 +191,12 @@ the same read-only local tuple schedule. The lowering reuses a table only
 within its defining block, for the same relation, halo, and position
 field. Constraint row numbers refer to the group layout and require no
 position-field match. Each kernel still reads its own current geometry.
+
+An MPI tuple packet identifies the input tuple and its midpoint domain.
+Each owned member needs only its nonnegative row. A ghost in one of
+the neighboring periodic images uses a negative base-three encoding of
+its three translations. The receiver reads the particle identity from
+the immutable input tuple and resolves the image to its local ghost row.
+If any sender needs a larger translation, all ranks use the full
+identity and three signed translations for that exchange. Complemented
+destination counts communicate this choice in the existing count exchange.
