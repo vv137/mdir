@@ -1553,3 +1553,11 @@ raw row as their initial stride. A Cellulose snapshot needed at most 431
 entries in a raw row with capacity 896. In a paired one-node mixed run,
 sizing the two derived matrices by occupancy reduced mean step time
 from 122.79 to 120.14 ms. Raw neighbor order and force order are preserved.
+
+The constraint solve accesses complete disjoint groups. With one domain
+per rank, a retained constraint layout can put each group on the native
+owner of its first member. Only groups spanning native identity intervals
+then require communication to repartition their fields. In a Cellulose
+trace the remote native-to-owned traffic fell from 47.14 to 8.57 MB per
+step and owned-to-native traffic from 26.78 to 8.57 MB per step. The
+pair traversal and PME keep their spatial ownership.

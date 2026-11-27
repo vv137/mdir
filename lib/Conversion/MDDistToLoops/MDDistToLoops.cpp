@@ -181,6 +181,7 @@ private:
   LogicalResult lowerMesh(MeshOp op);
   LogicalResult lowerCollect(CollectOp op);
   LogicalResult lowerRedistribute(RedistributeOp op);
+  bool onlyGroupHalo(HaloOp op);
   LogicalResult lowerHalo(HaloOp op);
   LogicalResult lowerCovered(CoveredOp op);
   LogicalResult lowerHaloCopy(HaloCopyOp op);
@@ -761,6 +762,15 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
   }
   Value handle = func::CallOp::create(b, loc,
       declare(name, b.getFunctionType(ValueRange(args).getTypes(), {i64}), true), args).getResult(0);
+  if (mpi && !op.getGroups().empty() && op->hasAttr("md_dist.retained_groups") &&
+      llvm::all_of(op.getLayout().getUsers(), [&](Operation *user) {
+        if (auto halo = dyn_cast<HaloOp>(user))
+          return onlyGroupHalo(halo);
+        return isa<DistributeOp, CollectOp, MapParticlesOp, SumParticlesOp>(user);
+      })) {
+    auto place = declare("mdrtDistUseIdentityGroups", b.getFunctionType({i64}, {}), false);
+    func::CallOp::create(b, loc, place, handle);
+  }
   for (Value group : op.getGroups()) {
     auto type = mdrt::getMembersType(mlir::cast<md::RelationType>(group.getType()));
     Value members = mdrt::ToBufferOp::create(b, loc, type, group);
@@ -1075,11 +1085,10 @@ LogicalResult Lowering::lowerRedistribute(RedistributeOp op) {
   return success();
 }
 
-LogicalResult Lowering::lowerHalo(HaloOp op) {
-  OpBuilder b(op);
+bool Lowering::onlyGroupHalo(HaloOp op) {
   // All constraint members are owned. Such a solve only needs the layout
   // for row lookup and never reads the halo or an imported field.
-  if (llvm::all_of(op.getResult().getUsers(), [&](Operation *use) {
+  return llvm::all_of(op.getResult().getUsers(), [&](Operation *use) {
         if (auto rows = dyn_cast<TupleRowsOp>(use)) return rows.getGroup();
         if (auto copy = dyn_cast<HaloCopyOp>(use))
           return !copy.getResult().use_empty() &&
@@ -1092,8 +1101,12 @@ LogicalResult Lowering::lowerHalo(HaloOp op) {
                  auto field = dyn_cast<FieldType>(t);
                  return field && field.getPartial();
                });
-      }))
-    return success();
+      });
+}
+
+LogicalResult Lowering::lowerHalo(HaloOp op) {
+  OpBuilder b(op);
+  if (onlyGroupHalo(op)) return success();
   Storage &layout = storage[op.getLayout()];
   Value positions = storage[op.getPositions()].buffer;
   Type i64 = b.getI64Type();
@@ -3413,7 +3426,7 @@ static LogicalResult outlineSteps(ModuleOp module, func::FuncOp function, String
 }
 
 // Group tuples never read ghosts. Their members stay together on the
-// initial spatial layout throughout the interval of unchanged topology.
+// retained layout throughout the interval of unchanged topology.
 // Coordinates still take their current primary-cell image at each solve.
 static void retainConstraintLayouts(scf::ForOp root) {
   SmallVector<PartitionOp> partitions;
@@ -3431,6 +3444,7 @@ static void retainConstraintLayouts(scf::ForOp root) {
     OpBuilder before(root);
     auto base = PartitionOp::create(before,p.getLoc(),p.getLayout().getType(),
         root.getInitArgs().front(),p.getCell(),p.getGroups());
+    base->setAttr("md_dist.retained_groups", before.getUnitAttr());
     for (auto move : moves) {
       auto input = move.getPositions().getDefiningOp<DistributeOp>();
       if (!input || input.getLayout() != p.getLayout()) continue;

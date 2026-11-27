@@ -98,7 +98,7 @@ struct Layout {
     int64_t tuple;
   } *groups, *localGroups;
   size_t groupCount;
-  int groupsFrozen;
+  int groupsFrozen, identityGroups;
   struct Layout *groupSource;
   int64_t *centerGroup; /* Group index plus one at each center. */
   double (*migratedPositions)[3];
@@ -1999,6 +1999,18 @@ int64_t _mlir_ciface_mdrtDistStartPartition(struct Memref2D *x, int64_t gx, int6
   return (int64_t)(intptr_t)l;
 }
 
+/* A solve that only visits disjoint complete groups may keep its
+   unconstrained atoms in native identity order. The group center chooses
+   the owner of all its members. Spatial force layouts use their own grid. */
+void mdrtDistUseIdentityGroups(int64_t layout) {
+  struct Layout *l = (struct Layout *)(intptr_t)layout;
+  if (!l->initial || l->domains != mdrtMPISize()) return;
+  l->identityGroups = 1;
+  int64_t n = mdrtMPIIdentityBound(l->count,1)-mdrtMPIIdentityBound(l->count,0);
+  int rank = mdrtMPIRank();
+  for (int64_t i = 0; i < n; ++i) l->initial[i].domain = rank;
+}
+
 /* A native interval has compact storage, but partitioning addresses atoms
    by their original identity. The descriptor is used only at owned indices. */
 static struct Memref2D identityView(struct Memref2D *local, int64_t count) {
@@ -2032,7 +2044,7 @@ static void assignGroups(struct Layout *l, struct Memref2D *x, struct Members *m
   /* Route member requests in the same order as their assignments. The
      reverse exchange returns exactly the sites of this topology interval. */
   double (*sites)[3] = NULL;
-  if (sharded) {
+  if (sharded && !l->identityGroups) {
     int64_t *request = malloc((route.sends ? route.sends : 1)*sizeof *request);
     int64_t *received = malloc((route.receives ? route.receives : 1)*sizeof *received);
     double (*reply)[3] = malloc((route.receives ? route.receives : 1)*sizeof *reply);
@@ -2057,10 +2069,12 @@ static void assignGroups(struct Layout *l, struct Memref2D *x, struct Members *m
     for (int a = 0; a < arity; ++a) {
       g.atoms[a] = m->aligned[m->offset+t*m->strides[0]+a*m->strides[1]];
       slots[a] = route.cursor[mdrtMPIOwner(l->count,g.atoms[a])]++;
-      for (int k = 0; k < 3; ++k)
-        points[a][k] = sites ? sites[slots[a]][k] : *at2(x,g.atoms[a],k);
+      if (!l->identityGroups)
+        for (int k = 0; k < 3; ++k)
+          points[a][k] = sites ? sites[slots[a]][k] : *at2(x,g.atoms[a],k);
     }
-    int64_t domain = groupOwner(l,&g,points);
+    int64_t domain = l->identityGroups ? mdrtMPIOwner(l->count,g.atoms[0])
+                                       : groupOwner(l,&g,points);
     for (int a = 0; a < arity; ++a) {
       int64_t id = g.atoms[a];
       out[slots[a]] = (struct InitialAtom){id,domain,

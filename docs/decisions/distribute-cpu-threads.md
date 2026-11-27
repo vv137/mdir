@@ -293,3 +293,10 @@ A midpoint rebuild records the largest actual raw row. Both filtered
 matrices need at most that many entries per row. A later rebuild can
 grow them before generating new candidates. The general neighbor builder
 continues to supply its allocated width when it has no measured maximum.
+
+A retained partition used only for disjoint constraint groups and owned
+fields assigns each group to the native identity interval of its first
+member when each rank has one domain. Ungrouped atoms keep their native
+owner. A physical halo, migration or other spatial use requires spatial
+ownership. The original identity carries every solved field back to its
+caller, including members crossing an identity interval boundary.
