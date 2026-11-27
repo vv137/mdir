@@ -90,6 +90,8 @@ private:
 /// the tuple sets, which it declares `mdrt.read_only` and the compile proves
 /// so (D258): a caller may hand it the arrays below.
 struct Program {
+  /// Whether the entry runs over the domains of [distribute], and their
+  /// divisions along x, y, and z (D[distribute-driver]).
   bool distributed = false;
   std::array<int64_t, 3> domainGrid{1, 1, 1};
   /// The module, as text.
@@ -424,6 +426,12 @@ struct BuildKept;
 llvm::Expected<Program> buildProgram(const Control &control,
                                      const System &system,
                                      const BuildKept *kept = nullptr);
+
+/// The refusals of [distribute] that need the system (D[distribute-driver]):
+/// constraints, whose partners may lie in other domains, and a triclinic
+/// cell. buildProgram checks them as well.
+llvm::Error checkDistributedSystem(const Control &control,
+                                   const System &system);
 
 /// Replaces the module text of `program` with the module as MLIR's printer
 /// prints it once the text is parsed (#568, ProgramModule.cpp): its SSA

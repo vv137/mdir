@@ -236,14 +236,6 @@ struct TowersSetup {
 /// What a control file says. Lengths are in Å, energies in kcal/mol, times
 /// in ps, masses in amu, and temperatures in K.
 struct Control {
-  struct Distribution {
-    std::array<int64_t, 3> grid{1, 1, 1};
-    bool gridGiven = false, transportGiven = false, traversalGiven = false;
-    int64_t domains = 0; // Nonzero when the cell chooses the factorization.
-    std::string traversal = "directed";
-    std::string transport = "local";
-  };
-  std::optional<Distribution> distribution;
   // [input]
   std::string pdbFile;
   /// A topology and the coordinates of Amber, in place of `pdbFile` and the
@@ -852,12 +844,32 @@ struct Control {
   /// so that a run gives the same bits on the same binary and hardware
   /// (D84).
   bool deterministic = false;
+
+  // [distribute] (D[distribute-driver]): the CPU velocity Verlet loop over
+  // spatial domains. Empty without the table, which selects the ordinary
+  // driver.
+  struct Distribution {
+    /// The divisions of the cell along x, y, and z, given or chosen.
+    std::array<int64_t, 3> grid{1, 1, 1};
+    /// Which keys the file gives, for the sources the log reports.
+    bool gridGiven = false, transportGiven = false, traversalGiven = false;
+    /// A count of domains whose factor grid the cell chooses, or 0.
+    int64_t domains = 0;
+    std::string traversal = "directed";
+    std::string transport = "local";
+  };
+  std::optional<Distribution> distribution;
 };
 
 /// Reads the control file `path`. Paths of files in it are relative to the
 /// directory of the control file.
 llvm::Expected<Control> readControl(llvm::StringRef path);
-llvm::Expected<Control> readControl(llvm::StringRef path, Control *refusedDistribution);
+/// As readControl(path); where [distribute] itself refuses the run, also
+/// stores in `refusedDistribution` what was read before the refusal (the
+/// paths of the log and the manifest that record it). An error elsewhere in
+/// the file leaves it untouched.
+llvm::Expected<Control> readControl(llvm::StringRef path,
+                                    Control *refusedDistribution);
 
 /// Validate and resolve cross-field options without parsing a file.
 llvm::Error validateControl(Control &control, llvm::StringRef context);

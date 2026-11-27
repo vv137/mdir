@@ -5,32 +5,32 @@
 
 #include "BuildInfo.h"
 #include "Commands.h"
-#include "TowersShape.h"
-#include "Manifest.h"
 #include "DistributionLog.h"
-#include "mdir/Dialect/MDDist/Grid.h"
+#include "Manifest.h"
+#include "TowersShape.h"
 
-#include "mdir/Conversion/GPUToBinary.h"
+#include "mdir/Compiler/Compile.h"
+#include "mdir/Compiler/JITEngine.h"
+#include "mdir/Compiler/ProfileMap.h"
+#include "mdir/Compiler/Skins.h"
 #include "mdir/Conversion/AxisFFTEmitter.h"
+#include "mdir/Conversion/GPUToBinary.h"
 #include "mdir/Conversion/MDAlgLowering.h"
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Dialect/Dyn/DynDialect.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MD/Transforms/DerivativeInterface.h"
 #include "mdir/Dialect/MD/Transforms/Passes.h"
+#include "mdir/Dialect/MDDist/Grid.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
-#include "mdir/Driver/H5MD.h"
 #include "mdir/Driver/Builder.h"
-#include "mdir/Compiler/Compile.h"
-#include "mdir/Compiler/JITEngine.h"
-#include "mdir/Compiler/ProfileMap.h"
-#include "mdir/Compiler/Skins.h"
 #include "mdir/Driver/Checkpoint.h"
 #include "mdir/Driver/Control.h"
 #include "mdir/Driver/Fingerprint.h"
+#include "mdir/Driver/H5MD.h"
 #include "mdir/Driver/ModelTerm.h"
 #include "mdir/Driver/Output.h"
 #include "mdir/Driver/RigidUnits.h"
@@ -39,22 +39,22 @@
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/Diagnostics.h"
+#include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Parser/Parser.h"
-#include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassInstrumentation.h"
-#include <set>
+#include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
-#include "llvm/Support/Path.h"
-#include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/Path.h"
+#include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
+#include <set>
 
 #include <chrono>
 #include <cmath>
@@ -456,16 +456,22 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // Read
   //===--------------------------------------------------------------------===//
 
-  // A rejection may precede the normal path checks. Preserve existing
-  // diagnostic history and protect input, trajectory and checkpoint paths.
+  // The refusal of a distributed setup by [distribute], the builder, or the
+  // passes of md_dist: the reason goes to the log and the manifest that the
+  // control names as well. It may precede the checks of the paths of the
+  // ordinary run: an existing diagnostic history is kept, and the inputs,
+  // the trajectory, and the checkpoints are not overwritten.
   auto refuse = [&](const Control &c, llvm::Error e) {
     std::string reason = llvm::toString(std::move(e));
     if (emit == Emit::Run && (!c.logFile.empty() || !c.manifestFile.empty())) {
       auto inputs = getManifestInputs(controlFile, c, System{});
-      auto diagnosticPath = [&](const std::string &path, const std::string &other) {
-        if (path.empty()) return false;
-        std::vector<std::string> reserved{other, c.energyFile, c.trajectoryFile,
-            c.observablesFile, c.pullFile, c.freeEnergyFile, c.profileMapFile, c.restartOutput};
+      auto diagnosticPath = [&](const std::string &path,
+                                const std::string &other) {
+        if (path.empty())
+          return false;
+        std::vector<std::string> reserved{
+            other,      c.energyFile,     c.trajectoryFile, c.observablesFile,
+            c.pullFile, c.freeEnergyFile, c.profileMapFile, c.restartOutput};
         if (!c.restartOutput.empty()) {
           reserved.push_back(getPreviousCheckpointPath(c.restartOutput));
           reserved.push_back(c.restartOutput + ".partial");
@@ -487,10 +493,12 @@ static int runControlImpl(StringRef controlFile, Emit emit,
             mode = "a";
         }
         if (FILE *file = std::fopen(c.logFile.c_str(), mode)) {
-          std::fprintf(file, "MDIR: distributed setup refused: %s\n", reason.c_str());
+          std::fprintf(file, "MDIR: distributed setup refused: %s\n",
+                       reason.c_str());
           std::fclose(file);
         } else {
-          warn("cannot record refusal in log '" + c.logFile + "': " + std::strerror(errno));
+          warn("cannot record refusal in log '" + c.logFile +
+               "': " + std::strerror(errno));
         }
       }
       Manifest refusal;
@@ -979,9 +987,11 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // (#568, the equivalence check of the builder).
   if (options.segments)
     *control = compiler::getSegmentsControl(*control);
+  if (llvm::Error error = checkDistributedSystem(*control, *system))
+    return refuse(*control, std::move(error));
   auto program = buildProgram(*control, *system);
   if (!program)
-    return control->distribution ? refuse(*control, program.takeError()) : fail(program.takeError());
+    return fail(program.takeError());
   if (emit == Emit::Module) {
     llvm::outs() << printModuleForReading(*program);
     // The profile map is of the lowered program (D398).
@@ -1091,7 +1101,8 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   std::optional<mlir::ScopedDiagnosticHandler> handler;
   if (control->distribution)
     handler.emplace(&context, [&](mlir::Diagnostic &diagnostic) {
-      if (diagnostic.getSeverity() == mlir::DiagnosticSeverity::Error && distDiagnostic.empty())
+      if (diagnostic.getSeverity() == mlir::DiagnosticSeverity::Error &&
+          distDiagnostic.empty())
         distDiagnostic = diagnostic.str();
       return mlir::failure(); // Also emit the diagnostic at its IR location.
     });
@@ -1110,7 +1121,8 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   if ((!trial || !trial->compiled.entry) && mlir::failed(manager.run(*module))) {
     if (trial && !trial->refusal.empty()) return 0;
     if (!distDiagnostic.empty())
-      return refuse(*control, llvm::createStringError("%s", distDiagnostic.c_str()));
+      return refuse(*control,
+                    llvm::createStringError("%s", distDiagnostic.c_str()));
     return fail("cannot compile the run; this is a defect of mdir. The "
                 "input of the passes is in '" + reproducer + "'. Please "
                 "report it with the directory that `mdir bug-report " +
@@ -1481,31 +1493,44 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   llvm::json::Object distribution;
   if (const auto &dist = control->distribution) {
     const auto &grid = program->domainGrid;
-    const char *source = dist->domains ? "minimum surface area; lexicographic ties" :
-        dist->gridGiven ? "explicit grid" : "default one domain";
+    const char *source = dist->domains
+                             ? "minimum surface area; lexicographic ties"
+                         : dist->gridGiven ? "explicit grid"
+                                           : "default one domain";
     llvm::json::Array candidates;
     if (dist->domains)
-      mdir::md_dist::selectGrid(dist->domains, system->box,
+      mdir::md_dist::selectGrid(
+          dist->domains, system->box,
           [&](int64_t x, int64_t y, int64_t z, long double score) {
-        candidates.push_back(llvm::json::Object{{"grid", llvm::json::Array{x,y,z}},
-                                                {"score_per_nm", double(score)}});
-        output.log.print("MDIR: grid candidate %lld x %lld x %lld score %.17g /nm\n",
-                         (long long)x, (long long)y, (long long)z, double(score));
-      });
+            candidates.push_back(
+                llvm::json::Object{{"grid", llvm::json::Array{x, y, z}},
+                                   {"score_per_nm", double(score)}});
+            output.log.print(
+                "MDIR: grid candidate %lld x %lld x %lld score %.17g /nm\n",
+                (long long)x, (long long)y, (long long)z, double(score));
+          });
     distribution = llvm::json::Object{
-        {"grid", llvm::json::Array{grid[0],grid[1],grid[2]}}, {"grid_reason", source},
-        {"requested_count", dist->domains ? llvm::json::Value(dist->domains) : llvm::json::Value(nullptr)},
-        {"candidates", std::move(candidates)}, {"transport", dist->transport},
+        {"grid", llvm::json::Array{grid[0], grid[1], grid[2]}},
+        {"grid_reason", source},
+        {"requested_count", dist->domains ? llvm::json::Value(dist->domains)
+                                          : llvm::json::Value(nullptr)},
+        {"candidates", std::move(candidates)},
+        {"transport", dist->transport},
         {"transport_source", dist->transportGiven ? "requested" : "default"},
-        {"traversal", dist->traversal}, {"traversal_source", dist->traversalGiven ? "requested" : "default"},
-        {"ranks", distRanks}, {"cutoff_angstrom", control->cutoffDistance},
-        {"skin_angstrom", control->pairlistDistance-control->cutoffDistance},
+        {"traversal", dist->traversal},
+        {"traversal_source", dist->traversalGiven ? "requested" : "default"},
+        {"ranks", distRanks},
+        {"cutoff_angstrom", control->cutoffDistance},
+        {"skin_angstrom", control->pairlistDistance - control->cutoffDistance},
         {"reach_angstrom", control->pairlistDistance}};
-    output.log.print("MDIR: grid choice %s, requested count %lld, ranks %d; %s transport (%s), %s traversal (%s); reach %g Ang = cutoff %g Ang + skin %g Ang\n",
+    output.log.print(
+        "MDIR: grid choice %s, requested count %lld, ranks %d; %s transport "
+        "(%s), %s traversal (%s); reach %g Ang = cutoff %g Ang + skin %g Ang\n",
         source, (long long)dist->domains, distRanks, dist->transport.c_str(),
         dist->transportGiven ? "requested" : "default", dist->traversal.c_str(),
-        dist->traversalGiven ? "requested" : "default", control->pairlistDistance,
-        control->cutoffDistance, control->pairlistDistance-control->cutoffDistance);
+        dist->traversalGiven ? "requested" : "default",
+        control->pairlistDistance, control->cutoffDistance,
+        control->pairlistDistance - control->cutoffDistance);
   }
   if (!control->manifestFile.empty()) {
     auto device = getManifestDevice(control->target);
@@ -1648,7 +1673,8 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   output.timestep = control->timestep;
   // Langevin dynamics exchanges energy with the bath in every step, which
   // the run does not count (D135): its log has no conserved energy.
-  output.distributedWordEnergy = control->distribution && control->deterministic;
+  output.distributedWordEnergy =
+      control->distribution && control->deterministic;
   output.couples = control->getCouplingPeriod() > 0 && !control->isLangevin();
   output.changesCell = control->barostat;
   if (control->barostat && control->precision != Precision::Double) {
@@ -1916,11 +1942,13 @@ static int runControlImpl(StringRef controlFile, Emit emit,
                  control->timestep);
   if (control->distribution) {
     const auto &grid = program->domainGrid;
-    output.log.print("MDIR: domain grid %lld x %lld x %lld, %s transport, "
-                     "%s traversal, halo reach %g Ang\n",
-                     static_cast<long long>(grid[0]), static_cast<long long>(grid[1]),
-                     static_cast<long long>(grid[2]), control->distribution->transport.c_str(),
-                     control->distribution->traversal.c_str(), control->pairlistDistance);
+    output.log.print(
+        "MDIR: domain grid %lld x %lld x %lld, %s transport, "
+        "%s traversal, halo reach %g Ang\n",
+        static_cast<long long>(grid[0]), static_cast<long long>(grid[1]),
+        static_cast<long long>(grid[2]),
+        control->distribution->transport.c_str(),
+        control->distribution->traversal.c_str(), control->pairlistDistance);
   }
   if (program->pme)
     output.log.print("MDIR: PME force-only product rule: %s\n", pmeForceProduct);
@@ -2104,17 +2132,22 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   Observe observe = nullptr;
   if (control->distribution) {
     const auto &g = program->domainGrid;
-    distLog.emplace(output.log, manifest, distRank, distRanks, g[0]*g[1]*g[2],
-                    firstStep, control->energyPeriod, control->pairlistDistance);
-    bool opened = distLog->open(std::getenv("MDIR_DIST_STEP_TRACE"), control->restartOutput);
+    distLog.emplace(output.log, manifest, distRank, distRanks,
+                    g[0] * g[1] * g[2], firstStep, control->energyPeriod,
+                    control->pairlistDistance);
+    bool opened = distLog->open(std::getenv("MDIR_DIST_STEP_TRACE"),
+                                control->restartOutput);
     if (!opened) {
-      output.log.print("MDIR: distributed setup refused: %s\n", distLog->error.c_str());
+      output.log.print("MDIR: distributed setup refused: %s\n",
+                       distLog->error.c_str());
       if (auto e = manifest.finish("refused", firstStep, distLog->error))
         return fail(std::move(e));
       return fail(distLog->error);
     }
-    observe = reinterpret_cast<Observe>(findRuntime("mdrtDistObserve", "mdrtDistObserve"));
-    if (!observe) return fail("distributed statistics require mdrtDistObserve");
+    observe = reinterpret_cast<Observe>(
+        findRuntime("mdrtDistObserve", "mdrtDistObserve"));
+    if (!observe)
+      return fail("distributed statistics require mdrtDistObserve");
     observe(&distLog->observer);
     output.finishDistribution = [&] {
       observe(nullptr);
@@ -2135,7 +2168,8 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // And for the frames that the thread of the frames still holds
   // (D400).
   finishFrames(output);
-  if (distLog && !distLog->error.empty()) return fail(distLog->error);
+  if (distLog && !distLog->error.empty())
+    return fail(distLog->error);
   double runTime = std::chrono::duration<double>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
