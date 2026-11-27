@@ -67,7 +67,8 @@ a pass, a kernel, a strategy, or a target, is summarized in
   measurements before and after. A branch names its decision by a label,
   `D[<label>]` (lowercase letters, digits, and dashes), wherever it would
   write the number; the number is given when the branch is merged, by
-  `scripts/decision-number.sh assign <label>`, and
+  `scripts/decision-number.sh assign <label>`, which also rewrites the
+  label escaped in a test's pattern (`D\[<label>\]`), and
   `scripts/decision-number.sh check` refuses a label or a number given
   twice on `main`.
 - **The documents and the white paper** updated with the code: the design

@@ -204,11 +204,20 @@ coordinator runs `scripts/decision-number.sh assign <label>`, which gives
 the next free number, renames the file `docs/decisions/Dnnn.md` with the
 date, writes the table, and rewrites Markdown links to headings whose
 anchors change with the number, including duplicate-heading suffixes.
+It rewrites the label in its escaped forms too (#1010): a backslash run
+before either bracket, as a regular expression, a Markdown link, or a string
+that is not raw writes it (`D\[<label>\]`, `D\\[<label>\\]`), the
+bracket expressions `D[[]<label>[]]`, and FileCheck's
+`D{{\[}}<label>{{\]}}` and `D{{[[]}}<label>{{[]]}}`. A test that matches a
+log line's decision therefore writes the label in one of these forms, and
+after the rewrite `assign` refuses, naming file and line, any other
+form of the label between brackets, backslashes, or braces that is left.
 `scripts/decision-number.sh check` also reports stale decision-label anchors
 that no heading defines. `scripts/decision-number.sh check --pending`
 runs on every push to `main`: it refuses a table that is not that of the
 files, a decision written as a row of decisions.md, and a label without its
-file, and lists the labels still waiting for
+file (one numbered already or one never given a file), in any of the forms
+above, naming file and line, and lists the labels still waiting for
 their numbers, since a merge reaches `main` before the commit that numbers
 it. A tag runs the strict `scripts/decision-number.sh check`, which also
 refuses any label left without a number. Numbers therefore follow the
