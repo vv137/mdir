@@ -1,0 +1,32 @@
+# The fixed-point formats of the deterministic distributed sums, each fitted
+# to its quantity (D[distribute-driver]). Sum F^2/m of the kinetic
+# correction takes Q16 words: a liquid of argon with epsilon 250 times the
+# example's has a sum of more than 2^31 on each axis, beyond a Q32 word,
+# and runs; with a mass of 0.04 amu and epsilon 8000 times, the sum leaves
+# the range of Q16 too, and the run stops naming it. A time step of 1e-7 ps
+# keeps the liquid where the forces are evaluated.
+# REQUIRES: hdf5, h5py
+# RUN: rm -rf %t && mkdir -p %t && cd %t
+# RUN: sed -e 's|argon.pdb|%S/../../examples/argon/argon.pdb|' -e 's/= 2000$/= 100/' \
+# RUN:     -e 's/= 16$/= 1/' -e 's/= 9.5$/= 8.65/' -e '/^trajectory/d' \
+# RUN:     -e '/^\[output\]/a checkpoint = "start.h5"\ncheckpoint_interval = 100' \
+# RUN:     %S/../../examples/argon/argon.toml > start.toml
+# RUN: mdir run start.toml > start.log
+# RUN: sed -e 's/start.h5/state.h5/' -e 's/= 100$/= 1/' -e 's/^time_step .*/time_step = 1e-7/' \
+# RUN:     -e 's/^\[input\]/[input]\ncheckpoint = "start.h5"/' start.toml > base.toml
+# RUN: printf 'deterministic = true\n[distribute]\ndomains = [2, 1, 1]\n' >> base.toml
+# RUN: sed 's/^epsilon .*/epsilon = 59.616/' base.toml > squares.toml
+# RUN: mdir run squares.toml > squares.log
+# RUN: %h5md_python -c "import h5py; s = h5py.File('state.h5'); f = s['particles/all/force/value'][0]; m = s['particles/all/mass'][()]; q = (f * f / m[:, None]).sum(0); print('SQUARES', min(q) > 2**31, max(q) < 2**47)" | FileCheck %s --check-prefix=SQUARES
+# SQUARES: SQUARES True True
+# RUN: sed -e 's/^epsilon .*/epsilon = 1907.72/' -e 's/^mass .*/mass = 0.04/' base.toml > light.toml
+# RUN: not --crash mdir run light.toml 2>&1 | FileCheck %s --check-prefix=LIGHT
+# LIGHT: mdrt_dist: deterministic fixed-point sum of F^2/m (the kinetic correction) exceeds signed 64-bit range
+
+# The total energy adds the words of the potential and the kinetic energy
+# in Q33 (D[distribute-driver]): a kinetic energy between 2^30 and 2^31
+# kJ/mol fits its own Q32 sum but not the total, and the run stops.
+# RUN: sed -e '/^checkpoint/d' -e 's/= 100$/= 1/' -e 's/^temperature .*/temperature = 1.2e8/' start.toml > hot.toml
+# RUN: printf 'deterministic = true\n[distribute]\ndomains = [2, 1, 1]\n' >> hot.toml
+# RUN: not mdir run hot.toml 2>&1 | FileCheck %s --check-prefix=HOT
+# HOT: mdir: deterministic total energy: the kinetic energy exceeds the range of Q33 words

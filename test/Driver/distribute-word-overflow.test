@@ -4,4 +4,4 @@
 # RUN:   %S/../../examples/argon/argon.toml > %t/run.toml
 # RUN: printf '\ndeterministic=true\n[distribute]\ndomains=[2,1,1]\n' >> %t/run.toml
 # RUN: cd %t && not --crash mdir run run.toml 2>&1 | FileCheck %s
-# CHECK: mdrt_dist: deterministic fixed-point term outside signed 64-bit range
+# CHECK: mdrt_dist: deterministic fixed-point pair energy or virial term outside signed 64-bit range

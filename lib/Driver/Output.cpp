@@ -18,17 +18,18 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdarg>
 #include <cstdlib>
-#include <condition_variable>
 #include <cstring>
 #include <deque>
 #include <fstream>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <thread>
-#include <utility>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 using namespace mdir::driver;
@@ -1366,15 +1367,23 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   if (output.distributedWordEnergy) {
     // Directed pair energies carry one more fractional bit than kinetic
     // energies. The two signed 64-bit operands fit exactly in a 65-bit sum.
-    auto word = [&](double energy) -> int64_t {
+    // Its conversion to binary64 rounds above 2^53, a function of the sum.
+    auto word = [&](double energy, const char *name) -> std::optional<int64_t> {
       double scaled = std::round(std::ldexp(energy, 33));
       if (!(scaled >= -0x1p63 && scaled < 0x1p63)) {
-        stopOnFailure(output, "deterministic total energy operand exceeds Q33 range");
-        return 0;
+        stopOnFailure(output, std::string("deterministic total energy: the ") +
+                                  name + " exceeds the range of Q33 words");
+        return std::nullopt;
       }
       return static_cast<int64_t>(scaled);
     };
-    __int128 sum = static_cast<__int128>(word(potential)) + word(kinetic);
+    std::optional<int64_t> potentialWord = word(potential, "potential energy");
+    if (!potentialWord)
+      return;
+    std::optional<int64_t> kineticWord = word(kinetic, "kinetic energy");
+    if (!kineticWord)
+      return;
+    __int128 sum = static_cast<__int128>(*potentialWord) + *kineticWord;
     total = std::ldexp(static_cast<double>(sum), -33);
   }
   double physicalTotal = total;
@@ -1457,16 +1466,14 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
     row.push_back(static_cast<double>(output.tunablesVersion));
   // The total here has the energy of the bath if the run couples: the
   // conserved energy (D196 reports both).
-  output.lastEnergies = {step,
-                         potential,
-                         kinetic,
-                         physicalTotal,
-                         temperature,
-                         virial,
-                         // Convert kJ/mol/nm^3 to bar with the native coefficient.
-                         pressure * mdir::physical::pressureBar,
-                         output.distributedWordEnergy ? total : physicalTotal + (output.couples ? output.bath : 0.0),
-                         output.volume};
+  output.lastEnergies = {
+      step, potential, kinetic, physicalTotal, temperature, virial,
+      // Convert kJ/mol/nm^3 to bar with the native coefficient.
+      pressure * mdir::physical::pressureBar,
+      output.distributedWordEnergy
+          ? total
+          : physicalTotal + (output.couples ? output.bath : 0.0),
+      output.volume};
   if (!isRow)
     return;
   output.log.print("INFO: %9lld", static_cast<long long>(step));
@@ -2015,7 +2022,8 @@ static void writeState(int64_t step, void *positions, void *velocities,
     reason = "the wall time";
   if (!reason)
     return;
-  if (output.finishDistribution) output.finishDistribution();
+  if (output.finishDistribution)
+    output.finishDistribution();
   // The wait of a stop: for all three events of this checkpoint.
   waitForCheckpoint();
   waitForFrames(output);
