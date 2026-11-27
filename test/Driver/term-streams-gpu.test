@@ -59,6 +59,14 @@
 # RUN: %python %S/Inputs/compare_forces_rms.py %t/mixed-TERMS/forces %t/mixed-SINGLE/forces 1e-5 mixed | FileCheck %s --check-prefix=MIXED
 # RUN: %python %S/Inputs/compare_forces_rms.py %t/double-TERMS/forces %t/double-SINGLE/forces 1e-12 double | FileCheck %s --check-prefix=DOUBLE
 #
+# 4. TERMS under the default step_graph, SPANS (D448): the work outside the
+#    side-stream windows is still recorded and replayed as CUDA graphs. A
+#    record that is never taken while a join is pending on either lane
+#    prints no spans line at all.
+# RUN: sed -e 's/PRECISION/mixed/' -e 's/STREAMS/TERMS/' -e 's/DETERMINISTIC/false/' %t/template.toml > %t/spans.toml
+# RUN: mkdir -p %t/spans && cd %t/spans && mdir run ../spans.toml > log 2>&1
+# RUN: grep -h 'MDIR: step_graph\|MDIR: spans' %t/spans/log | FileCheck %s --check-prefix=SPANS
+#
 # TOWERS: without the key and with SINGLE the two passes take no options.
 # RUN: sed -e '/^term_streams/d' -e 's/PRECISION/mixed/' -e 's/DETERMINISTIC/false/' %t/template.toml > %t/towers-default.toml
 # RUN: printf 'neighbor_structure = "TOWERS"\n' >> %t/towers-default.toml
@@ -84,7 +92,10 @@
 # FORCES: forces equal
 # LOG: MDIR: term_streams {"category":"rule","changes_rounding":true,"inputs":{"deterministic":false,"target":"GPU"},"reason":"as requested","requested":"TERMS","value":"TERMS"}
 # LOG: MDIR: term_streams {"category":"rule","changes_rounding":false,"inputs":{"deterministic":false,"target":"GPU"},"reason":"as requested","requested":"SINGLE","value":"SINGLE"}
+# PIN: step_graph = "SPANS"
 # PIN: term_streams = "TERMS"
+# SPANS: MDIR: step_graph {{.*}}"spans":true,"value":"SPANS"}
+# SPANS: MDIR: spans: {{[1-9][0-9]*}} issued as CUDA graphs
 # BARE: md-exec-accumulate-destinations,
 # BARE: md-exec-assign-streams,
 # MIXED: mixed: relative difference {{.*}} ok

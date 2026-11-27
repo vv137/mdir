@@ -94,7 +94,13 @@ side streams; a captured step (`[execution] step_graph`, D439) contains the
 three chains as branches joined before the kick. The plain TOWERS graph
 builder accepts these calls and refuses a window that crosses the end of
 the drift phase, or that is not joined within the step. No host
-synchronization is added.
+synchronization is added. Under the default `step_graph = "SPANS"`
+(D448) a fork, on either side lane, ends the span, and nothing is
+recorded until the join: the work of the window, on all three streams, is
+launched one kernel at a time, and the spans before and after it are
+recorded as before (on JAC NVT with TOWERS, 5.5 of 18.5 kernels and
+transforms a step stay recorded). Recording the windows themselves is
+#1022.
 
 **Measured** (RTX 4090, 2 fs, two jobs of three fresh processes per arm
 in alternating order, ratio of the median ns/day to `main`; white paper,
