@@ -533,7 +533,7 @@ checkTrialMemory(double reach, double needed, int ranks, bool writer) {
   for (int rank = 1; rank < ranks; ++rank)
     if (all[2*rank] - all[2*rank+1] > all[2*worst] - all[2*worst+1])
       worst = rank;
-  const bool fits = all[2*worst] <= all[2*worst+1];
+  double fits = all[2*worst] <= all[2*worst+1];
   if (writer) {
     constexpr double MiB = 1024 * 1024;
     for (int rank = 0; rank < ranks; ++rank)
@@ -544,6 +544,8 @@ checkTrialMemory(double reach, double needed, int ranks, bool writer) {
           fits ? "admitted" : "skipped");
     llvm::errs().flush();
   }
+  // No rank starts the trial until the writer has flushed the decision.
+  mdrtMPIBroadcast(&fits, 1, 0);
   if (fits)
     return std::nullopt;
   return std::array<double, 3>{static_cast<double>(worst), all[2*worst],
