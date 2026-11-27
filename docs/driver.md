@@ -403,7 +403,9 @@ submits each kernel as it comes. On the CPU target the default resolves to
 with the counts of the spans. `MDRT_SPANS=0` turns them off for a
 comparison (docs/environment.md). `"GRAPH"` uses CUDA graph replay for
 constrained, fixed-cell TOWERS dynamics with velocity Verlet, Gaussian PME
-and V-rescale. On eligible inputs with at least 408,609 particles, `"AUTO"`
+and V-rescale. Its observations fall on the steps of `"LAUNCH"`, counted
+from the start step, also when a checkpoint is continued at a step that is
+not a multiple of an interval (#1014). On eligible inputs with at least 408,609 particles, `"AUTO"`
 selects LAUNCH before timing. The log and manifest record category `rule`
 and both the particle count and inclusive threshold in `inputs`. On smaller
 eligible inputs AUTO times both paths on disposable states at setup.

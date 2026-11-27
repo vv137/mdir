@@ -82,5 +82,5 @@ checkpoint = work / "graph" / "state.h5"
 compare(run("resume-launch", "LAUNCH", 12, 4, checkpoint),
         run("resume-graph", "GRAPH", 12, 4, checkpoint))
 fields, _ = run("partial", "GRAPH", 12, 6, checkpoint)
-assert fields["position/step"].item() == 30
-assert abs(fields["position/time"].item() - 0.030) < 1e-12
+assert fields["position/step"].item() == 32
+assert abs(fields["position/time"].item() - 0.032) < 1e-12

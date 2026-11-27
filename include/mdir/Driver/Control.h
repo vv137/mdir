@@ -370,9 +370,6 @@ struct Control {
   /// first step, since the checkpoint was written by a run of other physics
   /// or coupling (D172).
   bool restartRecomputes = false;
-  /// Absolute step restored by the CLI, for specialization of the first
-  /// and last partial periods of the experimental graph schedule.
-  int64_t restoredStep = 0;
   /// Set by an embedding front end, not by a key (D196): the
   /// entry takes the counts of its loops as arguments, so that one program
   /// runs any number of steps from any step of the coupling period, and
