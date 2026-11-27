@@ -416,21 +416,46 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   Value entries = getMatrixEntries(builder, loc, structure.handle);
   Value zero = createIndex(builder, loc, 0);
   Value one = createIndex(builder, loc, 1);
+  // Owned centers and explicit ghosts occupy consecutive ranges with very
+  // different selected row lengths. Interleave runs of adjacent rows from
+  // sixteen equal bands; the short trailing band stays in physical order.
+  Value bandWidth, covered;
+  if (structure.midpoint) {
+    Value cycle = createIndex(builder, loc, 128);
+    Value cycles = arith::DivUIOp::create(builder, loc, size, cycle);
+    bandWidth = arith::MulIOp::create(builder, loc, cycles, createIndex(builder, loc, 8));
+    covered = arith::MulIOp::create(builder, loc, cycles, cycle);
+  }
   auto loop = scf::ParallelOp::create(
       builder, loc, ValueRange{zero}, ValueRange{size}, ValueRange{one},
       inits, [&](OpBuilder &body, Location, ValueRange ivs, ValueRange) {
+        Value row = ivs[0];
+        if (bandWidth) {
+          Value tile = createIndex(body, loc, 8);
+          Value cycle = createIndex(body, loc, 128);
+          Value phase = arith::RemUIOp::create(body, loc, row, cycle);
+          Value band = arith::DivUIOp::create(body, loc, phase, tile);
+          Value start = arith::MulIOp::create(body, loc, band, bandWidth);
+          Value round = arith::DivUIOp::create(body, loc, row, cycle);
+          Value within = arith::AddIOp::create(body, loc,
+              arith::MulIOp::create(body, loc, round, tile),
+              arith::RemUIOp::create(body, loc, phase, tile));
+          row = arith::SelectOp::create(body, loc,
+              arith::CmpIOp::create(body, loc, arith::CmpIPredicate::ult, row, covered),
+              arith::AddIOp::create(body, loc, start, within), row);
+        }
         auto emitRow = [&](OpBuilder &at) {
           if (hostLanes)
             return emitPairRowLanes(at, op, structure.counts, entries, box,
-                                    inverse, ivs[0], *hostLanes, imageShifts, imagePositions);
+                                    inverse, row, *hostLanes, imageShifts, imagePositions);
           IRMapping local;
           return emitPairKernel(at, op, structure.counts, entries, box,
-                                inverse, ivs[0], local, nullptr, nullptr, nullptr, nullptr, imageShifts, imagePositions);
+                                inverse, row, local, nullptr, nullptr, nullptr, nullptr, imageShifts, imagePositions);
         };
         SmallVector<Value> contributions;
         if (Value selected = op.getCenterSet()) {
           Value bit = memref::LoadOp::create(body, loc, selected,
-                                            ValueRange{ivs[0]});
+                                            ValueRange{row});
           Value active = arith::CmpIOp::create(
               body, loc, arith::CmpIPredicate::ne, bit,
               arith::ConstantIntOp::create(body, loc, 0, 32));
@@ -930,7 +955,7 @@ LogicalResult Lowering::lowerDomainMatrix(mdrt::DomainMatrixOp op) {
   Value matrix = call("mdrtDistMatrix", i64,
       {op.getHalo(), wide(op.getDomain()), wide(op.getCenters()), wide(list.size),
        createReal(b, loc, b.getF64Type(), cutoff), createReal(b, loc, b.getF64Type(), skin),
-       word(op.getWidth())});
+       word(op.getWidth()),word(op.getRule() == 2)});
   list.imagePositions = x;
   list.midpoint = op.getRule() == 2;
   list.domainMatrix = matrix;
@@ -951,36 +976,28 @@ LogicalResult Lowering::lowerDomainMatrix(mdrt::DomainMatrixOp op) {
         arith::ConstantIntOp::create(build, loc, phase, 64)});
   };
   markBuild(DistList);
-  SmallVector<Value> edges;
-  auto edge = getOrDeclare("mdrtDistMatrixEdge", b.getFunctionType({i64, i64}, {b.getF64Type()}));
-  for (int axis = 0; axis < 3; ++axis) {
-    Value component = arith::ConstantIntOp::create(build, loc, axis, 64);
-    edges.push_back(func::CallOp::create(build, loc, edge, ValueRange{matrix, component}).getResult(0));
+  if (op.getRule() == 2) {
+    auto fn = getOrDeclare("mdrtDistBuildMidpoint", b.getFunctionType({i64,i64,x.getType()},{}));
+    fn->setAttr("llvm.emit_c_interface",b.getUnitAttr());
+    func::CallOp::create(build,loc,fn,ValueRange{op.getHalo(),matrix,x});
+    func::CallOp::create(build,loc,getOrDeclare(countBuildName,b.getFunctionType({},{})),ValueRange());
+  } else {
+    SmallVector<Value> edges;
+    auto edge = getOrDeclare("mdrtDistMatrixEdge", b.getFunctionType({i64, i64}, {b.getF64Type()}));
+    for (int axis = 0; axis < 3; ++axis) {
+      Value component = arith::ConstantIntOp::create(build, loc, axis, 64);
+      edges.push_back(func::CallOp::create(build, loc, edge, ValueRange{matrix, component}).getResult(0));
+    }
+    Value box = vector::FromElementsOp::create(build, loc, VectorType::get({3}, b.getF64Type()), edges);
+    if (failed(emitMatrixBuild(build, loc, list, x, box, cutoff + skin,
+                               (cutoff + skin) / 3, op.getCenters())))
+      return failure();
   }
-  Value box = vector::FromElementsOp::create(build, loc, VectorType::get({3}, b.getF64Type()), edges);
-  if (failed(emitMatrixBuild(build, loc, list, x, box, cutoff + skin,
-                             (cutoff + skin) / 3, op.getCenters())))
-    return failure();
   markBuild(-DistList);
   Value rule = word(op.getRule());
-  Value selected = call("mdrtDistSelectMatrix", i64, {matrix, op.getExclusions(), rule});
-  Value filter = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne, selected, word(0));
-  scf::IfOp::create(b, loc, filter, [&](OpBuilder &at, Location) {
-    Value zero = createIndex(at, loc, 0), chunk = createIndex(at, loc, 64);
-    scf::ParallelOp::create(at, loc, ValueRange{zero}, ValueRange{op.getCenters()},
-        ValueRange{chunk}, [&](OpBuilder &body, Location, ValueRange ivs) {
-          Value end = arith::MinUIOp::create(body, loc, op.getCenters(),
-              arith::AddIOp::create(body, loc, ivs[0], chunk));
-          SmallVector<Value> args{op.getHalo(), matrix, op.getExclusions(), rule,
-              arith::IndexCastOp::create(body, loc, i64, ivs[0]),
-              arith::IndexCastOp::create(body, loc, i64, end),
-              op.getOwnedPositions(), op.getGhostPositions()};
-          auto fn = getOrDeclare("mdrtDistSelectRows", body.getFunctionType(ValueRange(args).getTypes(), {}));
-          fn->setAttr("llvm.emit_c_interface", body.getUnitAttr());
-          func::CallOp::create(body, loc, fn, args);
-        });
-    scf::YieldOp::create(at, loc);
-  });
+  Value selected = call("mdrtDistFilterMatrix", i64, {op.getHalo(), matrix, op.getExclusions(),
+      rule, op.getOwnedPositions(), op.getGhostPositions(), x,
+      word(!module->hasAttr(md_exec::algebra::kDeterministicAttrName))}, true);
   view(selected);
   neighbors[op.getResult()] = list;
   return success();

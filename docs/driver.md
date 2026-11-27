@@ -1717,7 +1717,7 @@ traversal = "directed"
 ```
 
 The optional table selects the distributed velocity Verlet entry. Its
-default grid is one domain. An integer count chooses the minimum-area
+default grid is one domain for local transport and one domain per launched MPI rank. An integer count chooses the minimum-area
 factor grid for the cell, using the lexicographically first grid on ties.
 An explicit grid has three positive integer divisions, with x varying
 fastest. Directed traversal evaluates both centers. Unique traversal
@@ -1800,7 +1800,9 @@ the H5MD trajectory reproduce the uninterrupted run.
 
 With an MPI-enabled build (`-DMDIR_ENABLE_MPI=ON`), set
 `transport = "mpi"` and launch the same control file on every rank with
-the MPI launcher. Give the grid at least one domain per rank. Each rank
+the MPI launcher. For threaded PME, bind one rank per NUMA node and its
+threads to the cores of that node. Omitting `domains` uses the communicator
+size as the domain count. An explicit grid needs at least one domain per rank. Each rank
 reads the input and rank zero writes the output files. Execution threads
 parallelize disjoint domains within a rank. MPI uses a duplicate of the
 world communicator and finalizes MPI only when the runtime initialized it.

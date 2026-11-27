@@ -821,3 +821,95 @@ sequence of contributions to each owner, including those on the same rank.
 For a disjoint constraint group the partition places every member at one
 owner. The verified tuple schedule then contains only owned row indices,
 so its calculation needs no forward ghost payload.
+
+The parallel tuple traversal preserves the topology index when it buckets
+local tuples by domain (D[distribute-cpu-threads]). A tuple therefore
+reads the same parameters after grouping. Within each domain, fixed chunks
+sum the energies in topology order, and the domain combines the chunks in
+order. For a force, the traversal stores one contribution per tuple member.
+Each destination row gathers its contributions in the original order,
+including repeated occurrences of a member. A serial kernel writes those additions
+directly to the row, skipping the incidence index and the member-force
+buffer. Disjoint constraint groups
+can update their members concurrently. A bitwise OR combines their
+failure flags independently of evaluation order.
+
+A domain fills the force-incidence interval for its own tuples independently.
+Concatenating the active row offsets in domain order preserves the member
+order in every destination. For a pair, one minimum-image separation
+from the lower identity supplies both the midpoint and the image shifts.
+
+A particle map, including a kick or drift, reads the input fields and
+writes a distinct result row. The CPU traversal can therefore distribute
+the local domain and row indices together. The capacity bounds define a
+rectangular iteration space, and the live row count excludes padding.
+During redistribution the new owner similarly writes each destination
+row once, using the old owner and inverse row map to find its source.
+
+For a migration, the old owners enumerate changed identities in domain
+and row order. An all-gather concatenates the records by source rank,
+so every rank applies the same map updates. When no owner changes, the
+count exchange alone establishes that the migration record set is empty.
+
+Likewise the observable partials occupy consecutive domain rows. Each
+rank contributes its interval to a single gather on all ranks, then adds
+the complete rows in increasing domain order. This combines the
+transfers while preserving the order of the numerical reduction.
+
+
+For the MPI layout in D[distribute-cpu-threads], each old owned row either
+survives on its rank or supplies one crossing record to its new rank.
+Sorting these disjoint records by domain and particle identity fixes the
+new row permutation. That permutation also indexes velocities and other
+carried fields. The center of a disjoint constraint group transfers the
+member identities and the original parameter index with it. For bonded
+terms, consecutive input intervals route records to the rank of the
+interaction midpoint. Concatenating source intervals in rank order
+preserves topology order. The receiving rank resolves periodic images
+against its own ghost rows before summing member forces.
+
+D[distribute-cpu-threads] keeps immutable relation membership separate from
+geometry. Each rank sorts the remote atom identities required by its tuple
+interval and maps repeated members to the same response slot. It refreshes
+coordinates and spatial ownership every evaluation. Parallel expansion and
+image lookup write rows in their original topology order.
+
+Before a floating midpoint kernel evaluates a row, the CPU filter compares
+the squared distance of its current explicit images with the squared cutoff
+times $1+16\epsilon$, where $\epsilon$ is binary32 machine epsilon. The
+guard covers narrowing the displacement, squaring its components, and adding
+them. Squared cutoffs outside the normal binary32 range bypass this filter.
+The force kernel retains its cutoff test (D[distribute-cpu-threads]).
+
+For D[distribute-cpu-threads], spatial ownership and native integration
+ownership are two partitions of the same identities. Collecting a spatial
+field assigns each row to its unique position in its native interval.
+Reversing the sends and receives returns the field to the original spatial
+rows. Particlewise Verlet updates therefore use the same mass, position,
+velocity, and force for each identity in both representations. A disjoint
+constraint group requests its members before determining their common owner.
+The deterministic observable sum adds integer interval totals before the
+single conversion to physical units.
+
+An exclusion pair has a unique directory entry orientation, with its smaller
+identity first. Both endpoints of every candidate occur among the owned and
+ghost rows. Querying that directory for the distinct local identities and
+retaining pairs with both endpoints present consequently preserves the
+exclusion test on every candidate.
+
+For the midpoint rule, the halo already contains each required translated
+image. A Cartesian bin query enclosing the cutoff plus skin therefore finds
+every admissible image without folding its displacement a second time.
+Canonical identity order selects the center. The midpoint ownership test
+and exclusion predicate then select the physical interaction. For a
+constraint projection the unique requirement on ownership is that the
+members of a group reside together. Holding their initial assignment fixed
+across successive projections preserves that property as their coordinates
+evolve.
+
+Within a retained constraint layout, the first center identifies the
+disjoint relation, and the topology index orders its tuples. Reusing those
+indices and member rows preserves the association between parameters and
+groups at every projection. A native interval occupying the entire particle
+set can apply the spatial permutation directly since every source and
+destination belongs to the same rank.

@@ -1368,3 +1368,42 @@ $224 \times 108 \times 108$ and $160 \times 80 \times 80$, with force
 errors of 0.798 and 0.772 kJ mol⁻¹ nm⁻¹. At four nodes the smaller grid
 reduced the transpose from 58.54 to 23.09 MB per step and the overlap
 exchange from 48.61 to 21.00 MB per step (decimal MB).
+
+The CPU pencil transform assigns complete lines to workers, so each line
+undergoes the same sequence of operations for any team size. For the
+reciprocal energy and virial, each spectral plane accumulates its own
+subtotal and the rank adds the planes in order. In deterministic mode each
+mode contributes a rounded word before that sum. A change of pencil
+layout can therefore regroup these words without changing their total
+(D[distribute-cpu-threads]).
+
+In the distributed CPU spread, a team marks occupied grid indices in
+block-private storage, combines the marks by grid index, and translates
+particle stencil starts into the compact footprint. A second team counts
+and scatters particles by starting plane and computes the output planes.
+The prefix scan visits blocks in particle order, so changing the team size
+preserves the incident-particle order within each plane.
+
+For the real-space midpoint traversal, interval classification amortizes
+the domain test over steps that share a neighbor matrix. The lower bound
+on midpoint displacement uses the lower coordinate of the center and the
+upper coordinate of its neighbor, with both periodic translations fixed.
+The upper bound reverses these endpoint choices. Subtracting half the
+upper displacement from the lower center coordinate bounds the midpoint
+from below. Reversing the choices bounds it from above. Only intervals
+that cross a cell or image boundary need a new exact decision as the
+particles move within their coordinate bounds.
+
+A double-precision check compared every selected row with the exact
+midpoint filter at the same coordinates during eight 2 fs steps. The
+stable inside and outside classes covered 70.4% of candidates for JAC,
+74.3% for Factor IX, and 79.8% for Cellulose. All selected neighbor
+indices agreed in order. Summing the largest of eight equal row slices
+at each evaluation and dividing by the sum of the ideal slice sizes gave
+the following ratios. These counts measure the distribution of selected
+neighbors across slices.
+
+| Midpoint row order | JAC | Factor IX | Cellulose |
+| --- | ---: | ---: | ---: |
+| Contiguous | 3.16 | 2.40 | 1.74 |
+| Interleaved runs | 1.17 | 1.12 | 1.05 |

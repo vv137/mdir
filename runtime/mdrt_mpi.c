@@ -90,6 +90,7 @@ static void initialize(void) {
 
 int mdrtMPIRank(void) { initialize(); return rank; }
 int mdrtMPISize(void) { initialize(); return size; }
+int mdrtMPINodeSize(void) { initialize(); return nodeSize; }
 
 int64_t mdrtMPIDomainBound(int64_t domains, int64_t end) {
   initialize();
@@ -117,6 +118,16 @@ void mdrtMPIRowsToRoot(double *values, int64_t count, int owner) {
       MPI_Recv(values, n, MPI_DOUBLE, owner, 0, comm, MPI_STATUS_IGNORE);
     count -= n;
     values += n;
+  }
+}
+
+void mdrtMPIBroadcastIndices(int64_t *values, int64_t count, int root) {
+  while (count > 0) {
+    int n = count > INT_MAX ? INT_MAX : (int)count;
+    arrival();
+    MPI_Bcast(values, n, MPI_INT64_T, root, comm);
+    values += n;
+    count -= n;
   }
 }
 
@@ -165,44 +176,121 @@ void mdrtMPIExchange(void *send, int *sendCounts, int *sendOffsets,
 }
 
 
-void mdrtMPIExchangeCharges(int64_t *send, int *ns, int *os,
-                            int64_t *recv, int *nr, int *offsets) {
+MPI_Request mdrtMPIStartChargeExchange(int64_t *send, int *ns, int *os,
+                                       int64_t *recv, int *nr, int *offsets) {
+  MPI_Request request;
+  MPI_Ialltoallv(send, ns, os, MPI_INT64_T, recv, nr, offsets, MPI_INT64_T,
+                 comm, &request);
+  return request;
+}
+
+/* Ranks own consecutive domains. For a packed table one all-gather
+   places each live subtotal in its original row without doing arithmetic. */
+static int shareDomainBlocks(void *values, int64_t domains, int64_t width,
+                             MPI_Datatype type) {
+  if (size == 1 || !width) return 1;
+  if (domains > INT_MAX / width) return 0;
+  int64_t q = domains / size, rem = domains % size;
+  int *counts = malloc(2*(size_t)size*sizeof *counts);
+  if (!counts) mdrtMPIAbort("out of memory sharing domain rows");
+  int *offsets = counts + size;
+  for (int p = 0; p < size; ++p) {
+    offsets[p] = (p*q + (p < rem ? p : rem)) * width;
+    counts[p] = (q + (p < rem)) * width;
+  }
   arrival();
-  MPI_Alltoallv(send, ns, os, MPI_INT64_T, recv, nr, offsets, MPI_INT64_T, comm);
+  MPI_Allgatherv(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, values, counts, offsets, type, comm);
+  free(counts);
+  return 1;
+}
+
+int mdrtMPIShareDomainPartials(void *values, int64_t domains, int64_t width, int words) {
+  return shareDomainBlocks(values, domains, width, words ? wideWord : MPI_DOUBLE);
+}
+
+void mdrtMPICollectIntervals(void *data, int64_t count, int64_t width, int integer, int rootOnly) {
+  if (size == 1 || count == 0) return;
+  MPI_Datatype type = integer ? MPI_INT32_T : MPI_DOUBLE;
+  size_t bytes = integer ? sizeof(int32_t) : sizeof(double);
+  int64_t q = count/size, rem = count%size;
+  if (count <= INT_MAX/width) {
+    if (!rootOnly) { shareDomainBlocks(data,count,width,type); return; }
+    int *sizes = malloc(2*(size_t)size*sizeof *sizes);
+    if (!sizes) mdrtMPIAbort("out of memory collecting native fields");
+    int *offsets = sizes+size;
+    for (int p = 0; p < size; ++p) {
+      sizes[p] = (q+(p < rem))*width;
+      offsets[p] = (p*q+(p < rem ? p : rem))*width;
+    }
+    void *local = (char *)data+offsets[rank]*bytes;
+    MPI_Gatherv(rank ? local : MPI_IN_PLACE,sizes[rank],type,data,sizes,offsets,type,0,comm);
+    free(sizes);
+    return;
+  }
+  for (int p = 0; p < size; ++p) {
+    int64_t off = (p*q+(p < rem ? p : rem))*width, n = (q+(p < rem))*width;
+    for (int64_t i = 0; i < n; ) {
+      int block = n-i > INT_MAX ? INT_MAX : (int)(n-i);
+      void *buf = (char *)data+(off+i)*bytes;
+      if (!rootOnly) MPI_Bcast(buf,block,type,p,comm);
+      else if (p && rank == p) MPI_Send(buf,block,type,0,0,comm);
+      else if (p && rank == 0) MPI_Recv(buf,block,type,p,0,comm,MPI_STATUS_IGNORE);
+      i += block;
+    }
+  }
+}
+
+void mdrtMPIShareIndexRows(int64_t *rows, int64_t domains, int64_t width) {
+  if (!shareDomainBlocks(rows,domains,width,MPI_INT64_T))
+    for (int64_t d = 0; d < domains; ++d)
+      mdrtMPIBroadcastIndices(rows+d*width,width,mdrtMPIOwner(domains,d));
+}
+
+void mdrtMPIShareDomainCounts(int64_t *rows, int64_t domains) {
+  if (shareDomainBlocks(rows, domains, 1, MPI_INT64_T)) return;
+  int64_t q = domains / size, rem = domains % size;
+  for (int p = 0; p < size; ++p)
+    mdrtMPIBroadcastIndices(rows + p*q + (p < rem ? p : rem), q + (p < rem), p);
 }
 
 int mdrtMPISameNode(int peer) { return rankNodes[peer] == rankNodes[rank]; }
 
-// Use the shared-memory communicator for nearby peers. World-rank
-// displacements still refer to the original consecutive packing order.
-void mdrtMPIForwardHalo(double *send, int *ns, int *os, double *recv, int *nr, int *or) {
-  if (nodeSize > 1) {
-    int *local = malloc((size_t)4*nodeSize*sizeof *local);
-    if (!local) mdrtMPIAbort("out of memory routing shared-memory halo");
-    for (int k = 0; k < nodeSize; ++k) {
-      int p = nodeRanks[k];
-      local[k] = ns[p];
-      local[nodeSize+k] = os[p];
-      local[2*nodeSize+k] = nr[p];
-      local[3*nodeSize+k] = or[p];
-    }
-    mdrtDistPhase(DistIntra);
-    if (mdrtDistObserving()) {
-      mdrtDistPhase(DistWait);
-      MPI_Barrier(nodeComm);
-      mdrtDistPhase(-DistWait);
-    }
-    MPI_Alltoallv(send, local, local+nodeSize, MPI_DOUBLE,
-                  recv, local+2*nodeSize, local+3*nodeSize, MPI_DOUBLE, nodeComm);
-    mdrtDistPhase(-DistIntra);
-    free(local);
-  }
-  if (size > nodeSize) {
-    for (int k = 0; k < nodeSize; ++k)
-      ns[nodeRanks[k]] = nr[nodeRanks[k]] = 0;
-    mdrtDistPhase(DistInter);
-    mdrtMPIExchange(send, ns, os, recv, nr, or, 0);
-    mdrtDistPhase(-DistInter);
+/* A halo invocation owns its request set until all peers finish. Only
+   nonempty streams participate; forward and transpose use separate tags. */
+struct HaloRequests {
+  int count;
+  MPI_Request requests[];
+};
+
+struct HaloRequests *mdrtMPIStartHalo(void *send, const int *ns, const int *os,
+    void *recv, const int *nr, const int *offsets, int words, int transpose) {
+  struct HaloRequests *pending = malloc(sizeof *pending + 2*(size_t)size*sizeof(MPI_Request));
+  if (!pending) mdrtMPIAbort("out of memory posting halo exchange");
+  pending->count = 0;
+  MPI_Datatype type = words ? wideWord : MPI_DOUBLE;
+  size_t width = words ? 2*sizeof(uint64_t) : sizeof(double);
+  for (int p = 0; p < size; ++p)
+    if (nr[p])
+      MPI_Irecv((char *)recv + (size_t)offsets[p]*width, nr[p], type, p, transpose,
+                comm, &pending->requests[pending->count++]);
+  for (int p = 0; p < size; ++p)
+    if (ns[p])
+      MPI_Isend((char *)send + (size_t)os[p]*width, ns[p], type, p, transpose,
+                comm, &pending->requests[pending->count++]);
+  return pending;
+}
+
+void mdrtMPIWaitHalo(struct HaloRequests *pending) {
+  MPI_Waitall(pending->count, pending->requests, MPI_STATUSES_IGNORE);
+  free(pending);
+}
+
+void mdrtMPISumMigration(int64_t *counts, int64_t domains) {
+  for (int64_t left = 2*domains; left > 0; ) {
+    int n = left > INT_MAX ? INT_MAX : (int)left;
+    MPI_Allreduce(MPI_IN_PLACE,counts,n,MPI_INT64_T,MPI_SUM,comm);
+    counts += n;
+    left -= n;
   }
 }
 

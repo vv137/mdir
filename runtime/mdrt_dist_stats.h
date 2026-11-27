@@ -27,9 +27,8 @@ void mdrtDistMeshBytes(enum DistMeshTraffic kind, int64_t bytes);
 #endif
 struct DistObserver {
   void *context;
-  void (*domain)(void *, int64_t, int64_t, int64_t, const double *,
-                 const double *);
-  void (*migration)(void *, int64_t, int64_t);
+  void (*domain)(void *, int64_t, int64_t, int64_t, const double *, const double *);
+  void (*movementCounts)(void *, int64_t, int64_t, int64_t);
   void (*transfer)(void *, int64_t, int64_t, int64_t);
   void (*phase)(void *, int64_t);
   void (*meshBytes)(void *, enum DistMeshTraffic, int64_t);

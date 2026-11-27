@@ -54,11 +54,12 @@ deterministic = true
 """
 
 
-def run(name, domains, ranks, *, stop=False, resume=False, trace=False):
+def run(name, domains, ranks, *, stop=False, resume=False, trace=False, auto_grid=False):
     path = root / name
     path.mkdir(exist_ok=True)
     transport = 'mpi' if ranks and mpi else 'local'
-    control = base + f'domains = {domains}\ntransport = "{transport}"\n'
+    grid = '' if auto_grid else f'domains = {domains}\n'
+    control = base + grid + f'transport = "{transport}"\n'
     (path / "run.toml").write_text(control)
     cmd = [*mpi, "-n", str(ranks)] if transport == "mpi" else []
     cmd.extend([program, "run"])
@@ -132,7 +133,9 @@ def compare(a, b):
 
 ranks = 2 if mpi else 0
 reference = run("whole", 2, ranks)
-traced = run("traced", 2, ranks, trace=True)
+traced = run("traced", 2, ranks, trace=True, auto_grid=bool(mpi))
+if mpi:
+    assert "one domain per MPI rank" in (traced / "run.log").read_text()
 compare(reference, traced)
 compare(reference, run("whole-16", 16, ranks))
 seed = run("stop", 2, ranks, stop=True)

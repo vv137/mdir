@@ -1646,3 +1646,11 @@ canonical image. Identity exclusions precede the force law. A list can
 remain valid while its midpoint assignment changes, so selection reads
 current coordinates at each evaluation. The deterministic executor uses
 the integer-image and fixed-point algorithm of ruling B.
+
+MPI driver migration routes changed spatial owners and retains source slots for each carried field. Halo receivers assign their own image rows, and topology intervals send midpoint assignments to their evaluating ranks (D[distribute-cpu-threads]).
+
+In MPI native integration loops, identity intervals carry the particlewise
+state between evaluations. Spatial owners and interval owners exchange only
+the rows of their respective schedules. A halo projects the distributed
+exclusion directory onto its local candidate endpoints
+(D[distribute-cpu-threads]).

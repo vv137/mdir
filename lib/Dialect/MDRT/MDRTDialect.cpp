@@ -5,6 +5,7 @@
 #include "mdir/Dialect/MDRT/MDRTTypes.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -229,6 +230,13 @@ static LogicalResult verifyHaloStart(Operation *start, Value event, Value halo,
   for (Operation *user : destination.getUsers()) {
     if (user == start || user == wait)
       continue;
+    // A synchronous parallel initialization finishes before the transfer.
+    if (auto store = dyn_cast<memref::StoreOp>(user)) {
+      Operation *loop = store->getParentOp();
+      if (store.getMemRef() == destination && isa<scf::ParallelOp>(loop) &&
+          loop->getBlock() == start->getBlock() && loop->isBeforeInBlock(start))
+        continue;
+    }
     if (user->getBlock() != start->getBlock())
       return user->emitOpError()
              << "destination use crosses the halo event block";

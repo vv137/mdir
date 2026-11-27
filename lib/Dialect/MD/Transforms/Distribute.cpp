@@ -588,6 +588,7 @@ static LogicalResult distributeGroups(ModuleOp module, ArrayRef<int64_t> grid,
           false, t.getNumComponents(), t.getElementType());
     };
     Value original = md_dist::PartitionOp::create(b, loc, layoutType, x, cell, groups);
+    original.getDefiningOp()->setAttr("md_dist.constraint_layout",b.getUnitAttr());
     struct Epoch { Value layout, x, h, ghosts; };
     DenseMap<Value, Epoch> epochs;
     for (Operation *op : work) {

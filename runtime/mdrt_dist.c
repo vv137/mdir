@@ -21,6 +21,7 @@
 #include <float.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,7 +44,7 @@ struct Memref3D {
 };
 
 static double *at2(struct Memref2D *m, int64_t i, int64_t j) {
-  return m->aligned + m->offset + i * m->strides[0] + j * m->strides[1];
+  return &m->aligned[m->offset + i * m->strides[0] + j * m->strides[1]];
 }
 static double *at3(struct Memref3D *m, int64_t d, int64_t r, int64_t c) {
   return m->aligned + m->offset + d * m->strides[0] + r * m->strides[1] +
@@ -85,19 +86,28 @@ static void fail(const char *message) {
    carries it, and a halo holds one of its layout. */
 struct Layout {
   int mpi;
+  int64_t idBase, *globalIds;
   int64_t references;
   int64_t grid[3], domains, count, stride;
   double edges[3];
   struct ConstraintGroup {
     int32_t atoms[4];
     int size;
-  } *groups;
+    int32_t relationCenter;
+    int64_t tuple;
+  } *groups, *localGroups;
   size_t groupCount;
   int groupsFrozen;
+  struct Layout *groupSource;
+  int64_t *centerGroup; /* Group index plus one at each center. */
   double (*migratedPositions)[3];
   int32_t *groupCenters; /* center + 1; zero for a free atom */
 #ifdef MDIR_ENABLE_MPI
-  int64_t *migrantOffsets, *migrantIds; /* Old rank, then particle identity. */
+  struct InitialAtom *initial;
+  struct Collection *collection;
+  struct TupleSchedule *groupSchedules;
+  int *migrationCounts; /* Send/receive counts, then displacements. */
+  int64_t *sendSlots, *sourceSlots;
 #endif
   int64_t *owner; /* [count]: the domain that owns each particle */
   int64_t *row;   /* [count]: its owned row there */
@@ -105,17 +115,29 @@ struct Layout {
   int64_t *ids;   /* [domains * stride]: the particle of each owned row */
 };
 
+struct MidpointBounds {
+  double low[3], high[3], shift[3];
+  int64_t image[3];
+};
+
 struct DomainMatrix {
   struct DomainMatrix *next;
   int64_t domain, centers, rows, raw, selected;
   double cutoff, skin, box[3];
   double *reference, *shifts;
+  struct MidpointBounds *bounds;
   int32_t *counts, *selectedCounts;
   int valid;
+  int64_t candidateRule, candidates;
+  int32_t *candidateCounts;
+  uint64_t exclusionVersion;
+  int candidatesValid, midpointList;
 };
 
+struct TransferRow { int64_t domain, ghost, offset; int peer; int64_t source,row; };
+struct GatherRow { int64_t slot, offset; };
+
 #ifdef MDIR_ENABLE_MPI
-struct TransferRow { int64_t domain, ghost; int peer; };
 struct TransferPlan {
   int *counts;
   struct TransferRow *send, *receive, *local;
@@ -123,14 +145,23 @@ struct TransferPlan {
 };
 #endif
 
+struct GhostLink { int64_t domain,ghost,source,row; };
 struct Halo {
+  int64_t idBase;
   int64_t references;
   struct Layout *layout;
   double reach;
-  int64_t *firstGhost, *nextGhost;
   struct DomainMatrix *matrices;
+  int64_t gatherSlots;
+  unsigned char *needsPeer;
+  size_t *gatherOffsets;
+  struct GatherRow *gatherRows;
 #ifdef MDIR_ENABLE_MPI
   struct TransferPlan plans[2];
+  struct Exclusions *exclusions;
+  uint64_t directoryVersion;
+  struct GhostLink *links;
+  int64_t *linkOffsets;
 #endif
   int64_t capacity; /* the most ghosts of one domain */
   int64_t *rows;    /* [domains] */
@@ -145,10 +176,18 @@ struct Halo {
 
 /* Input tuple members use particle-set indices even after a reorder. The
    symmetric key removes both orientations from the cutoff relation. */
+/* Matrix entries depend only on this immutable relation and their local
+   rows. A new relation may reuse a released relation's address. */
+static _Atomic uint64_t lastExclusionVersion;
 struct Exclusions {
-  size_t count;
+  uint64_t version;
+  size_t references, count;
   uint64_t pairs[];
 };
+
+static const int64_t *domainIds(const struct Layout *l, int64_t d) {
+  return l->globalIds ? l->globalIds+d*l->stride : l->ids+(d-l->idBase)*l->stride;
+}
 
 struct Members {
   int32_t *allocated, *aligned;
@@ -160,13 +199,21 @@ static int compareKeys(const void *lhs, const void *rhs) {
   return (a > b) - (a < b);
 }
 
-int64_t _mlir_ciface_mdrtDistExclusions(struct Members *members) {
-  size_t count = members->sizes[0];
+static struct Exclusions *newExclusions(size_t count) {
   if (count > (SIZE_MAX - sizeof(struct Exclusions)) / sizeof(uint64_t))
     fail("exclusion table too large");
   struct Exclusions *e = malloc(sizeof *e + count * sizeof *e->pairs);
   if (!e) fail("out of memory building exclusions");
+  e->version = atomic_fetch_add_explicit(&lastExclusionVersion, 1, memory_order_relaxed) + 1;
+  if (!e->version) fail("exclusion relation version exhausted");
+  e->references = 1;
   e->count = count;
+  return e;
+}
+
+int64_t _mlir_ciface_mdrtDistExclusions(struct Members *members) {
+  size_t count = members->sizes[0];
+  struct Exclusions *e = newExclusions(count);
   for (size_t r = 0; r < count; ++r) {
     const int32_t *row = members->aligned + members->offset + r * members->strides[0];
     uint32_t i = row[0], j = row[members->strides[1]];
@@ -183,7 +230,8 @@ int64_t mdrtDistPairAllowed(int64_t handle, int64_t i, int64_t j) {
 }
 
 void mdrtDistFreeExclusions(int64_t handle) {
-  free((void *)(intptr_t)handle);
+  struct Exclusions *e = (void *)(intptr_t)handle;
+  if (e && !--e->references) free(e);
 }
 
 static const char *const quantityNames[DistQuantityCount] = {
@@ -346,15 +394,24 @@ void _mlir_ciface_mdrtDistImageShifts(int64_t handle, struct Memref3D *shifts) {
   if (!h || !shifts || shifts->sizes[0] != h->layout->domains ||
       shifts->sizes[2] != 3)
     fail("deterministic pair geometry requires a complete halo image field");
-  for (int64_t d = 0; d < h->layout->domains; ++d)
+  int64_t first = 0, past = h->layout->domains;
+#ifdef MDIR_ENABLE_MPI
+  if (h->layout->mpi) {
+    first = mdrtMPIDomainBound(h->layout->domains,0);
+    past = mdrtMPIDomainBound(h->layout->domains,1);
+  }
+#endif
+  for (int64_t d = first; d < past; ++d)
     if (shifts->sizes[1] < h->rows[d])
       fail("missing halo rows for deterministic pair geometry");
-  for (int64_t d = 0; d < h->layout->domains; ++d)
-    for (int64_t g = 0; g < h->rows[d]; ++g)
+  #pragma omp parallel for collapse(2) schedule(static) if((past-first)*h->capacity > 512)
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t g = 0; g < h->capacity; ++g) {
+      if (g >= h->rows[d]) continue;
       for (int c = 0; c < 3; ++c)
-        *at3(shifts, d, g, c) =
-            (double)h->image[3 * (d * h->capacity + g) + c] *
-            h->layout->edges[c];
+        *at3(shifts,d,g,c) =
+            (double)h->image[3*((d-h->idBase)*h->capacity+g)+c] * h->layout->edges[c];
+    }
 }
 
 struct Memref3W {
@@ -381,22 +438,15 @@ static int64_t division(double u, int64_t g) {
 /* xi is the untranslated position of the lesser identity. Form its midpoint
    before choosing a grid. Of all common translations of this pair, use
    exactly the one that puts the midpoint in the primary cell. */
-int64_t mdrtDistMidpointOwns(int64_t handle, int64_t d, int64_t i,
-    double x, double y, double z, double dx, double dy, double dz) {
+struct ImageView {
+  int64_t *allocated, *aligned;
+  int64_t offset, sizes[3], strides[3];
+};
+
+void _mlir_ciface_mdrtDistHaloImageWords(struct ImageView *view, int64_t handle) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
-  struct Layout *l = h->layout;
-  double midpoint[3] = {x - 0.5*dx, y - 0.5*dy, z - 0.5*dz};
-  int64_t owner = 0;
-  for (int k = 2; k >= 0; --k) {
-    double u = midpoint[k] / l->edges[k];
-    double image = floor(u);
-    int64_t n = i < l->rows[d] ? 0 :
-        h->image[3*(d*h->capacity + i-l->rows[d]) + k];
-    if (image != -(double)n)
-      return 0;
-    owner = owner*l->grid[k] + division(u - image, l->grid[k]);
-  }
-  return owner == d;
+  *view = (struct ImageView){h->image,h->image,-3*h->idBase*h->capacity,{h->layout->domains,h->capacity,3},
+                             {3*h->capacity,3,1}};
 }
 
 /* The rank visits its domains serially. The ordinary compiled builder and
@@ -404,7 +454,7 @@ int64_t mdrtDistMidpointOwns(int64_t handle, int64_t d, int64_t i,
    identities and images, but current explicit-image positions still have
    to satisfy the Verlet displacement bound. */
 int64_t mdrtDistMatrix(int64_t handle, int64_t domain, int64_t centers,
-                       int64_t rows, double cutoff, double skin, int64_t width) {
+                       int64_t rows, double cutoff, double skin, int64_t width, int64_t midpoint) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
   if (!h || domain < 0 || domain >= h->layout->domains ||
       rows != h->layout->rows[domain] + h->rows[domain] ||
@@ -412,7 +462,7 @@ int64_t mdrtDistMatrix(int64_t handle, int64_t domain, int64_t centers,
     fail("domain matrix extents do not match its halo");
   struct DomainMatrix *m = h->matrices;
   while (m && !(m->domain == domain && m->centers == centers &&
-                m->cutoff == cutoff && m->skin == skin))
+                m->cutoff == cutoff && m->skin == skin && m->midpointList == midpoint))
     m = m->next;
   if (!m) {
     m = calloc(1, sizeof *m);
@@ -422,6 +472,7 @@ int64_t mdrtDistMatrix(int64_t handle, int64_t domain, int64_t centers,
     m->domain = domain;
     m->rows = rows;
     m->centers = centers;
+    m->midpointList = midpoint;
     m->cutoff = cutoff;
     m->skin = skin;
     m->raw = mdrtHostMatrixAllocate(centers, width);
@@ -463,7 +514,66 @@ int64_t _mlir_ciface_mdrtDistMatrixRebuild(int64_t matrix, struct Memref2D *x) {
   for (int c = 0; c < 3; ++c)
     m->box[c] = (m->rows ? hi[c]-lo[c] : 0.0) + 2*(m->cutoff + m->skin);
   m->valid = 1;
+  m->candidatesValid = 0;
   return 1;
+}
+
+/* Packed coordinates already include the halo translation. Within this
+   open Cartesian box the common-image shifts and periodic cell searches
+   of a full-system list are unnecessary. Only the lower identity can
+   own the center of a midpoint pair. */
+void _mlir_ciface_mdrtDistBuildMidpoint(int64_t halo, int64_t matrix, struct Memref2D *x) {
+  struct Halo *h = (struct Halo *)(intptr_t)halo;
+  struct DomainMatrix *m = (struct DomainMatrix *)(intptr_t)matrix;
+  struct Layout *l = h->layout;
+  int64_t n = m->rows, centers = m->centers, d = m->domain, owned = l->rows[d];
+  if (!centers) return;
+  if (n > INT32_MAX) fail("too many explicit images in a pair list");
+  double reach = m->cutoff + m->skin + 3.e-6*(m->box[0]+m->box[1]+m->box[2]);
+  double limit2 = reach*reach;
+  int64_t *order = malloc(n*sizeof *order);
+  int64_t (*spans)[18] = malloc(centers*sizeof *spans);
+  struct SortedSite { double x[3]; int32_t row, id; };
+  struct SortedSite *sites = malloc(n*sizeof *sites);
+  if (!order || !spans || !sites) fail("out of memory binning midpoint rows");
+  struct Memref3D positions = {x->allocated,x->aligned,x->offset,{1,n,3},{0,x->strides[0],x->strides[1]}};
+  struct Memref1I permutation = {order,order,0,{n},{1}};
+  struct Memref1I ranges = {&spans[0][0],&spans[0][0],0,{18*centers},{1}};
+  pairCells(0,n,n,centers,reach,&positions,NULL,NULL,0,&permutation,&ranges);
+  const int64_t *ownerIds = domainIds(l,d);
+  const int64_t *ghostIds = h->ids+(d-h->idBase)*h->capacity;
+  #pragma omp parallel for schedule(static) if(n > 1024)
+  for (int64_t q = 0; q < n; ++q) {
+    int64_t j = order[q];
+    sites[q].row = j;
+    sites[q].id = j < owned ? ownerIds[j] : ghostIds[j-owned];
+    for (int k = 0; k < 3; ++k) sites[q].x[k] = *at2(x,j,k);
+  }
+  for (;;) {
+    struct HostBuffer2 entries;
+    _mlir_ciface_mdrtHostMatrixEntries(&entries,m->raw);
+    int32_t largest = 0;
+    #pragma omp parallel for schedule(static,8) reduction(max:largest) if(centers > 256)
+    for (int64_t i = 0; i < centers; ++i) {
+      int32_t *row = (int32_t *)entries.aligned+i*entries.strides[0];
+      int64_t id = i < owned ? ownerIds[i] : ghostIds[i-owned];
+      double xi = *at2(x,i,0), yi = *at2(x,i,1), zi = *at2(x,i,2);
+      int32_t count = 0;
+      for (int slab = 0; slab < 9; ++slab)
+        for (int64_t q = spans[i][2*slab]; q < spans[i][2*slab+1]; ++q) {
+          if (sites[q].id <= id) continue;
+          double dx = xi-sites[q].x[0], dy = yi-sites[q].x[1], dz = zi-sites[q].x[2];
+          if (dx*dx+dy*dy+dz*dz > limit2) continue;
+          if (count < entries.sizes[1]) row[count] = sites[q].row;
+          ++count;
+        }
+      m->counts[i] = count;
+      if (count > largest) largest = count;
+    }
+    if (largest <= entries.sizes[1]) break;
+    mdrtHostMatrixGrow(m->raw,largest);
+  }
+  free(sites); free(spans); free(order);
 }
 
 void _mlir_ciface_mdrtDistMatrixImages(struct Memref2D *r, int64_t handle, int64_t matrix) {
@@ -475,7 +585,7 @@ void _mlir_ciface_mdrtDistMatrixImages(struct Memref2D *r, int64_t handle, int64
     int64_t d = m->domain, n = h->layout->rows[d];
     for (int64_t g = 0; g < h->rows[d]; ++g)
       for (int c = 0; c < 3; ++c)
-        m->shifts[3*(n+g)+c] = h->image[3*(d*h->capacity+g)+c]*h->layout->edges[c];
+        m->shifts[3*(n+g)+c] = h->image[3*((d-h->idBase)*h->capacity+g)+c]*h->layout->edges[c];
   }
   r->allocated = r->aligned = m->shifts;
   r->offset = 0;
@@ -506,21 +616,6 @@ void _mlir_ciface_mdrtDistMatrixCounts(struct RowCounts *r, int64_t matrix, int6
   r->strides[0] = 1;
 }
 
-int64_t mdrtDistSelectMatrix(int64_t matrix, int64_t exclusions, int64_t rule) {
-  if (!rule && !exclusions) return 0;
-  struct DomainMatrix *m = (struct DomainMatrix *)(intptr_t)matrix;
-  struct HostBuffer2 src;
-  _mlir_ciface_mdrtHostMatrixEntries(&src, m->raw);
-  if (!m->selected) {
-    m->selected = mdrtHostMatrixAllocate(m->centers, src.sizes[1]);
-    m->selectedCounts = calloc(m->centers ? m->centers : 1, sizeof *m->selectedCounts);
-    if (!m->selectedCounts) fail("out of memory allocating filtered row counts");
-  }
-  mdrtHostMatrixGrow(m->selected, src.sizes[1]);
-  return 1;
-}
-
-
 static size_t firstKey(const struct Exclusions *e, uint64_t key) {
   size_t first = 0, end = e->count;
   while (first < end) {
@@ -531,56 +626,181 @@ static size_t firstKey(const struct Exclusions *e, uint64_t key) {
   return first;
 }
 
-void _mlir_ciface_mdrtDistSelectRows(int64_t handle, int64_t matrix,
-    int64_t exclusions, int64_t rule, int64_t first, int64_t end,
-    struct Memref3D *owned, struct Memref3D *ghost) {
+/* Classify the fractional midpoint relative to the cell of this explicit
+   image, using the same primary-cell wrap and rounded division as selection. */
+static int compareMidpoint(double u, int64_t image, int64_t grid, int64_t cell) {
+  double whole = floor(u), target = -(double)image;
+  if (whole != target) return whole < target ? -1 : 1;
+  int64_t domain = division(u-whole, grid);
+  return (domain > cell) - (domain < cell);
+}
+
+/* Bound each operation of (xi - .5*((xi-xj)-(b-a))) / L separately.
+   Subtraction is increasing in its first operand and decreasing in its
+   second. Using the same operations at the bounding endpoints also
+   encloses rounded results at a domain face. */
+static int classifyMidpoint(const struct MidpointBounds *i, const struct MidpointBounds *j,
+                            const struct Layout *l, const int64_t cell[3]) {
+  int stable = 1;
+  for (int c = 0; c < 3; ++c) {
+    double shift = j->shift[c]-i->shift[c];
+    double dxLow = (i->low[c]-j->high[c])-shift;
+    double dxHigh = (i->high[c]-j->low[c])-shift;
+    double low = (i->low[c]-0.5*dxHigh)/l->edges[c];
+    double high = (i->high[c]-0.5*dxLow)/l->edges[c];
+    if (!isfinite(low) || !isfinite(high)) return 0;
+    int lower = compareMidpoint(low,i->image[c],l->grid[c],cell[c]);
+    int upper = compareMidpoint(high,i->image[c],l->grid[c],cell[c]);
+    if (lower > 0 || upper < 0) return -1;
+    stable &= lower == 0 && upper == 0;
+  }
+  return stable;
+}
+
+int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
+    int64_t exclusions, int64_t rule, struct Memref3D *owned, struct Memref3D *ghost,
+    struct Memref2D *packed, int64_t prune) {
+  if (!rule && !exclusions) return 0;
   struct DomainMatrix *m = (struct DomainMatrix *)(intptr_t)matrix;
   struct Halo *h = (struct Halo *)(intptr_t)handle;
   struct Layout *l = h->layout;
   int64_t d = m->domain, n = l->rows[d];
   struct HostBuffer2 src, dst;
-  _mlir_ciface_mdrtHostMatrixEntries(&src, m->raw);
-  _mlir_ciface_mdrtHostMatrixEntries(&dst, m->selected);
-  struct Exclusions *e = (struct Exclusions *)(intptr_t)exclusions;
-  for (int64_t i = first; i < end; ++i) {
-    int64_t gi = d*h->capacity + i-n;
-    int64_t idi = i<n ? l->ids[d*l->stride+i] : h->ids[gi];
-    uint64_t prefix = (uint64_t)idi << 32;
-    size_t lo = 0, hi = 0;
-    if (e && rule) {
-      lo = firstKey(e, prefix);
-      hi = firstKey(e, prefix + (UINT64_C(1)<<32));
+  _mlir_ciface_mdrtHostMatrixEntries(&src,m->raw);
+  if (!m->selected) {
+    m->selected = mdrtHostMatrixAllocate(m->centers,src.sizes[1]);
+    m->selectedCounts = calloc(m->centers ? m->centers : 1,sizeof *m->selectedCounts);
+    if (!m->selectedCounts) fail("out of memory allocating selected row counts");
+  }
+  mdrtHostMatrixGrow(m->selected,src.sizes[1]);
+  _mlir_ciface_mdrtHostMatrixEntries(&dst,m->selected);
+  struct HostBuffer2 candidates = dst;
+  int32_t *counts = m->selectedCounts;
+  if (rule == 2) {
+    if (!m->candidates) {
+      m->candidates = mdrtHostMatrixAllocate(m->centers,src.sizes[1]);
+      m->candidateCounts = calloc(m->centers ? m->centers : 1,sizeof *m->candidateCounts);
+      if (!m->candidateCounts) fail("out of memory allocating midpoint row counts");
     }
-    int32_t count = 0;
-    for (int32_t k = 0; k < m->counts[i]; ++k) {
-      int32_t j = ((int32_t *)src.aligned)[i*src.strides[0]+k];
-      int64_t gj = d*h->capacity + j-n;
-      int64_t idj = j<n ? l->ids[d*l->stride+j] : h->ids[gj];
-      if (rule && idi >= idj) continue;
-      if (e && rule) {
-        uint64_t key = prefix | (uint32_t)idj;
-        size_t t = lo;
-        while (t < hi && e->pairs[t] < key) ++t;
-        if (t < hi && e->pairs[t] == key) continue;
-      }
-      if (e && !rule && !mdrtDistPairAllowed(exclusions, idi < idj ? idi : idj,
-                                             idi < idj ? idj : idi)) continue;
-      if (rule == 2) {
-        double xi[3], dx[3];
+    mdrtHostMatrixGrow(m->candidates,src.sizes[1]);
+    _mlir_ciface_mdrtHostMatrixEntries(&candidates,m->candidates);
+    counts = m->candidateCounts;
+  }
+  const struct Exclusions *e = (const struct Exclusions *)(intptr_t)exclusions;
+  uint64_t version = e ? e->version : 0;
+  int64_t cell[3] = {d%l->grid[0], (d/l->grid[0])%l->grid[1], d/(l->grid[0]*l->grid[1])};
+  int rebuild = !m->candidatesValid || m->candidateRule != rule || version != m->exclusionVersion;
+  if (rule == 2) {
+    if (!m->bounds) {
+      m->bounds = calloc(m->rows ? m->rows : 1, sizeof *m->bounds);
+      if (!m->bounds) fail("out of memory bounding midpoint candidates");
+      rebuild = 1;
+    }
+    if (!rebuild) {
+      #pragma omp parallel for reduction(|:rebuild) schedule(static) if(m->rows > 512)
+      for (int64_t i = 0; i < m->rows; ++i)
         for (int c = 0; c < 3; ++c) {
-          xi[c] = i<n ? *at3(owned,d,i,c) : *at3(ghost,d,i-n,c);
-          double xj = j<n ? *at3(owned,d,j,c) : *at3(ghost,d,j-n,c);
-          double a = i<n ? 0.0 : h->image[3*gi+c]*l->edges[c];
-          double b = j<n ? 0.0 : h->image[3*gj+c]*l->edges[c];
-          dx[c] = (xi[c]-xj)-(b-a);
+          double x = i<n ? *at3(owned,d,i,c) : *at3(ghost,d,i-n,c);
+          rebuild |= !(x >= m->bounds[i].low[c] && x <= m->bounds[i].high[c]);
         }
-        if (!mdrtDistMidpointOwns(handle,d,i,xi[0],xi[1],xi[2],dx[0],dx[1],dx[2]))
-          continue;
+    }
+    if (rebuild) {
+      #pragma omp parallel for schedule(static) if(m->rows > 512)
+      for (int64_t i = 0; i < m->rows; ++i)
+        for (int c = 0; c < 3; ++c) {
+          double x = i<n ? *at3(owned,d,i,c) : *at3(ghost,d,i-n,c);
+          m->bounds[i].low[c] = x - 0.5*m->skin;
+          m->bounds[i].high[c] = x + 0.5*m->skin;
+          int64_t image = i<n ? 0 : h->image[3*((d-h->idBase)*h->capacity+i-n)+c];
+          m->bounds[i].image[c] = image;
+          m->bounds[i].shift[c] = image*l->edges[c];
+        }
+    }
+  }
+  if (rebuild) {
+    #pragma omp parallel for schedule(static,8) if(m->centers > 256)
+    for (int64_t i = 0; i < m->centers; ++i) {
+      int64_t idi = i<n ? domainIds(l,d)[i] : h->ids[(d-h->idBase)*h->capacity+i-n];
+      uint64_t prefix = (uint64_t)idi << 32;
+      size_t lo = e && rule ? firstKey(e,prefix) : 0;
+      size_t hi = e && rule ? firstKey(e,prefix+(UINT64_C(1)<<32)) : 0;
+      int32_t count = 0;
+      for (int32_t k = 0; k < m->counts[i]; ++k) {
+        int32_t j = ((int32_t *)src.aligned)[i*src.strides[0]+k];
+        int64_t idj = j<n ? domainIds(l,d)[j] : h->ids[(d-h->idBase)*h->capacity+j-n];
+        if (rule && idi >= idj) continue;
+        if (e && rule) {
+          uint64_t key = prefix | (uint32_t)idj;
+          size_t t = lo;
+          while (t < hi && e->pairs[t] < key) ++t;
+          if (t < hi && e->pairs[t] == key) continue;
+        }
+        if (e && !rule && !mdrtDistPairAllowed(exclusions,idi<idj ? idi : idj,
+                                                idi<idj ? idj : idi)) continue;
+        if (rule == 2) {
+          int membership = classifyMidpoint(&m->bounds[i],&m->bounds[j],l,cell);
+          if (membership < 0) continue;
+          if (membership > 0) j = ~j;
+        }
+        ((int32_t *)candidates.aligned)[i*candidates.strides[0]+count++] = j;
       }
-      ((int32_t *)dst.aligned)[i*dst.strides[0]+count++] = j;
+      counts[i] = count;
+    }
+    m->exclusionVersion = version;
+    m->candidateRule = rule;
+    m->candidatesValid = 1;
+  }
+  if (rule != 2) return 1;
+
+  /* The packed coordinates are the same explicit images the pair kernel
+     reads. Leave a guard shell for rounding the displacement, products,
+     and sum to binary32. The kernel still applies its own cutoff. */
+  double cutoff2 = m->cutoff*m->cutoff;
+  double outer2 = cutoff2*(1.0 + 16.0*FLT_EPSILON);
+  prune = prune && cutoff2 > FLT_MIN && outer2 < FLT_MAX;
+  #pragma omp parallel for schedule(static,8) if(m->centers > 256)
+  for (int64_t i = 0; i < m->centers; ++i) {
+    int64_t image[3] = {0,0,0};
+    double xi[3], a[3];
+    for (int c = 0; c < 3; ++c) {
+      if (i >= n) image[c] = h->image[3*((d-h->idBase)*h->capacity+i-n)+c];
+      xi[c] = i<n ? *at3(owned,d,i,c) : *at3(ghost,d,i-n,c);
+      a[c] = image[c]*l->edges[c];
+    }
+    double center[3];
+    for (int c = 0; c < 3; ++c) center[c] = *at2(packed,i,c);
+    int32_t count = 0;
+    for (int32_t k = 0; k < counts[i]; ++k) {
+      int32_t j = ((int32_t *)candidates.aligned)[i*candidates.strides[0]+k];
+      if (prune) {
+        int32_t neighbor = j < 0 ? ~j : j;
+        double r2 = 0.0;
+        for (int c = 0; c < 3; ++c) {
+          double dx = center[c] - *at2(packed,neighbor,c);
+          r2 += dx*dx;
+        }
+        if (r2 > outer2) continue;
+      }
+      if (j < 0) {
+        ((int32_t *)dst.aligned)[i*dst.strides[0]+count++] = ~j;
+        continue;
+      }
+      int keep = 1;
+      for (int c = 0; c < 3; ++c) {
+        double xj = j<n ? *at3(owned,d,j,c) : *at3(ghost,d,j-n,c);
+        double b = j<n ? 0.0 : h->image[3*((d-h->idBase)*h->capacity+j-n)+c]*l->edges[c];
+        double dx = (xi[c]-xj)-(b-a[c]);
+        double u = (xi[c]-0.5*dx)/l->edges[c], shift = floor(u);
+        if (shift != -(double)image[c] || division(u-shift,l->grid[c]) != cell[c]) {
+          keep = 0;
+          break;
+        }
+      }
+      if (keep) ((int32_t *)dst.aligned)[i*dst.strides[0]+count++] = j;
     }
     m->selectedCounts[i] = count;
   }
+  return 1;
 }
 
 /* Constraints in a group share the periodic image of the center atom.
@@ -600,24 +820,119 @@ static int64_t groupOwner(const struct Layout *l, const struct ConstraintGroup *
   return owner;
 }
 
-static void numberOwnedRows(struct Layout *l) {
-  memset(l->rows,0,l->domains*sizeof *l->rows);
-  for (int64_t j = 0; j < l->count; ++j) ++l->rows[l->owner[j]];
+static void numberRows(struct Layout *l, const int64_t *ids, int64_t count) {
+  /* Each block owns its counters. The scan assigns disjoint ranges of
+     each domain in global identity order, independent of thread count. */
+  const int64_t width = l->domains > 2048 ? l->domains : 2048;
+  const int64_t blocks = (count + width - 1) / width;
+  int64_t *offset = calloc((size_t)(blocks ? blocks : 1), l->domains * sizeof *offset);
+  if (!offset) fail("out of memory numbering owned rows");
+  #pragma omp parallel for schedule(static) if(blocks > 1)
+  for (int64_t b = 0; b < blocks; ++b) {
+    int64_t end = (b+1)*width < count ? (b+1)*width : count;
+    for (int64_t j = b*width; j < end; ++j)
+      ++offset[b*l->domains + l->owner[ids ? ids[j] : j]];
+  }
   int64_t cap = 1;
-  for (int64_t d = 0; d < l->domains; ++d)
-    if (l->rows[d] > cap) cap = l->rows[d];
+  for (int64_t d = 0; d < l->domains; ++d) {
+    int64_t sum = 0;
+    for (int64_t b = 0; b < blocks; ++b) {
+      int64_t *v = &offset[b*l->domains+d], count = *v;
+      *v = sum;
+      sum += count;
+    }
+    l->rows[d] = sum;
+    if (sum > cap) cap = sum;
+  }
+#ifdef MDIR_ENABLE_MPI
+  if (ids) {
+    mdrtMPIShareDomainCounts(l->rows, l->domains);
+    for (int64_t d = 0; d < l->domains; ++d)
+      if (l->rows[d] > cap) cap = l->rows[d];
+  }
+#endif
   if (l->stride != cap) {
     l->ids = realloc(l->ids,l->domains*cap*sizeof *l->ids);
     if (!l->ids) fail("out of memory indexing owned rows");
     l->stride = cap;
   }
-  memset(l->rows,0,l->domains*sizeof *l->rows);
-  for (int64_t j = 0; j < l->count; ++j) {
-    int64_t d = l->owner[j], r = l->rows[d]++;
-    l->ids[d * cap + r] = j;
-    l->row[j] = r;
+  #pragma omp parallel for schedule(static) if(blocks > 1)
+  for (int64_t b = 0; b < blocks; ++b) {
+    int64_t end = (b+1)*width < count ? (b+1)*width : count;
+    for (int64_t j = b*width; j < end; ++j) {
+      int64_t id = ids ? ids[j] : j;
+      int64_t d = l->owner[id], r = offset[b*l->domains+d]++;
+      l->ids[d * cap + r] = id;
+      l->row[id] = r;
+    }
   }
+  free(offset);
 }
+
+#ifdef MDIR_ENABLE_MPI
+static void materializeRows(struct Layout *l);
+#else
+#define materializeRows(l) ((void)0)
+#endif
+
+#ifdef MDIR_ENABLE_MPI
+static void releaseCollection(struct Collection *p);
+#endif
+
+#ifdef MDIR_ENABLE_MPI
+static void releaseGroupSchedules(struct TupleSchedule *head);
+#endif
+void mdrtDistReleaseLayout(int64_t handle);
+
+#ifdef MDIR_ENABLE_MPI
+/* Extending a registered group relation is a topology update. Rebuild
+   the mutable registry from owned centers before adding the new relation. */
+static void assignGroups(struct Layout *, struct Memref2D *, struct Members *, int);
+
+static void collectGroups(struct Layout *l) {
+  if (!l->localGroups) return;
+  l->groups = malloc(l->groupCount*sizeof *l->groups);
+  l->centerGroup = calloc(l->count,sizeof *l->centerGroup);
+  l->groupCenters = calloc(l->count,sizeof *l->groupCenters);
+  if (!l->groups || !l->centerGroup || !l->groupCenters) fail("out of memory extending group registry");
+  size_t used = 0;
+  for (int64_t d = 0; d < l->domains; ++d) {
+    int owner = mdrtMPIOwner(l->domains,d);
+    int64_t entries = 0;
+    if (owner == mdrtMPIRank())
+      for (int64_t r = 0; r < l->rows[d]; ++r) {
+        struct ConstraintGroup g = l->localGroups[(d-l->idBase)*l->stride+r];
+        if (g.size > 0) l->groups[used+entries++] = g;
+      }
+    mdrtMPIBroadcastIndices(&entries,1,owner);
+    for (int64_t i = 0; i < entries; ++i) {
+      struct ConstraintGroup *g = l->groups+used++;
+      int64_t record[7] = {0};
+      if (owner == mdrtMPIRank()) {
+        record[0] = g->size;
+        record[5] = g->relationCenter;
+        record[6] = g->tuple;
+        for (int a = 0; a < g->size; ++a) record[a+1] = g->atoms[a];
+      }
+      mdrtMPIBroadcastIndices(record,7,owner);
+      g->relationCenter = record[5];
+      g->tuple = record[6];
+      g->size = record[0];
+      for (int a = 0; a < g->size; ++a) {
+        g->atoms[a] = record[a+1];
+        l->groupCenters[g->atoms[a]] = record[1]+1;
+      }
+      l->centerGroup[g->atoms[0]] = used;
+    }
+  }
+  free(l->localGroups);
+  l->localGroups = NULL;
+  free(l->ids);
+  l->ids = l->globalIds;
+  l->globalIds = NULL;
+  l->idBase = 0;
+}
+#endif
 
 void _mlir_ciface_mdrtDistGroupOwners(int64_t handle, struct Memref2D *positions,
                                       struct Members *members) {
@@ -625,17 +940,39 @@ void _mlir_ciface_mdrtDistGroupOwners(int64_t handle, struct Memref2D *positions
   size_t count = members->sizes[0];
   int64_t size = members->sizes[1];
   if (!count || l->groupsFrozen) return;
+#ifdef MDIR_ENABLE_MPI
+  if (l->initial) { assignGroups(l,positions,members,0); return; }
+#endif
+  materializeRows(l);
+#ifdef MDIR_ENABLE_MPI
+  collectGroups(l);
+#endif
   if (size < 2 || size > 4 || count > (size_t)l->count ||
       count > SIZE_MAX / sizeof *l->groups - l->groupCount)
     fail("invalid constraint group dimensions");
+  if (l->groupSource) {
+    struct Layout *source = l->groupSource;
+    l->groups = malloc(l->groupCount*sizeof *l->groups);
+    l->centerGroup = malloc(l->count*sizeof *l->centerGroup);
+    l->groupCenters = malloc(l->count*sizeof *l->groupCenters);
+    if (!l->groups || !l->centerGroup || !l->groupCenters)
+      fail("out of memory extending migrated constraint groups");
+    memcpy(l->groups,source->groups,l->groupCount*sizeof *l->groups);
+    memcpy(l->centerGroup,source->centerGroup,l->count*sizeof *l->centerGroup);
+    memcpy(l->groupCenters,source->groupCenters,l->count*sizeof *l->groupCenters);
+    l->groupSource = NULL;
+    mdrtDistReleaseLayout((int64_t)(intptr_t)source);
+  }
   if (!l->groupCenters)
     l->groupCenters = calloc(l->count, sizeof *l->groupCenters);
+  if (!l->centerGroup) l->centerGroup = calloc(l->count, sizeof *l->centerGroup);
   l->groups = realloc(l->groups, (l->groupCount + count) * sizeof *l->groups);
-  if (!l->groupCenters || !l->groups) fail("out of memory partitioning constraint groups");
+  if (!l->groupCenters || !l->centerGroup || !l->groups) fail("out of memory partitioning constraint groups");
   for (size_t row = 0; row < count; ++row) {
     struct ConstraintGroup *g = &l->groups[l->groupCount++];
     g->size = size;
-    double points[4][3];
+    g->tuple = row;
+    g->relationCenter = members->aligned[members->offset];
     for (int a = 0; a < size; ++a) {
       int32_t atom = members->aligned[members->offset + row * members->strides[0] + a * members->strides[1]];
       if (atom < 0 || atom >= l->count) fail("invalid atom in constraint group");
@@ -647,14 +984,21 @@ void _mlir_ciface_mdrtDistGroupOwners(int64_t handle, struct Memref2D *positions
         fail(message);
       }
       l->groupCenters[atom] = g->atoms[0] + 1;
-      for (int k = 0; k < 3; ++k)
-        points[a][k] = *at2(positions, atom, k);
     }
+    l->centerGroup[g->atoms[0]] = l->groupCount;
+  }
+  #pragma omp parallel for schedule(static) if(count > 256)
+  for (size_t row = 0; row < count; ++row) {
+    struct ConstraintGroup *g = &l->groups[l->groupCount-count+row];
+    double points[4][3];
+    for (int a = 0; a < size; ++a)
+      for (int k = 0; k < 3; ++k)
+        points[a][k] = *at2(positions, g->atoms[a], k);
     int64_t owner = groupOwner(l, g, points);
     for (int a = 0; a < size; ++a)
       l->owner[g->atoms[a]] = owner;
   }
-  numberOwnedRows(l);
+  numberRows(l, NULL, l->count);
 }
 
 int64_t _mlir_ciface_mdrtDistPartition(struct Memref2D *x, int64_t gx,
@@ -687,7 +1031,7 @@ int64_t _mlir_ciface_mdrtDistPartition(struct Memref2D *x, int64_t gx,
     int64_t d = cell[0] + gx * (cell[1] + gy * cell[2]);
     l->owner[j] = d;
   }
-  numberOwnedRows(l);
+  numberRows(l, NULL, l->count);
   return (int64_t)(intptr_t)l;
 }
 
@@ -705,6 +1049,7 @@ int64_t _mlir_ciface_mdrtDistMPIPartition(struct Memref2D *x, int64_t gx,
 static void shareRows(struct Layout *l, const int64_t *rows, struct Memref3D *field) {
   if (!l->mpi || mdrtMPISize() == 1)
     return;
+  materializeRows(l);
   if (field->strides[2] != 1 || field->strides[1] != field->sizes[2])
     mdrtMPIAbort("expected contiguous field rows");
   // Gather compact live rows once. The owner of each domain fills its
@@ -758,6 +1103,7 @@ void _mlir_ciface_mdrtMPICollectRows(int64_t handle, struct Memref3D *field) {
 
 int64_t _mlir_ciface_mdrtMPICheckpointRows(int64_t handle, struct Memref3D *field) {
   struct Layout *l = (struct Layout *)(intptr_t)handle;
+  materializeRows(l);
   for (int64_t d = 0; d < l->domains; ++d)
     if (l->rows[d])
       mdrtMPIRowsToRoot(at3(field, d, 0, 0), l->rows[d] * field->sizes[2],
@@ -771,12 +1117,20 @@ struct Memref2W {
 };
 
 void _mlir_ciface_mdrtMPIShareWords(struct Memref2W *partial) {
+  if (partial->strides[0] == partial->sizes[1] && partial->strides[1] == 1 &&
+      mdrtMPIShareDomainPartials(partial->aligned + partial->offset, partial->sizes[0],
+                                 partial->sizes[1], 1))
+    return;
   for (int64_t d = 0; d < partial->sizes[0]; ++d)
     mdrtMPIBroadcastWords(partial->aligned + partial->offset + d * partial->strides[0],
                           partial->sizes[1], mdrtMPIOwner(partial->sizes[0], d));
 }
 
 void _mlir_ciface_mdrtMPISharePartials(struct Memref2D *partial) {
+  if (partial->strides[0] == partial->sizes[1] && partial->strides[1] == 1 &&
+      mdrtMPIShareDomainPartials(partial->aligned + partial->offset, partial->sizes[0],
+                                 partial->sizes[1], 0))
+    return;
   for (int64_t d = 0; d < partial->sizes[0]; ++d)
     mdrtMPIBroadcast(at2(partial, d, 0), partial->sizes[1],
                      mdrtMPIOwner(partial->sizes[0], d));
@@ -789,12 +1143,12 @@ void _mlir_ciface_mdrtMPISharePartials(struct Memref2D *partial) {
 void _mlir_ciface_mdrtDistLayoutRows(int64_t handle, struct Memref1I *rows,
                                      struct Memref2I *ids) {
   struct Layout *l = (struct Layout *)(intptr_t)handle;
-  int64_t cap = l->stride;
+  materializeRows(l);
   for (int64_t d = 0; d < l->domains; ++d) {
     rows->aligned[rows->offset + d * rows->strides[0]] = l->rows[d];
     for (int64_t r = 0; r < l->rows[d]; ++r)
       ids->aligned[ids->offset + d * ids->strides[0] + r * ids->strides[1]] =
-          l->ids[d * cap + r];
+          domainIds(l,d)[r];
   }
 }
 
@@ -813,6 +1167,7 @@ void _mlir_ciface_mdrtDistIdView(struct Memref2I *out, int64_t handle, int64_t g
   struct Layout *l = h ? h->layout : (struct Layout *)(intptr_t)handle;
   int64_t stride = h ? h->capacity : l->stride;
   *out = (struct Memref2I){.aligned = h ? h->ids : l->ids,
+                           .offset = -(h ? h->idBase : l->idBase)*stride,
                            .sizes = {l->domains,stride}, .strides = {stride,1}};
   out->allocated = out->aligned;
 }
@@ -846,15 +1201,26 @@ void mdrtDistReleaseLayout(int64_t handle) {
   if (--l->references > 0)
     return;
 #ifdef MDIR_ENABLE_MPI
-  free(l->migrantOffsets);
-  free(l->migrantIds);
+  free(l->initial);
+  releaseCollection(l->collection);
+  releaseGroupSchedules(l->groupSchedules);
+  free(l->migrationCounts);
+  free(l->sendSlots);
+  free(l->sourceSlots);
 #endif
   free(l->migratedPositions);
-  free(l->groups);
-  free(l->groupCenters);
+  free(l->localGroups);
+  if (l->groupSource) {
+    mdrtDistReleaseLayout((int64_t)(intptr_t)l->groupSource);
+  } else {
+    free(l->groups);
+    free(l->groupCenters);
+    free(l->centerGroup);
+  }
   free(l->owner);
   free(l->row);
   free(l->rows);
+  free(l->globalIds);
   free(l->ids);
   free(l);
 }
@@ -862,27 +1228,31 @@ void mdrtDistReleaseLayout(int64_t handle) {
 /* A migration is a new ownership epoch. Prove that the source's identity
    table is a bijection before any field can be copied into that epoch. */
 static void checkIdentities(struct Layout *l) {
-  int64_t n = l->count, cap = n > 0 ? n : 1;
-  unsigned char *seen = calloc((size_t)cap, 1);
-  if (!seen)
-    fail("out of memory");
-  int64_t visited = 0;
-  for (int64_t d = 0; d < l->domains; ++d) {
-    if (l->rows[d] < 0 || l->rows[d] > n)
-      fail("invalid number of owned rows in a layout");
-    for (int64_t r = 0; r < l->rows[d]; ++r) {
-      int64_t j = l->ids[d * l->stride + r];
-      if (j < 0 || j >= n || seen[j])
-        fail("duplicate or invalid global particle identity in a layout");
-      if (l->owner[j] != d || l->row[j] != r)
-        fail("layout identity and owner/row tables disagree");
-      seen[j] = 1;
-      ++visited;
-    }
+  int64_t visited = 0, first = 0, past = l->domains;
+#ifdef MDIR_ENABLE_MPI
+  if (l->mpi) {
+    first = mdrtMPIDomainBound(l->domains, 0);
+    past = mdrtMPIDomainBound(l->domains, 1);
   }
-  if (visited != n)
-    fail("missing global particle identity in a layout");
-  free(seen);
+#endif
+  for (int64_t d = 0; d < l->domains; ++d) {
+    if (l->rows[d] < 0 || l->rows[d] > l->stride)
+      fail("invalid number of owned rows in a layout");
+    visited += l->rows[d];
+  }
+  if (visited != l->count) fail("missing global particle identity in a layout");
+  // The inverse map proves uniqueness. Each rank checks its own interval.
+  int invalid = 0;
+  #pragma omp parallel for collapse(2) reduction(|:invalid) schedule(static) if(l->count > 1024)
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < l->stride; ++r) {
+      if (r >= l->rows[d]) continue;
+      int64_t j = domainIds(l,d)[r];
+      invalid |= j < 0 || j >= l->count ||
+                 (l->owner && (l->owner[j] != d || l->row[j] != r)) ||
+                 (r && domainIds(l,d)[r-1] >= j);
+    }
+  if (invalid) fail("layout identity and owner/row tables disagree");
 }
 
 /* The particles whose owner changes, by the number of axes of the grid
@@ -915,58 +1285,232 @@ static void traceMigration(struct Layout *old, struct Layout *next) {
 }
 
 #ifdef MDIR_ENABLE_MPI
-/* Redistribute is verified against the migration that produced its new
-   layout. All fields in that migration have the same crossing identities. */
-static void indexMigrants(struct Layout *old, struct Layout *next) {
-  int peers = mdrtMPISize();
-  int *owners = malloc(old->domains*sizeof *owners);
-  int64_t *offsets = calloc((size_t)peers+1,sizeof *offsets);
-  int64_t *cursor = malloc(peers*sizeof *cursor);
-  if (!owners || !offsets || !cursor) fail("out of memory indexing migration");
-  for (int64_t d = 0; d < old->domains; ++d) owners[d] = mdrtMPIOwner(old->domains,d);
-  for (int64_t j = 0; j < old->count; ++j) {
-    int from = owners[old->owner[j]];
-    if (from != owners[next->owner[j]]) ++offsets[from+1];
+/* The input slots are offsets in the old domain field. A negative slot in
+   the output schedule denotes an incoming record in peer order. */
+struct Crossing { int64_t id, domain; struct ConstraintGroup group; };
+
+static struct ConstraintGroup rowGroup(struct Layout *l, int64_t d, int64_t r, int64_t id) {
+  if (l->localGroups) return l->localGroups[(d-l->idBase)*l->stride+r];
+  if (l->groupCenters && l->groupCenters[id]) {
+    if (l->centerGroup[id]) return l->groups[l->centerGroup[id]-1];
+    return (struct ConstraintGroup){.size=-1};
   }
-  for (int p = 0; p < peers; ++p) offsets[p+1] += offsets[p];
-  next->migrantOffsets = offsets;
-  if (offsets[peers]) {
-    next->migrantIds = malloc(offsets[peers]*sizeof *next->migrantIds);
-    if (!next->migrantIds) fail("out of memory recording migrating rows");
-    memcpy(cursor,offsets,peers*sizeof *cursor);
-    for (int64_t j = 0; j < old->count; ++j) {
-      int from = owners[old->owner[j]];
-      if (from != owners[next->owner[j]]) next->migrantIds[cursor[from]++] = j;
-    }
-  }
-  free(owners);
-  free(cursor);
+  return (struct ConstraintGroup){0};
+}
+struct Arrival { int64_t domain, id, slot; };
+
+static int compareArrival(const void *a, const void *b) {
+  const struct Arrival *x = a, *y = b;
+  if (x->domain != y->domain) return x->domain < y->domain ? -1 : 1;
+  return (x->id > y->id) - (x->id < y->id);
 }
 
-static void shareMigrants(struct Layout *old, struct Layout *next, struct Memref3D *source) {
-  int peers = mdrtMPISize(), rank = mdrtMPIRank();
-  int64_t width = source->sizes[2], *offsets = next->migrantOffsets;
-  for (int p = 0; p < peers; ++p) {
-    int64_t rows = offsets[p+1]-offsets[p];
-    if (!rows) continue;
-    double *payload = malloc(rows*width*sizeof *payload);
-    if (!payload) fail("out of memory sharing migration payload");
-    if (p == rank)
-      for (int64_t r = 0; r < rows; ++r) {
-        int64_t j = next->migrantIds[offsets[p]+r];
-        for (int64_t c = 0; c < width; ++c)
-          payload[r*width+c] = *at3(source,old->owner[j],old->row[j],c);
+static int64_t findOwnedRow(const struct Layout *l, int64_t d, int64_t id) {
+  if (l->row) return l->row[id];
+  const int64_t *ids = domainIds(l,d);
+  int64_t lo = 0, hi = l->rows[d];
+  while (lo < hi) {
+    int64_t mid = lo+(hi-lo)/2;
+    if (ids[mid] < id) lo = mid+1;
+    else hi = mid;
+  }
+  if (lo == l->rows[d] || ids[lo] != id) fail("missing owned constraint member");
+  return lo;
+}
+
+static void fillLocalField(struct Layout *old, struct Layout *next,
+    struct Memref3D *source, struct Memref3D *dest, int image) {
+  int peers = mdrtMPISize();
+  int *ns = next->migrationCounts, *nr = ns+peers, *os = nr+peers, *or = os+peers;
+  int sends = os[peers-1]+ns[peers-1], receives = or[peers-1]+nr[peers-1];
+  int64_t width = source->sizes[2];
+  if (width < 1 || width > INT_MAX/(int)sizeof(double)) fail("invalid migration field width");
+  double *out = malloc((sends ? (size_t)sends : 1)*width*sizeof *out);
+  double *in = malloc((receives ? (size_t)receives : 1)*width*sizeof *in);
+  if (!out || !in) fail("out of memory transferring migrating fields");
+  for (int i = 0; i < sends; ++i) {
+    int64_t slot = next->sendSlots[i];
+    for (int64_t k = 0; k < width; ++k)
+      out[i*width+k] = *at3(source,slot/old->stride,slot%old->stride,k);
+  }
+  mdrtMPIExchangeRecords(out,ns,os,in,nr,or,width*sizeof(double));
+  int64_t first = mdrtMPIDomainBound(next->domains,0), past = mdrtMPIDomainBound(next->domains,1);
+  #pragma omp parallel for collapse(2) schedule(static) if((past-first)*next->stride > 1024)
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < next->stride; ++r) {
+      if (r >= next->rows[d]) continue;
+      int64_t local = (d-first)*next->stride+r, slot = next->sourceSlots[local];
+      for (int64_t k = 0; k < width; ++k) {
+        double v = slot < 0 ? in[(-1-slot)*width+k] :
+                   *at3(source,slot/old->stride,slot%old->stride,k);
+        if (image) {
+          if (!isfinite(v)) fail("redistributed positions must be finite");
+          v -= next->edges[k]*floor(v/next->edges[k]);
+        }
+        if (dest) *at3(dest,d,r,k) = v;
+        else next->migratedPositions[local][k] = v;
       }
-    mdrtMPIBroadcast(payload,rows*width,p);
-    if (p != rank)
-      for (int64_t r = 0; r < rows; ++r) {
-        int64_t j = next->migrantIds[offsets[p]+r];
-        for (int64_t c = 0; c < width; ++c)
-          *at3(source,old->owner[j],old->row[j],c) = payload[r*width+c];
-      }
-    free(payload);
+    }
+  free(in);
+  free(out);
+}
+
+/* Build the inverse identity maps only for consumers that require an
+   explicitly global view. Migration and ordinary redistributions use the
+   old local rows and the receive schedule directly. */
+static void materializeRows(struct Layout *l) {
+  if (!l->mpi || l->owner) return;
+  int64_t n = l->count ? l->count : 1;
+  l->owner = malloc(n*sizeof *l->owner);
+  l->row = malloc(n*sizeof *l->row);
+  if (!l->owner || !l->row) fail("out of memory gathering layout identities");
+  l->globalIds = malloc(l->domains*l->stride*sizeof *l->globalIds);
+  if (!l->globalIds) fail("out of memory gathering global rows");
+  int64_t past = mdrtMPIDomainBound(l->domains,1);
+  for (int64_t d = 0; d < l->domains; ++d) {
+    int64_t *ids = l->globalIds+d*l->stride;
+    if (d >= l->idBase && d < past)
+      memcpy(ids,l->ids+(d-l->idBase)*l->stride,l->rows[d]*sizeof *ids);
+    mdrtMPIBroadcastIndices(ids,l->rows[d],mdrtMPIOwner(l->domains,d));
+    #pragma omp parallel for schedule(static) if(l->rows[d] > 2048)
+    for (int64_t r = 0; r < l->rows[d]; ++r) {
+      l->owner[ids[r]] = d;
+      l->row[ids[r]] = r;
+    }
   }
 }
+
+static void migrateLocal(struct Layout *old, struct Layout *next, struct Memref3D *x,
+                         int64_t first, int64_t past, int keepPositions) {
+  int peers = mdrtMPISize(), rank = mdrtMPIRank();
+  int64_t capacity = (past-first)*old->stride;
+  int64_t *targets = malloc(capacity*sizeof *targets);
+  next->migrationCounts = calloc(4*(size_t)peers,sizeof(int));
+  if (!targets || !next->migrationCounts) fail("out of memory planning migration");
+  int *ns = next->migrationCounts, *nr = ns+peers, *os = nr+peers, *or = os+peers;
+  #pragma omp parallel for collapse(2) schedule(static) if(capacity > 1024)
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < old->stride; ++r) {
+      if (r >= old->rows[d]) continue;
+      int64_t id = domainIds(old,d)[r], cell[3];
+      struct ConstraintGroup group = rowGroup(old,d,r,id);
+      if (group.size) {
+        if (group.size < 0) continue;
+        const struct ConstraintGroup *g = &group;
+        int64_t rows[4];
+        double points[4][3];
+        for (int a = 0; a < g->size; ++a) {
+          rows[a] = findOwnedRow(old,d,g->atoms[a]);
+          for (int k = 0; k < 3; ++k) {
+            points[a][k] = *at3(x,d,rows[a],k);
+            if (!isfinite(points[a][k]/next->edges[k])) fail("migration requires finite coordinates");
+          }
+        }
+        int64_t domain = groupOwner(next,g,points);
+        for (int a = 0; a < g->size; ++a) targets[(d-first)*old->stride+rows[a]] = domain;
+      } else {
+        for (int k = 0; k < 3; ++k) {
+          double u = *at3(x,d,r,k)/next->edges[k];
+          if (!isfinite(u)) fail("migration requires finite coordinates");
+          cell[k] = division(u-floor(u),next->grid[k]);
+        }
+        targets[(d-first)*old->stride+r] = cell[0]+next->grid[0]*(cell[1]+next->grid[1]*cell[2]);
+      }
+    }
+  int64_t total = 0;
+  for (int64_t d = first; d < past; ++d) {
+    total += old->rows[d];
+    for (int64_t r = 0; r < old->rows[d]; ++r) {
+      int peer = mdrtMPIOwner(next->domains,targets[(d-first)*old->stride+r]);
+      if (peer != rank) {
+        if (ns[peer] == INT_MAX) fail("migration peer count exceeds MPI range");
+        ++ns[peer];
+      }
+    }
+  }
+  mdrtMPIExchangeCounts(ns,nr);
+  int sends = 0, receives = 0;
+  for (int p = 0; p < peers; ++p) {
+    os[p] = sends; or[p] = receives;
+    if (ns[p] > INT_MAX-sends || nr[p] > INT_MAX-receives)
+      fail("migration displacement exceeds MPI range");
+    sends += ns[p]; receives += nr[p];
+  }
+  int64_t n = total-sends+receives;
+  struct Arrival *rows = malloc((n ? n : 1)*sizeof *rows);
+  struct Crossing *out = malloc((sends ? (size_t)sends : 1)*sizeof *out);
+  struct Crossing *in = malloc((receives ? (size_t)receives : 1)*sizeof *in);
+  next->sendSlots = malloc((sends ? (size_t)sends : 1)*sizeof *next->sendSlots);
+  int *cursor = malloc(peers*sizeof *cursor);
+  if (!rows || !out || !in || !next->sendSlots || !cursor) fail("out of memory routing migrants");
+  memcpy(cursor,os,peers*sizeof *cursor);
+  int64_t used = 0;
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < old->rows[d]; ++r) {
+      int64_t slot = d*old->stride+r, id = domainIds(old,d)[r], target = targets[(d-first)*old->stride+r];
+      int peer = mdrtMPIOwner(next->domains,target);
+      if (rank == peer) rows[used++] = (struct Arrival){target,id,slot};
+      else {
+        int i = cursor[peer]++;
+        out[i] = (struct Crossing){id,target,rowGroup(old,d,r,id)};
+        next->sendSlots[i] = slot;
+      }
+    }
+  mdrtMPIExchangeRecords(out,ns,os,in,nr,or,sizeof *in);
+  for (int i = 0; i < receives; ++i)
+    rows[used++] = (struct Arrival){in[i].domain,in[i].id,-1-(int64_t)i};
+  free(cursor); free(out);
+  qsort(rows,n,sizeof *rows,compareArrival);
+  for (int64_t i = 0; i < n; ++i) ++next->rows[rows[i].domain];
+  mdrtMPIShareDomainCounts(next->rows,next->domains);
+  next->stride = 1;
+  for (int64_t d = 0; d < next->domains; ++d)
+    if (next->rows[d] > next->stride) next->stride = next->rows[d];
+  next->idBase = first;
+  next->ids = malloc((past-first)*next->stride*sizeof *next->ids);
+  size_t slots = (past-first)*next->stride;
+  next->sourceSlots = malloc(slots*sizeof *next->sourceSlots);
+  if (!next->sourceSlots || !next->ids) fail("out of memory indexing migrated rows");
+  if (old->groupCount) {
+    next->localGroups = malloc(slots*sizeof *next->localGroups);
+    if (!next->localGroups) fail("out of memory retaining owned constraint groups");
+    next->groupCount = old->groupCount;
+  }
+  int64_t i = 0;
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < next->rows[d]; ++r, ++i) {
+      next->ids[(d-first)*next->stride+r] = rows[i].id;
+      int64_t local = (d-first)*next->stride+r, slot = rows[i].slot;
+      next->sourceSlots[local] = slot;
+      if (next->localGroups)
+        next->localGroups[local] = slot < 0 ? in[-1-slot].group :
+            rowGroup(old,slot/old->stride,slot%old->stride,rows[i].id);
+    }
+  free(rows);
+  free(in);
+  if (keepPositions) {
+    next->migratedPositions = malloc(slots*sizeof *next->migratedPositions);
+    if (!next->migratedPositions) fail("out of memory retaining local positions");
+    fillLocalField(old,next,x,NULL,1);
+  }
+  if (observer) {
+    /* A rank counts departures from its old rows. Share the domain totals
+       at the reporting interface, independently of particle identities. */
+    int64_t *moves = calloc(next->domains,2*sizeof *moves);
+    if (!moves) fail("out of memory counting domain crossings");
+    for (int64_t d = first; d < past; ++d)
+      for (int64_t r = 0; r < old->rows[d]; ++r) {
+        int64_t target = targets[(d-first)*old->stride+r];
+        if (target != d) { ++moves[2*d+1]; ++moves[2*target]; }
+      }
+    mdrtMPISumMigration(moves,next->domains);
+    for (int64_t d = 0; d < next->domains; ++d)
+      observer->movementCounts(observer->context,d,moves[2*d],moves[2*d+1]);
+    free(moves);
+  }
+  free(targets);
+}
+
 #endif
 
 static int64_t migrate(int64_t oldHandle, struct Memref3D *positions,
@@ -976,7 +1520,13 @@ static int64_t migrate(int64_t oldHandle, struct Memref3D *positions,
       positions->sizes[1] < ownedCapacity(old) || positions->sizes[2] != 3)
     fail("migration positions do not cover the old layout");
   checkIdentities(old);
-  shareRows(old, old->rows, positions);
+  int64_t first = 0, past = old->domains;
+#ifdef MDIR_ENABLE_MPI
+  if (old->mpi) {
+    first = mdrtMPIDomainBound(old->domains, 0);
+    past = mdrtMPIDomainBound(old->domains, 1);
+  }
+#endif
   double edges[3] = {lx, ly, lz};
   for (int k = 0; k < 3; ++k)
     if (!(isfinite(edges[k]) && edges[k] > 0.0))
@@ -993,58 +1543,75 @@ static int64_t migrate(int64_t oldHandle, struct Memref3D *positions,
     next->edges[k] = edges[k];
   }
   int64_t n = next->count, cap = n > 0 ? n : 1;
-  next->owner = malloc(sizeof(int64_t) * cap);
-  next->row = malloc(sizeof(int64_t) * cap);
-  next->rows = calloc(next->domains, sizeof(int64_t));
-  if (!next->owner || !next->row || !next->rows)
-    fail("out of memory");
+  next->rows = calloc(next->domains,sizeof *next->rows);
+  if (!next->rows) fail("out of memory counting domains");
+#ifdef MDIR_ENABLE_MPI
+  if (old->mpi && mdrtMPISize() > 1) {
+    migrateLocal(old,next,positions,first,past,keepPositions);
+    checkIdentities(next);
+    if (tracing()) {
+      materializeRows(old);
+      materializeRows(next);
+      traceMigration(old,next);
+    }
+    return (int64_t)(intptr_t)next;
+  }
+#endif
+  if (old->groupCount) {
+    next->groupSource = old->groupSource ? old->groupSource : old;
+    mdrtDistRetainLayout((int64_t)(intptr_t)next->groupSource);
+    next->groupCount = old->groupCount;
+    next->groups = old->groups;
+    next->centerGroup = old->centerGroup;
+    next->groupCenters = old->groupCenters;
+  }
+  next->owner = malloc(cap*sizeof *next->owner);
+  next->row = malloc(cap*sizeof *next->row);
+  if (!next->owner || !next->row) fail("out of memory numbering particles");
   if (keepPositions) {
     next->migratedPositions = malloc(cap*sizeof *next->migratedPositions);
     if (!next->migratedPositions) fail("out of memory retaining migrated positions");
   }
-  for (int64_t j = 0; j < n; ++j) {
-    int64_t cell[3];
-    for (int k = 0; k < 3; ++k) {
-      double coordinate = *at3(positions, old->owner[j], old->row[j], k);
-      if (!isfinite(coordinate))
-        fail("migration requires finite positions");
-      double u = coordinate / edges[k];
-      if (!isfinite(u))
-        fail("migration coordinate exceeds cell range");
-      double image = floor(u);
-      cell[k] = division(u - image, next->grid[k]);
-      if (keepPositions) next->migratedPositions[j][k] = coordinate - edges[k]*image;
-    }
-    int64_t d = cell[0] + next->grid[0] *
-                            (cell[1] + next->grid[1] * cell[2]);
-    next->owner[j] = d;
-  }
-  if (old->groupCount) {
-    next->groups = malloc(old->groupCount * sizeof *next->groups);
-    if (!next->groups) fail("out of memory migrating constraint groups");
-    next->groupCount = old->groupCount;
-    for (size_t r = 0; r < old->groupCount; ++r) {
-      struct ConstraintGroup *g = &next->groups[r];
-      *g = old->groups[r];
-      double points[4][3];
-      for (int a = 0; a < g->size; ++a) {
-        int32_t j = g->atoms[a];
-        for (int k = 0; k < 3; ++k)
-          points[a][k] = *at3(positions, old->owner[j], old->row[j], k);
+  int invalid = 0;
+  #pragma omp parallel if(n > 1024) reduction(|:invalid)
+  {
+    #pragma omp for collapse(2) schedule(static)
+    for (int64_t d = first; d < past; ++d)
+      for (int64_t r = 0; r < old->stride; ++r) {
+        if (r >= old->rows[d]) continue;
+        int64_t j = domainIds(old,d)[r], cell[3];
+        for (int k = 0; k < 3; ++k) {
+          double coordinate = *at3(positions,d,r,k), u = coordinate/edges[k];
+          if (!isfinite(u)) { invalid = 1; u = 0; }
+          double image = floor(u);
+          cell[k] = division(u-image,next->grid[k]);
+          if (keepPositions) next->migratedPositions[j][k] = coordinate-edges[k]*image;
+        }
+        if (!old->groupCenters || !old->groupCenters[j]) {
+          next->owner[j] = cell[0] + next->grid[0]*(cell[1] + next->grid[1]*cell[2]);
+        } else if (old->centerGroup[j]) {
+          struct ConstraintGroup *g = &old->groups[old->centerGroup[j]-1];
+          double points[4][3];
+          for (int a = 0; a < g->size; ++a)
+            for (int k = 0; k < 3; ++k)
+              points[a][k] = *at3(positions,d,old->row[g->atoms[a]],k);
+          int finite = 1;
+          for (int a = 0; a < g->size; ++a)
+            for (int k = 0; k < 3; ++k) finite &= isfinite(points[a][k]/edges[k]);
+          if (!finite) { invalid = 1; continue; }
+          int64_t owner = groupOwner(next,g,points);
+          for (int a = 0; a < g->size; ++a) next->owner[g->atoms[a]] = owner;
+        }
       }
-      int64_t owner = groupOwner(next, g, points);
-      for (int a = 0; a < g->size; ++a)
-        next->owner[g->atoms[a]] = owner;
-    }
   }
-  numberOwnedRows(next);
-#ifdef MDIR_ENABLE_MPI
-  if (next->mpi) indexMigrants(old,next);
-#endif
+  if (invalid) fail("migration requires finite positions within cell range");
+  numberRows(next,NULL,next->count);
   if (observer)
     for (int64_t j = 0; j < n; ++j)
-      if (old->owner[j] != next->owner[j])
-        observer->migration(observer->context, old->owner[j], next->owner[j]);
+      if (old->owner[j] != next->owner[j]) {
+        observer->movementCounts(observer->context,old->owner[j],0,1);
+        observer->movementCounts(observer->context,next->owner[j],1,0);
+      }
   checkIdentities(next);
   if (tracing())
     traceMigration(old, next);
@@ -1065,9 +1632,11 @@ int64_t _mlir_ciface_mdrtDistMigratePositions(int64_t old, struct Memref3D *x, d
 void _mlir_ciface_mdrtDistMigratedPositions(int64_t handle, struct Memref3D *dest) {
   struct Layout *l = (struct Layout *)(intptr_t)handle;
   int64_t first = mdrtMPIDomainBound(l->domains,0), past = mdrtMPIDomainBound(l->domains,1);
+  #pragma omp parallel for collapse(2) schedule(static) if(l->count > 1024)
   for (int64_t d = first; d < past; ++d)
-    for (int64_t r = 0; r < l->rows[d]; ++r) {
-      int64_t j = l->ids[d*l->stride+r];
+    for (int64_t r = 0; r < l->stride; ++r) {
+      if (r >= l->rows[d]) continue;
+      int64_t j = l->sourceSlots ? (d-first)*l->stride+r : domainIds(l,d)[r];
       for (int c = 0; c < 3; ++c) *at3(dest,d,r,c) = l->migratedPositions[j][c];
     }
 }
@@ -1091,7 +1660,10 @@ void _mlir_ciface_mdrtDistRedistribute(int64_t oldHandle, int64_t newHandle,
       (image && source->sizes[2] != 3))
     fail("redistribution requires matching, distinct field buffers");
 #ifdef MDIR_ENABLE_MPI
-  if (next->mpi) shareMigrants(old,next,source);
+  if (next->sourceSlots) {
+    fillLocalField(old,next,source,destination,image);
+    return;
+  }
 #endif
   int64_t components = source->sizes[2];
   int64_t first = 0, past = next->domains;
@@ -1101,8 +1673,10 @@ void _mlir_ciface_mdrtDistRedistribute(int64_t oldHandle, int64_t newHandle,
     past = mdrtMPIDomainBound(next->domains, 1);
   }
 #endif
+  #pragma omp parallel for collapse(2) schedule(static) if(next->count > 1024)
   for (int64_t d = first; d < past; ++d)
-    for (int64_t r = 0; r < next->rows[d]; ++r) {
+    for (int64_t r = 0; r < next->stride; ++r) {
+      if (r >= next->rows[d]) continue;
       int64_t j = next->ids[d*next->stride+r];
       for (int64_t k = 0; k < components; ++k) {
         double value = *at3(source, old->owner[j], old->row[j], k);
@@ -1133,7 +1707,7 @@ static void domainBox(struct Layout *l, const double (*points)[3], int64_t d,
   if (midpoint) return;
   for (int64_t r = 0; r < l->rows[d]; ++r)
     for (int k = 0; k < 3; ++k) {
-      double v = points[l->ids[d*l->stride+r]][k];
+      double v = points[domainIds(l,d)[r]][k];
       if (v < lo[k])
         lo[k] = v;
       if (v > hi[k])
@@ -1152,16 +1726,17 @@ struct GhostBin { double lo[3], hi[3]; };
 struct GhostRow { int64_t id, image[3]; };
 struct GhostList { struct GhostRow *data; size_t size, capacity; double lo[3], hi[3]; };
 
+struct GhostSite { int64_t id, domain, row; double x[3]; };
 static void visitGhosts(struct Halo *h, const double (*points)[3],
                         const struct GhostBin *bins, int64_t d,
                         const double lo[3], const double hi[3],
-                        struct GhostList *list) {
+                        struct GhostList *list, const struct GhostSite *sites, int64_t count) {
   struct Layout *l = h->layout;
   const double reach2 = h->reach*h->reach;
   int64_t span[3];
   for (int c = 0; c < 3; ++c)
     span[c] = (int64_t)ceil(h->reach/l->edges[c]);
-  for (int64_t first = 0; first < l->count; first += GhostBinSize) {
+  for (int64_t first = 0; first < count; first += GhostBinSize) {
     const struct GhostBin *bin = &bins[first/GhostBinSize];
     int64_t low[3], high[3];
     int c = 0;
@@ -1176,7 +1751,7 @@ static void visitGhosts(struct Halo *h, const double (*points)[3],
       if (low[c] > high[c]) break;
     }
     if (c != 3) continue;
-    int64_t end = first+GhostBinSize < l->count ? first+GhostBinSize : l->count;
+    int64_t end = first+GhostBinSize < count ? first+GhostBinSize : count;
     for (int64_t j = first; j < end; ++j) {
       const double *x = points[j];
       for (int64_t a = low[0]; a <= high[0]; ++a) {
@@ -1188,7 +1763,7 @@ static void visitGhosts(struct Halo *h, const double (*points)[3],
           double dxy2 = dx2+dy*dy;
           if (!(dxy2 < reach2)) continue;
           for (int64_t z = low[2]; z <= high[2]; ++z) {
-            if (l->owner[j] == d && a == 0 && b == 0 && z == 0) continue;
+            if ((sites ? sites[j].domain : l->owner[j]) == d && a == 0 && b == 0 && z == 0) continue;
             double dz = outsideBox(x[2]+z*l->edges[2],lo[2],hi[2]);
             if (!(dxy2+dz*dz < reach2)) continue;
             if (list->size == list->capacity) {
@@ -1210,8 +1785,634 @@ struct HaloBuild {
   struct GhostBin *bins;
   struct GhostList *lists;
   int midpoint;
+  struct GhostSite *sites;
+  int64_t count, first, past;
 };
 
+#ifdef MDIR_ENABLE_MPI
+struct Route {
+  int *send, *recv, *sendOffset, *recvOffset, *cursor;
+  int sends, receives;
+};
+
+static struct Route beginRoute(void) {
+  int peers = mdrtMPISize();
+  int *v = calloc(5*(size_t)peers,sizeof *v);
+  if (!v) fail("out of memory counting routed records");
+  return (struct Route){v,v+peers,v+2*peers,v+3*peers,v+4*peers,0,0};
+}
+
+static void countRoute(struct Route *r, int peer) {
+  if (r->send[peer] == INT_MAX) fail("too many records for an MPI peer");
+  ++r->send[peer];
+}
+
+static void finishRoute(struct Route *r) {
+  mdrtMPIExchangeCounts(r->send,r->recv);
+  for (int p = 0; p < mdrtMPISize(); ++p) {
+    if (r->send[p] > INT_MAX-r->sends || r->recv[p] > INT_MAX-r->receives)
+      fail("record displacement exceeds MPI range");
+    r->cursor[p] = r->sendOffset[p] = r->sends;
+    r->recvOffset[p] = r->receives;
+    r->sends += r->send[p];
+    r->receives += r->recv[p];
+  }
+}
+
+
+struct InitialAtom { int64_t id, domain; struct ConstraintGroup group; };
+
+int64_t mdrtMPIIdentityBound(int64_t n, int64_t end) {
+  int peers = mdrtMPISize(), p = mdrtMPIRank()+end;
+  return p*(n/peers)+(p < n%peers ? p : n%peers);
+}
+
+/* Topology input is replicated. Sort only this rank's tuple interval, then
+   send each key to the directory rank of its smaller endpoint. */
+int64_t _mlir_ciface_mdrtDistExclusionShard(struct Members *members) {
+  int peers = mdrtMPISize();
+  int64_t n = members->sizes[0], lo = mdrtMPIIdentityBound(n,0), hi = mdrtMPIIdentityBound(n,1);
+  struct Members slice = *members;
+  slice.offset += lo*slice.strides[0];
+  slice.sizes[0] = hi-lo;
+  struct Exclusions *local = (void *)(intptr_t)_mlir_ciface_mdrtDistExclusions(&slice);
+  if (peers == 1) return (int64_t)(intptr_t)local;
+  struct Route r = beginRoute();
+  for (size_t i = 0; i < local->count; ++i) countRoute(&r,(local->pairs[i] >> 32)%peers);
+  finishRoute(&r);
+  struct Exclusions *shard = newExclusions(r.receives);
+  uint64_t *out = malloc((r.sends ? (size_t)r.sends : 1)*sizeof *out);
+  if (!out) fail("out of memory routing exclusion keys");
+  for (size_t i = 0; i < local->count; ++i) {
+    uint64_t key = local->pairs[i];
+    out[r.cursor[(key >> 32)%peers]++] = key;
+  }
+  mdrtMPIExchangeRecords(out,r.send,r.sendOffset,shard->pairs,r.recv,r.recvOffset,sizeof *out);
+  qsort(shard->pairs,shard->count,sizeof *out,compareKeys);
+  free(out); free(local); free(r.send);
+  return (int64_t)(intptr_t)shard;
+}
+
+/* The local candidate list needs keys only when both endpoints occur in
+   the owned or halo rows. The halo keeps that projection across steps. */
+int64_t mdrtDistHaloExclusions(int64_t halo, int64_t handle) {
+  struct Halo *h = (struct Halo *)(intptr_t)halo;
+  struct Layout *l = h->layout;
+  struct Exclusions *shard = (struct Exclusions *)(intptr_t)handle;
+  int peers = mdrtMPISize();
+  if (peers == 1) {
+    ++shard->references;
+    return handle;
+  }
+  if (h->exclusions && h->directoryVersion == shard->version) {
+    ++h->exclusions->references;
+    return (int64_t)(intptr_t)h->exclusions;
+  }
+  int64_t first = mdrtMPIDomainBound(l->domains,0), past = mdrtMPIDomainBound(l->domains,1);
+  size_t n = 0;
+  for (int64_t d = first; d < past; ++d) n += l->rows[d]+h->rows[d];
+  uint64_t *ids = malloc((n ? n : 1)*sizeof *ids);
+  if (!ids) fail("out of memory indexing local exclusion rows");
+  size_t k = 0;
+  for (int64_t d = first; d < past; ++d) {
+    for (int64_t i = 0; i < l->rows[d]; ++i) ids[k++] = domainIds(l,d)[i];
+    for (int64_t i = 0; i < h->rows[d]; ++i) ids[k++] = h->ids[(d-h->idBase)*h->capacity+i];
+  }
+  qsort(ids,n,sizeof *ids,compareKeys);
+  size_t unique = 0;
+  for (size_t i = 0; i < n; ++i)
+    if (!i || ids[i] != ids[i-1]) ids[unique++] = ids[i];
+  struct Route request = beginRoute();
+  for (size_t i = 0; i < unique; ++i) countRoute(&request,ids[i]%peers);
+  finishRoute(&request);
+  uint64_t *send = malloc((unique ? unique : 1)*sizeof *send);
+  uint64_t *recv = malloc((request.receives ? (size_t)request.receives : 1)*sizeof *recv);
+  if (!send || !recv) fail("out of memory requesting exclusion rows");
+  for (size_t i = 0; i < unique; ++i) send[request.cursor[ids[i]%peers]++] = ids[i];
+  mdrtMPIExchangeRecords(send,request.send,request.sendOffset,recv,request.recv,request.recvOffset,sizeof *recv);
+  struct Route reply = beginRoute();
+  for (int p = 0; p < peers; ++p)
+    for (int j = request.recvOffset[p]; j < request.recvOffset[p]+request.recv[p]; ++j) {
+      size_t lo = firstKey(shard,recv[j]<<32), hi = firstKey(shard,(recv[j]+1)<<32);
+      if (hi-lo > (size_t)(INT_MAX-reply.send[p])) fail("too many local exclusion keys");
+      reply.send[p] += hi-lo;
+    }
+  finishRoute(&reply);
+  free(send);
+  send = malloc((reply.sends ? (size_t)reply.sends : 1)*sizeof *send);
+  if (!send) fail("out of memory returning exclusion keys");
+  for (int p = 0; p < peers; ++p)
+    for (int j = request.recvOffset[p]; j < request.recvOffset[p]+request.recv[p]; ++j) {
+      size_t lo = firstKey(shard,recv[j]<<32), hi = firstKey(shard,(recv[j]+1)<<32);
+      memcpy(send+reply.cursor[p],shard->pairs+lo,(hi-lo)*sizeof *send);
+      reply.cursor[p] += hi-lo;
+    }
+  struct Exclusions *local = newExclusions(reply.receives);
+  mdrtMPIExchangeRecords(send,reply.send,reply.sendOffset,local->pairs,reply.recv,reply.recvOffset,sizeof *send);
+  size_t kept = 0;
+  for (size_t i = 0; i < local->count; ++i) {
+    uint64_t partner = (uint32_t)local->pairs[i];
+    if (bsearch(&partner,ids,unique,sizeof *ids,compareKeys))
+      local->pairs[kept++] = local->pairs[i];
+  }
+  local->count = kept;
+  qsort(local->pairs,kept,sizeof *send,compareKeys);
+  free(ids); free(send); free(recv); free(request.send); free(reply.send);
+  mdrtDistFreeExclusions((int64_t)(intptr_t)h->exclusions);
+  h->directoryVersion = shard->version;
+  h->exclusions = local;
+  ++local->references;
+  return (int64_t)(intptr_t)local;
+}
+
+int64_t _mlir_ciface_mdrtDistStartPartition(struct Memref2D *x, int64_t gx, int64_t gy,
+                                           int64_t gz, double lx, double ly, double lz) {
+  if (mdrtMPISize() == 1)
+    return _mlir_ciface_mdrtDistMPIPartition(x,gx,gy,gz,lx,ly,lz);
+  struct Layout *l = calloc(1,sizeof *l);
+  if (!l) fail("out of memory starting spatial partition");
+  l->mpi = 1;
+  l->references = 1;
+  l->domains = gx*gy*gz;
+  l->count = x->sizes[0];
+  l->grid[0] = gx; l->grid[1] = gy; l->grid[2] = gz;
+  l->edges[0] = lx; l->edges[1] = ly; l->edges[2] = lz;
+  int64_t first = mdrtMPIIdentityBound(l->count,0), past = mdrtMPIIdentityBound(l->count,1);
+  l->initial = calloc(past > first ? past-first : 1,sizeof *l->initial);
+  if (!l->initial) fail("out of memory assigning particle owners");
+  #pragma omp parallel for schedule(static) if(past-first > 1024)
+  for (int64_t j = first; j < past; ++j) {
+    int64_t d = 0;
+    for (int k = 2; k >= 0; --k) {
+      double u = *at2(x,j,k)/l->edges[k];
+      if (!isfinite(u)) fail("partition requires finite positions");
+      d = d*l->grid[k]+division(u-floor(u),l->grid[k]);
+    }
+    l->initial[j-first].id = j;
+    l->initial[j-first].domain = d;
+  }
+  return (int64_t)(intptr_t)l;
+}
+
+/* A native interval has compact storage, but partitioning addresses atoms
+   by their original identity. The descriptor is used only at owned indices. */
+static struct Memref2D identityView(struct Memref2D *local, int64_t count) {
+  struct Memref2D view = *local;
+  view.offset -= mdrtMPIIdentityBound(count,0)*view.strides[0];
+  view.sizes[0] = count;
+  return view;
+}
+
+int64_t _mlir_ciface_mdrtDistShardPartition(struct Memref2D *local, int64_t gx, int64_t gy,
+    int64_t gz, double lx, double ly, double lz, int64_t count) {
+  struct Memref2D view = identityView(local,count);
+  return _mlir_ciface_mdrtDistStartPartition(&view,gx,gy,gz,lx,ly,lz);
+}
+
+static void assignGroups(struct Layout *l, struct Memref2D *x, struct Members *m, int sharded) {
+  int64_t n = m->sizes[0], arity = m->sizes[1];
+  if (arity < 2 || arity > 4 || n > l->count) fail("invalid constraint group dimensions");
+  int64_t lo = mdrtMPIIdentityBound(n,0), hi = mdrtMPIIdentityBound(n,1), first = mdrtMPIIdentityBound(l->count,0);
+  struct Route route = beginRoute();
+  for (int64_t t = lo; t < hi; ++t)
+    for (int64_t a = 0; a < arity; ++a) {
+      int32_t id = m->aligned[m->offset+t*m->strides[0]+a*m->strides[1]];
+      if (id < 0 || id >= l->count) fail("invalid atom in constraint group");
+      countRoute(&route,mdrtMPIOwner(l->count,id));
+    }
+  finishRoute(&route);
+  struct InitialAtom *out = malloc((route.sends ? (size_t)route.sends : 1)*sizeof *out);
+  struct InitialAtom *in = malloc((route.receives ? (size_t)route.receives : 1)*sizeof *in);
+  if (!out || !in) fail("out of memory assigning group owners");
+  /* Route member requests in the same order as their assignments. The
+     reverse exchange returns exactly the sites of this topology interval. */
+  double (*sites)[3] = NULL;
+  if (sharded) {
+    int64_t *request = malloc((route.sends ? route.sends : 1)*sizeof *request);
+    int64_t *received = malloc((route.receives ? route.receives : 1)*sizeof *received);
+    double (*reply)[3] = malloc((route.receives ? route.receives : 1)*sizeof *reply);
+    sites = malloc((route.sends ? route.sends : 1)*sizeof *sites);
+    if (!request || !received || !reply || !sites) fail("out of memory requesting constraint sites");
+    for (int64_t t = lo; t < hi; ++t)
+      for (int a = 0; a < arity; ++a) {
+        int32_t id = m->aligned[m->offset+t*m->strides[0]+a*m->strides[1]];
+        request[route.cursor[mdrtMPIOwner(l->count,id)]++] = id;
+      }
+    mdrtMPIExchangeRecords(request,route.send,route.sendOffset,received,route.recv,route.recvOffset,sizeof *request);
+    for (int i = 0; i < route.receives; ++i)
+      for (int k = 0; k < 3; ++k) reply[i][k] = *at2(x,received[i]-first,k);
+    mdrtMPIExchangeRecords(reply,route.recv,route.recvOffset,sites,route.send,route.sendOffset,sizeof *sites);
+    memcpy(route.cursor,route.sendOffset,mdrtMPISize()*sizeof *route.cursor);
+    free(reply); free(received); free(request);
+  }
+  for (int64_t t = lo; t < hi; ++t) {
+    struct ConstraintGroup g = {.size=arity,.relationCenter=m->aligned[m->offset],.tuple=t};
+    double points[4][3];
+    int slots[4];
+    for (int a = 0; a < arity; ++a) {
+      g.atoms[a] = m->aligned[m->offset+t*m->strides[0]+a*m->strides[1]];
+      slots[a] = route.cursor[mdrtMPIOwner(l->count,g.atoms[a])]++;
+      for (int k = 0; k < 3; ++k)
+        points[a][k] = sites ? sites[slots[a]][k] : *at2(x,g.atoms[a],k);
+    }
+    int64_t domain = groupOwner(l,&g,points);
+    for (int a = 0; a < arity; ++a) {
+      int64_t id = g.atoms[a];
+      out[slots[a]] = (struct InitialAtom){id,domain,
+          a ? (struct ConstraintGroup){.size=-1,.atoms={g.atoms[0]}} : g};
+    }
+  }
+  free(sites);
+  mdrtMPIExchangeRecords(out,route.send,route.sendOffset,in,route.recv,route.recvOffset,sizeof *in);
+  for (int i = 0; i < route.receives; ++i) {
+    struct InitialAtom *a = l->initial+in[i].id-first;
+    if (a->group.size) {
+      char message[192];
+      snprintf(message,sizeof message,"coupled constraint groups: atom %lld occurs at centers %lld and %lld",
+               (long long)a->id+1,(long long)a->group.atoms[0]+1,(long long)in[i].group.atoms[0]+1);
+      fail(message);
+    }
+    *a = in[i];
+  }
+  l->groupCount += n;
+  free(in); free(out); free(route.send);
+}
+
+void _mlir_ciface_mdrtDistShardGroupOwners(int64_t handle, struct Memref2D *x, struct Members *members) {
+  struct Layout *l = (struct Layout *)(intptr_t)handle;
+  if (!members->sizes[0] || l->groupsFrozen) return;
+  if (l->initial) assignGroups(l,x,members,1);
+  else _mlir_ciface_mdrtDistGroupOwners(handle,x,members);
+}
+
+void mdrtDistEndPartition(int64_t handle) {
+  struct Layout *l = (struct Layout *)(intptr_t)handle;
+  if (!l->initial) return;
+  int64_t n = mdrtMPIIdentityBound(l->count,1)-mdrtMPIIdentityBound(l->count,0);
+  struct Route route = beginRoute();
+  for (int64_t i = 0; i < n; ++i) countRoute(&route,mdrtMPIOwner(l->domains,l->initial[i].domain));
+  finishRoute(&route);
+  struct InitialAtom *out = malloc((n ? n : 1)*sizeof *out);
+  struct InitialAtom *in = malloc((route.receives ? (size_t)route.receives : 1)*sizeof *in);
+  if (!out || !in) fail("out of memory distributing initial owners");
+  for (int64_t i = 0; i < n; ++i) {
+    int peer = mdrtMPIOwner(l->domains,l->initial[i].domain);
+    out[route.cursor[peer]++] = l->initial[i];
+  }
+  mdrtMPIExchangeRecords(out,route.send,route.sendOffset,in,route.recv,route.recvOffset,sizeof *in);
+  l->rows = calloc(l->domains,sizeof *l->rows);
+  if (!l->rows) fail("out of memory counting initial rows");
+  for (int i = 0; i < route.receives; ++i) ++l->rows[in[i].domain];
+  mdrtMPIShareDomainCounts(l->rows,l->domains);
+  l->stride = 1;
+  for (int64_t d = 0; d < l->domains; ++d) if (l->rows[d] > l->stride) l->stride = l->rows[d];
+  int64_t first = mdrtMPIDomainBound(l->domains,0), past = mdrtMPIDomainBound(l->domains,1);
+  l->idBase = first;
+  size_t slots = (past-first)*l->stride;
+  l->ids = malloc(slots*sizeof *l->ids);
+  if (l->groupCount) l->localGroups = malloc(slots*sizeof *l->localGroups);
+  int64_t *cursor = calloc(past-first,sizeof *cursor);
+  if (!l->ids || !cursor || (l->groupCount && !l->localGroups)) fail("out of memory numbering initial rows");
+  for (int i = 0; i < route.receives; ++i) {
+    int64_t d = in[i].domain-first, slot = d*l->stride+cursor[d]++;
+    l->ids[slot] = in[i].id;
+    if (l->localGroups) l->localGroups[slot] = in[i].group;
+  }
+  free(cursor); free(in); free(out); free(route.send);
+  free(l->initial);
+  l->initial = NULL;
+}
+
+struct Collection {
+  struct Route route;
+  int64_t *sources, *ids;
+};
+
+static void releaseCollection(struct Collection *p) {
+  if (!p) return;
+  free(p->sources);
+  free(p->ids);
+  free(p->route.send);
+  free(p);
+}
+
+/* Pack a rank's owned rows by identity interval. Only the owners of
+   those intervals scatter by particle identity. MPI can then concatenate
+   the contiguous intervals directly into the native field. */
+static struct Collection *collection(struct Layout *l) {
+  if (l->collection) return l->collection;
+  struct Collection *p = calloc(1,sizeof *p);
+  if (!p) fail("out of memory creating a collection schedule");
+  p->route = beginRoute();
+  int64_t first = mdrtMPIDomainBound(l->domains,0), past = mdrtMPIDomainBound(l->domains,1);
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < l->rows[d]; ++r)
+      countRoute(&p->route,mdrtMPIOwner(l->count,domainIds(l,d)[r]));
+  finishRoute(&p->route);
+  size_t sends = p->route.sends ? (size_t)p->route.sends : 1;
+  size_t receives = p->route.receives ? (size_t)p->route.receives : 1;
+  p->sources = malloc(sends*sizeof *p->sources);
+  p->ids = malloc(receives*sizeof *p->ids);
+  int64_t *ids = malloc(sends*sizeof *ids);
+  if (!p->sources || !p->ids || !ids) fail("out of memory indexing collected fields");
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < l->rows[d]; ++r) {
+      int64_t id = domainIds(l,d)[r];
+      int i = p->route.cursor[mdrtMPIOwner(l->count,id)]++;
+      p->sources[i] = d*l->stride+r;
+      ids[i] = id;
+    }
+  mdrtMPIExchangeRecords(ids,p->route.send,p->route.sendOffset,p->ids,p->route.recv,
+                          p->route.recvOffset,sizeof *ids);
+  free(ids);
+  l->collection = p;
+  return p;
+}
+
+void _mlir_ciface_mdrtMPICollectField(int64_t layout, struct Memref3D *source,
+    int64_t address, int64_t integer, int64_t destination) {
+  struct Layout *l = (struct Layout *)(intptr_t)layout;
+  struct Collection *p = collection(l);
+  struct Route *r = &p->route;
+  int64_t width = source->sizes[2];
+  int64_t first = destination == 2 ? mdrtMPIIdentityBound(l->count,0) : 0;
+  void *global = (void *)(intptr_t)address;
+  if (mdrtMPISize() == 1) {
+    #pragma omp parallel for schedule(static) if(r->sends > 1024)
+    for (int i = 0; i < r->sends; ++i) {
+      int64_t slot = p->sources[i], id = p->ids[i];
+      for (int64_t k = 0; k < width; ++k) {
+        double value = *at3(source,slot/l->stride,slot%l->stride,k);
+        if (integer) ((int32_t *)global)[id*width+k] = (int32_t)value;
+        else ((double *)global)[id*width+k] = value;
+      }
+    }
+    return;
+  }
+  double *out = malloc((r->sends ? (size_t)r->sends : 1)*width*sizeof *out);
+  double *in = malloc((r->receives ? (size_t)r->receives : 1)*width*sizeof *in);
+  if (!out || !in) fail("out of memory collecting fields");
+  #pragma omp parallel for schedule(static) if(r->sends > 1024)
+  for (int i = 0; i < r->sends; ++i) {
+    int64_t slot = p->sources[i], d = slot/l->stride, row = slot%l->stride;
+    for (int64_t k = 0; k < width; ++k) out[i*width+k] = *at3(source,d,row,k);
+  }
+  mdrtMPIExchangeRecords(out,r->send,r->sendOffset,in,r->recv,r->recvOffset,width*sizeof *in);
+  #pragma omp parallel for schedule(static) if(r->receives > 1024)
+  for (int i = 0; i < r->receives; ++i)
+    for (int64_t k = 0; k < width; ++k) {
+      int64_t slot = (p->ids[i]-first)*width+k;
+      if (integer) ((int32_t *)global)[slot] = (int32_t)in[i*width+k];
+      else ((double *)global)[slot] = in[i*width+k];
+    }
+  free(out); free(in);
+  if (destination != 2) mdrtMPICollectIntervals(global,l->count,width,integer,destination);
+}
+
+/* The inverse of collection uses its stream in the opposite direction.
+   The MPI counts and offsets belong to the immutable spatial layout. */
+void _mlir_ciface_mdrtDistDistributeShard(int64_t layout, int64_t base,
+    struct Memref3D *dest, int64_t integer, int64_t image) {
+  struct Layout *l = (struct Layout *)(intptr_t)layout;
+  struct Collection *p = collection(l);
+  struct Route *r = &p->route;
+  int64_t width = dest->sizes[2], first = mdrtMPIIdentityBound(l->count,0);
+  if (mdrtMPISize() == 1) {
+    #pragma omp parallel for schedule(static) if(r->sends > 1024)
+    for (int i = 0; i < r->sends; ++i) {
+      int64_t slot = p->sources[i], id = p->ids[i];
+      for (int64_t k = 0; k < width; ++k) {
+        int64_t j = id*width+k;
+        double v = integer ? ((int32_t *)(intptr_t)base)[j] : ((double *)(intptr_t)base)[j];
+        if (image) v -= l->edges[k]*floor(v/l->edges[k]);
+        *at3(dest,slot/l->stride,slot%l->stride,k) = v;
+      }
+    }
+    return;
+  }
+  double *out = malloc((r->receives ? (size_t)r->receives : 1)*width*sizeof *out);
+  double *in = malloc((r->sends ? (size_t)r->sends : 1)*width*sizeof *in);
+  if (!out || !in) fail("out of memory distributing native rows");
+  #pragma omp parallel for schedule(static) if(r->receives > 1024)
+  for (int i = 0; i < r->receives; ++i)
+    for (int64_t k = 0; k < width; ++k) {
+      int64_t j = (p->ids[i]-first)*width+k;
+      out[i*width+k] = integer ? ((int32_t *)(intptr_t)base)[j] : ((double *)(intptr_t)base)[j];
+    }
+  mdrtMPIExchangeRecords(out,r->recv,r->recvOffset,in,r->send,r->sendOffset,width*sizeof *in);
+  #pragma omp parallel for schedule(static) if(r->sends > 1024)
+  for (int i = 0; i < r->sends; ++i) {
+    int64_t slot = p->sources[i];
+    for (int64_t k = 0; k < width; ++k) {
+      double v = in[i*width+k];
+      if (image) v -= l->edges[k]*floor(v/l->edges[k]);
+      *at3(dest,slot/l->stride,slot%l->stride,k) = v;
+    }
+  }
+  free(in); free(out);
+}
+
+void mdrtMPIExpandField(int64_t source, int64_t count, int64_t dest, int64_t width, int64_t integer) {
+  int64_t first = mdrtMPIIdentityBound(count,0), past = mdrtMPIIdentityBound(count,1);
+  size_t stride = width*(integer ? sizeof(int32_t) : sizeof(double));
+  if (past > first) memcpy((char *)(intptr_t)dest+first*stride,(void *)(intptr_t)source,(past-first)*stride);
+  mdrtMPICollectIntervals((void *)(intptr_t)dest,count,width,integer,0);
+}
+
+DistWide mdrtMPICombineWide(DistWide value) {
+  DistWide total = 0;
+  for (int p = 0; p < mdrtMPISize(); ++p) {
+    DistWide term = value;
+    mdrtMPIBroadcastWords(&term,1,p);
+    total = mdrtDistAddWide(total,term);
+  }
+  return total;
+}
+
+double mdrtMPICombineDouble(double value) {
+  double total = 0;
+  for (int p = 0; p < mdrtMPISize(); ++p) {
+    double term = value;
+    mdrtMPIBroadcast(&term,1,p);
+    total += term;
+  }
+  return total;
+}
+
+static int compareSite(const void *a, const void *b) {
+  const struct GhostSite *x = a, *y = b;
+  return (x->id > y->id)-(x->id < y->id);
+}
+
+/* Each axis may choose its closest periodic image independently for an
+   orthorhombic box. The minimum squared distance therefore tests whether
+   any image can enter this domain's halo. */
+static int reachesBox(const double x[3], const double box[6], struct Halo *h) {
+  double sum = 0, limit = h->reach*h->reach;
+  for (int k = 0; k < 3; ++k) {
+    double edge = h->layout->edges[k], best = INFINITY;
+    int64_t span = (int64_t)ceil(h->reach/edge);
+    for (int64_t n = -span; n <= span; ++n) {
+      double v = outsideBox(x[k]+n*edge,box[k],box[k+3]);
+      if (v < best) best = v;
+    }
+    sum += best*best;
+    if (!(sum < limit)) return 0;
+  }
+  return 1;
+}
+
+static void prepareLocalHalo(struct HaloBuild *b, struct Memref3D *x) {
+  struct Halo *h = b->halo;
+  struct Layout *l = h->layout;
+  int peers = mdrtMPISize(), rank = mdrtMPIRank();
+  int64_t first = mdrtMPIDomainBound(l->domains,0), past = mdrtMPIDomainBound(l->domains,1);
+  double (*boxes)[6] = malloc(l->domains*sizeof *boxes);
+  if (!boxes) fail("out of memory sharing halo bounds");
+  for (int64_t d = first; d < past; ++d) {
+    domainBox(l,NULL,d,boxes[d],boxes[d]+3,1);
+    if (!b->midpoint)
+      for (int64_t r = 0; r < l->rows[d]; ++r)
+        for (int k = 0; k < 3; ++k) {
+          double v = *at3(x,d,r,k);
+          if (v < boxes[d][k]) boxes[d][k] = v;
+          if (v > boxes[d][3+k]) boxes[d][3+k] = v;
+        }
+  }
+  if (!mdrtMPIShareDomainPartials(boxes,l->domains,6,0))
+    for (int64_t d = 0; d < l->domains; ++d)
+      mdrtMPIBroadcast(boxes[d],6,mdrtMPIOwner(l->domains,d));
+  for (int64_t d = 0; d < l->domains; ++d) {
+    memcpy(b->lists[d].lo,boxes[d],3*sizeof(double));
+    memcpy(b->lists[d].hi,boxes[d]+3,3*sizeof(double));
+  }
+  struct Route route = beginRoute();
+  int64_t owned = 0;
+  for (int64_t d = first; d < past; ++d) owned += l->rows[d];
+  struct GhostSite *local = malloc((owned ? owned : 1)*sizeof *local);
+  if (!local) fail("out of memory binning local halo sites");
+  int64_t i = 0;
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < l->rows[d]; ++r)
+      local[i++] = (struct GhostSite){domainIds(l,d)[r],d,r,
+                                       {*at3(x,d,r,0),*at3(x,d,r,1),*at3(x,d,r,2)}};
+  /* Store only routes accepted by the distance test. Each peer sees an
+     identity once even if several of its domains import the same site. */
+  struct GhostList *exports = calloc(peers,sizeof *exports);
+  if (!exports) fail("out of memory planning halo candidates");
+  #pragma omp parallel for schedule(static) if(peers > 1 && owned > 256)
+  for (int p = 0; p < peers; ++p) {
+    if (p == rank) continue;
+    struct GhostList *list = &exports[p];
+    int64_t q = l->domains/peers, rem = l->domains%peers;
+    int64_t lo = p*q+(p<rem ? p : rem), hi = lo+q+(p<rem);
+    for (int64_t j = 0; j < owned; ++j) {
+      int64_t d = lo;
+      while (d < hi && !reachesBox(local[j].x,boxes[d],h)) ++d;
+      if (d == hi) continue;
+      if (list->size == list->capacity) {
+        list->capacity = list->capacity ? 2*list->capacity : 64;
+        list->data = realloc(list->data,list->capacity*sizeof *list->data);
+        if (!list->data) fail("out of memory selecting halo exports");
+      }
+      list->data[list->size++].id = j;
+    }
+    if (list->size > INT_MAX) fail("halo candidate count exceeds MPI range");
+    route.send[p] = list->size;
+  }
+  finishRoute(&route);
+  struct GhostSite *send = malloc((route.sends ? (size_t)route.sends : 1)*sizeof *send);
+  b->count = owned+route.receives;
+  struct GhostSite *sites = malloc((b->count ? b->count : 1)*sizeof *sites);
+  if (!send || !sites) fail("out of memory routing halo candidates");
+  for (int p = 0; p < peers; ++p) {
+    for (size_t k = 0; k < exports[p].size; ++k)
+      send[route.sendOffset[p]+k] = local[exports[p].data[k].id];
+    free(exports[p].data);
+  }
+  memcpy(sites,local,owned*sizeof *sites);
+  mdrtMPIExchangeRecords(send,route.send,route.sendOffset,sites+owned,route.recv,route.recvOffset,sizeof *send);
+  free(send); free(local); free(exports); free(route.send); free(boxes);
+  qsort(sites,b->count,sizeof *sites,compareSite);
+  b->sites = sites;
+  b->points = malloc((b->count ? b->count : 1)*sizeof *b->points);
+  if (!b->points) fail("out of memory storing halo coordinates");
+  for (int64_t j = 0; j < b->count; ++j) memcpy(b->points[j],sites[j].x,sizeof sites[j].x);
+}
+
+static int compareLink(const void *a, const void *b) {
+  const struct GhostLink *x = a, *y = b;
+  if (x->domain != y->domain) return x->domain < y->domain ? -1 : 1;
+  return (x->ghost > y->ghost)-(x->ghost < y->ghost);
+}
+
+static void routeGhostRows(struct Halo *h, struct GhostList *lists, struct GhostSite *sites) {
+  struct Layout *l = h->layout;
+  int64_t first = mdrtMPIDomainBound(l->domains,0), past = mdrtMPIDomainBound(l->domains,1);
+  mdrtMPIShareDomainCounts(h->rows,l->domains);
+  for (int64_t d = 0; d < l->domains; ++d)
+    if (h->rows[d] > h->capacity) h->capacity = h->rows[d];
+  if (!h->capacity) h->capacity = 1;
+  h->idBase = first;
+  int64_t cap = h->capacity, slots = (past-first)*cap;
+  h->ids = malloc(slots*sizeof *h->ids);
+  h->image = malloc(slots*3*sizeof *h->image);
+  int64_t locals = 0;
+  struct Route route = beginRoute();
+  int rank = mdrtMPIRank();
+  for (int64_t d = first; d < past; ++d) {
+    locals += h->rows[d];
+    for (int64_t g = 0; g < h->rows[d]; ++g) {
+      struct GhostSite site = sites[lists[d].data[g].id];
+      int peer = mdrtMPIOwner(l->domains,site.domain);
+      if (peer != rank) countRoute(&route,peer);
+    }
+  }
+  finishRoute(&route);
+  struct GhostLink *send = malloc((route.sends ? (size_t)route.sends : 1)*sizeof *send);
+  int64_t n = locals+route.receives;
+  h->links = malloc((n ? n : 1)*sizeof *h->links);
+  h->linkOffsets = calloc(l->domains+1,sizeof *h->linkOffsets);
+  if (!h->ids || !h->image || !send || !h->links || !h->linkOffsets)
+    fail("out of memory recording halo links");
+  int64_t *edges = observer ? calloc(l->domains*l->domains,sizeof *edges) : NULL;
+  if (observer && !edges) fail("out of memory reporting halo links");
+  int64_t k = 0;
+  for (int64_t d = first; d < past; ++d) {
+    for (int64_t g = 0; g < h->rows[d]; ++g) {
+      struct GhostRow *row = &lists[d].data[g];
+      struct GhostSite site = sites[row->id];
+      int peer = mdrtMPIOwner(l->domains,site.domain);
+      h->ids[(d-first)*cap+g] = site.id;
+      memcpy(h->image+3*((d-first)*cap+g),row->image,sizeof row->image);
+      struct GhostLink link = {d,g,site.domain,site.row};
+      h->links[k++] = link;
+      if (peer != rank) send[route.cursor[peer]++] = link;
+      if (edges) ++edges[d*l->domains+site.domain];
+    }
+    free(lists[d].data);
+  }
+  mdrtMPIExchangeRecords(send,route.send,route.sendOffset,h->links+locals,route.recv,route.recvOffset,sizeof *send);
+  free(send); free(route.send);
+  qsort(h->links,n,sizeof *h->links,compareLink);
+  for (int64_t j = 0; j < n; ++j) ++h->linkOffsets[h->links[j].domain+1];
+  for (int64_t d = 0; d < l->domains; ++d) h->linkOffsets[d+1] += h->linkOffsets[d];
+  if (edges) {
+    mdrtMPIShareIndexRows(edges,l->domains,l->domains);
+    for (int64_t d = 0; d < l->domains; ++d) {
+      observer->domain(observer->context,d,l->rows[d],h->rows[d],lists[d].lo,lists[d].hi);
+      for (int64_t src = 0; src < l->domains; ++src) {
+        int64_t count = edges[d*l->domains+src];
+        if (!count) continue;
+        h->edges = realloc(h->edges,(1+h->edgeCount)*sizeof *h->edges);
+        if (!h->edges) fail("out of memory reporting halo edges");
+        h->edges[h->edgeCount++] = (struct Edge){src,d,count};
+      }
+    }
+    free(edges);
+  }
+}
+#endif
 int64_t _mlir_ciface_mdrtDistBeginHalo(int64_t layout, struct Memref3D *x,
                                        double reach, int64_t midpoint, int64_t migrated) {
   struct Halo *h = calloc(1, sizeof *h);
@@ -1221,29 +2422,43 @@ int64_t _mlir_ciface_mdrtDistBeginHalo(int64_t layout, struct Memref3D *x,
   h->layout = (struct Layout *)(intptr_t)layout;
   mdrtDistRetainLayout(layout);
   h->reach = reach;
-  if (!migrated) shareRows(h->layout, h->layout->rows, x);
-  int64_t domains = h->layout->domains;
-  h->rows = calloc(domains, sizeof(int64_t));
-  if (!h->rows)
-    fail("out of memory");
   struct Layout *l = h->layout;
-  size_t length = l->count ? l->count : 1;
-  double (*points)[3] = migrated ? l->migratedPositions : malloc(length*sizeof *points);
-  struct GhostBin *bins = malloc(((length+GhostBinSize-1)/GhostBinSize)*sizeof *bins);
-  struct GhostList *lists = calloc(domains,sizeof *lists);
-  if (!points || !bins || !lists) fail("out of memory binning halo positions");
-  for (int64_t j = 0; j < l->count; ++j) {
-    struct GhostBin *bin = &bins[j/GhostBinSize];
+  int64_t domains = l->domains;
+  struct HaloBuild *build = calloc(1,sizeof *build);
+  h->rows = calloc(domains,sizeof *h->rows);
+  if (!build || !h->rows) fail("out of memory starting halo construction");
+  build->halo = h;
+  build->midpoint = midpoint & 1;
+  build->count = l->count;
+  build->past = domains;
+  build->lists = calloc(domains,sizeof *build->lists);
+  if (!build->lists) fail("out of memory building domain halos");
+#ifdef MDIR_ENABLE_MPI
+  if (l->mpi && mdrtMPISize() > 1) {
+    migrated = 0;
+    if (midpoint & 2) {
+      build->first = mdrtMPIDomainBound(domains,0);
+      build->past = mdrtMPIDomainBound(domains,1);
+      prepareLocalHalo(build,x);
+    }
+  }
+#endif
+  size_t length = build->count ? build->count : 1;
+  if (!build->sites) {
+    if (!migrated) shareRows(l,l->rows,x);
+    build->points = migrated ? l->migratedPositions : malloc(length*sizeof *build->points);
+  }
+  build->bins = malloc(((length+GhostBinSize-1)/GhostBinSize)*sizeof *build->bins);
+  if (!build->points || !build->bins) fail("out of memory binning halo positions");
+  for (int64_t j = 0; j < build->count; ++j) {
+    struct GhostBin *bin = build->bins+j/GhostBinSize;
     for (int c = 0; c < 3; ++c) {
-      if (!migrated) points[j][c] = *at3(x,l->owner[j],l->row[j],c);
-      double v = points[j][c];
+      if (!build->sites && !migrated) build->points[j][c] = *at3(x,l->owner[j],l->row[j],c);
+      double v = build->points[j][c];
       if (j%GhostBinSize == 0 || v < bin->lo[c]) bin->lo[c] = v;
       if (j%GhostBinSize == 0 || v > bin->hi[c]) bin->hi[c] = v;
     }
   }
-  struct HaloBuild *build = malloc(sizeof *build);
-  if (!build) fail("out of memory starting halo construction");
-  *build = (struct HaloBuild){h,points,bins,lists,midpoint};
   return (int64_t)(intptr_t)build;
 }
 
@@ -1253,8 +2468,9 @@ void _mlir_ciface_mdrtDistVisitHalo(int64_t handle, int64_t domain, struct Memre
   struct HaloBuild *build = (struct HaloBuild *)(intptr_t)handle;
   struct Halo *h = build->halo;
   double *lo = build->lists[domain].lo, *hi = build->lists[domain].hi;
-  domainBox(h->layout,build->points,domain,lo,hi,build->midpoint);
-  visitGhosts(h,build->points,build->bins,domain,lo,hi,&build->lists[domain]);
+  if (domain < build->first || domain >= build->past) return;
+  if (!build->sites) domainBox(h->layout,build->points,domain,lo,hi,build->midpoint);
+  visitGhosts(h,build->points,build->bins,domain,lo,hi,&build->lists[domain],build->sites,build->count);
   h->rows[domain] = build->lists[domain].size;
 }
 
@@ -1264,6 +2480,17 @@ int64_t _mlir_ciface_mdrtDistFinishHalo(int64_t handle, struct Memref3D *x) {
   struct Layout *l = h->layout;
   struct GhostList *lists = build->lists;
   int64_t domains = l->domains;
+#ifdef MDIR_ENABLE_MPI
+  if (build->sites) {
+    routeGhostRows(h,lists,build->sites);
+    free(build->sites);
+    free(build->points);
+    free(build->bins);
+    free(lists);
+    free(build);
+    return (int64_t)(intptr_t)h;
+  }
+#endif
   if (build->points != l->migratedPositions) free(build->points);
   free(build->bins);
   free(build);
@@ -1338,6 +2565,11 @@ int64_t _mlir_ciface_mdrtDistHalo(int64_t layout, struct Memref3D *x, double rea
   return buildHalo(layout,x,reach,0);
 }
 
+int64_t _mlir_ciface_mdrtDistDriverHalo(int64_t layout, struct Memref3D *x,
+                                        double reach, int64_t mode) {
+  return buildHalo(layout,x,reach,mode);
+}
+
 int64_t _mlir_ciface_mdrtDistMidpointHalo(int64_t layout, struct Memref3D *x, double reach) {
   return buildHalo(layout,x,reach,1);
 }
@@ -1409,8 +2641,10 @@ int64_t _mlir_ciface_mdrtDistCovered(int64_t handle,
    member. Verify the common owner again at the epoch of the solve. */
 void _mlir_ciface_mdrtDistConstraintRows(int64_t handle, struct Memref3D *positions,
                                          struct Members *members, struct Memref2I *out) {
-  const struct Layout *l = (struct Layout *)(intptr_t)handle;
+  struct Layout *l = (struct Layout *)(intptr_t)handle;
+  materializeRows(l);
   (void)positions;
+  #pragma omp parallel for schedule(static) if(members->sizes[0] > 512)
   for (int64_t t = 0; t < members->sizes[0]; ++t) {
     int64_t *record = out->aligned + out->offset + t*out->strides[0];
     for (int64_t a = 0; a < members->sizes[1]; ++a) {
@@ -1423,84 +2657,328 @@ void _mlir_ciface_mdrtDistConstraintRows(int64_t handle, struct Memref3D *positi
   }
 }
 
-/* Index the imported images by identity. An atom may have several images
-   on one domain, including periodic images of a locally owned atom. */
-void mdrtDistIndexTupleImages(int64_t handle, int64_t count) {
-  if (!count) return;
-  struct Halo *h = (struct Halo *)(intptr_t)handle;
-  struct Layout *l = h->layout;
-  if (!h->firstGhost) {
-    h->firstGhost = malloc(l->domains*l->count*sizeof *h->firstGhost);
-    h->nextGhost = malloc(l->domains*h->capacity*sizeof *h->nextGhost);
-    if (!h->firstGhost || !h->nextGhost) fail("out of memory indexing tuple images");
-    for (int64_t d = 0; d < l->domains; ++d) {
-      int64_t *heads = &h->firstGhost[d*l->count];
-      for (int64_t j = 0; j < l->count; ++j) heads[j] = -1;
-      for (int64_t r = 0; r < h->rows[d]; ++r) {
-        int64_t slot = d*h->capacity+r;
-        int64_t *head = &heads[h->ids[slot]];
-        h->nextGhost[slot] = *head;
-        *head = r;
+/* Ghosts are emitted in identity order, with all periodic images of an
+   atom adjacent. Search the domain's actual rows without a system-sized
+   inverse table for each domain. */
+static int64_t firstImage(const struct Halo *h, int64_t domain, int64_t id) {
+  const int64_t *ids = h->ids + (domain-h->idBase)*h->capacity;
+  int64_t lo = 0, hi = h->rows[domain];
+  while (lo < hi) {
+    int64_t mid = lo + (hi-lo)/2;
+    if (ids[mid] < id) lo = mid+1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/* Keep the topology index for parameter lookup. Counting sort is stable
+   within each domain, so chunk boundaries are independent of the team. */
+int64_t _mlir_ciface_mdrtDistTupleChunks(struct Memref2I *rows, int64_t first,
+    int64_t past, int64_t width, struct Memref1I *order, struct Memref1I *starts) {
+  int64_t domains = past - first;
+  int64_t *offsets = calloc(domains + 1, sizeof *offsets);
+  if (!offsets) fail("out of memory sorting local tuple rows");
+  for (int64_t t = 0; t < rows->sizes[0]; ++t) {
+    int64_t d = rows->aligned[rows->offset + t * rows->strides[0]];
+    if (d >= first && d < past) ++offsets[d - first + 1];
+  }
+  int64_t chunks = 0;
+  for (int64_t d = 0; d < domains; ++d) {
+    offsets[d+1] += offsets[d];
+    for (int64_t t = offsets[d]; t < offsets[d+1]; t += width)
+      starts->aligned[chunks++] = t;
+  }
+  starts->aligned[chunks] = offsets[domains];
+  for (int64_t t = 0; t < rows->sizes[0]; ++t) {
+    int64_t d = rows->aligned[rows->offset + t * rows->strides[0]];
+    if (d >= first && d < past) order->aligned[offsets[d-first]++] = t;
+  }
+  free(offsets);
+  return chunks;
+}
+
+/* List tuple-member contributions by destination. Within a destination the
+   entries follow topology order, including repeated members of a tuple. */
+int64_t _mlir_ciface_mdrtDistTupleIncidence(struct Memref2I *rows,
+    struct Memref1I *order, int64_t count, int64_t first, int64_t past,
+    int64_t stride, struct Memref1I *entries, struct Memref1I *starts) {
+  int64_t domains = past - first, arity = rows->sizes[1] - 1;
+  int64_t *ranges = calloc(domains + 1, sizeof *ranges);
+  int64_t *used = calloc(domains, sizeof *used);
+  if (!ranges || !used) fail("out of memory indexing tuple domains");
+  ranges[domains] = count;
+  // The chunk builder has already put the topology indices in domain order.
+  for (int64_t d = 1; d < domains; ++d) {
+    int64_t lo = ranges[d-1], hi = count;
+    while (lo < hi) {
+      int64_t mid = lo + (hi-lo)/2;
+      int64_t tuple = order->aligned[mid];
+      int64_t owner = rows->aligned[rows->offset + tuple*rows->strides[0]];
+      if (owner < first+d) lo = mid+1;
+      else hi = mid;
+    }
+    ranges[d] = lo;
+  }
+  #pragma omp parallel for schedule(static) if(domains > 1 && count > 1024)
+  for (int64_t d = 0; d < domains; ++d) {
+    if (ranges[d] == ranges[d+1]) continue;
+    int64_t *cursor = calloc(stride, sizeof *cursor);
+    if (!cursor) fail("out of memory indexing tuple forces");
+    int64_t base = ranges[d]*arity;
+    for (int pass = 0; pass < 2; ++pass) {
+      for (int64_t p = ranges[d]; p < ranges[d+1]; ++p) {
+        int64_t t = order->aligned[p];
+        const int64_t *row = rows->aligned + rows->offset + t*rows->strides[0];
+        for (int64_t a = 0; a < arity; ++a) {
+          int64_t dest = row[(a+1)*rows->strides[1]];
+          if (pass) entries->aligned[cursor[dest]++] = p*arity + a;
+          else ++cursor[dest];
+        }
+      }
+      if (!pass) {
+        int64_t next = base, active = 0;
+        for (int64_t i = 0; i < stride; ++i) {
+          int64_t n = cursor[i];
+          if (n) starts->aligned[base+active++] = next;
+          cursor[i] = next;
+          next += n;
+        }
+        used[d] = active;
       }
     }
+    free(cursor);
   }
+  int64_t active = 0;
+  for (int64_t d = 0; d < domains; ++d) {
+    int64_t base = ranges[d]*arity;
+    if (active != base && used[d])
+      memmove(starts->aligned+active, starts->aligned+base, used[d]*sizeof(int64_t));
+    active += used[d];
+  }
+  starts->aligned[active] = count*arity;
+  free(used);
+  free(ranges);
+  return active;
+}
+
+struct TopologySite { int64_t domain, row; double x[3]; };
+
+#ifdef MDIR_ENABLE_MPI
+/* A geometry snapshot owns one contiguous identity interval per rank.
+   Tuple intervals gather only their member sites from this directory. */
+struct TopologyShard { int64_t first, count; struct TopologySite sites[]; };
+int64_t _mlir_ciface_mdrtDistTopologyShard(int64_t layout, struct Memref3D *x) {
+  struct Layout *l = (struct Layout *)(intptr_t)layout;
+  int peers = mdrtMPISize(), rank = mdrtMPIRank();
+  if (peers == 1) return 0;
+  int64_t q = l->count/peers, rem = l->count%peers, n = q+(rank < rem);
+  struct TopologyShard *shard = malloc(sizeof *shard+n*sizeof *shard->sites);
+  if (!shard) fail("out of memory storing topology sites");
+  shard->first = rank*q+(rank < rem ? rank : rem);
+  shard->count = n;
+  struct Route route = beginRoute();
+  int64_t first = mdrtMPIDomainBound(l->domains,0), past = mdrtMPIDomainBound(l->domains,1);
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < l->rows[d]; ++r) {
+      int peer = mdrtMPIOwner(l->count,domainIds(l,d)[r]);
+      if (peer != rank) countRoute(&route,peer);
+    }
+  finishRoute(&route);
+  struct SiteRecord { int64_t id; struct TopologySite site; };
+  struct SiteRecord *send = malloc((route.sends ? (size_t)route.sends : 1)*sizeof *send);
+  struct SiteRecord *recv = malloc((route.receives ? (size_t)route.receives : 1)*sizeof *recv);
+  if (!send || !recv) fail("out of memory routing topology sites");
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < l->rows[d]; ++r) {
+      int64_t id = domainIds(l,d)[r];
+      int peer = mdrtMPIOwner(l->count,id);
+      struct TopologySite site = {d,r,{*at3(x,d,r,0),*at3(x,d,r,1),*at3(x,d,r,2)}};
+      if (peer == rank) shard->sites[id-shard->first] = site;
+      else send[route.cursor[peer]++] = (struct SiteRecord){id,site};
+    }
+  mdrtMPIExchangeRecords(send,route.send,route.sendOffset,recv,route.recv,route.recvOffset,sizeof *recv);
+  for (int i = 0; i < route.receives; ++i) shard->sites[recv[i].id-shard->first] = recv[i].site;
+  free(recv); free(send); free(route.send);
+  return (int64_t)(intptr_t)shard;
+}
+
+void mdrtDistReleaseShard(int64_t handle) { free((void *)(intptr_t)handle); }
+
+static int64_t memberAt(const struct Members *m, int64_t i) {
+  return m->aligned[m->offset+i/m->sizes[1]*m->strides[0]+i%m->sizes[1]*m->strides[1]];
+}
+
+/* Relations are immutable across iterations of their enclosing step loop.
+   Map every member once to a local slot or a unique remote request. */
+struct TuplePlan {
+  struct Route route;
+  int64_t *slots, *incoming;
+};
+
+int64_t mdrtDistNewTuplePlan(void) {
+  struct TuplePlan *p = calloc(1,sizeof *p);
+  if (!p) fail("out of memory starting tuple plan");
+  return (int64_t)(intptr_t)p;
+}
+
+void mdrtDistFreeTuplePlan(int64_t handle) {
+  struct TuplePlan *p = (struct TuplePlan *)(intptr_t)handle;
+  free(p->route.send);
+  free(p->slots);
+  free(p->incoming);
+  free(p);
+}
+
+static int compareId(const void *x, const void *y) {
+  int64_t a = *(const int64_t *)x, b = *(const int64_t *)y;
+  return (a > b) - (a < b);
+}
+
+static void planSites(struct TuplePlan *p, const struct TopologyShard *shard,
+                      struct Members *m, int64_t count) {
+  int64_t n = m->sizes[0]*m->sizes[1], remote = 0;
+  p->slots = malloc((n ? n : 1)*sizeof *p->slots);
+  int64_t *ids = malloc((n ? n : 1)*sizeof *ids);
+  if (!p->slots || !ids) fail("out of memory planning tuple members");
+  for (int64_t i = 0; i < n; ++i) {
+    int64_t id = memberAt(m,i);
+    if (id < 0 || id >= count) fail("tuple member outside particle set");
+    if (id >= shard->first && id-shard->first < shard->count)
+      p->slots[i] = id-shard->first;
+    else {
+      ids[remote++] = id;
+      p->slots[i] = ~id;
+    }
+  }
+  qsort(ids,remote,sizeof *ids,compareId);
+  p->route = beginRoute();
+  int64_t unique = 0;
+  for (int64_t i = 0; i < remote; ++i)
+    if (!i || ids[i] != ids[i-1]) {
+      countRoute(&p->route,mdrtMPIOwner(count,ids[i]));
+      ids[unique++] = ids[i];
+    }
+  finishRoute(&p->route);
+  p->incoming = malloc((p->route.receives ? p->route.receives : 1)*sizeof *p->incoming);
+  if (!p->incoming) fail("out of memory planning remote tuple members");
+  mdrtMPIExchangeRecords(ids,p->route.send,p->route.sendOffset,p->incoming,
+      p->route.recv,p->route.recvOffset,sizeof *ids);
+  for (int64_t i = 0; i < n; ++i)
+    if (p->slots[i] < 0) {
+      int64_t id = ~p->slots[i];
+      const int64_t *found = bsearch(&id,ids,unique,sizeof *ids,compareId);
+      p->slots[i] = ~(int64_t)(found-ids);
+    }
+  free(ids);
+}
+
+static struct TopologySite *readSites(struct TuplePlan *p, const struct TopologyShard *shard,
+                                     struct Members *m, int64_t count) {
+  if (!p->slots) planSites(p,shard,m,count);
+  struct Route *route = &p->route;
+  int64_t n = m->sizes[0]*m->sizes[1];
+  struct TopologySite *sites = malloc((n ? n : 1)*sizeof *sites);
+  struct TopologySite *send = malloc((route->receives ? route->receives : 1)*sizeof *send);
+  struct TopologySite *recv = malloc((route->sends ? route->sends : 1)*sizeof *recv);
+  if (!sites || !send || !recv) fail("out of memory gathering tuple geometry");
+  for (int i = 0; i < route->receives; ++i)
+    send[i] = shard->sites[p->incoming[i]-shard->first];
+  mdrtMPIExchangeRecords(send,route->recv,route->recvOffset,recv,route->send,route->sendOffset,sizeof *send);
+  #pragma omp parallel for schedule(static) if(n > 4096)
+  for (int64_t i = 0; i < n; ++i) {
+    int64_t slot = p->slots[i];
+    sites[i] = slot >= 0 ? shard->sites[slot] : recv[~slot];
+  }
+  free(recv);
+  free(send);
+  return sites;
+}
+#endif
+
+static int64_t imageRow(struct Halo *h, int64_t d, int64_t id, const int64_t image[3],
+                        int64_t tuple) {
+  for (int64_t g = firstImage(h,d,id); g < h->rows[d] && h->ids[(d-h->idBase)*h->capacity+g] == id; ++g) {
+    const int64_t *n = &h->image[3*((d-h->idBase)*h->capacity+g)];
+    if (n[0] == image[0] && n[1] == image[1] && n[2] == image[2]) return h->layout->rows[d]+g;
+  }
+  char message[192];
+  snprintf(message,sizeof message,"missing tuple owner coverage: tuple %lld domain %lld lacks atom %lld",
+           (long long)tuple+1,(long long)d,(long long)id+1);
+  fail(message);
+  return -1;
 }
 
 static void tupleRows(int64_t handle, struct Memref3D *positions,
                       struct Members *members, struct Memref2I *out, int64_t begin, int64_t end,
-                      int64_t firstTuple, int64_t pastTuple) {
+                      int64_t firstTuple, int64_t pastTuple, const struct TopologySite *sites) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
   struct Layout *l = h->layout;
   int64_t count = members->sizes[0], arity = members->sizes[1];
-  if (arity < 2 || out->sizes[0] != count || out->sizes[1] != 1 + arity)
+  if (arity < 2 || out->sizes[0] != count || out->sizes[1] != 1 + (sites ? 4 : 1)*arity)
     fail("invalid tuple ownership schedule shape");
   if (count == 0) return;
   int64_t *ids = malloc(arity*sizeof *ids);
   int64_t (*image)[3] = calloc(arity,sizeof *image);
   if (!ids || !image) fail("out of memory locating tuple members");
   for (int64_t t = firstTuple; t < pastTuple; ++t) {
-    int64_t anchor = l->count;
+    int64_t anchor = l->count, pivot = 0;
+    const struct TopologySite *site = sites ? sites+t*arity : NULL;
     for (int64_t a = 0; a < arity; ++a) {
       ids[a] = members->aligned[members->offset + t*members->strides[0] + a*members->strides[1]];
       if (ids[a] < 0 || ids[a] >= l->count) fail("tuple member outside particle set");
-      if (ids[a] < anchor) anchor = ids[a];
+      if (ids[a] < anchor) { anchor = ids[a]; pivot = a; }
     }
     int64_t *record = out->aligned + out->offset + t*out->strides[0];
     int64_t d = 0;
-    for (int k = 2; k >= 0; --k) {
-      double origin = *at3(positions, l->owner[anchor], l->row[anchor], k);
-      double lo = 0, hi = 0, length = l->edges[k];
-      for (int64_t a = 0; a < arity; ++a) {
-        double delta = *at3(positions, l->owner[ids[a]], l->row[ids[a]], k) - origin;
-        image[a][k] = -(int64_t)floor(delta / length + 0.5);
-        delta += (double)image[a][k] * length;
-        lo = fmin(lo, delta);
-        hi = fmax(hi, delta);
+    if (arity == 2) {
+      int first = ids[0] == anchor ? 0 : 1, other = 1 - first;
+      const double *origin = site ? site[first].x : at3(positions, l->owner[anchor], l->row[anchor], 0);
+      int64_t j = ids[other];
+      const double *point = site ? site[other].x : at3(positions, l->owner[j], l->row[j], 0);
+      for (int k = 2; k >= 0; --k) {
+        int64_t c = site ? k : k * positions->strides[2];
+        double length = l->edges[k];
+        double delta = point[c] - origin[c];
+        int64_t shift = -(int64_t)floor(delta / length + 0.5);
+        delta += (double)shift * length;
+        double u = (origin[c] + 0.5 * delta) / length;
+        double cell = floor(u);
+        image[first][k] = -(int64_t)cell;
+        image[other][k] = shift - (int64_t)cell;
+        d = d*l->grid[k] + division(u - cell, l->grid[k]);
       }
-      double u = (origin + 0.5*(lo + hi)) / length;
-      double translation = floor(u);
-      d = d*l->grid[k] + division(u - translation, l->grid[k]);
-      for (int64_t a = 0; a < arity; ++a)
-        image[a][k] -= (int64_t)translation;
+    } else {
+      for (int k = 2; k >= 0; --k) {
+        double origin = site ? site[pivot].x[k] : *at3(positions, l->owner[anchor], l->row[anchor], k);
+        double lo = 0, hi = 0, length = l->edges[k];
+        for (int64_t a = 0; a < arity; ++a) {
+          double delta = (site ? site[a].x[k] : *at3(positions,l->owner[ids[a]],l->row[ids[a]],k)) - origin;
+          image[a][k] = -(int64_t)floor(delta / length + 0.5);
+          delta += (double)image[a][k] * length;
+          lo = fmin(lo, delta);
+          hi = fmax(hi, delta);
+        }
+        double u = (origin + 0.5*(lo + hi)) / length;
+        double translation = floor(u);
+        d = d*l->grid[k] + division(u - translation, l->grid[k]);
+        for (int64_t a = 0; a < arity; ++a)
+          image[a][k] -= (int64_t)translation;
+      }
     }
     record[0] = d;
     if (d < begin || d >= end) continue;
     for (int64_t a = 0; a < arity; ++a) {
       int64_t j = ids[a], row = -1;
-      if (l->owner[j] == d && !image[a][0] && !image[a][1] && !image[a][2])
-        row = l->row[j];
-      for (int64_t g = h->firstGhost[d*l->count+j]; row < 0 && g >= 0; g = h->nextGhost[d*h->capacity+g]) {
-        int64_t *n = &h->image[3*(d*h->capacity + g)];
-        if (n[0] == image[a][0] && n[1] == image[a][1] && n[2] == image[a][2])
-          row = l->rows[d] + g;
+      if ((site ? site[a].domain : l->owner[j]) == d && !image[a][0] && !image[a][1] && !image[a][2])
+        row = site ? site[a].row : l->row[j];
+      if (site) {
+        int64_t *ref = record+1+4*a;
+        ref[0] = row >= 0 ? row : -1-j;
+        memcpy(ref+1,image[a],3*sizeof *ref);
+      } else {
+        if (row < 0) row = imageRow(h,d,j,image[a],t);
+        record[(a+1)*out->strides[1]] = row;
       }
-      if (row < 0) {
-        char message[192];
-        snprintf(message, sizeof message, "missing tuple owner coverage: tuple %lld domain %lld lacks atom %lld",
-                 (long long)t+1, (long long)d, (long long)j+1);
-        fail(message);
-      }
-      record[(a+1)*out->strides[1]] = row;
     }
   }
   free(image);
@@ -1510,24 +2988,201 @@ static void tupleRows(int64_t handle, struct Memref3D *positions,
 void _mlir_ciface_mdrtDistTupleRows(int64_t handle, struct Memref3D *positions,
                                     struct Members *members, struct Memref2I *out) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
-  mdrtDistIndexTupleImages(handle, members->sizes[0]);
-  tupleRows(handle,positions,members,out,0,h->layout->domains,0,members->sizes[0]);
+  tupleRows(handle,positions,members,out,0,h->layout->domains,0,members->sizes[0],NULL);
 }
 
 #ifdef MDIR_ENABLE_MPI
+struct TupleSchedule {
+  struct TupleSchedule *next;
+  int references, relation;
+  int64_t count, width;
+  int64_t *rows, *indices;
+};
+
+/* Group centers carry their immutable relation and parameter index through
+   migration. The identity of the first center distinguishes disjoint
+   constraint relations, including relations of the same arity. */
+struct GroupTuple { int64_t tuple, domain, rows[4]; };
+
+static int compareGroupTuple(const void *a, const void *b) {
+  const struct GroupTuple *x = a, *y = b;
+  return (x->tuple > y->tuple)-(x->tuple < y->tuple);
+}
+
+static int64_t groupSchedule(struct Layout *l, struct Members *m) {
+  int64_t first = mdrtMPIDomainBound(l->domains,0), past = mdrtMPIDomainBound(l->domains,1);
+  int64_t cap = (past-first)*l->stride, n = 0, width = m->sizes[1]+1;
+  int relation = m->sizes[0] ? m->aligned[m->offset] : -1;
+  for (struct TupleSchedule *s = l->groupSchedules; s; s = s->next)
+    if (s->width == width && s->relation == relation) {
+      ++s->references;
+      return (int64_t)(intptr_t)s;
+    }
+  struct GroupTuple *tuples = malloc((cap ? cap : 1)*sizeof *tuples);
+  struct TupleSchedule *s = calloc(1,sizeof *s);
+  if (!tuples || !s) fail("out of memory scheduling owned constraint groups");
+  if (m->sizes[0]) {
+    for (int64_t d = first; d < past; ++d)
+      for (int64_t r = 0; r < l->rows[d]; ++r) {
+        struct ConstraintGroup g = rowGroup(l,d,r,domainIds(l,d)[r]);
+        if (g.size != width-1 || g.relationCenter != relation) continue;
+        struct GroupTuple *t = tuples+n++;
+        t->tuple = g.tuple;
+        t->domain = d;
+        for (int a = 0; a < g.size; ++a) t->rows[a] = findOwnedRow(l,d,g.atoms[a]);
+      }
+  }
+  qsort(tuples,n,sizeof *tuples,compareGroupTuple);
+  s->rows = malloc((n ? n : 1)*width*sizeof *s->rows);
+  s->indices = malloc((n ? n : 1)*sizeof *s->indices);
+  if (!s->rows || !s->indices) fail("out of memory indexing owned constraints");
+  s->width = width;
+  s->count = n;
+  for (int64_t i = 0; i < n; ++i) {
+    s->indices[i] = tuples[i].tuple;
+    s->rows[i*width] = tuples[i].domain;
+    memcpy(s->rows+i*width+1,tuples[i].rows,(width-1)*sizeof *s->rows);
+  }
+  free(tuples);
+  s->relation = relation;
+  s->references = 2; /* The layout and the returned schedule. */
+  s->next = l->groupSchedules;
+  l->groupSchedules = s;
+  return (int64_t)(intptr_t)s;
+}
+
+/* Assign contiguous input intervals to ranks. A peer's records retain input
+   order, so concatenating received intervals preserves topology order even
+   when several ranks contribute to the same midpoint domain. */
+int64_t _mlir_ciface_mdrtDistScheduleTuples(int64_t handle, int64_t groups, int64_t directory, int64_t plan,
+    struct Memref3D *positions, struct Members *members) {
+  struct Layout *l = groups ? (struct Layout *)(intptr_t)handle :
+                              ((struct Halo *)(intptr_t)handle)->layout;
+  if (groups) return groupSchedule(l,members);
+  int peers = mdrtMPISize(), rank = mdrtMPIRank();
+  int64_t total = members->sizes[0], width = members->sizes[1]+1;
+  int64_t q = total/peers, rem = total%peers;
+  int64_t first = q*rank+(rank < rem ? rank : rem), count = q+(rank < rem);
+  struct Members slice = *members;
+  slice.offset += first*slice.strides[0];
+  slice.sizes[0] = count;
+  if (count > INT_MAX || width < 3 || width >= INT_MAX/(int)sizeof(int64_t))
+    fail("tuple schedule exceeds MPI range");
+  int64_t recordWidth = directory ? 1+4*(width-1) : width;
+  int64_t *rows = malloc((count ? count : 1)*recordWidth*sizeof *rows);
+  if (!rows) fail("out of memory locating topology interval");
+  struct Memref2I records = {rows,rows,0,{count,recordWidth},{recordWidth,1}};
+  struct TopologySite *sites = directory ?
+      readSites((struct TuplePlan *)(intptr_t)plan,(struct TopologyShard *)(intptr_t)directory,&slice,l->count) : NULL;
+  {
+    #pragma omp parallel for schedule(static) if(count > 256)
+    for (int64_t start = 0; start < count; start += 256) {
+      int64_t end = start+256 < count ? start+256 : count;
+      tupleRows(handle,positions,&slice,&records,0,l->domains,start,end,sites);
+    }
+  }
+  free(sites);
+  struct TupleSchedule *schedule = calloc(1,sizeof *schedule);
+  if (!schedule) fail("out of memory creating tuple schedule");
+  schedule->references = 1;
+  schedule->width = width;
+  if (peers == 1) {
+    schedule->rows = rows;
+    schedule->count = count;
+    return (int64_t)(intptr_t)schedule;
+  }
+  int *counts = calloc(5*(size_t)peers,sizeof *counts);
+  if (!counts) fail("out of memory counting local tuples");
+  int *ns = counts, *nr = ns+peers, *os = nr+peers, *or = os+peers, *cursor = or+peers;
+  for (int64_t i = 0; i < count; ++i)
+    ++ns[mdrtMPIOwner(l->domains,rows[i*recordWidth])];
+  mdrtMPIExchangeCounts(ns,nr);
+  int receives = 0;
+  for (int p = 0; p < peers; ++p) {
+    if (p) os[p] = os[p-1]+ns[p-1];
+    or[p] = receives;
+    if (nr[p] > INT_MAX-receives) fail("tuple schedule displacement exceeds MPI range");
+    receives += nr[p];
+  }
+  memcpy(cursor,os,peers*sizeof *cursor);
+  int64_t *out = malloc((count ? count : 1)*(recordWidth+1)*sizeof *out);
+  int64_t *in = malloc((receives ? (size_t)receives : 1)*(recordWidth+1)*sizeof *in);
+  if (!out || !in) fail("out of memory routing tuple rows");
+  for (int64_t i = 0; i < count; ++i) {
+    int dest = mdrtMPIOwner(l->domains,rows[i*recordWidth]);
+    int64_t *record = out+(recordWidth+1)*cursor[dest]++;
+    record[0] = first+i;
+    memcpy(record+1,rows+i*recordWidth,recordWidth*sizeof *rows);
+  }
+  mdrtMPIExchangeRecords(out,ns,os,in,nr,or,(recordWidth+1)*sizeof *in);
+  free(counts);
+  free(rows);
+  free(out);
+  schedule->count = receives;
+  schedule->rows = malloc((receives ? (size_t)receives : 1)*width*sizeof *rows);
+  schedule->indices = malloc((receives ? (size_t)receives : 1)*sizeof *rows);
+  if (!schedule->rows || !schedule->indices) fail("out of memory collecting local tuples");
+  #pragma omp parallel for schedule(static) if(receives > 1024)
+  for (int i = 0; i < receives; ++i) {
+    const int64_t *record = in+(recordWidth+1)*i;
+    schedule->indices[i] = record[0];
+    int64_t *local = schedule->rows+width*i;
+    {
+      local[0] = record[1];
+      for (int64_t a = 0; a < width-1; ++a) {
+        const int64_t *ref = record+2+4*a;
+        local[1+a] = ref[0] >= 0 ? ref[0] :
+            imageRow((struct Halo *)(intptr_t)handle,local[0],-1-ref[0],ref+1,record[0]);
+      }
+    }
+  }
+  free(in);
+  return (int64_t)(intptr_t)schedule;
+}
+
+void mdrtDistReleaseSchedule(int64_t handle) {
+  struct TupleSchedule *s = (struct TupleSchedule *)(intptr_t)handle;
+  if (--s->references == 0) {
+    free(s->rows);
+    free(s->indices);
+    free(s);
+  }
+}
+
+static void releaseGroupSchedules(struct TupleSchedule *head) {
+  while (head) {
+    struct TupleSchedule *next = head->next;
+    mdrtDistReleaseSchedule((int64_t)(intptr_t)head);
+    head = next;
+  }
+}
+
+void _mlir_ciface_mdrtDistScheduleView(struct Memref2I *out, int64_t handle) {
+  struct TupleSchedule *s = (struct TupleSchedule *)(intptr_t)handle;
+  *out = (struct Memref2I){s->rows,s->rows,0,{s->count,s->width},{s->width,1}};
+}
+
+void _mlir_ciface_mdrtDistParameterOrder(int64_t handle, struct Memref1I *order,
+                                         struct Memref1I *indices) {
+  struct TupleSchedule *s = (struct TupleSchedule *)(intptr_t)handle;
+  for (int64_t i = 0; i < indices->sizes[0]; ++i) {
+    int64_t t = order->aligned[order->offset+i*order->strides[0]];
+    indices->aligned[indices->offset+i*indices->strides[0]] = s->indices ? s->indices[t] : t;
+  }
+}
+
 void _mlir_ciface_mdrtDistTupleRowBlock(int64_t handle, struct Memref3D *positions,
     struct Members *members, struct Memref2I *out, int64_t begin, int64_t end,
     int64_t firstTuple, int64_t pastTuple) {
-  tupleRows(handle,positions,members,out,begin,end,firstTuple,pastTuple);
+  tupleRows(handle,positions,members,out,begin,end,firstTuple,pastTuple,NULL);
 }
 
 void _mlir_ciface_mdrtDistLocalTupleRows(int64_t handle, struct Memref3D *positions,
                                          struct Members *members, struct Memref2I *out) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
   int64_t domains = h->layout->domains;
-  mdrtDistIndexTupleImages(handle, members->sizes[0]);
   tupleRows(handle,positions,members,out,mdrtMPIDomainBound(domains,0),
-            mdrtMPIDomainBound(domains,1),0,members->sizes[0]);
+            mdrtMPIDomainBound(domains,1),0,members->sizes[0],NULL);
 }
 #endif
 
@@ -1551,6 +3206,96 @@ static int64_t movedRows(struct Halo *h) {
   return moved;
 }
 
+union HaloBuffer {
+  struct Memref3D real;
+  struct Memref3W wide;
+};
+
+struct HaloField {
+  union HaloBuffer owned, ghosts;
+  struct Memref3D result;
+  int64_t width, image;
+};
+
+/* Partition the existing stream by its owned destination. Counting and
+   scattering in stream order preserves every floating-point addition. */
+static void gatherHalo(struct Halo *h, int64_t first, int64_t past,
+    const struct TransferRow *remotePlan, size_t planSize, const void *recv,
+    struct HaloField *fields, int64_t fieldCount, int64_t components, int words, int remote) {
+  int64_t stride = h->layout->stride;
+  if (!h->gatherOffsets) {
+    h->gatherSlots = (past-first)*stride;
+    size_t slots = h->gatherSlots;
+    h->gatherOffsets = calloc(slots+1,sizeof *h->gatherOffsets);
+    if (remotePlan) {
+      h->needsPeer = calloc(slots+1,sizeof *h->needsPeer);
+      if (!h->needsPeer) fail("out of memory indexing remote halo sums");
+    }
+    size_t *cursor = calloc(slots+1,sizeof *cursor);
+    if (!cursor || !h->gatherOffsets) fail("out of memory indexing halo sums");
+    for (int pass = 0; pass < 2; ++pass) {
+      // The MPI stream is already restricted to this rank. In process,
+      // visit all ghost rows in domain order.
+      int64_t domains = remotePlan ? 1 : h->layout->domains;
+      for (int64_t d = 0; d < domains; ++d) {
+        size_t count = remotePlan ? planSize : (size_t)h->rows[d];
+        for (size_t k = 0; k < count; ++k) {
+          int64_t slot = remotePlan ? remotePlan[k].domain*h->capacity + remotePlan[k].ghost :
+                                     d*h->capacity + (int64_t)k;
+          int64_t dest = remotePlan ? (remotePlan[k].source-first)*stride+remotePlan[k].row :
+                                      (h->sourceDomain[slot]-first)*stride+h->sourceRow[slot];
+          if (pass == 0) {
+            ++h->gatherOffsets[dest+1];
+            if (remotePlan && remotePlan[k].offset >= 0) h->needsPeer[dest] = 1;
+          }
+          else h->gatherRows[cursor[dest]++] = (struct GatherRow){slot, remotePlan ? remotePlan[k].offset : -1};
+        }
+      }
+      if (pass == 0) {
+        for (size_t i = 0; i < slots; ++i) h->gatherOffsets[i+1] += h->gatherOffsets[i];
+        memcpy(cursor,h->gatherOffsets,slots*sizeof *cursor);
+        size_t n = h->gatherOffsets[slots];
+        h->gatherRows = malloc((n ? n : 1)*sizeof *h->gatherRows);
+        if (!h->gatherRows) fail("out of memory retaining halo sums");
+      }
+    }
+    free(cursor);
+  }
+  #pragma omp parallel for schedule(static) if(h->gatherSlots > 512)
+  for (int64_t i = 0; i < h->gatherSlots; ++i) {
+    if (remotePlan && h->needsPeer[i] != remote) continue;
+    size_t begin = h->gatherOffsets[i], end = h->gatherOffsets[i+1];
+    if (begin == end) continue;
+    int64_t d = first+i/stride, row = i%stride;
+    int64_t base = 0;
+    for (int64_t f = 0; f < fieldCount; ++f) {
+      struct HaloField *field = fields+f;
+      for (int64_t c = 0; c < field->width; ++c) {
+        if (words) {
+          DistWide sum = *wordAt(&field->owned.wide,d,row,c);
+          for (size_t k = begin; k < end; ++k) {
+            struct GatherRow t = h->gatherRows[k];
+            DistWide v = t.offset < 0 ? *wordAt(&field->ghosts.wide,t.slot/h->capacity,t.slot%h->capacity,c) :
+                         ((const DistWide *)recv)[t.offset*components+base+c];
+            sum = mdrtDistAddWide(sum,v);
+          }
+          *wordAt(&field->owned.wide,d,row,c) = sum;
+        } else {
+          double sum = *at3(&field->owned.real,d,row,c);
+          for (size_t k = begin; k < end; ++k) {
+            struct GatherRow t = h->gatherRows[k];
+            double v = t.offset < 0 ? *at3(&field->ghosts.real,t.slot/h->capacity,t.slot%h->capacity,c) :
+                       ((const double *)recv)[t.offset*components+base+c];
+            sum += v;
+          }
+          *at3(&field->owned.real,d,row,c) = sum;
+        }
+      }
+      base += field->width;
+    }
+  }
+}
+
 #ifdef MDIR_ENABLE_MPI
 /* Pack and consume a peer's stream in the same (domain, ghost, component)
    order on both sides. For the transpose, interleave local and remote
@@ -1567,24 +3312,28 @@ static struct TransferPlan *transferPlan(struct Halo *h, int transpose) {
   for (int pass = 0; pass < 2; ++pass) {
     size_t ns = 0, nr = 0, nl = 0, near = 0;
     for (int64_t d = 0; d < domains; ++d)
-      for (int64_t g = 0; g < h->rows[d]; ++g) {
-        int owner = owners[h->sourceDomain[d*h->capacity+g]];
+      for (int64_t i = h->links ? h->linkOffsets[d] : 0;
+           i < (h->links ? h->linkOffsets[d+1] : h->rows[d]); ++i) {
+        int64_t g = h->links ? h->links[i].ghost : i;
+        int64_t src = h->links ? h->links[i].source : h->sourceDomain[d*h->capacity+g];
+        int64_t row = h->links ? h->links[i].row : h->sourceRow[d*h->capacity+g];
+        int owner = owners[src];
         int from = transpose ? owners[d] : owner, to = transpose ? owner : owners[d];
         if (from == rank && to != rank) {
-          if (pass) plan->send[ns] = (struct TransferRow){d, g, to};
+          if (pass) plan->send[ns] = (struct TransferRow){d,g,-1,to,src,row};
           else if (plan->counts[to] == INT_MAX) mdrtMPIAbort("halo count exceeds MPI int");
           else ++plan->counts[to];
           ++ns;
         }
         if (to != rank) continue;
         if (!transpose && from == rank) {
-          if (pass) plan->local[nl] = (struct TransferRow){d, g, from};
+          if (pass) plan->local[nl] = (struct TransferRow){d,g,-1,from,src,row};
           ++nl;
         } else {
           int sameNode = !transpose && mdrtMPISameNode(from);
           size_t slot = transpose ? nr : sameNode ? near : plan->onNode + nr - near;
           if (sameNode) ++near;
-          if (pass) plan->receive[slot] = (struct TransferRow){d, g, from};
+          if (pass) plan->receive[slot] = (struct TransferRow){d,g,-1,from,src,row};
           else if (from != rank) {
             if (plan->counts[peers+from] == INT_MAX) mdrtMPIAbort("halo count exceeds MPI int");
             ++plan->counts[peers+from];
@@ -1595,26 +3344,89 @@ static struct TransferPlan *transferPlan(struct Halo *h, int transpose) {
     if (!pass) {
       plan->sends = ns; plan->receives = nr; plan->locals = nl; plan->onNode = near;
       plan->send = malloc(ns * sizeof *plan->send);
-      plan->receive = malloc(nr * sizeof *plan->receive);
+      plan->receive = malloc((nr ? nr : 1) * sizeof *plan->receive);
       plan->local = malloc(nl * sizeof *plan->local);
-      if ((ns && !plan->send) || (nr && !plan->receive) || (nl && !plan->local))
+      if ((ns && !plan->send) || !plan->receive || (nl && !plan->local))
         mdrtMPIAbort("out of memory storing halo schedule");
     }
   }
+  int64_t *cursor = calloc(2*(size_t)peers,sizeof *cursor);
+  if (!cursor) fail("out of memory indexing peer offsets");
+  for (int p = 1; p < peers; ++p) {
+    cursor[p] = cursor[p-1]+plan->counts[p-1];
+    cursor[peers+p] = cursor[peers+p-1]+plan->counts[peers+p-1];
+  }
+  for (size_t i = 0; i < plan->sends; ++i)
+    plan->send[i].offset = cursor[plan->send[i].peer]++;
+  for (size_t i = 0; i < plan->receives; ++i)
+    if (plan->receive[i].peer != rank)
+      plan->receive[i].offset = cursor[peers+plan->receive[i].peer]++;
+  free(cursor);
   free(owners);
   return plan;
 }
 
-static void exchangeHalo(struct Halo *h, struct Memref3D *owned,
-                         struct Memref3D *ghosts, int image, int transpose,
-                         struct Memref3W *ownedWords, struct Memref3W *ghostWords) {
+struct HaloBatch {
+  int64_t count, capacity;
+  struct HaloField fields[];
+};
+
+int64_t mdrtDistHaloBatch(int64_t capacity) {
+  if (capacity <= 0 || (uint64_t)capacity > (SIZE_MAX-sizeof(struct HaloBatch))/sizeof(struct HaloField))
+    fail("invalid number of halo fields");
+  struct HaloBatch *batch = malloc(sizeof *batch + capacity*sizeof *batch->fields);
+  if (!batch) fail("out of memory grouping halo fields");
+  batch->count = 0;
+  batch->capacity = capacity;
+  return (int64_t)(intptr_t)batch;
+}
+
+static void addHaloField(int64_t handle, struct HaloField field) {
+  struct HaloBatch *batch = (struct HaloBatch *)(intptr_t)handle;
+  if (batch->count == batch->capacity) fail("halo batch already full");
+  batch->fields[batch->count++] = field;
+}
+
+void _mlir_ciface_mdrtDistHaloField(int64_t handle, struct Memref3D *owned,
+                                    struct Memref3D *ghosts, int64_t image) {
+  addHaloField(handle,(struct HaloField){.owned.real=*owned,.ghosts.real=*ghosts,
+               .width=owned->sizes[2],.image=image});
+}
+
+void _mlir_ciface_mdrtDistHaloWordField(int64_t handle, struct Memref3W *owned,
+                                        struct Memref3W *ghosts, struct Memref3D *result) {
+  addHaloField(handle,(struct HaloField){.owned.wide=*owned,.ghosts.wide=*ghosts,
+               .width=owned->sizes[2],.result=*result});
+}
+
+static void exchangeHalo(struct Halo *h, struct HaloField *fields, int64_t fieldCount,
+                         int transpose, int words) {
+  // Use the replicated row bounds so every peer makes the same split.
+  // Individually representable fields remain valid if their batch exceeds
+  // the MPI count or displacement limit.
+  if (fieldCount > 1) {
+    int64_t width = 0;
+    for (int64_t f = 0; f < fieldCount && width <= INT_MAX; ++f) width += fields[f].width;
+    int64_t remaining = width && width <= INT_MAX ? INT_MAX/width : 0;
+    for (int64_t d = 0; d < h->layout->domains && remaining >= 0; ++d)
+      remaining -= h->rows[d];
+    if (width > INT_MAX || remaining < 0) {
+      for (int64_t f = 0; f < fieldCount; ++f)
+        exchangeHalo(h,fields+f,1,transpose,words);
+      return;
+    }
+  }
   const int peers = mdrtMPISize(), rank = mdrtMPIRank();
   struct TransferPlan *plan = transferPlan(h, transpose);
-  int *counts = calloc((size_t)peers * 6, sizeof(int));
+  int *counts = calloc((size_t)peers * 4, sizeof(int));
   if (!counts) mdrtMPIAbort("out of memory packing halo counts");
   int *ns = counts, *nr = ns + peers, *os = nr + peers, *or = os + peers;
-  int *ws = or + peers, *wr = ws + peers;
-  int64_t components = ownedWords ? ownedWords->sizes[2] : owned->sizes[2];
+  int64_t components = 0;
+  for (int64_t f = 0; f < fieldCount; ++f) {
+    if (fields[f].width > INT_MAX-components)
+      mdrtMPIAbort("halo field width exceeds MPI count range");
+    components += fields[f].width;
+  }
   for (int p = 0; p < 2*peers; ++p) {
     if (components && plan->counts[p] > INT_MAX / components)
       mdrtMPIAbort("halo count exceeds MPI int");
@@ -1622,54 +3434,57 @@ static void exchangeHalo(struct Halo *h, struct Memref3D *owned,
   }
   int sendSize = 0, recvSize = 0;
   for (int p = 0; p < peers; ++p) {
-    os[p] = ws[p] = sendSize;
-    or[p] = wr[p] = recvSize;
+    os[p] =  sendSize;
+    or[p] =  recvSize;
     if (ns[p] > INT_MAX - sendSize || nr[p] > INT_MAX - recvSize)
       mdrtMPIAbort("halo displacement exceeds MPI int");
     sendSize += ns[p];
     recvSize += nr[p];
   }
-  size_t bytes = ownedWords ? sizeof(DistWide) : sizeof(double);
+  size_t bytes = words ? sizeof(DistWide) : sizeof(double);
   void *send = malloc((size_t)(sendSize ? sendSize : 1) * bytes);
   void *recv = malloc((size_t)(recvSize ? recvSize : 1) * bytes);
   if (!send || !recv) mdrtMPIAbort("out of memory packing halo rows");
+  struct HaloRequests *pending = NULL;
   for (int pass = 0; pass < 4; ++pass) {
-    if (pass == 1 && peers > 1) {
-      if (transpose)
-        mdrtMPIExchange(send, ns, os, recv, nr, or, ownedWords != NULL);
-      else
-        mdrtMPIForwardHalo(send, ns, os, recv, nr, or);
+    if (pass == 1) {
+      pending = mdrtMPIStartHalo(send, ns, os, recv, nr, or, words, transpose);
+      if (transpose) {
+        int64_t first = mdrtMPIDomainBound(h->layout->domains,0);
+        int64_t past = mdrtMPIDomainBound(h->layout->domains,1);
+        gatherHalo(h,first,past,plan->receive,plan->receives,recv,fields,fieldCount,components,words,0);
+        mdrtMPIWaitHalo(pending);
+        gatherHalo(h,first,past,plan->receive,plan->receives,recv,fields,fieldCount,components,words,1);
+        break;
+      }
     }
-    size_t first = pass == 2 ? plan->onNode : 0;
-    size_t length = pass == 0 ? plan->sends : pass == 1 ? plan->onNode :
-                    pass == 2 ? plan->receives : plan->locals;
+    if (pass == 2) mdrtMPIWaitHalo(pending);
+    size_t first = pass == 3 ? plan->onNode : 0;
+    size_t length = pass == 0 ? plan->sends : pass == 1 ? plan->locals :
+                    pass == 2 ? plan->onNode : plan->receives;
     if (first == length) continue;
-    struct TransferRow *rows = pass == 0 ? plan->send : pass == 3 ? plan->local : plan->receive;
-    int phase = pass == 0 ? DistPack : pass == 2 ? DistInter : DistIntra;
+    struct TransferRow *rows = pass == 0 ? plan->send : pass == 1 ? plan->local : plan->receive;
+    int phase = pass == 0 ? DistPack : pass == 3 ? DistInter : DistIntra;
     if (!transpose) mdrtDistPhase(phase);
+    #pragma omp parallel for schedule(static) if(length-first > 256)
     for (size_t k = first; k < length; ++k) {
       int64_t d = rows[k].domain, g = rows[k].ghost, i = d*h->capacity+g;
-      int64_t dom = h->sourceDomain[i], row = h->sourceRow[i];
+      int64_t dom = rows[k].source, row = rows[k].row;
       int peer = rows[k].peer;
-      for (int64_t c = 0; c < components; ++c) {
-        if (ownedWords) {
-          DistWide *from = wordAt(ghostWords, d, g, c);
-          if (!pass) ((DistWide *)send)[ws[peer]++] = *from;
-          else {
-            DistWide term = peer == rank ? *from : ((DistWide *)recv)[wr[peer]++];
-            DistWide *to = wordAt(ownedWords, dom, row, c);
-            *to = mdrtDistAddWide(*to, term);
-          }
-          continue;
-        }
-        double *a = at3(owned, dom, row, c), *b = at3(ghosts, d, g, c);
-        if (!pass) ((double *)send)[ws[peer]++] = transpose ? *b : *a;
-        else {
-          double v = peer == rank ? (transpose ? *b : *a) : ((double *)recv)[wr[peer]++];
-          if (transpose) *a += v;
-          else {
-            if (image) v += (double)h->image[3*i+c] * h->layout->edges[c];
-            *b = v;
+      int64_t offset = rows[k].offset*components;
+      for (int64_t f = 0; f < fieldCount; ++f) {
+        struct HaloField *field = fields+f;
+        for (int64_t c = 0; c < field->width; ++c, ++offset) {
+          if (words) {
+            ((DistWide *)send)[offset] = *wordAt(&field->ghosts.wide,d,g,c);
+          } else if (transpose) {
+            ((double *)send)[offset] = *at3(&field->ghosts.real,d,g,c);
+          } else if (!pass) {
+            ((double *)send)[offset] = *at3(&field->owned.real,dom,row,c);
+          } else {
+            double v = peer == rank ? *at3(&field->owned.real,dom,row,c) : ((double *)recv)[offset];
+            if (field->image) v += (double)h->image[3*(i-h->idBase*h->capacity)+c] * h->layout->edges[c];
+            *at3(&field->ghosts.real,d,g,c) = v;
           }
         }
       }
@@ -1679,6 +3494,22 @@ static void exchangeHalo(struct Halo *h, struct Memref3D *owned,
   free(send); free(recv); free(counts);
 }
 #endif
+
+static void convertHaloWords(struct Halo *h, struct Memref3W *owned, struct Memref3D *out) {
+  int64_t components = owned->sizes[2];
+  int64_t first = 0, past = h->layout->domains;
+#ifdef MDIR_ENABLE_MPI
+  if (h->layout->mpi && mdrtMPISize() > 1) {
+    first = mdrtMPIDomainBound(past, 0);
+    past = mdrtMPIDomainBound(past, 1);
+  }
+#endif
+  #pragma omp parallel for collapse(2) schedule(static) if(h->layout->count > 1024)
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < h->layout->stride; ++r)
+      if (r < h->layout->rows[d]) for (int64_t c = 0; c < components; ++c)
+        *at3(out, d, r, c) = (double)mdrtDistNarrowWord(*wordAt(owned, d, r, c), DistPairForce) * 0x1p-40;
+}
 
 void _mlir_ciface_mdrtDistHaloSumWords(int64_t handle, struct Memref3W *owned,
     struct Memref3W *ghosts, struct Memref3D *out) {
@@ -1690,30 +3521,14 @@ void _mlir_ciface_mdrtDistHaloSumWords(int64_t handle, struct Memref3W *owned,
       observer->transfer(observer->context, edge.to, edge.from,
                          edge.rows * components * (int64_t)sizeof(DistWide));
     }
+  struct HaloField field = {.owned.wide=*owned,.ghosts.wide=*ghosts,.width=components};
 #ifdef MDIR_ENABLE_MPI
-  if (h->layout->mpi)
-    exchangeHalo(h, NULL, NULL, 0, 1, owned, ghosts);
+  if (h->layout->mpi && mdrtMPISize() > 1)
+    exchangeHalo(h,&field,1,1,1);
   else
 #endif
-  for (int64_t d = 0; d < h->layout->domains; ++d)
-    for (int64_t g = 0; g < h->rows[d]; ++g) {
-      int64_t slot = d * h->capacity + g;
-      for (int64_t c = 0; c < components; ++c) {
-        DistWide *to = wordAt(owned, h->sourceDomain[slot], h->sourceRow[slot], c);
-        *to = mdrtDistAddWide(*to, *wordAt(ghosts, d, g, c));
-      }
-    }
-  int64_t first = 0, past = h->layout->domains;
-#ifdef MDIR_ENABLE_MPI
-  if (h->layout->mpi) {
-    first = mdrtMPIDomainBound(past, 0);
-    past = mdrtMPIDomainBound(past, 1);
-  }
-#endif
-  for (int64_t d = first; d < past; ++d)
-    for (int64_t r = 0; r < h->layout->rows[d]; ++r)
-      for (int64_t c = 0; c < components; ++c)
-        *at3(out, d, r, c) = (double)mdrtDistNarrowWord(*wordAt(owned, d, r, c), DistPairForce) * 0x1p-40;
+    gatherHalo(h,0,h->layout->domains,NULL,0,NULL,&field,1,components,1,0);
+  convertHaloWords(h,owned,out);
 }
 
 /* G: (G a)_g = a_{s(g)}, with `image` x_{s(g)} + n_g L. */
@@ -1727,14 +3542,17 @@ void _mlir_ciface_mdrtDistHaloCopy(int64_t handle, struct Memref3D *owned,
                          edge.rows * owned->sizes[2] * (int64_t)sizeof(double));
     }
 #ifdef MDIR_ENABLE_MPI
-  if (h->layout->mpi) {
-    exchangeHalo(h, owned, ghosts, image, 0, NULL, NULL);
+  if (h->layout->mpi && mdrtMPISize() > 1) {
+    struct HaloField field = {.owned.real=*owned,.ghosts.real=*ghosts,.image=image,.width=owned->sizes[2]};
+    exchangeHalo(h,&field,1,0,0);
     return;
   }
 #endif
   int64_t k = owned->sizes[2];
+  #pragma omp parallel for collapse(2) schedule(static) if(h->layout->count > 1024)
   for (int64_t d = 0; d < h->layout->domains; ++d)
-    for (int64_t g = 0; g < h->rows[d]; ++g) {
+    for (int64_t g = 0; g < h->capacity; ++g) {
+      if (g >= h->rows[d]) continue;
       int64_t s = d * h->capacity + g;
       for (int64_t c = 0; c < k; ++c) {
         double v = *at3(owned, h->sourceDomain[s], h->sourceRow[s], c);
@@ -1761,26 +3579,54 @@ void _mlir_ciface_mdrtDistHaloSum(int64_t handle, struct Memref3D *ghosts,
       observer->transfer(observer->context, edge.to, edge.from,
                          edge.rows * owned->sizes[2] * (int64_t)sizeof(double));
     }
+  struct HaloField field = {.owned.real=*owned,.ghosts.real=*ghosts,.width=owned->sizes[2]};
 #ifdef MDIR_ENABLE_MPI
-  if (h->layout->mpi) {
-    exchangeHalo(h, owned, ghosts, 0, 1, NULL, NULL);
+  if (h->layout->mpi && mdrtMPISize() > 1) {
+    exchangeHalo(h,&field,1,1,0);
     return;
   }
 #endif
   int64_t k = owned->sizes[2];
-  for (int64_t d = 0; d < h->layout->domains; ++d)
-    for (int64_t g = 0; g < h->rows[d]; ++g) {
-      int64_t s = d * h->capacity + g;
-      for (int64_t c = 0; c < k; ++c)
-        *at3(owned, h->sourceDomain[s], h->sourceRow[s], c) +=
-            *at3(ghosts, d, g, c);
-    }
+  gatherHalo(h,0,h->layout->domains,NULL,0,NULL,&field,1,k,0,0);
   if (tracing())
     fprintf(stderr,
             "mdrt_dist: halo_sum of %lld components: %lld rows between "
             "domains\n",
             (long long)k, (long long)movedRows(h));
 }
+
+#ifdef MDIR_ENABLE_MPI
+void mdrtDistFlushHalo(int64_t halo, int64_t handle, int64_t transpose, int64_t words) {
+  struct Halo *h = (struct Halo *)(intptr_t)halo;
+  struct HaloBatch *batch = (struct HaloBatch *)(intptr_t)handle;
+  if (batch->count != batch->capacity) fail("incomplete halo batch");
+  if (mdrtMPISize() == 1) {
+    for (int64_t f = 0; f < batch->count; ++f) {
+      struct HaloField *field = batch->fields+f;
+      if (words)
+        _mlir_ciface_mdrtDistHaloSumWords(halo,&field->owned.wide,&field->ghosts.wide,&field->result);
+      else if (transpose)
+        _mlir_ciface_mdrtDistHaloSum(halo,&field->ghosts.real,&field->owned.real);
+      else
+        _mlir_ciface_mdrtDistHaloCopy(halo,&field->owned.real,&field->ghosts.real,field->image);
+    }
+  } else {
+    if (observer)
+      for (size_t i = 0; i < h->edgeCount; ++i) {
+        struct Edge edge = h->edges[i];
+        for (int64_t f = 0; f < batch->count; ++f)
+          observer->transfer(observer->context, transpose ? edge.to : edge.from,
+              transpose ? edge.from : edge.to, edge.rows*batch->fields[f].width*
+              (words ? (int64_t)sizeof(DistWide) : (int64_t)sizeof(double)));
+      }
+    exchangeHalo(h,batch->fields,batch->count,transpose,words);
+    if (words)
+      for (int64_t f = 0; f < batch->count; ++f)
+        convertHaloWords(h,&batch->fields[f].owned.wide,&batch->fields[f].result);
+  }
+  free(batch);
+}
+#endif
 
 void mdrtDistRetainHalo(int64_t handle) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
@@ -1815,17 +3661,21 @@ void mdrtDistReleaseHalo(int64_t handle) {
     h->matrices = m->next;
     mdrtHostMatrixRelease(m->raw);
     mdrtHostMatrixRelease(m->selected);
+    mdrtHostMatrixRelease(m->candidates);
+    free(m->candidateCounts);
     free(m->counts);
     free(m->selectedCounts);
     free(m->reference);
     free(m->shifts);
+    free(m->bounds);
     free(m);
   }
   free(h->rows);
   free(h->edges);
-  free(h->firstGhost);
-  free(h->nextGhost);
 #ifdef MDIR_ENABLE_MPI
+  mdrtDistFreeExclusions((int64_t)(intptr_t)h->exclusions);
+  free(h->links);
+  free(h->linkOffsets);
   for (int i = 0; i < 2; ++i) {
     free(h->plans[i].counts);
     free(h->plans[i].send);
@@ -1833,6 +3683,9 @@ void mdrtDistReleaseHalo(int64_t handle) {
     free(h->plans[i].local);
   }
 #endif
+  free(h->needsPeer);
+  free(h->gatherRows);
+  free(h->gatherOffsets);
   free(h->sourceDomain);
   free(h->sourceRow);
   free(h->ids);
@@ -1845,7 +3698,7 @@ void mdrtDistReleaseHalo(int64_t handle) {
    The caller scopes this object to one loop with invariant group relations. */
 struct TrajectoryEpoch {
   struct Halo *halo;
-  double *reference;
+  double *reference, *ownedReference;
 };
 
 int64_t mdrtDistEpochCreate(void) {
@@ -1857,6 +3710,7 @@ int64_t mdrtDistEpochCreate(void) {
 void mdrtDistEpochDestroy(int64_t cache) {
   struct TrajectoryEpoch *e = (struct TrajectoryEpoch *)(intptr_t)cache;
   if (e->halo) mdrtDistReleaseHalo((int64_t)(intptr_t)e->halo);
+  free(e->ownedReference);
   free(e->reference);
   free(e);
 }
@@ -1867,18 +3721,30 @@ int64_t _mlir_ciface_mdrtDistEpochPartition(struct Memref2D *x, int64_t gx,
   struct TrajectoryEpoch *e = (struct TrajectoryEpoch *)(intptr_t)cache;
   double box[] = {lx, ly, lz};
   int64_t n = x->sizes[0];
+  int64_t first = 0, past = n;
+#ifdef MDIR_ENABLE_MPI
+  if (mpi) { first = mdrtMPIIdentityBound(n,0); past = mdrtMPIIdentityBound(n,1); }
+#endif
   if (e->halo) {
     struct Layout *l = e->halo->layout;
     int valid = l->count == n && l->edges[0] == lx && l->edges[1] == ly && l->edges[2] == lz;
-    for (int64_t j = 0; valid && j < n; ++j) {
-      double r2 = 0;
-      for (int c = 0; c < 3; ++c) {
-        double dx = *at2(x,j,c) - e->reference[3*j+c];
-        dx -= box[c]*floor(dx/box[c] + 0.5);
-        r2 += dx*dx;
+    if (valid) {
+      double maxDisplacement2 = 0;
+      #pragma omp parallel for reduction(max:maxDisplacement2) schedule(static) if(n > 1024)
+      for (int64_t j = first; j < past; ++j) {
+        double r2 = 0;
+        for (int c = 0; c < 3; ++c) {
+          double dx = *at2(x,j,c) - e->reference[3*(j-first)+c];
+          dx -= box[c]*floor(dx/box[c] + 0.5);
+          r2 += dx*dx;
+        }
+        maxDisplacement2 = fmax(maxDisplacement2,isfinite(r2) ? r2 : INFINITY);
       }
-      valid = r2 <= 0.25*skin*skin;
+      valid = isfinite(maxDisplacement2) && maxDisplacement2 <= 0.25*skin*skin;
     }
+#ifdef MDIR_ENABLE_MPI
+    if (mpi && mdrtMPISize() > 1) valid = mdrtMPIAllTrue(valid);
+#endif
     if (valid) {
       mdrtDistRetainLayout((int64_t)(intptr_t)l);
       return (int64_t)(intptr_t)l;
@@ -1886,16 +3752,26 @@ int64_t _mlir_ciface_mdrtDistEpochPartition(struct Memref2D *x, int64_t gx,
     mdrtDistReleaseHalo((int64_t)(intptr_t)e->halo);
     e->halo = NULL;
   }
-  e->reference = realloc(e->reference, (n ? n : 1)*3*sizeof(double));
+  e->reference = realloc(e->reference, (past > first ? past-first : 1)*3*sizeof(double));
   if (!e->reference) fail("out of memory recording trajectory positions");
-  for (int64_t j = 0; j < n; ++j)
+  #pragma omp parallel for schedule(static) if(n > 1024)
+  for (int64_t j = first; j < past; ++j)
     for (int c = 0; c < 3; ++c)
-      e->reference[3*j+c] = *at2(x,j,c);
+      e->reference[3*(j-first)+c] = *at2(x,j,c);
 #ifdef MDIR_ENABLE_MPI
-  if (mpi) return _mlir_ciface_mdrtDistMPIPartition(x,gx,gy,gz,lx,ly,lz);
+  if (mpi) return _mlir_ciface_mdrtDistStartPartition(x,gx,gy,gz,lx,ly,lz);
 #endif
   return _mlir_ciface_mdrtDistPartition(x,gx,gy,gz,lx,ly,lz);
 }
+
+#ifdef MDIR_ENABLE_MPI
+int64_t _mlir_ciface_mdrtDistShardEpochPartition(struct Memref2D *local, int64_t gx,
+    int64_t gy, int64_t gz, double lx, double ly, double lz, int64_t cache,
+    double skin, int64_t mpi, int64_t count) {
+  struct Memref2D view = identityView(local,count);
+  return _mlir_ciface_mdrtDistEpochPartition(&view,gx,gy,gz,lx,ly,lz,cache,skin,mpi);
+}
+#endif
 
 void _mlir_ciface_mdrtDistEpochImages(int64_t cache, int64_t layout,
                                       struct Memref3D *x) {
@@ -1909,11 +3785,14 @@ void _mlir_ciface_mdrtDistEpochImages(int64_t cache, int64_t layout,
     past = mdrtMPIDomainBound(l->domains, 1);
   }
 #endif
+  #pragma omp parallel for collapse(2) schedule(static) if((past-first)*l->stride > 512)
   for (int64_t d = first; d < past; ++d)
-    for (int64_t r = 0; r < l->rows[d]; ++r) {
-      int64_t j = l->ids[d*l->stride+r];
+    for (int64_t r = 0; r < l->stride; ++r) {
+      if (r >= l->rows[d]) continue;
+      int64_t j = domainIds(l,d)[r];
       for (int c = 0; c < 3; ++c) {
-        double len = l->edges[c], ref = e->reference[3*j+c];
+        double len = l->edges[c], ref = e->ownedReference ?
+            e->ownedReference[3*((d-first)*l->stride+r)+c] : e->reference[3*j+c];
         ref -= len*floor(ref/len);
         double *v = at3(x,d,r,c);
         *v -= len*floor((*v-ref)/len + 0.5);
@@ -1925,6 +3804,18 @@ int64_t _mlir_ciface_mdrtDistEpochHalo(int64_t layout, struct Memref3D *x,
                                        double reach, int64_t cache, int64_t midpoint) {
   struct TrajectoryEpoch *e = (struct TrajectoryEpoch *)(intptr_t)cache;
   if (!e->halo) {
+#ifdef MDIR_ENABLE_MPI
+    struct Layout *l = (struct Layout *)(intptr_t)layout;
+    if (l->mpi && mdrtMPISize() > 1) {
+      int64_t first = mdrtMPIDomainBound(l->domains,0), past = mdrtMPIDomainBound(l->domains,1);
+      e->ownedReference = realloc(e->ownedReference,3*(past-first)*l->stride*sizeof(double));
+      if (!e->ownedReference) fail("out of memory retaining local reference positions");
+      for (int64_t d = first; d < past; ++d)
+        for (int64_t r = 0; r < l->rows[d]; ++r)
+          for (int k = 0; k < 3; ++k)
+            e->ownedReference[3*((d-first)*l->stride+r)+k] = *at3(x,d,r,k);
+    }
+#endif
     e->halo = (struct Halo *)(intptr_t)buildHalo(layout,x,reach,midpoint);
     e->halo->layout->groupsFrozen = 1;
   }

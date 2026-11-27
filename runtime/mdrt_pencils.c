@@ -10,6 +10,7 @@ extern void mdrtDistPhase(int64_t);
 #endif
 #include <limits.h>
 #include <stdint.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,7 +19,7 @@ struct PmePencils {
   int n[3], px, py, rank, peers, mixed;
   rfft_plan rz;
   cfft_plan cy, cx;
-  double *line, *a, *b, *send, *recv;
+  double *a, *b, *send, *recv;
   int *schedule;
 };
 
@@ -36,6 +37,45 @@ static void *allocate(size_t n, size_t width) {
   if (!p)
     fail("insufficient memory for FFT pencils");
   return p;
+}
+
+/* Only an idle set is cached. Concurrent callers own separate sets,
+   and a grid change evicts the old plans when the new set is returned. */
+struct PlanSet {
+  int n[3];
+  rfft_plan rz;
+  cfft_plan cy, cx;
+};
+static struct PlanSet idle;
+static pthread_mutex_t planLock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_once_t planCleanup = PTHREAD_ONCE_INIT;
+
+static void clearIdle(void) {
+  if (idle.rz) {
+    destroy_rfft_plan(idle.rz);
+    destroy_cfft_plan(idle.cy);
+    destroy_cfft_plan(idle.cx);
+    memset(&idle,0,sizeof idle);
+  }
+}
+
+static void registerPlanCleanup(void) { atexit(clearIdle); }
+
+static void acquirePlans(struct PmePencils *p) {
+  pthread_once(&planCleanup,registerPlanCleanup);
+  pthread_mutex_lock(&planLock);
+  if (idle.rz && !memcmp(idle.n,p->n,sizeof idle.n)) {
+    p->rz = idle.rz;
+    p->cy = idle.cy;
+    p->cx = idle.cx;
+    memset(&idle,0,sizeof idle);
+  } else {
+    p->rz = make_rfft_plan(p->n[2]);
+    p->cy = make_cfft_plan(p->n[1]);
+    p->cx = make_cfft_plan(p->n[0]);
+  }
+  pthread_mutex_unlock(&planLock);
+  if (!p->rz || !p->cy || !p->cx) fail("cannot create pocketfft pencil plans");
 }
 
 static void cut(struct PmeBox *b, int axis, int parts, int part) {
@@ -184,24 +224,16 @@ struct PmePencils *mdrtPmePencils(int nx, int ny, int nz, int px, int py,
   p->send = allocate(2 * (size_t)largest, sizeof(double));
   p->recv = allocate(2 * (size_t)largest, sizeof(double));
   p->schedule = allocate(p->peers, 4 * sizeof(int));
-  int len = nx > ny ? nx : ny;
-  if (nz > len)
-    len = nz;
-  p->line = allocate(len, 2 * sizeof(double));
-  p->rz = make_rfft_plan(nz);
-  p->cy = make_cfft_plan(ny);
-  p->cx = make_cfft_plan(nx);
-  if (!p->rz || !p->cy || !p->cx)
-    fail("cannot create pocketfft pencil plans");
+  acquirePlans(p);
   return p;
 }
 
 /* pocketfft performs a line in binary64. Ordinary CPU PME rounds on storing
    each axis into its grid, including the real inverse. */
-static void roundLine(struct PmePencils *p, int count) {
+static void roundLine(const struct PmePencils *p, double *line, int count) {
   if (p->mixed)
     for (int i = 0; i < count; ++i)
-      p->line[i] = (float)p->line[i];
+      line[i] = (float)line[i];
 }
 
 static void complexLines(struct PmePencils *p, int axis, double *data,
@@ -210,39 +242,51 @@ static void complexLines(struct PmePencils *p, int axis, double *data,
   if (!volume(b))
     return;
   int plane = 1 - axis, len = p->n[axis];
-  for (int j = b.lo[plane]; j < b.hi[plane]; ++j)
-    for (int z = b.lo[2]; z < b.hi[2]; ++z) {
-      size_t start = 2 * indexOf(b, axis == 0 ? 0 : j, axis == 0 ? j : 0, z);
-      size_t stride = 2 * (size_t)(b.hi[2] - b.lo[2]);
-      if (axis == 0)
-        stride *= b.hi[1] - b.lo[1];
-      for (int k = 0; k < len; ++k)
-        memcpy(p->line + 2 * k, data + start + k * stride, 2 * sizeof(double));
-      cfft_plan plan = axis == 0 ? p->cx : p->cy;
-      if (forward ? cfft_forward(plan, p->line, 1)
-                  : cfft_backward(plan, p->line, 1))
-        fail("pocketfft complex transform failed");
-      roundLine(p, 2 * len);
-      for (int k = 0; k < len; ++k)
-        memcpy(data + start + k * stride, p->line + 2 * k, 2 * sizeof(double));
-    }
+  #pragma omp parallel if(volume(b) >= 4096)
+  {
+    double *line = allocate(len,2*sizeof *line);
+    #pragma omp for collapse(2) schedule(static)
+    for (int j = b.lo[plane]; j < b.hi[plane]; ++j)
+      for (int z = b.lo[2]; z < b.hi[2]; ++z) {
+        size_t start = 2 * indexOf(b, axis == 0 ? 0 : j, axis == 0 ? j : 0, z);
+        size_t stride = 2 * (size_t)(b.hi[2] - b.lo[2]);
+        if (axis == 0)
+          stride *= b.hi[1] - b.lo[1];
+        for (int k = 0; k < len; ++k)
+          memcpy(line + 2 * k, data + start + k * stride, 2 * sizeof(double));
+        cfft_plan plan = axis == 0 ? p->cx : p->cy;
+        if (forward ? cfft_forward(plan, line, 1)
+                    : cfft_backward(plan, line, 1))
+          fail("pocketfft complex transform failed");
+        roundLine(p,line, 2 * len);
+        for (int k = 0; k < len; ++k)
+          memcpy(data + start + k * stride, line + 2 * k, 2 * sizeof(double));
+      }
+    free(line);
+  }
 }
 
 void mdrtPmeForward(struct PmePencils *p, const double *real,
                     double *spectrum) {
   int n = p->n[2], h = n / 2 + 1, rows = volume(bounds(p, 2, p->rank)) / h;
-  for (int row = 0; row < rows; ++row) {
-    memcpy(p->line, real + (size_t)row * n, n * sizeof(double));
-    if (rfft_forward(p->rz, p->line, 1))
-      fail("pocketfft real transform failed");
-    roundLine(p, n);
-    double *out = p->a + 2 * (size_t)row * h;
-    out[0] = p->line[0];
-    out[1] = 0;
-    for (int z = 1; z < h; ++z) {
-      out[2 * z] = p->line[2 * z - 1];
-      out[2 * z + 1] = 2 * z < n ? p->line[2 * z] : 0;
+  #pragma omp parallel if((size_t)rows*n >= 4096)
+  {
+    double *line = allocate(n,sizeof *line);
+    #pragma omp for schedule(static)
+    for (int row = 0; row < rows; ++row) {
+      memcpy(line, real + (size_t)row * n, n * sizeof(double));
+      if (rfft_forward(p->rz, line, 1))
+        fail("pocketfft real transform failed");
+      roundLine(p,line, n);
+      double *out = p->a + 2 * (size_t)row * h;
+      out[0] = line[0];
+      out[1] = 0;
+      for (int z = 1; z < h; ++z) {
+        out[2 * z] = line[2 * z - 1];
+        out[2 * z + 1] = 2 * z < n ? line[2 * z] : 0;
+      }
     }
+    free(line);
   }
   transpose(p, 2, 1, p->a, p->b);
   complexLines(p, 1, p->b, 1);
@@ -267,28 +311,37 @@ void mdrtPmeBackward(struct PmePencils *p, const double *spectrum,
   complexLines(p, second, dst, 0);
   transpose(p, second, 2, dst, src);
   int n = p->n[2], h = n / 2 + 1, rows = volume(bounds(p, 2, p->rank)) / h;
-  for (int row = 0; row < rows; ++row) {
-    const double *in = src + 2 * (size_t)row * h;
-    p->line[0] = in[0];
-    for (int z = 1; z < h; ++z) {
-      p->line[2 * z - 1] = in[2 * z];
-      if (2 * z < n)
-        p->line[2 * z] = in[2 * z + 1];
+  #pragma omp parallel if((size_t)rows*n >= 4096)
+  {
+    double *line = allocate(n,sizeof *line);
+    #pragma omp for schedule(static)
+    for (int row = 0; row < rows; ++row) {
+      const double *in = src + 2 * (size_t)row * h;
+      line[0] = in[0];
+      for (int z = 1; z < h; ++z) {
+        line[2 * z - 1] = in[2 * z];
+        if (2 * z < n)
+          line[2 * z] = in[2 * z + 1];
+      }
+      if (rfft_backward(p->rz, line, 1))
+        fail("pocketfft real inverse failed");
+      roundLine(p,line, n);
+      memcpy(real + (size_t)row * n, line, n * sizeof(double));
     }
-    if (rfft_backward(p->rz, p->line, 1))
-      fail("pocketfft real inverse failed");
-    roundLine(p, n);
-    memcpy(real + (size_t)row * n, p->line, n * sizeof(double));
+    free(line);
   }
 }
 
 void mdrtPmeFreePencils(struct PmePencils *p) {
-  destroy_rfft_plan(p->rz);
-  destroy_cfft_plan(p->cy);
-  destroy_cfft_plan(p->cx);
+  pthread_mutex_lock(&planLock);
+  clearIdle();
+  memcpy(idle.n,p->n,sizeof idle.n);
+  idle.rz = p->rz;
+  idle.cy = p->cy;
+  idle.cx = p->cx;
+  pthread_mutex_unlock(&planLock);
   free(p->a);
   free(p->b);
-  free(p->line);
   free(p->send);
   free(p->recv);
   free(p->schedule);

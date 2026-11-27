@@ -2076,6 +2076,16 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
           llvm::any_of(from.getBuffer().getUsers(), [&](Operation *user) {
             if (user == op)
               return false;
+            if (auto ptr = dyn_cast<memref::ExtractAlignedPointerAsIndexOp>(user)) {
+              if (!ptr->hasOneUse()) return true;
+              auto cast = dyn_cast<arith::IndexCastOp>(*ptr->user_begin());
+              if (!cast || !cast->hasOneUse()) return true;
+              auto call = dyn_cast<func::CallOp>(*cast->user_begin());
+              return !call || (call.getCallee() != "mdrtMPICollectField" &&
+                               call.getCallee() != "mdrtMPIExpandField") ||
+                     call.getNumOperands() != 5 || call.getOperand(2) != cast.getResult() ||
+                     call->getBlock() != op->getBlock() || !call->isBeforeInBlock(op);
+            }
             auto store = dyn_cast<memref::StoreOp>(user);
             if (!store || store.getMemRef() != from.getBuffer())
               return true;
@@ -2164,12 +2174,33 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
       return failure();
     auto type = cast<MemRefType>(snapshot.getResult().getType());
     if (type != mdrt::getBufferType(snapshot.getField().getType()))
-      return snapshot.emitOpError(
-          "requires the buffer shape and type of its field");
-    Value size = memref::DimOp::create(builder, op->getLoc(), buffer, 0);
-    auto copy =
-        memref::AllocOp::create(builder, op->getLoc(), type, ValueRange{size});
-    memref::CopyOp::create(builder, op->getLoc(), buffer, copy);
+      return snapshot.emitOpError("requires the buffer shape and type of its field");
+    Value rows = mapping.lookupOrNull(snapshot.getIndices());
+    Value size = memref::DimOp::create(builder, op->getLoc(), rows ? rows : buffer, 0);
+    auto copy = memref::AllocOp::create(builder, op->getLoc(), type, ValueRange{size});
+    Location loc = op->getLoc();
+    Value z = arith::ConstantIndexOp::create(builder, loc, 0);
+    Value one = arith::ConstantIndexOp::create(builder, loc, 1);
+    scf::ParallelOp::create(builder, loc, ValueRange{z}, ValueRange{size}, ValueRange{one},
+        [&](OpBuilder &at, Location, ValueRange row) {
+          SmallVector<Value> indices(row);
+          Value sourceRow = rows ? Value(memref::LoadOp::create(at, loc, rows, row)) : row[0];
+          auto copyElement = [&]() {
+            indices[0] = sourceRow;
+            auto value = memref::LoadOp::create(at, loc, buffer, indices);
+            indices[0] = row[0];
+            memref::StoreOp::create(at, loc, value, copy, indices);
+          };
+          if (type.getRank() == 1) {
+            copyElement();
+          } else {
+            indices.push_back(z);
+            for (int64_t c = 0; c < type.getDimSize(1); ++c) {
+              indices.back() = arith::ConstantIndexOp::create(at, loc, c);
+              copyElement();
+            }
+          }
+        });
     mapping.map(snapshot.getResult(), copy.getResult());
     return success();
   }
@@ -2212,7 +2243,7 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     Value buffer;
     if (failed(getBuffer(to.getField(), scope, buffer)))
       return failure();
-    if (deviceResult) {
+    if (deviceResult || to->hasAttr("mdrt.partition_view")) {
       // The caller reads this storage directly. Keep it beyond the field's
       // last use, then let a loop return it to its pool at the yield.
       if (scope.owns(buffer))

@@ -279,10 +279,10 @@ public:
   DistObserver observer{this,
     [](void *p, int64_t d, int64_t n, int64_t g, const double *lo, const double *hi) {
       static_cast<DistributionLog *>(p)->domain(d,n,g,lo,hi);
-    }, [](void *p, int64_t from, int64_t to) {
+    }, [](void *p, int64_t domain, int64_t in, int64_t out) {
       auto &s = static_cast<DistributionLog *>(p)->current;
-      ++s.moves[from].out;
-      ++s.moves[to].in;
+      s.moves[domain].out += out;
+      s.moves[domain].in += in;
     }, [](void *p, int64_t from, int64_t to, int64_t bytes) {
       static_cast<DistributionLog *>(p)->current.bytes[{from,to}] += bytes;
     }, [](void *p, int64_t code) { static_cast<DistributionLog *>(p)->phase(code); },

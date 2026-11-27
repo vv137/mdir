@@ -580,7 +580,8 @@ D350 formalizes the internal neighbor-group buffer ABI and adds no control-file 
 ### CPU decomposition (D447)
 
 Within `[distribute]`, `domains` accepts a positive count or three positive
-axis counts and defaults to 1. A count chooses the factorization with the
+axis counts. It defaults to one domain for local transport and one domain
+per launched rank for MPI. A count chooses the factorization with the
 smallest domain surface area for the input cell. The traversal is
 `"directed"` (default), `"unique"`, or `"midpoint"` (D[distribute-midpoint]). The
 in-process transport is `"local"`. Without the table the ordinary single-domain
@@ -613,3 +614,9 @@ number of mesh ranks, defaulting to the communicator size.
 `pme_decomposition = [a, b]` pins the two mesh-rank dimensions. Their
 product must agree with an explicit rank count. The log prints both
 the physical PME grid and its pencil decomposition (D[distribute-pme]).
+
+For MPI transport, the driver assembles native output fields in particle identity order from distributed ranges (D[distribute-cpu-threads]).
+
+MPI distribution uses rank-local native integration fields and halo-local
+exclusion keys under the existing transport and domain controls
+(D[distribute-cpu-threads]).

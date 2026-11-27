@@ -32,9 +32,10 @@ namespace {
 /// The external functions of the runtime that a domain procedure gives a
 /// buffer it allocated, which use it only during the call:
 /// mdrtDistMatrixRebuild (runtime/mdrt_dist.c) compares the positions with
-/// the reference positions of its matrix and copies them there.
+/// the reference positions of its matrix and copies them there. The midpoint
+/// filter reads current positions while emitting selected row indices.
 static bool usesOnlyDuringCall(StringRef name) {
-  return name == "mdrtDistMatrixRebuild";
+  return name == "mdrtDistMatrixRebuild" || name == "mdrtDistBuildMidpoint" || name == "mdrtDistFilterMatrix";
 }
 
 class Release {
