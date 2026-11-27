@@ -3,10 +3,18 @@
 # RUN: cp %S/Inputs/towers-one-step.toml %S/../../examples/argon/argon.pdb %t/
 # RUN: sed -e 's/"TOWERS"/"MATRIX"/' -e 's/"MIXED"/"DOUBLE"/' -e 's/pairlist_distance *=.*/pairlist_distance = "AUTO"/' %t/towers-one-step.toml > %t/run.toml
 # RUN: printf '\n[distribute]\ntransport = "nccl"\ndomains = 2\n' >> %t/run.toml
-# RUN: cd %t && env MDIR_SKIN_CACHE=off MDIR_SKIN_SEARCH=always MDIR_DIST_AUTO_MEMORY_BYTES=280000000 %mpiexec -n 2 mdir run run.toml > fits.log
+# The two-rank geometry estimates about 261 MiB for the short reach and
+# 266 MiB for the original reach. Place the artificial budget between them.
+# RUN: cd %t && env MDIR_SKIN_CACHE=off MDIR_SKIN_SEARCH=always MDIR_DIST_AUTO_MEMORY_BYTES=276000000 %mpiexec -n 2 mdir run run.toml > fits.log 2>&1
+# RUN: FileCheck %s --check-prefix=PREFLIGHT < %t/fits.log
 # RUN: FileCheck %s --check-prefix=FITS < %t/fits.log
 # RUN: cd %t && not env MDIR_SKIN_CACHE=off MDIR_SKIN_SEARCH=always MDIR_DIST_AUTO_MEMORY_BYTES=1 %mpiexec -n 2 mdir run run.toml > none.log 2>&1
 # RUN: FileCheck %s --check-prefix=NONE < %t/none.log
+
+# PREFLIGHT: distributed list 10.000 Ang preflight: rank 0 needs an estimated {{.*}} (skipped)
+# PREFLIGHT: distributed list 10.000 Ang preflight: rank 1 needs an estimated {{.*}} (skipped)
+# PREFLIGHT: distributed list 8.650 Ang preflight: rank 0 needs an estimated {{.*}} (admitted)
+# PREFLIGHT: distributed list 8.650 Ang preflight: rank 1 needs an estimated {{.*}} (admitted)
 
 # FITS: distributed list 10.000 Ang skipped: rank 0 needs an estimated
 # FITS: distributed list 8.650 Ang:
