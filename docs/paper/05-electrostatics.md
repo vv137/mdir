@@ -1526,3 +1526,9 @@ has already produced on its group layout. If the requested view has the
 same floating field type and layout, the driver forwards those owned rows.
 The native collection is necessary only when another consumer reads the
 correction in identity order.
+
+For distributed mixed pair electrostatics, the precision pass rounds
+pair-only charge fields when it copies them from spatial transport.
+This removes four packed double-to-float conversion sites from the
+Cellulose force kernel. The compiled kernel retains the same 62 packed
+binary32 multiply sites and the same binary64 image subtractions.

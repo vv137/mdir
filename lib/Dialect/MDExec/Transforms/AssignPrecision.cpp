@@ -230,6 +230,7 @@ private:
   SmallVector<Boundary> boundaries;
   SmallVector<Value> positions, forces, integrated;
   SmallVector<Value> stageFields;
+  llvm::DenseSet<Value> pairInputCopies;
 
   SmallVector<PairForOp> pairLoops;
   SmallVector<TupleForOp> tupleLoops;
@@ -563,6 +564,8 @@ LogicalResult Assigner::resolve() {
       storage.assigned = policy.position;
     else if (storage.isForce)
       storage.assigned = policy.force;
+    else if (!storage.isStage && pairInputCopies.contains(field))
+      storage.assigned = policy.kernel;
     else if (storage.isIntegrated)
       storage.assigned = policy.integrator;
     else if (oneType)
@@ -800,6 +803,19 @@ void Assigner::isolateBoundaries() {
       Value copy = createCopy(builder, op->getLoc(), result);
       result.replaceAllUsesExcept(
           copy, copy.getDefiningOp<ParticleForOp>().getOperation());
+      // Spatial transport delivers binary64 fields. A scalar read only
+      // as a mixed pair parameter can round once in this existing copy.
+      auto field = cast<FieldType>(copy.getType());
+      if (!deterministic && function->hasAttr("md_dist.domain_procedure") &&
+          field.getNumComponents() == 1 && field.getElementType().isF64() &&
+          policy.kernel.isF32() && llvm::all_of(copy.getUses(), [](OpOperand &use) {
+            auto pair = dyn_cast<PairForOp>(use.getOwner());
+            if (!pair || pair.getIns().empty()) return false;
+            unsigned first = pair.getIns().getBeginOperandIndex();
+            return use.getOperandNumber() >= first &&
+                   use.getOperandNumber() - first < pair.getIns().size();
+          }))
+        pairInputCopies.insert(copy);
       continue;
     }
     OpBuilder builder(op);

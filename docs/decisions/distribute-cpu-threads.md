@@ -266,3 +266,10 @@ When a floating field returns from identity order to the same owned
 layout without an image change, the original owned field supplies that
 consumer. A remaining native consumer still triggers a collection.
 Fixed-point sums retain their explicit field materialization.
+
+In mixed precision the owned spatial transport delivers binary64 charge
+values. When every use of its isolated scalar copy is a pair input, the
+copy rounds each value once to binary32. The pair kernel reads binary32
+charges directly. A scalar with a native consumer keeps its assigned
+precision. Explicit midpoint images still form displacements in binary64
+before the force calculation rounds them.
