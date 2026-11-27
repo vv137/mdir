@@ -1408,6 +1408,13 @@ from below. Reversing the choices bounds it from above. Only intervals
 that cross a cell or image boundary need a new exact decision as the
 particles move within their coordinate bounds.
 
+The final step of a reporting interval can use the same reference positions
+and candidate matrix as the preceding plain steps. Both sites test the
+maximum displacement against half the skin before reuse. The scope of
+their shared cache fixes the cell, constraint relations, and halo geometry.
+The exclusion projection refers to the same immutable topology version
+at both sites.
+
 A double-precision check compared every selected row with the exact
 midpoint filter at the same coordinates during eight 2 fs steps. The
 stable inside and outside classes covered 70.4% of candidates for JAC,

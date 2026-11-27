@@ -156,6 +156,17 @@ private:
                                     ValueRange reduce, DenseF64ArrayAttr weights,
                                     bool atomic, double scale);
   llvm::DenseMap<Value, Value> trajectoryCaches;
+  // A native reporting block follows a completed plain-step loop.
+  struct InnerEpoch {
+    scf::ForOp loop;
+    PartitionOp partition;
+    Type haloType;
+    int64_t mode;
+    Value cache;
+  };
+  SmallVector<InnerEpoch> innerEpochs;
+  llvm::DenseMap<std::pair<Operation *, Value>, Value> scopedExclusions;
+  int64_t haloMode(HaloOp op);
   llvm::DenseMap<std::pair<Block *,Value>,Value> topologyShards;
   llvm::DenseMap<Value, Value> tupleSchedules;
   llvm::DenseSet<std::pair<Block *, Value>> sharedTuplePositions;
@@ -628,6 +639,24 @@ Value Lowering::ownedCapacity(OpBuilder &b, Value handle) {
   return toIndex(b, func::CallOp::create(b, loc, capacity, ValueRange{handle}).getResult(0));
 }
 
+int64_t Lowering::haloMode(HaloOp op) {
+  bool midpoint = matrixPairs && module->hasAttr("md_dist.driver") &&
+      llvm::any_of(op.getResult().getUsers(), [](Operation *user) {
+        auto n = dyn_cast<NeighborhoodOp>(user);
+        return n && n.getResult().getType().getTraversal() == Traversal::Midpoint;
+      }) && llvm::all_of(op.getResult().getUsers(), [](Operation *user) {
+        auto n = dyn_cast<NeighborhoodOp>(user);
+        return !n || n.getResult().getType().getTraversal() == Traversal::Midpoint;
+      });
+  bool local = mpi && module->hasAttr("md_dist.driver") &&
+      llvm::all_of(op.getResult().getUsers(), [](Operation *user) {
+        auto rows = dyn_cast<TupleRowsOp>(user);
+        return !rows || llvm::all_of(rows.getRows().getUsers(),
+            [](Operation *use) { return isa<TupleKernelOp>(use); });
+      });
+  return midpoint + (local ? 2 : 0);
+}
+
 LogicalResult Lowering::lowerPartition(PartitionOp op) {
   OpBuilder b(op);
   Value edges[3];
@@ -679,12 +708,33 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
         scope = loop;
       }
       if (scope) {
-        OpBuilder init(scope);
-        cache = func::CallOp::create(init, loc,
-            declare("mdrtDistEpochCreate", b.getFunctionType({}, {i64}), false)).getResult(0);
-        OpBuilder after(scope->getBlock(), std::next(scope->getIterator()));
-        func::CallOp::create(after, loc,
-            declare("mdrtDistEpochDestroy", b.getFunctionType({i64}, {}), false), ValueRange{cache});
+        auto inner = op->getParentOfType<scf::ForOp>();
+        Type haloType = pairHalo.getResult().getType();
+        int64_t mode = haloMode(pairHalo);
+        if (op->getParentOp() == scope) {
+          for (auto it = innerEpochs.begin(); it != innerEpochs.end(); ++it) {
+            PartitionOp prior = it->partition;
+            if (it->loop->getParentOp() == scope && it->loop->isBeforeInBlock(op) &&
+                prior.getPositions().getType() == fieldType &&
+                prior.getCell() == op.getCell() && prior.getGroups() == op.getGroups() &&
+                shardExtent.lookup(prior) == shardExtent.lookup(op) &&
+                it->haloType == haloType && it->mode == mode) {
+              cache = it->cache;
+              innerEpochs.erase(it);
+              break;
+            }
+          }
+        }
+        if (!cache) {
+          OpBuilder init(scope);
+          cache = func::CallOp::create(init, loc,
+              declare("mdrtDistEpochCreate", b.getFunctionType({}, {i64}), false)).getResult(0);
+          OpBuilder after(scope->getBlock(), std::next(scope->getIterator()));
+          func::CallOp::create(after, loc,
+              declare("mdrtDistEpochDestroy", b.getFunctionType({i64}, {}), false), ValueRange{cache});
+          if (op->getParentOp() == inner && inner->getParentOp() == scope)
+            innerEpochs.push_back({inner, op, haloType, mode, cache});
+        }
         trajectoryCaches[pairHalo.getResult()] = cache;
         trajectoryCaches[pairHalo.getPositions()] = cache;
       }
@@ -1014,21 +1064,8 @@ LogicalResult Lowering::lowerHalo(HaloOp op) {
   SmallVector<Value> args{layout.handle, positions, real(b, reach)};
   Value cache = trajectoryCaches.lookup(op.getResult());
   if (cache) args.push_back(cache);
-  bool midpoint = matrixPairs && module->hasAttr("md_dist.driver") &&
-      llvm::any_of(op.getResult().getUsers(), [](Operation *user) {
-        auto n = dyn_cast<NeighborhoodOp>(user);
-        return n && n.getResult().getType().getTraversal() == Traversal::Midpoint;
-      }) && llvm::all_of(op.getResult().getUsers(), [](Operation *user) {
-        auto n = dyn_cast<NeighborhoodOp>(user);
-        return !n || n.getResult().getType().getTraversal() == Traversal::Midpoint;
-      });
-  bool local = mpi && module->hasAttr("md_dist.driver") &&
-      llvm::all_of(op.getResult().getUsers(), [](Operation *user) {
-        auto rows = dyn_cast<TupleRowsOp>(user);
-        return !rows || llvm::all_of(rows.getRows().getUsers(),
-            [](Operation *use) { return isa<TupleKernelOp>(use); });
-      });
-  int64_t mode = midpoint + (local ? 2 : 0);
+  int64_t mode = haloMode(op);
+  bool midpoint = mode & 1, local = mode & 2;
   StringRef name = midpoint ? "mdrtDistMidpointHalo" : "mdrtDistHalo";
   if (cache) {
     name = "mdrtDistEpochHalo";
@@ -1652,11 +1689,18 @@ LogicalResult Lowering::lowerNeighborhood(NeighborhoodOp op) {
       if (!loop.isDefinedOutsideOfLoop(excluded)) break;
       scope = loop;
     }
-    OpBuilder init(scope);
-    Value members = mdrt::ToBufferOp::create(init, loc, type, excluded);
     bool local = mpi && module->hasAttr("md_dist.driver");
-    auto build = declare(local ? "mdrtDistExclusionShard" : "mdrtDistExclusions", b.getFunctionType({type}, {i64}), true);
-    Value handle = func::CallOp::create(init, loc, build, members).getResult(0);
+    auto key = std::make_pair(scope, excluded);
+    Value handle = scopedExclusions.lookup(key);
+    bool created = !handle;
+    if (created) {
+      OpBuilder init(scope);
+      Value members = mdrt::ToBufferOp::create(init, loc, type, excluded);
+      auto build = declare(local ? "mdrtDistExclusionShard" : "mdrtDistExclusions",
+                           b.getFunctionType({type}, {i64}), true);
+      handle = func::CallOp::create(init, loc, build, members).getResult(0);
+      scopedExclusions[key] = handle;
+    }
     Value selected = handle;
     if (local) {
       auto project = declare("mdrtDistHaloExclusions",b.getFunctionType({i64,i64},{i64}),false);
@@ -1666,8 +1710,10 @@ LogicalResult Lowering::lowerNeighborhood(NeighborhoodOp op) {
     OpBuilder cleanup(end);
     auto release = declare("mdrtDistFreeExclusions", b.getFunctionType({i64}, {}), false);
     if (local) func::CallOp::create(cleanup,loc,release,selected);
-    if (scope != op) cleanup.setInsertionPointAfter(scope);
-    func::CallOp::create(cleanup, loc, release, handle);
+    if (created) {
+      if (scope != op) cleanup.setInsertionPointAfter(scope);
+      func::CallOp::create(cleanup, loc, release, handle);
+    }
   }
   func::CallOp::create(
       b, loc,
@@ -3696,6 +3742,8 @@ LogicalResult Lowering::run(func::FuncOp function) {
   grouped.clear();
   relations.clear();
   trajectoryCaches.clear();
+  innerEpochs.clear();
+  scopedExclusions.clear();
   sharedTuplePositions.clear();
   tupleSchedules.clear();
   topologyShards.clear();

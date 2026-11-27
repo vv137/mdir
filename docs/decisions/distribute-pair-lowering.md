@@ -24,3 +24,11 @@ reordering, each chunk of center rows accumulates into its own force
 buffer. The scratch contains both owned and ghost endpoints. A second
 loop sums each destination in chunk order before halo return. This avoids
 a scalar atomic addition per active neighbor and force component.
+
+In a native reporting interval the plain inner steps and the subsequent
+reporting step share a Verlet epoch when their particle set, cell,
+constraint relations, halo reach, and halo construction mode match. The
+inner loop completes before the reporting step uses its cache. The same
+displacement test runs at both sites. An invariant exclusion relation
+has one directory version within its common loop scope, so alternating
+the two sites preserves its projection on a live halo.
