@@ -23,6 +23,14 @@
 # RUN: %python %S/Inputs/kind_pairs_mixture.py %t/site-first site-first
 # RUN: %mdir_python %S/Inputs/rigid_units_frames.py site-first %t/site-first/system.top %t/site-first/system.gro 3 10 | tee %t/site-first.txt | FileCheck %s -DS=site-first
 #
+# The mixture with an ion listed inside each water of four sites: that kind
+# is not of consecutive particles, so ON does not take it and its particles
+# run in the rest (D[water-layout]); the run must still agree with the
+# general route within the same bounds.
+# RUN: mkdir -p %t/scattered
+# RUN: %python %S/Inputs/kind_pairs_mixture.py %t/scattered scattered
+# RUN: %mdir_python %S/Inputs/rigid_units_frames.py scattered %t/scattered/system.top %t/scattered/system.gro 3 10 | tee %t/scattered.txt | FileCheck %s -DS=scattered
+#
 # The anchors of the rest, with PME: alanine dipeptide in OPC under NPT
 # (Amber's extra point, not linear in its frame, so compared from the first
 # step on, where the frame is constrained) and in TIP3P under NVT.

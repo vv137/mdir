@@ -320,11 +320,27 @@ llvm::Error mdir::driver::resolveRigidUnits(Control &control,
                                      "outside the molecule",
                                      kind.outsideExclusions,
                                      plural(kind.outsideExclusions));
-      else if (kind.scattered)
-        // The list reads a copy from its first particle (D[water-layout]).
+      else if (kind.scattered) {
+        // The list reads a copy from its first particle (D[water-layout]):
+        // a kind with a molecule that is not of consecutive particles is
+        // not taken, and its particles run as particles of the rest, an
+        // automatic choice that the warning names.
         entry.reason = llvm::formatv("{0} molecule{1} not of consecutive "
-                                     "particles",
+                                     "particles; its particles run in the "
+                                     "rest",
                                      kind.scattered, plural(kind.scattered));
+        entry.scattered = kind.scattered;
+        if (on)
+          route.warnings.push_back(
+              {"rigid_units_scattered",
+               llvm::formatv("kind {0}: {1} of {2} molecules are not of "
+                             "consecutive particles in the input; the list "
+                             "of units reads a copy from its first particle, "
+                             "so the kind is not taken and its particles run "
+                             "as particles of the rest (D[water-layout])",
+                             entry.number, kind.scattered, entry.molecules)
+                   .str()});
+      }
       else if (takenCount == 2)
         entry.reason = "beyond the two most populous";
       else {
@@ -384,6 +400,19 @@ llvm::Error mdir::driver::resolveRigidUnits(Control &control,
     if (on) {
       if (route.kinds.empty())
         return refuse("no rigid kind: the system has no rigid group (D403)");
+      // Only kinds that are not of consecutive particles stand in the way:
+      // the run takes the general route, which runs every input, and says
+      // why (D[water-layout]).
+      bool onlyScattered =
+          !takenCount && llvm::any_of(route.kinds, [](const auto &kind) {
+            return kind.scattered;
+          });
+      if (onlyScattered) {
+        route.reason = "ON was given, but no kind of consecutive particles "
+                       "is eligible: the general route";
+        control.rigidUnitsRoute = std::move(route);
+        return llvm::Error::success();
+      }
       if (!takenCount) {
         std::string reasons;
         for (const RigidUnitsRoute::Kind &kind : route.kinds)
@@ -509,7 +538,8 @@ llvm::json::Object mdir::driver::getRigidUnitsJSON(const Control &control) {
                  {"units", static_cast<int64_t>(kind.molecules)},
                  {"places", kind.places},
                  {"frame", kind.frame},
-                 {"sites", kind.sites}};
+                 {"sites", kind.sites},
+                 {"scattered", static_cast<int64_t>(kind.scattered)}};
     if (kind.nonlinearSites)
       entry["input_off_constraints"] = Object{
           {"molecules", static_cast<int64_t>(kind.offConstraints)},

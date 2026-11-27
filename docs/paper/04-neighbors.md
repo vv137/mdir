@@ -1255,9 +1255,10 @@ the particles of each copy of a rigid kind consecutive (Section 4.2), so
 a list of units holds no table of members: the place of a copy names the
 particle of the copy's place 0, and its place $p$ is the particle $p$ after
 it. The writer and the traversal form every member's index from that one
-number, and the forces of a unit's places reach its frame atoms there. A run whose
-copy is not consecutive stops at the setup, and a kind whose molecules are
-not of consecutive particles in the input is not taken.
+number, and the forces of a unit's places reach its frame atoms there. A kind
+whose molecules are not of consecutive particles in the input is not taken:
+its particles run in the rest, with a warning, and where no other kind is
+eligible the run takes the general route.
 
 **The writer** (D422). After the last op of a step
 that writes the positions (the constraints, and a barostat's scaling), one

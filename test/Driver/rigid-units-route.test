@@ -190,20 +190,43 @@
 # OUTSIDE: not taken: 2 molecules with an excluded pair outside the molecule
 #
 # The list of units reads a copy of a taken kind from its first particle,
-# its places being consecutive particles (D[water-layout]): the waters of
-# four sites with an ion of their own listed between the second hydrogen
-# and the site are not taken, with that reason, and the third kind is
-# taken in their place. With the site listed before its frame they are
-# consecutive, and taken.
-# RUN: mkdir -p %t/scattered %t/site-first
+# its places being consecutive particles (D[water-layout]). A kind whose
+# molecules are not consecutive in the input is not refused: it is not
+# taken, its particles run in the rest, and `mdir check` and the run warn.
+# The waters of four sites with an ion of their own listed between the
+# second hydrogen and the site are such a kind, and the third kind is taken
+# in their place (`rigid-units-frames-gpu.test` runs it against the general
+# route). With the site listed before its frame they are consecutive, and
+# taken.
+# RUN: mkdir -p %t/scattered %t/scattered-only %t/site-first
 # RUN: %python %S/Inputs/kind_pairs_mixture.py %t/scattered scattered
 # RUN: printf '[execution]\ntarget = "GPU"\nprecision = "MIXED"\n[performance]\nrigid_units = "ON"\n' >> %t/scattered/run.toml
 # RUN: mdir check %t/scattered/run.toml | FileCheck %s --check-prefix=SCATTERED
 # SCATTERED: rigid units: ON: the units (ON was given)
 # SCATTERED-NEXT: kind 1: taken, 3 units of 3 places (3 in the frame, 0 sites)
 # SCATTERED-NEXT: kind 2: not taken: one particle
-# SCATTERED-NEXT: kind 3: not taken: 2 molecules not of consecutive particles
+# SCATTERED-NEXT: kind 3: not taken: 2 molecules not of consecutive particles; its particles run in the rest
 # SCATTERED-NEXT: kind 4: taken, 2 units of 3 places (3 in the frame, 0 sites)
+# RUN: mdir check %t/scattered/run.toml 2>&1 >/dev/null | FileCheck %s --check-prefix=SCATTERED-WARN
+# SCATTERED-WARN: warning: kind 3: 2 of 2 molecules are not of consecutive particles in the input
+# RUN: mdir check --json %t/scattered/run.toml | %python -c "import json, sys; d = json.load(sys.stdin); k = d['run']['rigid_units']['kinds'][2]; print([w['code'] for w in d['warnings'] if w['code'].startswith('rigid')], k['taken'], k['scattered'])" | FileCheck %s --check-prefix=SCATTERED-JSON
+# SCATTERED-JSON: ['rigid_units_scattered'] False 2
+#
+# Where the kinds that are not consecutive are the only eligible ones, ON
+# takes the general route with that reason, and the program is the general
+# one; under AUTO there is no warning.
+# RUN: %python %S/Inputs/kind_pairs_mixture.py %t/scattered-only scattered-only
+# RUN: cp %t/scattered-only/run.toml %t/scattered-only/auto.toml
+# RUN: printf '[execution]\ntarget = "GPU"\nprecision = "MIXED"\n[performance]\nrigid_units = "ON"\n' >> %t/scattered-only/run.toml
+# RUN: mdir check %t/scattered-only/run.toml | FileCheck %s --check-prefix=SCATTERED-ONLY
+# SCATTERED-ONLY: rigid units: ON: general (ON was given, but no kind of consecutive particles is eligible: the general route)
+# RUN: mdir check %t/scattered-only/run.toml 2>&1 >/dev/null | FileCheck %s --check-prefix=SCATTERED-WARN-ONLY
+# SCATTERED-WARN-ONLY: warning: kind 1: 2 of 2 molecules are not of consecutive particles in the input
+# RUN: mdir emit --stage=module %t/scattered-only/run.toml | FileCheck %s --check-prefix=GENERAL
+# RUN: mdir check %t/scattered-only/auto.toml 2>&1 | FileCheck %s --check-prefix=SCATTERED-AUTO
+# SCATTERED-AUTO-NOT: not of consecutive particles in the input
+# SCATTERED-AUTO: rigid units: AUTO: general
+# SCATTERED-AUTO-NOT: not of consecutive particles in the input
 # RUN: %python %S/Inputs/kind_pairs_mixture.py %t/site-first site-first
 # RUN: printf '[execution]\ntarget = "GPU"\nprecision = "MIXED"\n[performance]\nrigid_units = "ON"\n' >> %t/site-first/run.toml
 # RUN: mdir check %t/site-first/run.toml | FileCheck %s --check-prefix=SITE-FIRST

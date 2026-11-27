@@ -1,6 +1,6 @@
 ### Changed
 
-- **A list of rigid units reads each copy of a taken kind as consecutive particles** (D[water-layout], #794). The order of the state already keeps a copy's particles together. The list therefore has no table of members, and the writer of the frames takes the places in their order. `rigid_units = "ON"` does not take a kind whose molecules are not of consecutive particles in the input, and `mdir check` gives that reason.
+- **A list of rigid units reads each copy of a taken kind as consecutive particles** (D[water-layout], #794). The order of the state already keeps a copy's particles together. The list therefore has no table of members, and the writer of the frames takes the places in their order. Under `rigid_units = "ON"` a kind whose molecules are not of consecutive particles in the input is not taken. Its particles run in the rest, and `mdir check` and the run warn (`rigid_units_scattered`). Where no other kind is eligible, the run takes the general route and says why. No input is refused.
 
 ### Performance
 
