@@ -3291,7 +3291,17 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, Value d, FlatSymbolRefAttr
     }
     ins.push_back(packed);
   }
-  if (unique && relation.periodicOwned)
+  if (unique && sharedState() && domains > 1) {
+    Type element = b.getI64Type();
+    auto device = MemRefType::get({ShapedType::kDynamic}, element,
+                                  MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
+    SmallVector<Value> args{halo.handle, externalStream(b)};
+    auto ids = declare("mdrtDistPairIdentities",
+                       b.getFunctionType(ValueRange(args).getTypes(), {device}), true);
+    Value buffer = func::CallOp::create(b, loc, ids, args).getResult(0);
+    ins.push_back(mdrt::FromBufferOp::create(b, loc,
+        md::FieldType::get(module.getContext(), set, 1, element), buffer));
+  } else if (unique && relation.periodicOwned)
     ins.push_back(makeField(b, set, 1, b.getI64Type(), d, {layout.ids}, {nOwned}));
   else if (unique)
     ins.push_back(makeField(b, set, 1, b.getI64Type(), d,
