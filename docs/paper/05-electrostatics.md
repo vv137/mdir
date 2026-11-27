@@ -1390,6 +1390,14 @@ and scatters particles by starting plane and computes the output planes.
 The prefix scan visits blocks in particle order, so changing the team size
 preserves the incident-particle order within each plane.
 
+A midpoint force kernel updates the two endpoints of each accepted pair.
+When the force algebra permits reordering, contiguous chunks of the
+interleaved center rows each sum their endpoint contributions into a
+private local field. Each destination then sums the fields in chunk order.
+This preserves the force exchange of the pair kernel and moves synchronization
+out of its inner loop. Scratch storage scales with the number of local
+owned and ghost rows times the bounded number of chunks.
+
 For the real-space midpoint traversal, interval classification amortizes
 the domain test over steps that share a neighbor matrix. The lower bound
 on midpoint displacement uses the lower coordinate of the center and the

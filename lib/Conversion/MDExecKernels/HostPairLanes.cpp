@@ -266,7 +266,8 @@ SmallVector<Value> kernels::emitPairRowLanes(OpBuilder &builder,
                                              md_exec::PairForOp op,
                                              Value counts, Value index,
                                              Value box, Value inverse,
-                                             Value central, int64_t width, Value imageShifts, Value imagePositions) {
+                                             Value central, int64_t width, Value imageShifts, Value imagePositions,
+                                             Value privateOut, Value rowOffset) {
   Location loc = op.getLoc();
   Value positions = op.getPositions();
   SmallVector<Value> insBuffers(op.getIns().begin(), op.getIns().end());
@@ -341,6 +342,16 @@ SmallVector<Value> kernels::emitPairRowLanes(OpBuilder &builder,
   }
   first.push_back(sums.size());
 
+  auto scatter = [&](OpBuilder &b, Value value, unsigned output, Value row) {
+    if (!privateOut) {
+      emitHostAtomicAdd(b, loc, value, op.getOuts()[output], row);
+      return;
+    }
+    Value at = arith::AddIOp::create(b, loc, rowOffset, row);
+    Value sum = arith::AddFOp::create(b, loc, loadElement(b, loc, privateOut, at), value);
+    storeElement(b, loc, sum, privateOut, at);
+  };
+
   // One group of `width` candidates whose entries are `entries`;
   // `valid`, where it is set, masks the lanes past the row.
   auto emitGroup = [&](OpBuilder &b, Value entries, Value valid,
@@ -407,7 +418,7 @@ SmallVector<Value> kernels::emitPairRowLanes(OpBuilder &builder,
             Value value = contribution;
             if (op.getExchange(i) == md::Exchange::Antisymmetric)
               value = arith::NegFOp::create(at, loc, value);
-            emitHostAtomicAdd(at, loc, value, op.getOuts()[i], other[lane]);
+            scatter(at, value, i, other[lane]);
           }
           scf::YieldOp::create(at, loc);
         });
@@ -490,7 +501,7 @@ SmallVector<Value> kernels::emitPairRowLanes(OpBuilder &builder,
     Value destination = op.getOuts()[i];
     Value total = totals[i];
     if (op.getConflict() == md_exec::Conflict::Atomic) {
-      emitHostAtomicAdd(builder, loc, total, destination, central);
+      scatter(builder, total, i, central);
       continue;
     }
     if (!op.overwrites(i))

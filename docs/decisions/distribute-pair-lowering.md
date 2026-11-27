@@ -18,3 +18,9 @@ neighbor and returns ghost contributions to their owners.
 
 Deterministic distributed runs retain the canonical image calculation,
 Q40 force terms, Q32 observables, and checked wide sums of ruling B.
+
+For midpoint vector loops whose force and observable sums all permit
+reordering, each chunk of center rows accumulates into its own force
+buffer. The scratch contains both owned and ghost endpoints. A second
+loop sums each destination in chunk order before halo return. This avoids
+a scalar atomic addition per active neighbor and force component.

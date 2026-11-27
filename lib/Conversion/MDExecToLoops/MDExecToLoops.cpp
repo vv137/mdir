@@ -426,24 +426,93 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
     bandWidth = arith::MulIOp::create(builder, loc, cycles, createIndex(builder, loc, 8));
     covered = arith::MulIOp::create(builder, loc, cycles, cycle);
   }
+  auto centerRow = [&](OpBuilder &body, Value row) {
+    if (bandWidth) {
+      Value tile = createIndex(body, loc, 8);
+      Value cycle = createIndex(body, loc, 128);
+      Value phase = arith::RemUIOp::create(body, loc, row, cycle);
+      Value band = arith::DivUIOp::create(body, loc, phase, tile);
+      Value start = arith::MulIOp::create(body, loc, band, bandWidth);
+      Value round = arith::DivUIOp::create(body, loc, row, cycle);
+      Value within = arith::AddIOp::create(body, loc,
+          arith::MulIOp::create(body, loc, round, tile),
+          arith::RemUIOp::create(body, loc, phase, tile));
+      row = arith::SelectOp::create(body, loc,
+          arith::CmpIOp::create(body, loc, arith::CmpIPredicate::ult, row, covered),
+          arith::AddIOp::create(body, loc, start, within), row);
+    }
+    return row;
+  };
+  auto algebra = md_exec::algebra::getAlgebras(op);
+  if (structure.midpoint && hostLanes && op.getOuts().size() == 1 &&
+      !op.getCenterSet() &&
+      op.getConflict() == md_exec::Conflict::Atomic &&
+      algebra && md_exec::algebra::allowReorder(*algebra)) {
+    // A chunk owns an entire force buffer, including its ghost endpoints.
+    // Bound the scratch and avoid full extra buffers for short row lists.
+    Value chunks = arith::MinUIOp::create(builder, loc, createIndex(builder, loc, 16),
+        arith::CeilDivUIOp::create(builder, loc, size, createIndex(builder, loc, 1024)));
+    Value out = op.getOuts().front();
+    auto type = cast<MemRefType>(out.getType());
+    Value rows = createSize(builder, loc, out);
+    Value slots = arith::MulIOp::create(builder, loc, rows, chunks);
+    SmallVector<int64_t> shape(type.getShape());
+    shape[0] = ShapedType::kDynamic;
+    Value scratch = memref::AllocOp::create(builder, loc,
+        MemRefType::get(shape, type.getElementType()), ValueRange{slots});
+    Type valueType = type.getRank() == 1 ? type.getElementType() :
+        Type(VectorType::get({type.getDimSize(1)}, type.getElementType()));
+    SmallVector<Value> zeros;
+    for (Value init : inits)
+      zeros.push_back(createZero(builder, loc, init.getType()));
+    auto partials = scf::ParallelOp::create(builder, loc, ValueRange{zero},
+        ValueRange{chunks}, ValueRange{one}, inits,
+        [&](OpBuilder &at, Location, ValueRange ivs, ValueRange) {
+          Value offset = arith::MulIOp::create(at, loc, rows, ivs[0]);
+          scf::ForOp::create(at, loc, zero, rows, one, ValueRange{},
+              [&](OpBuilder &body, Location, Value row, ValueRange) {
+                storeElement(body, loc, createZero(body, loc, valueType), scratch,
+                    arith::AddIOp::create(body, loc, offset, row));
+                scf::YieldOp::create(body, loc);
+              });
+          auto bound = [&](Value chunk) {
+            return arith::DivUIOp::create(at, loc,
+                arith::MulIOp::create(at, loc, size, chunk), chunks);
+          };
+          Value begin = bound(ivs[0]);
+          Value end = bound(arith::AddIOp::create(at, loc, ivs[0], one));
+          auto local = scf::ForOp::create(at, loc, begin, end, one, zeros,
+              [&](OpBuilder &body, Location, Value row, ValueRange accum) {
+                auto values = emitPairRowLanes(body, op, structure.counts, entries,
+                    box, inverse, centerRow(body, row), *hostLanes, imageShifts,
+                    imagePositions, scratch, offset);
+                for (auto [i, value] : llvm::enumerate(values))
+                  values[i] = arith::AddFOp::create(body, loc, accum[i], value);
+                scf::YieldOp::create(body, loc, values);
+              });
+          if (!inits.empty())
+            createReduction(at, loc, SmallVector<Value>(local.getResults()), true);
+        });
+    scf::ParallelOp::create(builder, loc, ValueRange{zero}, ValueRange{rows},
+        ValueRange{one}, [&](OpBuilder &at, Location, ValueRange ivs) {
+          Value init = loadElement(at, loc, out, ivs[0]);
+          auto sum = scf::ForOp::create(at, loc, zero, chunks, one, ValueRange{init},
+              [&](OpBuilder &body, Location, Value chunk, ValueRange partial) {
+                Value index = arith::AddIOp::create(body, loc, ivs[0],
+                    arith::MulIOp::create(body, loc, chunk, rows));
+                scf::YieldOp::create(body, loc, arith::AddFOp::create(body, loc,
+                    partial[0], loadElement(body, loc, scratch, index)).getResult());
+              });
+          storeElement(at, loc, sum.getResult(0), out, ivs[0]);
+        });
+    memref::DeallocOp::create(builder, loc, scratch);
+    op.replaceAllUsesWith(partials.getResults());
+    return success();
+  }
   auto loop = scf::ParallelOp::create(
       builder, loc, ValueRange{zero}, ValueRange{size}, ValueRange{one},
       inits, [&](OpBuilder &body, Location, ValueRange ivs, ValueRange) {
-        Value row = ivs[0];
-        if (bandWidth) {
-          Value tile = createIndex(body, loc, 8);
-          Value cycle = createIndex(body, loc, 128);
-          Value phase = arith::RemUIOp::create(body, loc, row, cycle);
-          Value band = arith::DivUIOp::create(body, loc, phase, tile);
-          Value start = arith::MulIOp::create(body, loc, band, bandWidth);
-          Value round = arith::DivUIOp::create(body, loc, row, cycle);
-          Value within = arith::AddIOp::create(body, loc,
-              arith::MulIOp::create(body, loc, round, tile),
-              arith::RemUIOp::create(body, loc, phase, tile));
-          row = arith::SelectOp::create(body, loc,
-              arith::CmpIOp::create(body, loc, arith::CmpIPredicate::ult, row, covered),
-              arith::AddIOp::create(body, loc, start, within), row);
-        }
+        Value row = centerRow(body, ivs[0]);
         auto emitRow = [&](OpBuilder &at) {
           if (hostLanes)
             return emitPairRowLanes(at, op, structure.counts, entries, box,
