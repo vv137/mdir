@@ -1257,8 +1257,9 @@ particle of the copy's place 0, and its place $p$ is the particle $p$ after
 it. The writer and the traversal form every member's index from that one
 number, and the forces of a unit's places reach its frame atoms there. A kind
 whose molecules are not of consecutive particles in the input is not taken:
-its particles run in the rest, with a warning, and where no other kind is
-eligible the run takes the general route.
+its particles run in the rest, with a warning. Where no kind is taken and
+a kind is passed over for this alone, the run takes the general route; a
+refusal depends only on the reasons of before.
 
 **The writer** (D422). After the last op of a step
 that writes the positions (the constraints, and a barostat's scaling), one
