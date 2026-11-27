@@ -1486,3 +1486,10 @@ binary64 and converted the result. The mixed stencil now uses binary32
 products on rounded inputs, including the three directional derivatives
 of each interpolated grid point. Integer charge accumulation and the
 order of the gradient sum are preserved.
+
+The per-group kinetic and force observations need the masses and the
+member velocities or forces. Each group already has an owner and an
+ordered list of member rows. Evaluating these observations there removes
+six replicated tuple sums and three complete vector-field assemblies
+per Cellulose observation. The three assembled fields occupied 29.42 MB
+per recipient before accounting for its locally owned interval.

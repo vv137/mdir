@@ -164,6 +164,12 @@ def Distribute : Pass<"md-distribute", "::mlir::ModuleOp"> {
                            "::mlir::vector::VectorDialect"];
 }
 
+def DistributeGroupObservations
+    : Pass<"md-distribute-group-observations", "::mlir::ModuleOp"> {
+  let summary = "Evaluate geometry-independent observations on existing disjoint tuple rows";
+  let dependentDialects = ["::mdir::md_dist::MDDistDialect"];
+}
+
 def DistOwnerComputes
     : Pass<"md-dist-owner-computes", "::mlir::ModuleOp"> {
   let summary = "Computes the forces of a directed traversal at the owners";

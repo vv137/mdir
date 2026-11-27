@@ -34,6 +34,7 @@ namespace mdir {
 namespace md {
 
 #define GEN_PASS_DEF_DISTRIBUTE
+#define GEN_PASS_DEF_DISTRIBUTEGROUPOBSERVATIONS
 #include "mdir/Dialect/MD/Transforms/Passes.h.inc"
 
 namespace {
@@ -551,6 +552,49 @@ LogicalResult Distributor::run() {
 }
 
 namespace {
+template <typename Op>
+static void projectGroupTuple(OpBuilder &b, Op tuple, Value rows, Value layout,
+                              Value positions, Value ghosts, Value halo) {
+  constexpr bool gather = std::is_same_v<Op, GatherTuplesOp>;
+  auto loc = tuple.getLoc();
+  auto name = cast<md_dist::LayoutType>(layout.getType()).getDecomposition();
+  auto fieldType = [&](Value field) {
+    auto t = cast<FieldType>(field.getType());
+    return md_dist::FieldType::get(b.getContext(), name, md_dist::Role::Owned,
+        false, t.getNumComponents(), t.getElementType());
+  };
+  SmallVector<Value> fields;
+  for (Value field : tuple.getGathered()) {
+    auto type = fieldType(field);
+    Value owned = md_dist::DistributeOp::create(b, loc, type, field, layout, Value());
+    fields.push_back(owned);
+    fields.push_back(md_dist::HaloCopyOp::create(b, loc, type.with(md_dist::Role::Ghost, false), owned, halo, Value()));
+  }
+  SmallVector<Type> resultTypes;
+  if constexpr (gather) {
+    resultTypes.push_back(fieldType(tuple.getResult()));
+    if (tuple.getFailed()) resultTypes.push_back(b.getI1Type());
+  } else
+    resultTypes.push_back(md_dist::PartialType::get(b.getContext(), tuple.getResult().getType()));
+  auto kernel = md_dist::TupleKernelOp::create(b, loc, resultTypes, rows, positions, ghosts,
+      halo, fields, tuple.getParameters(), tuple.getCoordinateKindsAttr(), tuple.getCoordinateMembersAttr());
+  IRMapping map;
+  tuple.getKernel().cloneInto(&kernel.getKernel(), map);
+  auto term = kernel.getKernel().front().getTerminator();
+  OpBuilder inside(term);
+  md_dist::YieldOp::create(inside, loc, term->getOperands());
+  term->erase();
+  Value result;
+  if constexpr (gather) {
+    result = md_dist::CollectOp::create(b, loc, tuple.getResult().getType(), kernel.getResult(0), layout);
+    if (tuple.getFailed()) tuple.getFailed().replaceAllUsesWith(kernel.getResult(1));
+  } else {
+    result = md_dist::AllReduceOp::create(b, loc, tuple.getResult().getType(), kernel.getResult(0));
+  }
+  tuple.getResult().replaceAllUsesWith(result);
+  tuple.erase();
+}
+
 // Project disjoint constraint tuples at their common owner. The native
 // integrator supplies the old and predicted rows, and consumes the complete
 // correction and the agreed failure flag before its next kick.
@@ -606,39 +650,9 @@ static LogicalResult distributeGroups(ModuleOp module, ArrayRef<int64_t> grid,
             fieldType(positions).with(md_dist::Role::Ghost, false), e.x, e.h, cell);
       }
       auto convert = [&](auto tuple) {
-        constexpr bool gather = std::is_same_v<decltype(tuple), GatherTuplesOp>;
         auto rowType = MemRefType::get({ShapedType::kDynamic, int64_t(tuple.getArity() + 1)}, b.getI64Type());
         Value rows = md_dist::TupleRowsOp::create(b, loc, rowType, tuple.getRelation(), e.x, e.h, true);
-        SmallVector<Value> fields;
-        for (Value field : tuple.getGathered()) {
-          auto type = fieldType(field);
-          Value owned = md_dist::DistributeOp::create(b, loc, type, field, e.layout, Value());
-          fields.push_back(owned);
-          fields.push_back(md_dist::HaloCopyOp::create(b, loc, type.with(md_dist::Role::Ghost, false), owned, e.h, Value()));
-        }
-        SmallVector<Type> resultTypes;
-        if constexpr (gather) {
-          resultTypes.push_back(fieldType(tuple.getResult()));
-          if (tuple.getFailed()) resultTypes.push_back(b.getI1Type());
-        } else
-          resultTypes.push_back(md_dist::PartialType::get(b.getContext(), tuple.getResult().getType()));
-        auto kernel = md_dist::TupleKernelOp::create(b, loc, resultTypes, rows, e.x, e.ghosts,
-            e.h, fields, tuple.getParameters(), tuple.getCoordinateKindsAttr(), tuple.getCoordinateMembersAttr());
-        IRMapping map;
-        tuple.getKernel().cloneInto(&kernel.getKernel(), map);
-        auto term = kernel.getKernel().front().getTerminator();
-        OpBuilder inside(term);
-        md_dist::YieldOp::create(inside, loc, term->getOperands());
-        term->erase();
-        Value result;
-        if constexpr (gather) {
-          result = md_dist::CollectOp::create(b, loc, tuple.getResult().getType(), kernel.getResult(0), e.layout);
-          if (tuple.getFailed()) tuple.getFailed().replaceAllUsesWith(kernel.getResult(1));
-        } else {
-          result = md_dist::AllReduceOp::create(b, loc, tuple.getResult().getType(), kernel.getResult(0));
-        }
-        tuple.getResult().replaceAllUsesWith(result);
-        tuple.erase();
+        projectGroupTuple(b, tuple, rows, e.layout, e.x, e.ghosts, e.h);
       };
       if (auto gather = dyn_cast<GatherTuplesOp>(op)) convert(gather);
       else convert(cast<SumTuplesOp>(op));
@@ -646,6 +660,34 @@ static LogicalResult distributeGroups(ModuleOp module, ArrayRef<int64_t> grid,
   }
   return success();
 }
+
+// A group projection already supplies the membership of every disjoint
+// tuple. A report reading only gathered fields can use those same rows.
+class DistributeGroupObservations
+    : public impl::DistributeGroupObservationsBase<DistributeGroupObservations> {
+  void runOnOperation() final {
+    DenseMap<std::pair<Block *, Value>, md_dist::TupleKernelOp> groups;
+    getOperation().walk([&](Operation *op) {
+      if (auto kernel = dyn_cast<md_dist::TupleKernelOp>(op)) {
+        auto rows = kernel.getRows().getDefiningOp<md_dist::TupleRowsOp>();
+        if (rows && rows.getGroup()) groups[{op->getBlock(), rows.getTuples()}] = kernel;
+        return;
+      }
+      auto sum = dyn_cast<SumTuplesOp>(op);
+      if (!sum || !getElementTypeOrSelf(sum.getResult().getType()).isF64()) return;
+      auto group = groups.lookup({op->getBlock(), sum.getRelation()});
+      if (!group) return;
+      auto args = sum.getKernel().front().getArguments().take_front(sum.getCoordinateKinds().size());
+      if (!llvm::all_of(args, [](BlockArgument arg) { return arg.use_empty(); }) ||
+          !llvm::all_of(sum.getGathered(), [](Value field) {
+            return cast<FieldType>(field.getType()).getElementType().isF64();
+          })) return;
+      OpBuilder b(sum);
+      projectGroupTuple(b, sum, group.getRows(), md_dist::layoutOf(group.getHalo()),
+                        group.getPositions(), group.getGhosts(), group.getHalo());
+    });
+  }
+};
 
 class Distribute : public impl::DistributeBase<Distribute> {
 public:

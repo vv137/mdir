@@ -358,6 +358,9 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
   os << "md-differentiate,md-expand-truncation,md-inline,"
      << "dyn-expand-couplings,md-bypass-updates,";
   if (control.distribution) {
+    if (program.domainGroupSteps && !control.deterministic &&
+        control.distribution->transport == "mpi")
+      os << "md-distribute-group-observations,";
     os << "md-dist-owner-computes,"
        << (program.domainGroupSteps || program.pme ? "" : control.deterministic
            ? "md-distribute-driver-steps{wrap-drift=true}," : "md-distribute-driver-steps,")

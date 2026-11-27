@@ -233,3 +233,9 @@ and third stencil axes in binary32. Mixed interpolation uses binary32
 products of inverse grid points, weights, and derivatives. The rounded
 product enters the component sum in stencil order. The final reciprocal
 force still uses the original charge and box scale.
+
+Floating constraint observations can reuse a preceding disjoint tuple
+projection for the same relation and block when the observation reads
+only gathered fields. Each group is evaluated on its owner and the
+domain subtotals are combined in domain order. An observation that
+uses an internal coordinate keeps its own geometry.
