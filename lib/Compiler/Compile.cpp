@@ -343,7 +343,7 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
   std::string pipeline;
   llvm::raw_string_ostream os(pipeline);
   os << "md-check-exchange,";
-  if (control.distribution) {
+  if (control.distribution && !program.localUniquePairs) {
     if (program.domainTopology) os << "md-differentiate,";
     const auto &grid = program.domainGrid;
     os << "md-distribute{grid=" << grid[0] << "," << grid[1] << "," << grid[2]
@@ -359,7 +359,7 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
   }
   os << "md-differentiate,md-expand-truncation,md-inline,"
      << "dyn-expand-couplings,md-bypass-updates,";
-  if (control.distribution) {
+  if (control.distribution && !program.localUniquePairs) {
     os << "md-dist-owner-computes,";
     if (program.domainGroupSteps && control.distribution->transport == "nccl" &&
         !control.thermostat && program.skin > 0)

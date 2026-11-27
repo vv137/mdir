@@ -103,7 +103,9 @@ void driver::printParsedModule(Program &program) {
 llvm::Error mdir::driver::builder::serializeNativeProgram(Program &program,
                                                        TermIRPlan &plan) {
   auto native = plan.getModule();
-  if (program.distributed)
+  if (program.localUniquePairs)
+    native->setAttr("md_dist.local_unique", mlir::UnitAttr::get(native.getContext()));
+  else if (program.distributed)
     native->setAttr("md_dist.driver", mlir::UnitAttr::get(native.getContext()));
   if (program.domainSplitPairs)
     native->setAttr("md_dist.split_pairs", mlir::UnitAttr::get(native.getContext()));

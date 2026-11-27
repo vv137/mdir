@@ -671,3 +671,39 @@ on Cellulose in double and mixed precision, compared with 38.476 and
 with 95.887 and 93.787 on eight. Sharing classification improved the
 four-domain run as well. Neither system achieved the four-to-eight
 target in these measurements.
+
+### One-domain half MATRIX for reaction-field dynamics
+
+An NCCL unique traversal with one domain and constrained topology can
+use the single-device integrator. No pair has endpoints on different
+devices. Keep input row order and build a periodic half MATRIX. Each
+accepted pair contributes to both endpoint forces. The specialization
+selects built-in RF terms without a thermostat or user pair, triplet,
+or model terms.
+
+Each comparison used 205 frames at 2 fs. A is the parent, B is the
+half MATRIX, and ordinary is the mean of its two allocation-matched
+runs. Times are ms/step over steps 102 through 204.
+
+| System | Precision | Ordinary | A1 | B1 | B2 | A2 |
+|---|---|---:|---:|---:|---:|---:|
+| JAC-RF | Mixed | 0.670 | 3.367 | 0.686 | 0.688 | 3.368 |
+| JAC-RF | Double | 0.824 | 3.309 | 0.791 | 0.797 | 3.332 |
+| Factor IX | Mixed | 1.645 | 5.234 | 1.792 | 1.850 | 5.255 |
+| Factor IX | Double | 2.067 | 5.610 | 2.088 | 2.090 | 5.582 |
+| Cellulose | Mixed | 6.579 | 16.194 | 7.207 | 7.204 | 16.217 |
+| Cellulose | Double | 8.366 | 18.585 | 8.411 | 8.411 | 18.214 |
+| STMV | Mixed | 16.494 | 42.295 | 18.289 | 18.286 | 42.076 |
+| STMV | Double | 21.692 | 47.509 | 22.230 | 22.072 | 47.562 |
+
+The mixed candidate's largest potential and virial differences from
+the frozen ordinary references were 0.060534 and 0.908409 kcal/mol on
+JAC-RF and 0.923649 and 9.009296 kcal/mol on Factor IX. Both passed the
+order-aware bounds. Across the four double cases, the largest
+differences from the respective ordinary runs were 0.0000011 kcal/mol
+for potential and 0.0000061 kcal/mol for virial. The candidate passed
+all 53 focused tests and all 20 numerical comparisons.
+The liquid controls also passed. The one-GPU-to-ordinary ratio was
+1.211, the one-to-four-GPU speedup was 2.781, and the four-to-eight
+speedup was 1.072. The fixed-skin rebuild-to-covered time ratio was
+2.247.

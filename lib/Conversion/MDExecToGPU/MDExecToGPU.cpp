@@ -5589,7 +5589,7 @@ LogicalResult Lowering::addMatrixBuild(Type real) {
 
   OwningOpRef<ModuleOp> definitions = ModuleOp::create(module.getLoc());
   kernels::emitMatrixBuild(*definitions, module.lookupSymbol("mdrtDistDeviceMatrixSlot") != nullptr,
-                           module.lookupSymbol("mdrtDistPeriodicMatrixSlot") != nullptr);
+                           module.lookupSymbol("mdrtDistPeriodicMatrixSlot") != nullptr || module->hasAttr("md_dist.local_unique"));
   if (failed(instantiateTemplates(*definitions, real)))
     return failure();
   for (Operation &op : llvm::make_early_inc_range(*definitions)) {
@@ -8642,7 +8642,7 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
       }
     }
   }
-  if (!slot) return emitUncachedBuild(builder,loc,structure,positions,box,reach,cellWidth);
+  if (!slot) return emitUncachedBuild(builder,loc,structure,positions,box,reach,cellWidth,false,module->hasAttr("md_dist.local_unique"));
   SmallVector<Value> args{slot,structure.handle,structure.counts,structure.order};
   Type wide = builder.getI64Type();
   auto declare = [&](StringRef name, TypeRange outputs) {

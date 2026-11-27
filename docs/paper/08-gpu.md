@@ -1422,3 +1422,13 @@ one destination halo and share the resulting rows cut mean double
 halo-build time from 52.679 to 12.284 ms/step. Total step time fell from
 136.732 to 95.887. This prototype exceeded the Factor IX mixed potential
 and virial limits at eight ranks.
+
+For eligible constrained reaction-field dynamics, one NCCL domain uses
+a periodic half MATRIX in input row order. It accumulates each pair's
+forces at both endpoints and uses the single-device integration and
+constraint kernels. At 2 fs the half MATRIX took 7.206 ms/step for
+mixed Cellulose and 18.288 for mixed STMV, versus 6.579 and 16.494
+for ordinary on the same allocations. In double precision the
+corresponding pairs were 8.411 versus 8.366 and 22.151 versus 21.692
+ms/step. Both mixed protein tests passed the order-aware limits over
+205 frames.

@@ -91,6 +91,7 @@ private:
 /// so (D258): a caller may hand it the arrays below.
 struct Program {
   bool distributed = false;
+  bool localUniquePairs = false;
   bool domainTopology = false;
   bool domainSplitPairs = false;
   bool domainGroupSteps = false;

@@ -204,6 +204,9 @@ LogicalResult Converter::convertPairOp(OpTy op, bool isSum) {
   assert(structure && "the neighborhood is converted before its users");
   double cutoff = neighborhood.getCutoff().convertToDouble();
   auto relation = cast<md::RelationType>(op.getRelation().getType());
+  bool half = op->template getParentOfType<ModuleOp>()->hasAttr("md_dist.local_unique");
+  if (half && op.getExchange() == md::Exchange::None)
+    return op.emitOpError("unique MATRIX requires an exchange contract");
 
   builder.setInsertionPoint(op);
   // A gather may give several fields from one kernel, a destination each.
@@ -213,7 +216,7 @@ LogicalResult Converter::convertPairOp(OpTy op, bool isSum) {
   if (isSum) {
     reduce.push_back(createZero(loc, resultTypes.front()));
     // Each unordered pair is visited in both directions.
-    if (relation.getOrientation() == md::Orientation::Unordered)
+    if (!half && relation.getOrientation() == md::Orientation::Unordered)
       weights = builder.getDenseF64ArrayAttr({0.5});
   } else {
     for (Type type : resultTypes)
@@ -231,7 +234,7 @@ LogicalResult Converter::convertPairOp(OpTy op, bool isSum) {
       md_exec::TraversalAttr::get(builder.getContext(),
                                   md_exec::Traversal::Directed),
       md_exec::ConflictAttr::get(builder.getContext(),
-                                 md_exec::Conflict::OwnerOnly),
+                                 half ? md_exec::Conflict::Atomic : md_exec::Conflict::OwnerOnly),
       exchange, /*centers=*/Value(), /*centerSet=*/Value(),
       /*ghostFree=*/builder.getBoolAttr(false),
       /*images=*/md_exec::ImagesAttr(),

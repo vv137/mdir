@@ -625,6 +625,11 @@ position halo and the interior pass uses owned positions. Covered pair-only step
 
 With NCCL transport, pointwise constraint corrections on owned three-component fields run on each rank’s GPU. The halo retains mapped exclusions on the GPU for covered steps. With one domain, complete unique traversals use a periodic MATRIX of owned positions and skip excluded pairs.
 
+For constrained built-in reaction-field dynamics with unique traversal
+and one NCCL rank, the driver can use the single-device integrator with
+an input-order periodic half MATRIX. This path requires no thermostat
+or user pair, triplet, or model terms.
+
 A numeric `[energy] pairlist_distance` fixes the halo reach. For directed
 NCCL runs without topology, `"AUTO"` can measure that reach on the allocated
 layout. An explicit request searches for runs of at least 204 steps. An

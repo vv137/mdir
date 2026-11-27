@@ -1790,6 +1790,11 @@ writer. A collect shared with the following segment also supplies its peers.
 
 With NCCL transport, pointwise constraint corrections on owned three-component fields run on each rank’s GPU. The halo retains mapped exclusions on the GPU for covered steps. With one domain, complete unique traversals use a periodic MATRIX of owned positions and skip excluded pairs.
 
+For constrained built-in reaction-field dynamics with unique traversal
+and one NCCL rank, the driver can use the single-device integrator with
+an input-order periodic half MATRIX. This path requires no thermostat
+or user pair, triplet, or model terms.
+
 With MPI, CUDA, and NCCL enabled at build time, select a GPU target,
 `[distribute] transport = "nccl"`, and `placement = "node"`. The latter
 is the default. Each MPI rank owns one domain and one distinct CUDA
