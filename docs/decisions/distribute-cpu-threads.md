@@ -318,7 +318,10 @@ binary64 midpoint expression and half-open domain test in neighbor order.
 The mixed gather computes the independent derivative products along the
 contiguous stencil axis as SIMD lanes. At a periodic boundary, the
 potential values come from the tail and head of the same mesh row.
-Each component still adds the rounded products in stencil order.
+Each component adds the rounded products in stencil order in a binary32
+accumulator. The previous fold widened each operand and rounded the sum
+back to binary32 after each addition. The current fold widens the three
+finished components once for the force calculation.
 
 The mixed Gaussian spectrum forms each axis factor once per local mode
 index and combines the rounded factors in binary32. The complex

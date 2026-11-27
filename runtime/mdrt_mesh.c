@@ -299,10 +299,11 @@ static void spreadFixed(const struct DomainMesh *local, size_t count,
   free(ids);
 }
 /* Mixed inverse grid values, weights and derivatives are already rounded
-   to binary32. Multiply them directly at that precision. Keep the explicit
-   rounding of the product separate from the gradient addition. */
+   to binary32. The ordered gradient fold also rounds each sum to binary32.
+   Keep each rounded product separate from its gradient addition. */
 static void gatherMixed(const struct Window *w, struct Subgrid g, int order,
                         const double *potential, double grad[3]) {
+  float gx = 0, gy = 0, gz = 0;
   float wz[8], dwz[8];
   for (int l = 0; l < order; ++l) {
     wz[l] = w->w[2][l];
@@ -331,12 +332,15 @@ static void gatherMixed(const struct Window *w, struct Subgrid g, int order,
         tz[l] = values[l] * (xy * dwz[l]);
       }
       for (int l = 0; l < order; ++l) {
-        grad[0] = (float)(grad[0] + (double)tx[l]);
-        grad[1] = (float)(grad[1] + (double)ty[l]);
-        grad[2] = (float)(grad[2] + (double)tz[l]);
+        gx += tx[l];
+        gy += ty[l];
+        gz += tz[l];
       }
     }
   }
+  grad[0] = gx;
+  grad[1] = gy;
+  grad[2] = gz;
 }
 
 static void gather(const struct Window *w, struct Subgrid g, int order,

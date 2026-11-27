@@ -1586,8 +1586,9 @@ the binary64 midpoint with the original subtraction order.
 
 Mixed interpolation stages the last-axis potential window in stencil
 order across the periodic boundary. The three derivative products for
-each point can then be computed in SIMD lanes before their ordered
-addition to the gradient.
+each point can then be computed in SIMD lanes. Each gradient component
+adds the rounded products in stencil order with a binary32 accumulator
+and widens the finished sum for the force calculation.
 
 For mixed Gaussian PME, the influence factor separates into three
 one-dimensional factors and the inverse squared wave number. The rank
