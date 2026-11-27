@@ -370,14 +370,14 @@ extern "C" int64_t mdrtStepRun(intptr_t handle, int64_t start, int64_t k) {
   return p.accepted;
 }
 
-// The kernels of a chunk read the cell that a barostat moves from a device
-// mirror of the host's memory (D[towers-graph-npt]). The words go by value
-// in a launch on the graph's stream, ahead of the chunk; an unchanged cell
-// issues nothing.
+// The kernels of a chunk read the arguments that the cell of a barostat sets
+// from a device mirror (D[towers-graph-npt]): the host computes them before
+// each chunk, and the words go by value in a launch on the graph's stream,
+// ahead of the chunk; unchanged words issue nothing.
 namespace {
-struct Words { uint32_t w[32]; };
+struct Words { uint32_t w[512]; };
 __global__ void mirrorWords(uint32_t *dst, Words words, int n) {
-  if (int i = threadIdx.x; i < n) dst[i] = words.w[i];
+  for (int i = threadIdx.x; i < n; i += blockDim.x) dst[i] = words.w[i];
 }
 }
 extern "C" void mdrtStepMirror(intptr_t handle, intptr_t device, intptr_t host, int64_t bytes) {
@@ -402,7 +402,7 @@ extern "C" void mdrtStepMirror(intptr_t handle, intptr_t device, intptr_t host, 
   mdrtSpansFlush();
   Words words{};
   std::memcpy(words.w, src, bytes);
-  mirrorWords<<<1, 32, 0, c.stream>>>(static_cast<uint32_t *>(dst), words, int(bytes / 4));
+  mirrorWords<<<1, 128, 0, c.stream>>>(static_cast<uint32_t *>(dst), words, int(bytes / 4));
   ck(cudaGetLastError(), "write the cell mirror");
 }
 
