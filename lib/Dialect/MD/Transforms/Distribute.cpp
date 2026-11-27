@@ -41,9 +41,9 @@ namespace {
 class Distributor {
 public:
   Distributor(FunctionOpInterface potential, ArrayRef<int64_t> grid,
-              md_dist::Traversal traversal, double reach)
+              md_dist::Traversal traversal, double reach, bool meshMixed)
       : potential(potential), grid(grid), traversal(traversal),
-        requestedReach(reach), builder(potential.getContext()) {}
+        requestedReach(reach), meshMixed(meshMixed), builder(potential.getContext()) {}
 
   LogicalResult run();
 
@@ -85,6 +85,8 @@ private:
   ArrayRef<int64_t> grid;
   md_dist::Traversal traversal;
   double requestedReach;
+  bool meshMixed;
+  Value meshPositions;
   OpBuilder builder;
 
   Block *body = nullptr;
@@ -140,10 +142,13 @@ LogicalResult Distributor::check() {
       return op.emitOpError()
              << "cannot be distributed: a sum over tuples needs the topology "
                 "across domains (stage 2 of #31)";
-    if (isa<ReciprocalOp>(op))
+    if (auto mesh = dyn_cast<ReciprocalOp>(op)) {
+      if (isa<FunctionOp>(potential.getOperation()) && !mesh.getDispersion() &&
+          !mesh.getP3m() && !mesh.getPotential()) continue;
       return op.emitOpError()
              << "cannot be distributed: a reciprocal sum needs a "
                 "decomposition of its grid (stage 3 of #31)";
+    }
     // Any other op computes numbers from numbers: the sums of the domains
     // after md_dist.all_reduce. An op of md, or one that takes or gives a
     // field or a relation, is not known to the pass.
@@ -496,7 +501,28 @@ LogicalResult Distributor::run() {
       status = rewriteTuple(o);
     else if (auto o = dyn_cast<GatherTuplesOp>(op))
       status = rewriteTuple(o);
-    else if (auto o = dyn_cast<SumParticlesOp>(op))
+    else if (auto mesh = dyn_cast<ReciprocalOp>(op)) {
+      Value charges = ownedOf(mesh, mesh.getCharges());
+      if (!charges) return failure();
+      builder.setInsertionPoint(mesh);
+      // Mixed assignment rounds each window weight. Reimaging x in length
+      // units before taking frac(x/L) can change a weight at a binary32 tie.
+      if (!meshPositions) {
+        meshPositions = ownedPositions;
+        if (meshMixed)
+          meshPositions = md_dist::DistributeOp::create(
+              builder, mesh.getLoc(), ownedType(positions.getType()),
+              positions, layout, Value());
+      }
+      auto sum = md_dist::MeshOp::create(builder, mesh.getLoc(),
+          mesh.getEnergy().getType(), ownedType(mesh.getForces().getType()),
+          mesh.getVirial().getType(), layout, meshPositions, charges, cell,
+          mesh.getModuli(), mesh.getGridAttr(), mesh.getOrderAttr(),
+          mesh.getBetaAttr(), mesh.getCoulombAttr());
+      owned[mesh.getForces()] = sum.getForces();
+      mesh.getEnergy().replaceAllUsesWith(sum.getEnergy());
+      mesh.getVirial().replaceAllUsesWith(sum.getVirial());
+    } else if (auto o = dyn_cast<SumParticlesOp>(op))
       status = rewrite(o);
     else if (auto o = dyn_cast<MapParticlesOp>(op))
       status = rewrite(o);
@@ -688,16 +714,16 @@ public:
           return fn.getSymName().starts_with((p.getSymName() + ".").str());
         });
         if (!derived || !llvm::any_of(fn.getBody().front(), [](Operation &op) {
-              return isa<NeighborhoodOp, SumTuplesOp, GatherTuplesOp>(op);
+              return isa<NeighborhoodOp, SumTuplesOp, GatherTuplesOp, ReciprocalOp>(op);
             })) continue;
-        if (failed(Distributor(fn, divisions, kind, reach).run()))
+        if (failed(Distributor(fn, divisions, kind, reach, meshMixed).run()))
           return signalPassFailure();
       }
       if (failed(distributeGroups(module, divisions, reach))) return signalPassFailure();
       return;
     }
     for (PotentialOp potential : selected) {
-      Distributor distributor(potential, divisions, kind, reach);
+      Distributor distributor(potential, divisions, kind, reach, meshMixed);
       if (failed(distributor.run()))
         return signalPassFailure();
     }

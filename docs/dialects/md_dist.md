@@ -499,6 +499,46 @@ Traits: `RecursiveMemoryEffects`, `SingleBlock`
 
 
 
+### `md_dist.mesh` (::mdir::md_dist::MeshOp)
+
+_Solves electrostatic PME on a pencil mesh for owned particle rows_
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>grid</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
+<tr><td><code>order</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+<tr><td><code>beta</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>coulomb</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `layout` | The ownership of the particles by the domains |
+| `positions` | A field over the owned or the ghost rows of every domain |
+| `charges` | A field over the owned or the ghost rows of every domain |
+| `cell` | A simulation cell |
+| `moduli` | A table of parameters, indexed by types |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `energy` | 64-bit float |
+| `forces` | A field over the owned or the ghost rows of every domain |
+| `virial` | vector of 64-bit float values of length 9 |
+
+
+
 ### `md_dist.migrate` (::mdir::md_dist::MigrateOp)
 
 _A new ownership epoch from current owned positions_

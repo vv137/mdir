@@ -1732,8 +1732,8 @@ Distributed velocity Verlet requires a fixed periodic orthorhombic cell
 and positive skin. For topology inputs, unique and midpoint traversal
 support NVE and NVT with the V-rescale thermostat. Midpoint schedules bonded
 interactions and 1–4 corrections by topology row and filters exclusions by
-atom identity. Hydrogen groups and rigid waters migrate together. Reciprocal
-space needs a distributed mesh. Analytic EAM has an IR oracle in ML2
+atom identity. Hydrogen groups and rigid waters migrate together.
+Electrostatic PME uses the distributed mesh described below. Analytic EAM has an IR oracle in ML2
 Section 15.
 
 The setup log and the manifest start event give the requested domain count,
@@ -1812,3 +1812,21 @@ payload collective. Pair, copy, sum, reduction and migration times exclude
 that wait. Cross-rank halo payload excludes replicated state collection
 and logging traffic. A checkpoint-private collect gathers live rows to the
 writer. A collect shared with the following segment also supplies its peers.
+
+### Distributed electrostatic PME
+
+A fixed-cell CPU run with unique or midpoint traversal may use Gaussian
+or prolate electrostatic PME, including the D440 cubic B-spline window.
+Set the physical mesh and split in `[pme]`. The optional `[distribute]`
+key `pme_ranks` gives the number of mesh owners (default all ranks).
+Alternatively, `pme_decomposition = [a, b]` chooses the real mesh's
+$x$ and $y$ divisions. Its product sets the owner count. If both keys are
+given, the product must equal `pme_ranks`. The remaining ranks still own
+particles and participate in the forward and reverse overlap exchanges.
+Each real pencil must cover the assignment overlap, and each transposed
+pencil must contain at least one line.
+
+The setup log gives the resolved pencil decomposition. The phase log
+times `pme_spread`, `pme_overlap` (outgoing charge and returning
+potential), `pme_fft` (local transforms), `pme_transpose`,
+`pme_solve` and `pme_gather`. Direct-space pairs use `pairs`.

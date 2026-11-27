@@ -21,9 +21,14 @@ void mdrtMPIForwardHalo(double *send, int *sendCounts, int *sendOffsets,
 void mdrtMPIShareBlocks(void *values, const int *counts, const int *offsets, int words);
 void mdrtMPIExchange(void *send, int *sendCounts, int *sendOffsets,
                      void *recv, int *recvCounts, int *recvOffsets, int words);
+void mdrtMPIExchangeCharges(int64_t *send, int *ns, int *os,
+                            int64_t *recv, int *nr, int *offsets);
+void mdrtMPIExchangeCounts(const int *send, int *recv);
+void mdrtMPIExchangeRecords(void *send, int *ns, int *os, void *recv,
+                            int *nr, int *recvOffsets, int bytes);
 int mdrtMPIAllTrue(int predicate);
 int mdrtMPIActive(void);
-void mdrtMPIGatherTimes(const double *send, double *recv, int count);
+void mdrtMPIGatherMetrics(const void *send, void *recv, int bytes);
 int mdrtMPIMax(int value);
 void mdrtMPIAbort(const char *reason);
 

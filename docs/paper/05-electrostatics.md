@@ -1295,3 +1295,76 @@ which the builder does not model.
 
 The u-series gives a different smooth decomposition using Gaussians
 [[Predescu2020]](references.md#predescu2020).
+
+### Distributed electrostatic PME (D[distribute-pme])
+
+In a fixed periodic cell the reciprocal electrostatic energy is the
+quadratic form $U=\tfrac12\langle\mathcal F Sq,G\mathcal F Sq\rangle_\mathrm H$ on the half-spectrum. Here
+$S_{ji}$ is the product of the three assignment weights at mesh point
+$j$ for charge $q_i$. Differentiation with respect to the charge grid
+gives the potential $\mathcal F^\dagger G\mathcal F Sq$. Differentiation with respect to particle
+position gives $\mathbf F_i=-q_i\sum_j (\mathcal F^\dagger G\mathcal F Sq)_j\nabla_i S_{ji}$.
+The inverse transform in this convention is unnormalized. The
+strain derivative at fixed fractional coordinates differentiates the
+volume and wave vectors in $G$, giving the mode virial of Section 5.
+The direct potential and excluded-pair correction use the same splitting
+density as $G$.
+
+Partition the columns of $S$ by particle owner. Each local assignment
+extends over the window support across domain boundaries. Summing the
+local contributions at each mesh owner reconstructs $Sq$. Returning the
+potential along the transpose of this exchange supplies all terms in the
+force sum, including for constraint-group members outside their owner's
+geometric domain. The smallest cyclic interval containing all stencil
+starts on each axis, extended by the assignment support, gives a
+contiguous domain subgrid. Intersecting its periodic images with each
+real pencil determines both the charge message and the return message.
+Their values travel in contiguous runs along $z$. A single copy of the
+weights and their position derivatives serves spreading and gathering.
+
+The real grid begins with divisions $(P_x,P_y,1)$. After transforming
+complete real $z$ lines, the first transpose divides the half-spectrum
+as $(P_x,1,P_y)$ for the $y$ transform. The next gives $(1,P_x,P_y)$
+for the $x$ transform. Each message contains the intersection of a
+source and a destination box. This partitions every coefficient exactly
+once even for unequal pencil widths. Multiplying by $G$ in this layout
+avoids a third forward transpose. Interior $z$ frequencies have
+multiplicity two in the quadratic form. Zero and an even grid's Nyquist
+plane have multiplicity one. In double precision the inverse reverses the two transposes and three
+transforms. The mixed inverse redistributes the spectrum to $y$ pencils
+first, then transforms along $y$, $x$ and $z$. These transforms commute
+in exact arithmetic. The ordinary CPU path rounds after each axis in
+this order, so exchanging the inverse axes changes the rounded potential.
+
+Both precisions use the charge representation of ordinary CPU PME.
+Each stencil multiplies the scaled charge $2^{40}q$ by the three
+weights in axis order, rounding each product in the selected precision.
+Rounding the last product to the nearest even integer quantizes each
+contribution once at $2^{-40}$ e. A particle domain accumulates these
+signed words and sends one 64-bit word per overlap point.
+Integer summation at the owner bounds the point's quantization error by
+half a unit per contributing stencil entry, independently of the
+message order. Its checked final range is $[-2^{23},2^{23})$ e.
+The deterministic reciprocal energy and virial quantize each mode at
+$2^{-32}$ in native observable units before integer reduction. The
+self term depends only on the squared charge norm, and the neutralizing
+background on the squared total charge and inverse volume. A single
+evaluation in canonical charge order at setup supplies every rank.
+
+For Factor IX we compared a Gaussian mesh of $120 \times 70 \times 70$
+with a $90 \times 50 \times 50$ mesh using `kernel="PROLATE"`,
+`continuity=2`, `basis_terms=8`, and `window="BSPLINE"` with order four.
+Against a refined order-eight reference, the root mean square force
+component errors at the same coordinates were 0.901 and 0.916
+kJ mol⁻¹ nm⁻¹, respectively. Over four nodes the smaller mesh reduced
+transpose traffic from 14,515,200 to 5,612,288 bytes per step and overlap
+traffic from 13,451,520 to 5,888,340 bytes per step. These counts include
+messages between ranks on the same node. The corresponding two-run mean
+step times were 174.3 and 157.5 ms. They include direct interactions and
+particle migration as well as the measured mesh work.
+
+For Cellulose the corresponding fourth-order grids were
+$224 \times 108 \times 108$ and $160 \times 80 \times 80$, with force
+errors of 0.798 and 0.772 kJ mol⁻¹ nm⁻¹. At four nodes the smaller grid
+reduced the transpose from 58.54 to 23.09 MB per step and the overlap
+exchange from 48.61 to 21.00 MB per step (decimal MB).

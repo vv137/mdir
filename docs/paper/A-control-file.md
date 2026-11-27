@@ -607,3 +607,9 @@ zero owns the merged log. Other ranks write only their requested traces.
 D[distribute-pair-lowering] uses the existing pair-list distance and CPU
 thread count inside each domain. Default precision follows the host pair
 policy. Deterministic distribution retains its cross-grid word reductions.
+
+For electrostatic PME, `pme_ranks` in `[distribute]` selects a positive
+number of mesh ranks, defaulting to the communicator size.
+`pme_decomposition = [a, b]` pins the two mesh-rank dimensions. Their
+product must agree with an explicit rank count. The log prints both
+the physical PME grid and its pencil decomposition (D[distribute-pme]).

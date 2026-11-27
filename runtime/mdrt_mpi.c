@@ -39,8 +39,8 @@ static void arrival(void) {
     mdrtDistPhase(-DistWait);
   }
 }
-void mdrtMPIGatherTimes(const double *send, double *recv, int count) {
-  MPI_Allgather(send, count, MPI_DOUBLE, recv, count, MPI_DOUBLE, comm);
+void mdrtMPIGatherMetrics(const void *send, void *recv, int bytes) {
+  MPI_Allgather(send, bytes, MPI_BYTE, recv, bytes, MPI_BYTE, comm);
 }
 
 int mdrtMPIMax(int value) {
@@ -165,6 +165,12 @@ void mdrtMPIExchange(void *send, int *sendCounts, int *sendOffsets,
 }
 
 
+void mdrtMPIExchangeCharges(int64_t *send, int *ns, int *os,
+                            int64_t *recv, int *nr, int *offsets) {
+  arrival();
+  MPI_Alltoallv(send, ns, os, MPI_INT64_T, recv, nr, offsets, MPI_INT64_T, comm);
+}
+
 int mdrtMPISameNode(int peer) { return rankNodes[peer] == rankNodes[rank]; }
 
 // Use the shared-memory communicator for nearby peers. World-rank
@@ -198,4 +204,19 @@ void mdrtMPIForwardHalo(double *send, int *ns, int *os, double *recv, int *nr, i
     mdrtMPIExchange(send, ns, os, recv, nr, or, 0);
     mdrtDistPhase(-DistInter);
   }
+}
+
+void mdrtMPIExchangeCounts(const int *send, int *recv) {
+  arrival();
+  MPI_Alltoall(send, 1, MPI_INT, recv, 1, MPI_INT, comm);
+}
+
+void mdrtMPIExchangeRecords(void *send, int *ns, int *os, void *recv,
+                            int *nr, int *or, int bytes) {
+  MPI_Datatype record;
+  MPI_Type_contiguous(bytes, MPI_BYTE, &record);
+  MPI_Type_commit(&record);
+  arrival();
+  MPI_Alltoallv(send, ns, os, record, recv, nr, or, record, comm);
+  MPI_Type_free(&record);
 }

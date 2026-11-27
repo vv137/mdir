@@ -56,6 +56,11 @@ void mdrtDistObserve(struct DistObserver *value) { observer = value; }
 
 int mdrtDistObserving(void) { return observer != NULL; }
 
+void mdrtDistMeshBytes(enum DistMeshTraffic kind, int64_t bytes) {
+  if (observer)
+    observer->meshBytes(observer->context, kind, bytes);
+}
+
 void mdrtDistPhase(int64_t phase) {
   if (observer)
     observer->phase(observer->context, phase);

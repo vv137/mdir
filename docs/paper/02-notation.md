@@ -143,3 +143,8 @@ of the repository.
 For spatial decomposition, $r_c$ denotes the interaction cutoff, $s$ the
 neighbor-list skin, and $e$ the largest half-diagonal of an unwrapped
 topology tuple's Cartesian bounding box.
+
+For distributed PME, $S$ is the particle-to-mesh assignment matrix
+and $G$ the diagonal
+influence in Fourier space. $P_x,P_y$ count the two divisions of the
+real-space mesh among ranks.

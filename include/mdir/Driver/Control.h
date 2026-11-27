@@ -857,6 +857,13 @@ struct Control {
     std::array<int64_t, 3> grid{1, 1, 1};
     /// Which keys the file gives, for the sources the log reports.
     bool gridGiven = false, transportGiven = false, traversalGiven = false;
+    /// The setup transport of the topology-wide, cell-independent charge
+    /// sums of PME.
+    bool ownsPmeConstants = true;
+    void (*broadcastPmeConstants)(double *, int64_t, int) = nullptr;
+    /// The ranks of the PME mesh and their pencil decomposition, or 0.
+    int64_t pmeRanks = 0;
+    std::array<int64_t, 2> pmeDecomposition{};
     /// A count of domains whose factor grid the cell chooses, or 0.
     int64_t domains = 0;
     std::string traversal = "directed";

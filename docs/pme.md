@@ -1491,3 +1491,19 @@ These runs used the automatic traversal, which resolves to GROUPS on this system
 | k = 3, N = 8 | 180 × 90 × 90 | 5.74e−4 | 8 | −2.1 ± 5.3 | < 7.9 |
 
 On the same mesh and seeds, k = 2 with N = 40 drifts 36.8 ± 4.4 kcal/mol/ns more than N = 8 (95% interval 22.8 to 50.9). This comparison also changes the bandwidth by 2.3% and the force error from 6.14e−4 to 6.72e−4, so it does not by itself attribute the reduction to N alone. The same N = 8 kernel on the two meshes differs by −2.4 ± 3.5 (interval −10.8 to +6.0). For N = 40 the excess was +39.7 at 2 fs and +3.1 at 1 fs; the observed time-step dependence is consistent with second-order integration error, but two time steps do not establish a scaling law. Reciprocal time on RTX 4090 at 160 × 80 × 80: 130.2 µs for k = 3, N = 40, and 132.0 µs for k = 2, N = 8.
+
+### Paired CPU drift comparison
+
+For comparisons of ordinary and distributed NVE trajectories, draw the
+same initial velocities on both paths within each seed and choose the seed
+set and physical duration before examining the slopes. Fit total energy
+against time separately in each run. Subtract the ordinary slope from the
+distributed slope for each seed. The standard error of the mean difference
+is the sample standard deviation of these paired differences divided by the
+square root of the number of seeds. Accept a mean difference whose magnitude
+is at most twice this standard error. This accounts for covariance within
+a pair and uses independent seeds as the sampling units. Small differences
+in potential and force lead to chaotic divergence within a pair.
+The `paired-drift` command in
+[scripts/benchmarks/prolate-ewald/dynamics.py](../scripts/benchmarks/prolate-ewald/dynamics.py)
+reports every complete pair in kcal/mol/ps and applies this criterion.

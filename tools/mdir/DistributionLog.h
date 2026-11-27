@@ -1,5 +1,5 @@
 // Distributed trajectory accounting. Topology and logical transfer edges are
-// replicated. Only phase clocks need to travel to the writer.
+// replicated. Phase clocks and mesh byte counters travel to the writer.
 #pragma once
 #include "../../runtime/mdrt_dist_stats.h"
 #include "Manifest.h"
@@ -16,8 +16,11 @@ class DistributionLog {
   struct Counts {
     int64_t in = 0, out = 0;
   };
-  struct Sample {
+  struct Metrics {
     Times seconds{};
+    std::array<int64_t, DistMeshTrafficCount> meshBytes{};
+  };
+  struct Sample : Metrics {
     std::vector<Counts> moves;
     std::map<Edge, int64_t> bytes;
     explicit Sample(size_t n) : moves(n) {}
@@ -39,7 +42,8 @@ class DistributionLog {
   std::array<Clock::time_point, DistPhaseCount> starts;
   static constexpr const char *names[] = {"wall", "pairs", "other_terms",
       "halo_copy", "halo_sum", "all_reduce", "migration", "wait", "list_build",
-      "halo_pack", "halo_intra", "halo_inter", "integration", "output", "state", "halo_build"};
+      "halo_pack", "halo_intra", "halo_inter", "integration", "output", "state", "halo_build",
+      "pme_spread", "pme_overlap", "pme_fft", "pme_transpose", "pme_solve", "pme_gather"};
   int owner(int64_t d) const {
     auto q = domains / ranks, r = domains % ranks;
     return d < r * (q + 1) ? d / (q + 1) : r + (d - r * (q + 1)) / q;
@@ -86,6 +90,8 @@ class DistributionLog {
   static void add(Sample &to, const Sample &from) {
     for (unsigned i = 0; i < to.seconds.size(); ++i)
       to.seconds[i] += from.seconds[i];
+    for (size_t i = 0; i < to.meshBytes.size(); ++i)
+      to.meshBytes[i] += from.meshBytes[i];
     for (size_t i = 0; i < to.moves.size(); ++i) {
       to.moves[i].in += from.moves[i].in;
       to.moves[i].out += from.moves[i].out;
@@ -168,17 +174,21 @@ class DistributionLog {
                 (long long)step, r, columns[i], (long long)counts[r][i],
                 sum ? double(counts[r][i]) / sum : 0.);
     }
-    std::vector<double> times(size_t(ranks) * DistPhaseCount);
-    if (gather)
-      gather(s.seconds.data(), times.data(), DistPhaseCount);
-    else
-      std::copy(s.seconds.begin(), s.seconds.end(), times.begin());
-    if (rank && !detailed)
-      return;
+    std::vector<Metrics> metrics(ranks);
+    const Metrics &local = s;
+    if (gather) gather(&local, metrics.data(), sizeof(Metrics));
+    else metrics.front() = local;
+    if (rank && !detailed) return;
+    const char *meshNames[] = {"pme_overlap_sent_bytes", "pme_transpose_sent_bytes"};
+    for (unsigned i = 0; i < DistMeshTrafficCount; ++i) {
+      int64_t bytes = 0;
+      for (const auto &m : metrics) bytes += m.meshBytes[i];
+      print("DIST: %s step %lld %s %lld\n", label, (long long)step, meshNames[i], (long long)bytes);
+    }
     for (int i = 0; i < DistPhaseCount; ++i) {
-      double sum = 0, low = times[i], high = times[i];
+      double sum = 0, low = metrics.front().seconds[i], high = low;
       for (int r = 0; r < ranks; ++r) {
-        double value = times[r * DistPhaseCount + i];
+        double value = metrics[r].seconds[i];
         sum += value;
         low = std::min(low, value);
         high = std::max(high, value);
@@ -186,11 +196,10 @@ class DistributionLog {
       print("DIST: %s step %lld %s min/mean/max %.9g %.9g %.9g s\n", label,
             (long long)step, names[i], low, sum / ranks, high);
       for (int r = 0; r < ranks; ++r) {
-        if (detailed && r != rank)
-          continue;
-        double v = times[r * DistPhaseCount + i];
-        print("DIST: %s step %lld rank %d %s %.9g s share %.6f\n", label,
-              (long long)step, r, names[i], v, sum ? v / sum : 0.);
+        if (detailed && r != rank) continue;
+        double v = metrics[r].seconds[i];
+        print("DIST: %s step %lld rank %d %s %.9g s share %.6f\n",
+              label, (long long)step, r, names[i], v, sum ? v/sum : 0.);
       }
     }
     if (detailed && std::fflush(trace))
@@ -231,7 +240,7 @@ class DistributionLog {
 
 public:
   std::string error;
-  void (*gather)(const double *, double *, int) = nullptr;
+  void (*gather)(const void *, void *, int) = nullptr;
   DistributionLog(driver::Log &log, Manifest &manifest, int rank, int ranks,
                   int64_t n, int64_t first, int64_t period, double reach)
       : log(log), manifest(manifest), rank(rank), ranks(ranks), domains(n),
@@ -266,26 +275,19 @@ public:
         std::chrono::duration<double>(Clock::now() - started).count();
     rows(total, "total", false);
   }
-  ~DistributionLog() {
-    if (trace)
-      std::fclose(trace);
-  }
-  DistObserver observer{
-      this,
-      [](void *p, int64_t d, int64_t n, int64_t g, const double *lo,
-         const double *hi) {
-        static_cast<DistributionLog *>(p)->domain(d, n, g, lo, hi);
-      },
-      [](void *p, int64_t from, int64_t to) {
-        auto &s = static_cast<DistributionLog *>(p)->current;
-        ++s.moves[from].out;
-        ++s.moves[to].in;
-      },
-      [](void *p, int64_t from, int64_t to, int64_t bytes) {
-        static_cast<DistributionLog *>(p)->current.bytes[{from, to}] += bytes;
-      },
-      [](void *p, int64_t code) {
-        static_cast<DistributionLog *>(p)->phase(code);
-      }};
+  ~DistributionLog() { if (trace) std::fclose(trace); }
+  DistObserver observer{this,
+    [](void *p, int64_t d, int64_t n, int64_t g, const double *lo, const double *hi) {
+      static_cast<DistributionLog *>(p)->domain(d,n,g,lo,hi);
+    }, [](void *p, int64_t from, int64_t to) {
+      auto &s = static_cast<DistributionLog *>(p)->current;
+      ++s.moves[from].out;
+      ++s.moves[to].in;
+    }, [](void *p, int64_t from, int64_t to, int64_t bytes) {
+      static_cast<DistributionLog *>(p)->current.bytes[{from,to}] += bytes;
+    }, [](void *p, int64_t code) { static_cast<DistributionLog *>(p)->phase(code); },
+    [](void *p, DistMeshTraffic kind, int64_t bytes) {
+      static_cast<DistributionLog *>(p)->current.meshBytes[kind] += bytes;
+    }};
 };
 } // namespace mdir::tool

@@ -1,9 +1,15 @@
 # The runtime is plain C, so that it builds without the C++ standard library
 # and loads into any host process.
-add_library(mdrt SHARED mdrt.c mdrt_dist.c mdrt_fft.c
+add_library(mdrt SHARED mdrt.c mdrt_dist.c mdrt_fft.c mdrt_pencils.c mdrt_mesh.c
   ${PROJECT_SOURCE_DIR}/third_party/pocketfft/pocketfft.c)
 target_include_directories(mdrt PRIVATE
   ${PROJECT_SOURCE_DIR}/third_party/pocketfft)
+# Use the same OpenMP runtime as the compiled CPU loops so their thread
+# setting applies to mesh assignment and interpolation as well.
+if(EXISTS "${LLVM_LIBRARY_DIR}/libomp.so" AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  set_source_files_properties(mdrt_mesh.c PROPERTIES COMPILE_OPTIONS "-fopenmp")
+  target_link_libraries(mdrt PRIVATE "${LLVM_LIBRARY_DIR}/libomp.so")
+endif()
 # The thermostat takes the math library.
 target_link_libraries(mdrt PRIVATE m)
 set_target_properties(mdrt PROPERTIES

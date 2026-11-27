@@ -5,6 +5,11 @@ mean volume in NPT, mixed precision on a GPU.
 dynamics.py make DIR TOPOLOGY COORDINATES NVE_STEPS NPT_STEPS   control files
 dynamics.py run MDIR DIR                                      on the GPU, in turn
 dynamics.py report DIR                                        the table
+dynamics.py paired-drift END_PS SEED ORDINARY DISTRIBUTED [SEED ORDINARY DISTRIBUTED ...]
+
+paired-drift reads total energy from pairs of energy files sampled from zero
+through END_PS. It prints slopes in kcal/mol/ps and tests the mean paired
+difference across independent seeds against two standard errors.
 
 The drift is the slope of a straight line fitted to the total energy of the
 rows of the energy file, in kcal/mol/ns and per particle, and the slopes of
@@ -85,7 +90,38 @@ def table(path):
 
 
 mode = sys.argv[1]
-if mode == 'make':
+if mode == 'paired-drift':
+    if len(sys.argv) < 9 or (len(sys.argv) - 3) % 3:
+        sys.exit("paired-drift needs an end time and at least two seed/file/file triples")
+    end = float(sys.argv[2])
+    seeds = sys.argv[3::3]
+    if len(set(seeds)) != len(seeds):
+        sys.exit("paired-drift needs distinct seeds")
+    differences = []
+    print("seed ordinary distributed difference (kcal/mol/ps)")
+    for seed, ordinary, distributed in zip(seeds, sys.argv[4::3], sys.argv[5::3]):
+        traces = []
+        for path in (ordinary, distributed):
+            header, rows = table(path)
+            if len(rows) < 2:
+                sys.exit(f"{path} has too few energy samples")
+            time, energy = rows[:, [header.index('time'), header.index('total')]].T
+            if (time[0] != 0 or time[-1] != end or not np.all(np.diff(time) > 0)
+                    or not np.all(np.isfinite(energy))):
+                sys.exit(f"{path} needs finite energies on increasing times from 0 through {end} ps")
+            traces.append((time, energy))
+        if not np.array_equal(traces[0][0], traces[1][0]):
+            sys.exit(f"seed {seed} has different sampling times")
+        slopes = [np.polyfit(time, energy, 1)[0] for time, energy in traces]
+        difference = slopes[1] - slopes[0]
+        differences.append(difference)
+        print(seed, *(f"{value:.12g}" for value in (*slopes, difference)))
+    mean = np.mean(differences)
+    se = np.std(differences, ddof=1) / np.sqrt(len(differences))
+    passed = abs(mean) <= 2 * se
+    print(f"mean {mean:.12g}  SE {se:.12g}  2 SE {2*se:.12g}  {'PASS' if passed else 'FAIL'}")
+    sys.exit(0 if passed else 1)
+elif mode == 'make':
     d, top, crd, nve, npt = sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5]), int(sys.argv[6])
     for case, pme in CASES.items():
         for kind, steps in (('nve', nve), ('npt', npt)):

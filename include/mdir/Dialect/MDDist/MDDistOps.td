@@ -678,6 +678,16 @@ def MDDist_MapParticlesOp : MDDist_Op<"map_particles", [
   let hasRegionVerifier = 1;
 }
 
+def MDDist_MeshOp : MDDist_Op<"mesh", [Pure]> {
+  let summary = "Solves electrostatic PME on a pencil mesh for owned particle rows";
+  let hasVerifier = 1;
+  let arguments = (ins MDDist_LayoutType:$layout, MDDist_FieldType:$positions,
+    MDDist_FieldType:$charges, MD_CellType:$cell, MD_TableType:$moduli,
+    DenseI64ArrayAttr:$grid, I64Attr:$order, F64Attr:$beta, F64Attr:$coulomb);
+  let results = (outs F64:$energy, MDDist_FieldType:$forces,
+    VectorOfLengthAndType<[9], [F64]>:$virial);
+}
+
 def MDDist_AllReduceOp : MDDist_Op<"all_reduce", [Pure]> {
   let summary = "Sums the partial sums of the domains";
   let description = [{

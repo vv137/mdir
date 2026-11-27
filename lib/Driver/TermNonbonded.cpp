@@ -651,6 +651,29 @@ void NonbondedWork::collectObservedTails() {
 std::pair<double, double> NonbondedWork::getPMEConstants(double lambda) const {
   const Topology &topology = *system.topology;
   double squares = 0.0, net = 0.0;
+  if (const auto &dist = control.distribution) {
+    double corrections[2]{};
+    if (dist->ownsPmeConstants) {
+      std::vector<double> charges(topology.charges.begin(), topology.charges.end());
+      if (decouples())
+        for (size_t i = 0; i < charges.size(); ++i)
+          if (system.alchemical[i]) charges[i] *= 1.0 - lambda;
+      // A canonical sequence also handles a permutation of topology rows.
+      llvm::sort(charges);
+      long double total = 0, norm = 0;
+      for (long double charge : charges) {
+        total += charge;
+        norm += charge * charge;
+      }
+      double volume = system.box[0] * system.box[1] * system.box[2];
+      corrections[0] = -coulombInternal * program.pmeSelfFactor * norm;
+      corrections[1] = -coulombInternal * M_PI * total * total *
+                       program.pmeBackgroundFactor / volume;
+    }
+    if (dist->broadcastPmeConstants)
+      dist->broadcastPmeConstants(corrections, 2, 0);
+    return {corrections[0], corrections[1]};
+  }
   for (size_t i = 0, e = topology.charges.size(); i != e; ++i) {
     double q = topology.charges[i];
     if (decouples() && system.alchemical[i])
