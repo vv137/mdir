@@ -1133,6 +1133,27 @@ int64_t _mlir_ciface_mdrtDistDeviceCovered(int64_t halo, struct Memref3D *ref,
   if (flag == 2) fail("coverage requires finite displacement");
   return mdrtMPIAllTrue(!flag);
 }
+
+static void retireMatrix(struct DistDeviceMatrix *matrix) {
+  if (matrix->data) {
+    matrix->release(matrix->data);
+    *matrix = (struct DistDeviceMatrix){0};
+  }
+}
+
+int64_t _mlir_ciface_mdrtDistDeviceCoveredRetireMatrix(int64_t halo,
+    struct Memref3D *ref, struct Memref3D *current, double cutoff) {
+  int64_t covered = _mlir_ciface_mdrtDistDeviceCovered(halo, ref, current, cutoff);
+  if (!covered) {
+    // A surrounding report loop may still hold a reference. The rebuild
+    // branch replaces this halo before any further pair evaluation.
+    struct Halo *h = (struct Halo *)(intptr_t)halo;
+    retireMatrix(&h->deviceMatrix);
+    for (struct ExclusionMap *map = h->exclusionMaps; map; map = map->next)
+      retireMatrix(&map->matrix);
+  }
+  return covered;
+}
 #endif
 
 void _mlir_ciface_mdrtMPICopyState(struct Memref3D *source, struct Memref3D *dest) {

@@ -1057,9 +1057,13 @@ LogicalResult Lowering::lowerCovered(CoveredOp op) {
   Value reference = storage[op.getReference()].buffer;
   Value current = storage[op.getCurrent()].buffer;
   Type i64 = b.getI64Type();
+  StringRef coverage = "mdrtDistCovered";
+  if (sharedState())
+    coverage = op->hasAttr("md_dist.retire_matrix")
+                   ? "mdrtDistDeviceCoveredRetireMatrix" : "mdrtDistDeviceCovered";
   Value answer = func::CallOp::create(
                      b, loc,
-                     declare(sharedState() ? "mdrtDistDeviceCovered" : "mdrtDistCovered",
+                     declare(coverage,
                              b.getFunctionType({i64, reference.getType(),
                                                 current.getType(), b.getF64Type()},
                                                {i64}),

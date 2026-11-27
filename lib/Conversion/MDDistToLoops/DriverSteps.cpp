@@ -85,6 +85,8 @@ Value Segment::advance(OpBuilder &b, Value field, Value slope, Value dt, Value m
 Epoch Segment::rebuild(OpBuilder &b, Epoch e) {
   Value ok = dd::CoveredOp::create(b, loc, b.getI1Type(), e.halo, e.reference,
                                    e.fields[0], cell, b.getFloatAttr(b.getF64Type(), stateType.getCutoff()));
+  // The rebuild branch replaces this epoch for every subsequent force.
+  ok.getDefiningOp()->setAttr("md_dist.retire_matrix", b.getUnitAttr());
   auto branch = scf::IfOp::create(b, loc, ok, [&](OpBuilder &keep, Location) {
     scf::YieldOp::create(keep, loc, pack(keep, e));
   }, [&](OpBuilder &move, Location) {
