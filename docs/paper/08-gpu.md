@@ -506,7 +506,14 @@ order recorded; and a kernel takes its arguments by value, so the recorded
 bytes are those its launch would have passed. In the deterministic mode the
 checkpoint and every row of the log are therefore bitwise those of
 launches one by one, which the tests check in mixed and double precision.
-PENDING: measurements.
+On an RTX 4090 at 2 fs the spans raised the rate of TIP3P boxes of 10,000
+and 20,000 particles by 10 to 11% and 7 to 8% (MATRIX), of JAC by 8% in
+NVE and 5 to 6% in NPT, of Factor IX by 3%, and of Cellulose by under 1%;
+with TOWERS, by 10 to 14%, more than the chunk graphs of D439 gave
+(D[step-no-host-wait], Section 5). An IF node in the graph, which would let
+the device decide the rebuild, costs 2.5 µs a step when it is not taken, a
+fifth of what the graphs save at these sizes. The waits for the sizes of a
+build and for the kinetic energy of a coupling step remain on the host.
 
 ## 8.4 Where the time of a step goes
 
