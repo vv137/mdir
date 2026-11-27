@@ -69,6 +69,7 @@ struct Neighbors {
   /// them too narrow (getMatrixEntries).
   Value counts;
   Value handle;
+  Value domainMatrix, halo, imagePositions;
   /// The number of neighbors that a row holds at first.
   Value width;
   /// The configuration and the cell that the structure was built at.
@@ -121,6 +122,11 @@ private:
                           const Neighbors &structure, Value positions,
                           Value box, double reach, double cellWidth,
                           Value centers = Value());
+  LogicalResult emitMatrixBuild(OpBuilder &builder, Location loc,
+                          const Neighbors &structure, Value positions,
+                          Value box, double reach, double cellWidth,
+                          Value centers = Value());
+  LogicalResult lowerDomainMatrix(mdrt::DomainMatrixOp op);
 
   /// The number of particles that `buffer` holds a field of.
   Value createSize(OpBuilder &builder, Location loc, Value buffer) {
@@ -371,13 +377,30 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
   Value inverse = createInverse(builder, loc, box);
 
+  Value imageShifts, imagePositions;
+  if (structure.domainMatrix && md_exec::hostpairs::getComputedType(op).isF32()) {
+    imagePositions = structure.imagePositions;
+    auto type = MemRefType::get({ShapedType::kDynamic, 3}, builder.getF64Type());
+    auto shifts = getOrDeclare("mdrtDistMatrixImages", builder.getFunctionType(
+        {builder.getI64Type(), builder.getI64Type()}, {type}));
+    shifts->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+    imageShifts = func::CallOp::create(builder, loc, shifts,
+                      ValueRange{structure.halo, structure.domainMatrix}).getResult(0);
+  }
   Value entries = getMatrixEntries(builder, loc, structure.handle);
   Value zero = createIndex(builder, loc, 0);
   Value one = createIndex(builder, loc, 1);
   auto loop = scf::ParallelOp::create(
       builder, loc, ValueRange{zero}, ValueRange{size}, ValueRange{one},
       inits, [&](OpBuilder &body, Location, ValueRange ivs, ValueRange) {
-        IRMapping local;
+        auto emitRow = [&](OpBuilder &at) {
+          if (hostLanes)
+            return emitPairRowLanes(at, op, structure.counts, entries, box,
+                                    inverse, ivs[0], *hostLanes, imageShifts, imagePositions);
+          IRMapping local;
+          return emitPairKernel(at, op, structure.counts, entries, box,
+                                inverse, ivs[0], local, nullptr, nullptr, nullptr, nullptr, imageShifts, imagePositions);
+        };
         SmallVector<Value> contributions;
         if (Value selected = op.getCenterSet()) {
           Value bit = memref::LoadOp::create(body, loc, selected,
@@ -398,8 +421,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
             OpBuilder then = OpBuilder::atBlockEnd(filtered.thenBlock());
             scf::YieldOp::create(
                 then, loc,
-                emitPairKernel(then, op, structure.counts, entries, box,
-                               inverse, ivs[0], local));
+                emitRow(then));
           }
           {
             OpBuilder otherwise = OpBuilder::atBlockEnd(filtered.elseBlock());
@@ -410,13 +432,8 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
           }
           contributions.assign(filtered.getResults().begin(),
                                filtered.getResults().end());
-        } else if (hostLanes) {
-          contributions =
-              emitPairRowLanes(body, op, structure.counts, entries, box,
-                               inverse, ivs[0], *hostLanes);
         } else {
-          contributions = emitPairKernel(body, op, structure.counts, entries,
-                                         box, inverse, ivs[0], local);
+          contributions = emitRow(body);
         }
         if (!contributions.empty())
           createReduction(body, loc, contributions, /*isSum=*/true);
@@ -864,7 +881,74 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
   neighbors[op.getResult()] = structure;
 }
 
-LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
+LogicalResult Lowering::lowerDomainMatrix(mdrt::DomainMatrixOp op) {
+  Location loc = op.getLoc();
+  OpBuilder b(op);
+  Type i64 = b.getI64Type();
+  auto word = [&](int64_t n) -> Value { return arith::ConstantIntOp::create(b, loc, n, 64); };
+  auto wide = [&](Value n) -> Value { return arith::IndexCastOp::create(b, loc, i64, n); };
+  auto call = [&](StringRef name, Type result, ValueRange args, bool cInterface = false) {
+    auto fn = getOrDeclare(name, b.getFunctionType(args.getTypes(), {result}));
+    if (cInterface)
+      fn->setAttr("llvm.emit_c_interface", b.getUnitAttr());
+    return func::CallOp::create(b, loc, fn, args).getResult(0);
+  };
+  Neighbors list;
+  Value x = op.getPositions();
+  list.size = createSize(b, loc, x);
+  double cutoff = op.getCutoff().convertToDouble(), skin = op.getSkin().convertToDouble();
+  Value matrix = call("mdrtDistMatrix", i64,
+      {op.getHalo(), wide(op.getDomain()), wide(op.getCenters()), wide(list.size),
+       createReal(b, loc, b.getF64Type(), cutoff), createReal(b, loc, b.getF64Type(), skin),
+       word(op.getWidth())});
+  list.imagePositions = x;
+  list.domainMatrix = matrix;
+  list.halo = op.getHalo();
+  auto countsType = MemRefType::get({ShapedType::kDynamic}, b.getI32Type());
+  auto view = [&](Value selected) {
+    list.handle = call("mdrtDistMatrixHandle", i64, {matrix, selected});
+    list.counts = call("mdrtDistMatrixCounts", countsType, {matrix, selected}, true);
+  };
+  view(word(0));
+  Value rebuild = call("mdrtDistMatrixRebuild", i64, {matrix, x}, true);
+  Value stale = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne, rebuild, word(0));
+  auto branch = scf::IfOp::create(b, loc, stale, false);
+  OpBuilder build = branch.getThenBodyBuilder();
+  SmallVector<Value> edges;
+  auto edge = getOrDeclare("mdrtDistMatrixEdge", b.getFunctionType({i64, i64}, {b.getF64Type()}));
+  for (int axis = 0; axis < 3; ++axis) {
+    Value component = arith::ConstantIntOp::create(build, loc, axis, 64);
+    edges.push_back(func::CallOp::create(build, loc, edge, ValueRange{matrix, component}).getResult(0));
+  }
+  Value box = vector::FromElementsOp::create(build, loc, VectorType::get({3}, b.getF64Type()), edges);
+  if (failed(emitMatrixBuild(build, loc, list, x, box, cutoff + skin,
+                             (cutoff + skin) / 3, op.getCenters())))
+    return failure();
+  Value rule = word(op.getRule());
+  Value selected = call("mdrtDistSelectMatrix", i64, {matrix, op.getExclusions(), rule});
+  Value filter = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne, selected, word(0));
+  scf::IfOp::create(b, loc, filter, [&](OpBuilder &at, Location) {
+    Value zero = createIndex(at, loc, 0), chunk = createIndex(at, loc, 64);
+    scf::ParallelOp::create(at, loc, ValueRange{zero}, ValueRange{op.getCenters()},
+        ValueRange{chunk}, [&](OpBuilder &body, Location, ValueRange ivs) {
+          Value end = arith::MinUIOp::create(body, loc, op.getCenters(),
+              arith::AddIOp::create(body, loc, ivs[0], chunk));
+          SmallVector<Value> args{op.getHalo(), matrix, op.getExclusions(), rule,
+              arith::IndexCastOp::create(body, loc, i64, ivs[0]),
+              arith::IndexCastOp::create(body, loc, i64, end),
+              op.getOwnedPositions(), op.getGhostPositions()};
+          auto fn = getOrDeclare("mdrtDistSelectRows", body.getFunctionType(ValueRange(args).getTypes(), {}));
+          fn->setAttr("llvm.emit_c_interface", body.getUnitAttr());
+          func::CallOp::create(body, loc, fn, args);
+        });
+    scf::YieldOp::create(at, loc);
+  });
+  view(selected);
+  neighbors[op.getResult()] = list;
+  return success();
+}
+
+LogicalResult Lowering::emitMatrixBuild(OpBuilder &builder, Location loc,
                                   const Neighbors &structure, Value positions,
                                   Value box, double reach,
                                   double cellWidth, Value centers) {
@@ -942,6 +1026,16 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
       getOrDeclare(countBuildName, builder.getFunctionType({}, {})),
       ValueRange());
 
+  return success();
+}
+
+LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
+                                  const Neighbors &structure, Value positions,
+                                  Value box, double reach,
+                                  double cellWidth, Value centers) {
+  if (failed(emitMatrixBuild(builder, loc, structure, positions, box, reach,
+                             cellWidth, centers)))
+    return failure();
   // Leave the excluded pairs out.
   Value filtered = getMatrixEntries(builder, loc, structure.handle);
   if (structure.excluded)
@@ -975,6 +1069,7 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                                         builder.getBoolAttr(true));
   memref::StoreOp::create(builder, loc, yes, structure.valid, ValueRange{});
 
+  Type wide = builder.getI64Type();
   Value builds =
       memref::LoadOp::create(builder, loc, structure.builds, ValueRange{});
   Value increment = arith::ConstantOp::create(
@@ -1286,7 +1381,10 @@ LogicalResult Lowering::lowerOp(Operation *op) {
                 "'convert-md-exec-to-gpu'";
   }
 
-  if (auto empty = dyn_cast<md_exec::EmptyNeighborsOp>(op)) {
+  if (auto domain = dyn_cast<mdrt::DomainMatrixOp>(op)) {
+    if (failed(lowerDomainMatrix(domain)))
+      return failure();
+  } else if (auto empty = dyn_cast<md_exec::EmptyNeighborsOp>(op)) {
     if (!empty.isStorageForm())
       return op->emitOpError()
              << "is not in the storage form; run 'md-exec-assign-storage' "

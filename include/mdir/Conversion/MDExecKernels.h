@@ -34,6 +34,13 @@ mlir::Value createCutoff2(mlir::OpBuilder &builder, mlir::Location loc,
 mlir::Value convertReal(mlir::OpBuilder &builder, mlir::Location loc,
                         mlir::Value value, mlir::Type real);
 
+/// Difference of explicit-image positions, rounded in the same order as
+/// the host minimum-image kernel when image translations are available.
+mlir::Value pairDifference(mlir::OpBuilder &b, mlir::Location loc,
+                           mlir::Value center, mlir::Value other,
+                           mlir::Type computed, mlir::Type stored, mlir::Value centerImage = {},
+                           mlir::Value otherImage = {});
+
 /// One over each edge length of `box`. A kernel finds the minimum image
 /// with a multiplication in place of a division.
 ///
@@ -152,7 +159,8 @@ emitPairKernel(mlir::OpBuilder &builder, md_exec::PairForOp op,
                mlir::Value inverse, mlir::Value central,
                mlir::IRMapping &local, const RowLanes *lanes = nullptr,
                llvm::SmallVectorImpl<mlir::Value> *outTotals = nullptr,
-               const PairLayout *layout = nullptr, AddToMember add = nullptr);
+               const PairLayout *layout = nullptr, AddToMember add = nullptr,
+               mlir::Value imageShifts = {}, mlir::Value imagePositions = {});
 
 /// Where a loop over pairs over groups of 16 (D89,
 /// docs/neighbor-groups.md) finds its work: the lists of the groups in blocks of 64 entries (`entries` and
@@ -290,6 +298,9 @@ void emitTupleOnce(mlir::OpBuilder &builder, md_exec::TupleForOp op,
 /// row `row` of `buffer` on a device with a relaxed atomic at the scope of
 /// the device, with no result.
 void emitAtomicAdd(mlir::OpBuilder &builder, mlir::Location loc,
+                   mlir::Value value, mlir::Value buffer, mlir::Value row);
+
+void emitHostAtomicAdd(mlir::OpBuilder &builder, mlir::Location loc,
                    mlir::Value value, mlir::Value buffer, mlir::Value row);
 
 /// Emits what a thread of a loop over tuples with global sums does where

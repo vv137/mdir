@@ -603,3 +603,7 @@ The grid must have at least as many domains as ranks. The launcher sets
 the rank count. Rank zero owns the output files.
 Enable `MDIR_DIST_STEP_TRACE` consistently across the communicator. Rank
 zero owns the merged log. Other ranks write only their requested traces.
+
+D[distribute-pair-lowering] uses the existing pair-list distance and CPU
+thread count inside each domain. Default precision follows the host pair
+policy. Deterministic distribution retains its cross-grid word reductions.

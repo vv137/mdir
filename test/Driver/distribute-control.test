@@ -6,8 +6,9 @@
 # RUN: cp %t/base.toml %t/grid.toml && printf '\n[distribute]\ndomains = 8\n' >> %t/grid.toml
 # RUN: cd %t && env MDRT_DIST_TRACE=1 mdir run grid.toml > out 2> trace
 # RUN: sed -E 's/^(threads[[:space:]]*=[[:space:]]*)1$/\12/' %t/grid.toml > %t/threaded.toml
-# RUN: cd %t && mdir emit threaded.toml --stage=lowered | FileCheck %s --check-prefix=THREADED
-# THREADED: llvm.func {{.*}}@mdir_dist_pairs_
+# RUN: cd %t && env MDIR_HOST_PAIRS=lanes:4 mdir emit threaded.toml --stage=lowered | FileCheck %s --check-prefix=THREADED
+# THREADED-DAG: llvm.call @mdrtDistMatrixRebuild
+# THREADED-DAG: llvm.fmul {{.*}} : vector<4xf64>
 # RUN: FileCheck %s --check-prefix=GRID < %t/out
 # RUN: FileCheck %s --check-prefix=REBUILD < %t/trace
 # GRID: MDIR: domain grid 2 x 2 x 2, local transport, directed traversal

@@ -221,7 +221,7 @@ void kernels::storeElement(OpBuilder &builder, Location loc, Value value,
 
 /// Adds `value`, a scalar or a vector, atomically to the element `row` of
 /// the buffer `buffer` on the host.
-static void emitHostAtomicAdd(OpBuilder &b, Location loc, Value value,
+void kernels::emitHostAtomicAdd(OpBuilder &b, Location loc, Value value,
                               Value buffer, Value row) {
   auto type = cast<MemRefType>(buffer.getType());
   if (type.getRank() == 1) {
@@ -269,6 +269,23 @@ SmallVector<Value> kernels::emitParticleKernel(OpBuilder &builder,
 // Loops over pairs
 //===----------------------------------------------------------------------===//
 
+Value kernels::pairDifference(OpBuilder &b, Location loc, Value center,
+                              Value other, Type computed, Type stored, Value centerImage,
+                              Value otherImage) {
+  if (!centerImage)
+    return convertReal(b, loc, arith::SubFOp::create(b, loc, center, other), computed);
+  // Restore both coordinates before the storage-precision rounding.
+  // The ordinary kernel subtracts the stored coordinates, then applies
+  // the periodic translation in its compute precision.
+  Value a = arith::SubFOp::create(b, loc, center, centerImage);
+  Value z = arith::SubFOp::create(b, loc, other, otherImage);
+  a = convertReal(b, loc, a, stored);
+  z = convertReal(b, loc, z, stored);
+  Value raw = convertReal(b, loc, arith::SubFOp::create(b, loc, a, z), computed);
+  Value image = convertReal(b, loc, arith::SubFOp::create(b, loc, otherImage, centerImage), computed);
+  return arith::SubFOp::create(b, loc, raw, image);
+}
+
 SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
                                            md_exec::PairForOp op,
                                            Value counts, Value index,
@@ -278,7 +295,7 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
                                            const RowLanes *lanes,
                                            SmallVectorImpl<Value> *outTotals,
                                            const PairLayout *layout,
-                                           AddToMember add) {
+                                           AddToMember add, Value imageShifts, Value imagePositions) {
   Location loc = op.getLoc();
   Value positions = layout ? layout->positions : op.getPositions();
   SmallVector<Value> insBuffers(op.getIns().begin(), op.getIns().end());
@@ -308,6 +325,10 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
   Value one = createIndex(builder, loc, 1);
 
   Value centralPosition = loadElement(builder, loc, positions, central);
+  Type storedPosition = getElementTypeOrSelf(centralPosition);
+  if (imagePositions)
+    centralPosition = loadElement(builder, loc, imagePositions, central);
+  Value centralImage = imageShifts ? loadElement(builder, loc, imageShifts, central) : Value();
   SmallVector<Value> centralValues;
   for (Value buffer : insBuffers)
     centralValues.push_back(loadElement(builder, loc, buffer, central));
@@ -358,11 +379,10 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
           // The minimum-image displacement [AllenTildesley2017] and its
           // squared length; with explicit images, the plain difference, since
           // the rows carry their images (D290).
-          Value otherPosition = loadElement(pair, loc, positions, other);
-          Value raw = convertReal(
-              pair, loc,
-              arith::SubFOp::create(pair, loc, centralPosition, otherPosition),
-              computed);
+          Value otherPosition = loadElement(pair, loc, imagePositions ? imagePositions : positions, other);
+          Value otherImage = imageShifts ? loadElement(pair, loc, imageShifts, other) : Value();
+          Value raw = pairDifference(pair, loc, centralPosition, otherPosition, computed, storedPosition,
+                                     centralImage, otherImage);
           Value d = explicitImages ? raw
                                    : emitMinimumImage(pair, loc, raw,
                                                       boxComputed,

@@ -75,6 +75,23 @@ def MDRT_FromBufferOp : MDRT_Op<"from_buffer", [Pure]> {
   let hasVerifier = 1;
 }
 
+def MDRT_DomainMatrixOp : MDRT_Op<"domain_matrix"> {
+  let summary = "Acquire the host MATRIX candidate rows of a halo epoch";
+  let description = [{
+    Rebuild the ordinary CPU matrix at cutoff plus skin when the local
+    rows have moved beyond half the skin. The halo owns its storage and
+    fixes row identities and periodic images. Selection applies exclusions
+    and the directed (0), unique (1), or midpoint (2) computation rule.
+    Midpoint selection uses current coordinates on every visit.
+  }];
+  let hasVerifier = 1;
+  let arguments = (ins I64:$halo, Index:$domain, Index:$centers,
+      MemRefOf<[F64]>:$positions, I64:$exclusions,
+      MemRefOf<[F64]>:$ownedPositions, MemRefOf<[F64]>:$ghostPositions,
+      F64Attr:$cutoff, F64Attr:$skin, I64Attr:$width, I64Attr:$rule);
+  let results = (outs MDRT_NeighborsType:$result);
+}
+
 def MDRT_SnapshotOp : MDRT_Op<"snapshot", [MemoryEffects<[MemAlloc, MemRead]>]> {
   let summary = "An independent host copy of the field for a domain partition";
   let arguments = (ins MD_FieldType:$field);

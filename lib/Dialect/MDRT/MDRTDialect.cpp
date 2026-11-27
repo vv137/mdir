@@ -37,6 +37,22 @@ void MDRTDialect::initialize() {
   registerTypes();
 }
 
+LogicalResult DomainMatrixOp::verify() {
+  constexpr int64_t dyn = ShapedType::kDynamic;
+  auto f64 = Float64Type::get(getContext());
+  if (getPositions().getType() != MemRefType::get({dyn, 3}, f64) ||
+      getOwnedPositions().getType() != MemRefType::get({dyn, dyn, dyn}, f64) ||
+      getGhostPositions().getType() != getOwnedPositions().getType())
+    return emitOpError("requires packed xyz and domain-row-component position buffers");
+  if (!(getCutoff().convertToDouble() > 0 && getSkin().convertToDouble() >= 0) ||
+      getRule() > 2 || getWidthAttr().getInt() <= 0)
+    return emitOpError("requires positive cutoff and width, nonnegative skin, and a rule from 0 to 2");
+  auto contract = NeighborsContract::matrix(NeighborsContract::Images::Explicit);
+  if (!contract.meets(getResult().getType().getContract()))
+    return emitOpError("result exceeds the explicit-image MATRIX guarantee");
+  return success();
+}
+
 MemRefType mdir::mdrt::getBufferType(FieldType field) {
   if (field.getNumComponents() == 1)
     return MemRefType::get({ShapedType::kDynamic}, field.getElementType());

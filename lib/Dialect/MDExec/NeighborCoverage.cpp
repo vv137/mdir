@@ -3,6 +3,7 @@
 #include "mdir/Dialect/MDExec/NeighborCoverage.h"
 
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MDRT/MDRTOps.h"
 #include "mdir/Dialect/MDRT/MDRTTypes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -331,6 +332,12 @@ LogicalResult Coverage::prove() {
     Obligation request = work[cursor];
     if (!seen.insert({request.neighbors, request.centers}).second)
       continue;
+    if (auto domain = request.neighbors.getDefiningOp<mdir::mdrt::DomainMatrixOp>()) {
+      if (failed(fact(request, domain.getCutoff().convertToDouble(),
+                      domain.getCenters(), Images::Explicit)))
+        return failure();
+      continue;
+    }
     if (auto build = request.neighbors.getDefiningOp<BuildNeighborsOp>()) {
       if (failed(fact(request, build.getCutoff().convertToDouble(),
                       build.getCenters(), build.getImages())))

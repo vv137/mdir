@@ -36,6 +36,7 @@
 #include "mlir/IR/Verifier.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/RegionUtils.h"
+#include "mlir/IR/Dominance.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringSwitch.h"
 
@@ -78,8 +79,7 @@ struct Storage {
 /// positions of its local rows, owned then ghost, as a field of md_exec,
 /// its neighbor structure, and its number of owned rows, the centers.
 struct DomainRelation {
-  SmallVector<Value> positions, neighbors, centers;
-  Value cell;
+  Value positions, neighbors, owned, cell, centers;
 };
 
 class Lowering {
@@ -94,6 +94,8 @@ public:
         haloEvents(haloEvents), mpi(mpi), parallelDomains(parallelDomains) {}
 
   bool fixedPoint = false;
+  bool matrixPairs = false;
+  double matrixSkin = 0;
   LogicalResult run(func::FuncOp function);
 
 private:
@@ -104,6 +106,16 @@ private:
   //===--------------------------------------------------------------------===//
 
   LogicalResult lowerNeighborhoodExec(NeighborhoodOp op);
+  DomainRelation buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
+                                    Value d, FlatSymbolRefAttr set);
+  void forPairDomains(OpBuilder &b, Value rel,
+      function_ref<void(OpBuilder &, Value, FlatSymbolRefAttr, DomainRelation)> emit);
+  LogicalResult lowerPairGroup(Operation *anchor, DominanceInfo &dominance);
+  scf::ForOp domainLoop;
+  DomainRelation domainRelation;
+  md_exec::PairForOp lastPair;
+  llvm::DenseSet<Operation *> grouped;
+  llvm::DenseMap<std::pair<Value, Value>, Value> domainFields;
   LogicalResult lowerSumPairsExec(SumPairsOp op);
   LogicalResult lowerGatherPairsExec(GatherPairsOp op);
   LogicalResult lowerSumParticlesExec(SumParticlesOp op);
@@ -115,18 +127,18 @@ private:
   FlatSymbolRefAttr getSet(int64_t d, bool local, Value epoch);
   /// The number of rows of domain `d` that the rows of `rows`, a layout or
   /// a halo, give it, as an index.
-  Value countOf(OpBuilder &b, Storage &rows, int64_t d);
+  Value countOf(OpBuilder &b, Storage &rows, Value d);
   /// A field of md_exec on `set` of `k` components of `element`, of the
   /// rows of domain `d` of each buffer of `parts`, one after another, with
   /// the number of rows of each in `counts`: a buffer of all domains
   /// (memref<D x rows x k>) or of the identities (memref<D x rows>).
   Value makeField(OpBuilder &b, FlatSymbolRefAttr set, int64_t k,
-                  Type element, int64_t d, ArrayRef<Value> parts,
-                  ArrayRef<Value> counts);
+                  Type element, Value d, ArrayRef<Value> parts,
+                  ArrayRef<Value> counts, Value ghostShift = {});
   /// Copies `count` rows of `field`, a field of md_exec, from row `first`
   /// on, to the rows of domain `d` of `buffer`, a buffer of all domains.
   void copyBack(OpBuilder &b, Value field, Value first, Value count,
-                Value buffer, int64_t d);
+                Value buffer, Value d);
   /// Gives `loop`, a loop over pairs of md_exec, the kernel of the pair op
   /// `op` of md_dist: the distance from its square, the kernel inlined, and
   /// its value, for a unique relation, where the identity of the center is
@@ -136,7 +148,7 @@ private:
   /// The loop over the pairs of domain `d` of the pair op `op` (a
   /// `sum_pairs` or a `gather_pairs`), with the destinations `outs` and the
   /// sums `reduce`, and the policy `(directed, atomic)` for `atomic`.
-  md_exec::PairForOp createPairLoop(OpBuilder &b, Operation *op, int64_t d,
+  md_exec::PairForOp createPairLoop(OpBuilder &b, Operation *op, Value d, FlatSymbolRefAttr set, DomainRelation relation,
                                     TypeRange results, ValueRange outs,
                                     ValueRange reduce, DenseF64ArrayAttr weights,
                                     bool atomic, double scale);
@@ -269,7 +281,7 @@ private:
     Value side = arith::ConstantIntOp::create(b, loc, end, 64);
     return toIndex(b, func::CallOp::create(b, loc, bound, ValueRange{n, side}).getResult(0));
   }
-  llvm::DenseMap<Value, DomainRelation> relations;
+  llvm::DenseMap<Value, SmallVector<DomainRelation>> relations;
   /// The epochs of the sets of md_exec: layouts and halos, numbered.
   llvm::DenseMap<Value, int64_t> ownedEpochs, localEpochs;
 };
@@ -2096,14 +2108,13 @@ void Lowering::declareSets() {
     }
 }
 
-Value Lowering::countOf(OpBuilder &b, Storage &rows, int64_t d) {
-  return toIndex(
-      b, memref::LoadOp::create(b, loc, rows.rows, ValueRange{index(b, d)}));
+Value Lowering::countOf(OpBuilder &b, Storage &rows, Value d) {
+  return toIndex(b, memref::LoadOp::create(b, loc, rows.rows, d));
 }
 
 Value Lowering::makeField(OpBuilder &b, FlatSymbolRefAttr set, int64_t k,
-                          Type element, int64_t d, ArrayRef<Value> parts,
-                          ArrayRef<Value> counts) {
+                          Type element, Value d, ArrayRef<Value> parts,
+                          ArrayRef<Value> counts, Value ghostShift) {
   auto fieldType = md::FieldType::get(module.getContext(), set, k, element);
   MemRefType type = mdrt::getBufferType(fieldType);
   Value total = index(b, 0);
@@ -2119,10 +2130,16 @@ Value Lowering::makeField(OpBuilder &b, FlatSymbolRefAttr set, int64_t k,
         [&](OpBuilder &br, Location, Value r, ValueRange) {
           Value row = arith::AddIOp::create(br, loc, offset, r);
           for (int64_t c = 0; c < k; ++c) {
-            SmallVector<Value, 3> from = {index(br, d), r};
+            SmallVector<Value, 3> from = {d, r};
             if (partType.getRank() == 3)
               from.push_back(index(br, c));
             Value v = memref::LoadOp::create(br, loc, part, from);
+            if (ghostShift && part == parts.back()) {
+              Value shift = memref::LoadOp::create(br, loc, ghostShift, from);
+              v = arith::AddFOp::create(br, loc, v, shift);
+            }
+            if (element.isInteger(32) && v.getType().isF64())
+              v = arith::FPToSIOp::create(br, loc, element, v);
             SmallVector<Value, 2> to = {row};
             if (type.getRank() == 2)
               to.push_back(index(br, c));
@@ -2136,7 +2153,7 @@ Value Lowering::makeField(OpBuilder &b, FlatSymbolRefAttr set, int64_t k,
 }
 
 void Lowering::copyBack(OpBuilder &b, Value field, Value first, Value count,
-                        Value buffer, int64_t d) {
+                        Value buffer, Value d) {
   auto fieldType = cast<md::FieldType>(field.getType());
   MemRefType type = mdrt::getBufferType(fieldType);
   int64_t k = fieldType.getNumComponents();
@@ -2151,20 +2168,31 @@ void Lowering::copyBack(OpBuilder &b, Value field, Value first, Value count,
             from.push_back(index(br, c));
           Value v = memref::LoadOp::create(br, loc, flat, from);
           memref::StoreOp::create(br, loc, v, buffer,
-                                  ValueRange{index(br, d), r, index(br, c)});
+                                  ValueRange{d, r, index(br, c)});
         }
         scf::YieldOp::create(br, loc);
       });
 }
 
 LogicalResult Lowering::lowerNeighborhoodExec(NeighborhoodOp op) {
-  if (op.getResult().getType().getTraversal() == Traversal::Midpoint)
+  if (!matrixPairs && op.getResult().getType().getTraversal() == Traversal::Midpoint)
     return op.emitOpError("midpoint requires the distributed CPU pair lowering");
   // The precondition under which the relation is that of md.neighborhood,
   // as in the reference executor.
   if (failed(lowerNeighborhood(op)))
     return failure();
-  OpBuilder b(op);
+  auto &local = relations[op.getResult()];
+  if (!matrixPairs) {
+    OpBuilder b(op);
+    for (int64_t d = 0; d < domains; ++d)
+      local.push_back(buildLocalRelation(b, op, index(b, d),
+                          getSet(d, true, op.getHalo())));
+  }
+  return success();
+}
+
+DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
+                                             Value d, FlatSymbolRefAttr set) {
   Storage &halo = storage[op.getHalo()];
   Storage &layout = storage[layoutOf(op.getHalo())];
   Value owned = storage[op.getPositions()].buffer;
@@ -2175,31 +2203,39 @@ LogicalResult Lowering::lowerNeighborhoodExec(NeighborhoodOp op) {
   MLIRContext *context = module.getContext();
   DomainRelation relation;
   relation.cell = cellOf(op.getHalo());
-  for (int64_t d = 0; d < domains; ++d) {
-    FlatSymbolRefAttr set = getSet(d, /*local=*/true, op.getHalo());
-    Value nOwned = countOf(b, layout, d);
-    Value nGhosts = countOf(b, halo, d);
-    // The local rows, owned then ghost; the ghosts carry their images.
-    Value positions = makeField(b, set, 3, b.getF64Type(), d,
-                                {owned, ghosts}, {nOwned, nGhosts});
-    Value cells = md_exec::BuildCellsOp::create(
-        b, loc, mdrt::CellsType::get(context, set), positions,
-        relation.cell,
-        APFloat((cutoff + skin) / static_cast<double>(cellsPerReach)));
-    Value structure = md_exec::BuildNeighborsOp::create(
-        b, loc,
-        md_exec::getBuildType(set, md_exec::NeighborKind::Matrix,
-                              md_exec::Images::Explicit),
-        cells, positions, relation.cell, /*excluded=*/Value(), nOwned,
-        APFloat(cutoff),
-        APFloat(skin), md_exec::NeighborKind::Matrix,
-        static_cast<uint64_t>(width), md_exec::Images::Explicit);
-    relation.positions.push_back(positions);
-    relation.neighbors.push_back(structure);
-    relation.centers.push_back(nOwned);
+  Value nOwned = countOf(b, layout, d);
+  Value nGhosts = countOf(b, halo, d);
+  // The local rows, owned then ghost; the ghosts carry their images.
+  Value positions = makeField(b, set, 3, b.getF64Type(), d,
+                              {owned, ghosts}, {nOwned, nGhosts}, imageShifts.lookup(op.getGhosts()));
+  if (matrixPairs) {
+    auto traversal = op.getResult().getType().getTraversal();
+    bool midpoint = traversal == Traversal::Midpoint;
+    Value centers = midpoint ? Value(arith::AddIOp::create(b, loc, nOwned, nGhosts)) : nOwned;
+    Value excluded = excludedPairs.lookup(op.getResult());
+    if (!excluded)
+      excluded = arith::ConstantIntOp::create(b, loc, 0, 64);
+    Value packed = positions.getDefiningOp<mdrt::FromBufferOp>().getBuffer();
+    Value structure = mdrt::DomainMatrixOp::create(b, loc,
+        md_exec::getBuildType(set, md_exec::NeighborKind::Matrix, md_exec::Images::Explicit),
+        halo.handle, d, centers, packed, excluded, owned, ghosts,
+        APFloat(cutoff), APFloat(matrixSkin), width,
+        midpoint ? 2 : traversal == Traversal::Unique ? 1 : 0);
+    return {positions, structure, nOwned, relation.cell, centers};
   }
-  relations[op.getResult()] = relation;
-  return success();
+  Value cells = md_exec::BuildCellsOp::create(
+      b, loc, mdrt::CellsType::get(context, set), positions,
+      relation.cell,
+      APFloat((cutoff + skin) / static_cast<double>(cellsPerReach)));
+  Value structure = md_exec::BuildNeighborsOp::create(
+      b, loc,
+      md_exec::getBuildType(set, md_exec::NeighborKind::Matrix,
+                            md_exec::Images::Explicit),
+      cells, positions, relation.cell, /*excluded=*/Value(), nOwned,
+      APFloat(cutoff),
+      APFloat(skin), md_exec::NeighborKind::Matrix,
+      static_cast<uint64_t>(width), md_exec::Images::Explicit);
+  return {positions, structure, nOwned, relation.cell, nOwned};
 }
 
 void Lowering::addPairKernel(md_exec::PairForOp loop, Operation *op,
@@ -2248,19 +2284,17 @@ void Lowering::addPairKernel(md_exec::PairForOp loop, Operation *op,
 }
 
 md_exec::PairForOp
-Lowering::createPairLoop(OpBuilder &b, Operation *op, int64_t d,
+Lowering::createPairLoop(OpBuilder &b, Operation *op, Value d, FlatSymbolRefAttr set, DomainRelation relation,
                          TypeRange results, ValueRange outs, ValueRange reduce,
                          DenseF64ArrayAttr weights, bool atomic,
                          double scale) {
   Value relationValue = op->getOperand(0);
-  DomainRelation &relation = relations[relationValue];
   auto relationType = cast<RelationType>(relationValue.getType());
-  bool unique = relationType.getTraversal() == Traversal::Unique;
+  bool unique = !matrixPairs && relationType.getTraversal() == Traversal::Unique;
   auto neighborhood = relationValue.getDefiningOp<NeighborhoodOp>();
   Storage &halo = storage[neighborhood.getHalo()];
   Storage &layout = storage[layoutOf(neighborhood.getHalo())];
-  FlatSymbolRefAttr set = getSet(d, /*local=*/true, neighborhood.getHalo());
-  Value nOwned = relation.centers[d];
+  Value nOwned = relation.owned;
   Value nGhosts = countOf(b, halo, d);
   Value selected = isa<SumPairsOp>(op)
                        ? cast<SumPairsOp>(op).getCenterSet()
@@ -2282,11 +2316,16 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, int64_t d,
   SmallVector<Value> ins;
   for (unsigned g = 0; g < gathered.size(); g += 2) {
     auto type = cast<FieldType>(gathered[g].getType());
-    ins.push_back(makeField(b, set, type.getNumComponents(), b.getF64Type(),
-                            d,
-                            {storage[gathered[g]].buffer,
-                             storage[gathered[g + 1]].buffer},
-                            {nOwned, nGhosts}));
+    auto key = std::make_pair(gathered[g], gathered[g + 1]);
+    Value packed = matrixPairs ? domainFields.lookup(key) : Value();
+    if (!packed) {
+      packed = makeField(b, set, type.getNumComponents(), type.getElementType(), d,
+                         {storage[key.first].buffer, storage[key.second].buffer},
+                         {nOwned, nGhosts});
+      if (matrixPairs)
+        domainFields[key] = packed;
+    }
+    ins.push_back(packed);
   }
   if (unique)
     ins.push_back(makeField(b, set, 1, b.getI64Type(), d,
@@ -2300,23 +2339,77 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, int64_t d,
       ArrayAttr::get(context, {md::ExchangeAttr::get(context, exchange)});
   double cutoff = neighborhood.getCutoff().convertToDouble();
   auto loop = md_exec::PairForOp::create(
-      b, loc, results, relation.neighbors[d], relation.positions[d],
+      b, loc, results, relation.neighbors, relation.positions,
       relation.cell, ins, outs, reduce, /*scratch=*/ValueRange(),
       b.getF64FloatAttr(cutoff), weights, /*overwrite=*/DenseBoolArrayAttr(),
       md_exec::TraversalAttr::get(context, md_exec::Traversal::Directed),
       md_exec::ConflictAttr::get(context, atomic
                                               ? md_exec::Conflict::Atomic
                                               : md_exec::Conflict::OwnerOnly),
-      exchangeAttr, nOwned, centerSet, b.getBoolAttr(ghostFree),
+      exchangeAttr, relation.centers, centerSet, b.getBoolAttr(ghostFree),
       md_exec::ImagesAttr::get(context, md_exec::Images::Explicit),
       /*scatter=*/md_exec::ScatterAttr(),
       /*hostLanes=*/IntegerAttr());
   addPairKernel(loop, op, unique, scale);
+  if (matrixPairs) lastPair = loop;
   return loop;
 }
 
+void Lowering::forPairDomains(OpBuilder &b, Value rel,
+    function_ref<void(OpBuilder &, Value, FlatSymbolRefAttr, DomainRelation)> emit) {
+  auto n = rel.getDefiningOp<NeighborhoodOp>();
+  if (!matrixPairs) {
+    for (int64_t i = 0; i < domains; ++i)
+      emit(b, index(b, i), getSet(i, true, n.getHalo()), relations[rel][i]);
+    return;
+  }
+  Value d = domainLoop.getInductionVar();
+  OpBuilder body(domainLoop.getBody()->getTerminator());
+  if (lastPair)
+    body.setInsertionPointAfter(lastPair);
+  auto set = getSet(0, true, n.getHalo());
+  emit(body, d, set, domainRelation);
+}
+
+LogicalResult Lowering::lowerPairGroup(Operation *anchor, DominanceInfo &dominance) {
+  Value rel = anchor->getOperand(0);
+  auto n = rel.getDefiningOp<NeighborhoodOp>();
+  SmallVector<Operation *> group{anchor};
+  // A later many-body stage can read the result of an earlier scatter.
+  // Only bring a kernel forward when all its inputs already dominate the
+  // first evaluation, including tables and scalars captured by its body.
+  for (Operation *user : rel.getUsers()) {
+    if (!isa<SumPairsOp, GatherPairsOp>(user) || user->getBlock() != anchor->getBlock() ||
+        !anchor->isBeforeInBlock(user) || grouped.contains(user))
+      continue;
+    llvm::SetVector<Value> inputs;
+    inputs.insert(user->getOperands().begin(), user->getOperands().end());
+    getUsedValuesDefinedAbove(user->getRegion(0), inputs);
+    if (llvm::all_of(inputs, [&](Value v) { return dominance.dominates(v, anchor); }))
+      group.push_back(user);
+  }
+  llvm::sort(group, [](Operation *a, Operation *b) { return a->isBeforeInBlock(b); });
+  OpBuilder b(anchor);
+  domainLoop = scf::ForOp::create(b, loc, domainBound(b, false), domainBound(b, true), index(b, 1));
+  domainLoop->setAttr("md_dist.domain_loop", b.getUnitAttr());
+  OpBuilder body(domainLoop.getBody()->getTerminator());
+  domainRelation = buildLocalRelation(body, n, domainLoop.getInductionVar(), getSet(0, true, n.getHalo()));
+  for (Operation *op : group) {
+    grouped.insert(op);
+    if (auto sum = dyn_cast<SumPairsOp>(op)) {
+      if (failed(lowerSumPairsExec(sum))) return failure();
+    } else if (failed(lowerGatherPairsExec(cast<GatherPairsOp>(op)))) {
+      return failure();
+    }
+  }
+  domainFields.clear();
+  lastPair = {};
+  domainLoop = {};
+  return success();
+}
+
 LogicalResult Lowering::lowerSumPairsExec(SumPairsOp op) {
-  OpBuilder b(op);
+  OpBuilder b(matrixPairs ? domainLoop.getOperation() : op.getOperation());
   Type type = op.getResult().getType().getValueType();
   auto vector = dyn_cast<VectorType>(type);
   int64_t length = vector ? vector.getNumElements() : 1;
@@ -2330,25 +2423,25 @@ LogicalResult Lowering::lowerSumPairsExec(SumPairsOp op) {
   DenseF64ArrayAttr weights;
   if (directed)
     weights = b.getDenseF64ArrayAttr({0.5});
-  for (int64_t d = 0; d < domains; ++d) {
+  forPairDomains(b, op.getRelation(), [&](OpBuilder &b, Value d, FlatSymbolRefAttr set, DomainRelation relation) {
     Value init = zero(b, type);
-    auto loop = createPairLoop(b, op, d, TypeRange{type}, ValueRange(),
-                               ValueRange{init}, weights, /*atomic=*/false,
+    auto loop = createPairLoop(b, op, d, set, relation, TypeRange{type}, ValueRange(),
+                               ValueRange{init}, weights, /*atomic=*/matrixPairs && !directed,
                                /*scale=*/1.0);
     Value sum = loop.getResult(0);
     for (int64_t c = 0; c < length; ++c) {
       Value part =
           vector ? Value(vector::ExtractOp::create(b, loc, sum, c)) : sum;
       memref::StoreOp::create(b, loc, part, partial,
-                              ValueRange{index(b, d), index(b, c)});
+                              ValueRange{d, index(b, c)});
     }
-  }
+  });
   storage[op.getResult()].buffer = partial;
   return success();
 }
 
 LogicalResult Lowering::lowerGatherPairsExec(GatherPairsOp op) {
-  OpBuilder b(op);
+  OpBuilder b(matrixPairs ? domainLoop.getOperation() : op.getOperation());
   auto fieldType = cast<FieldType>(op.getResults()[0].getType());
   int64_t k = fieldType.getNumComponents();
   auto neighborhood = op.getRelation().getDefiningOp<NeighborhoodOp>();
@@ -2364,23 +2457,22 @@ LogicalResult Lowering::lowerGatherPairsExec(GatherPairsOp op) {
   Value ghostOut;
   if (twoEnded)
     ghostOut = allocate(b, halo.capacity, k);
-  for (int64_t d = 0; d < domains; ++d) {
+  forPairDomains(b, op.getRelation(), [&](OpBuilder &b, Value d, FlatSymbolRefAttr set, DomainRelation relation) {
     auto localType = md::FieldType::get(module.getContext(),
-                                        getSet(d, /*local=*/true,
-                                               haloOf(op.getRelation())),
+                                        set,
                                         k,
                                         b.getF64Type());
     Value destination = md_exec::ZerosOp::create(b, loc, localType);
-    auto loop = createPairLoop(b, op, d, TypeRange{localType},
+    auto loop = createPairLoop(b, op, d, set, relation, TypeRange{localType},
                                ValueRange{destination}, ValueRange(),
                                DenseF64ArrayAttr(), /*atomic=*/twoEnded,
                                scale);
-    Value nOwned = relations[op.getRelation()].centers[d];
+    Value nOwned = relation.owned;
     copyBack(b, loop.getResult(0), index(b, 0), nOwned, ownedOut, d);
     if (twoEnded)
       copyBack(b, loop.getResult(0), nOwned, countOf(b, halo, d), ghostOut,
                d);
-  }
+  });
   storage[op.getResults()[0]].buffer = ownedOut;
   if (twoEnded)
     storage[op.getResults()[1]].buffer = ghostOut;
@@ -2412,12 +2504,12 @@ LogicalResult Lowering::lowerSumParticlesExec(SumParticlesOp op) {
   for (int64_t d = 0; d < domains; ++d) {
     FlatSymbolRefAttr set =
         getSet(d, /*local=*/false, layoutOf(op.getGathered()[0]));
-    Value count = countOf(b, layout, d);
+    Value count = countOf(b, layout, index(b, d));
     SmallVector<Value> ins;
     for (Value field : op.getGathered())
       ins.push_back(makeField(
           b, set, cast<FieldType>(field.getType()).getNumComponents(),
-          b.getF64Type(), d, {storage[field].buffer}, {count}));
+          b.getF64Type(), index(b, d), {storage[field].buffer}, {count}));
     auto loop = md_exec::ParticleForOp::create(
         b, loc, TypeRange{type}, ins, ValueRange(),
         ValueRange{zero(b, type)}, /*scratch=*/ValueRange());
@@ -2457,12 +2549,12 @@ LogicalResult Lowering::lowerMapParticlesExec(MapParticlesOp op) {
   for (int64_t d = 0; d < domains; ++d) {
     FlatSymbolRefAttr set =
         getSet(d, /*local=*/false, layoutOf(op.getGathered()[0]));
-    Value count = countOf(b, layout, d);
+    Value count = countOf(b, layout, index(b, d));
     SmallVector<Value> ins;
     for (Value field : op.getGathered())
       ins.push_back(makeField(
           b, set, cast<FieldType>(field.getType()).getNumComponents(),
-          b.getF64Type(), d, {storage[field].buffer}, {count}));
+          b.getF64Type(), index(b, d), {storage[field].buffer}, {count}));
     auto outType =
         md::FieldType::get(module.getContext(), set, k, b.getF64Type());
     Value destination = md_exec::EmptyOp::create(b, loc, outType);
@@ -2482,7 +2574,7 @@ LogicalResult Lowering::lowerMapParticlesExec(MapParticlesOp op) {
         kb, loc,
         ValueRange{mapping.lookupOrDefault(
             cast<YieldOp>(source.getTerminator()).getValues()[0])});
-    copyBack(b, loop.getResult(0), index(b, 0), count, result, d);
+    copyBack(b, loop.getResult(0), index(b, 0), count, result, index(b, d));
   }
   storage[op.getResult()].buffer = result;
   return success();
@@ -2495,6 +2587,12 @@ LogicalResult Lowering::lowerMapParticlesExec(MapParticlesOp op) {
 LogicalResult Lowering::lower(Operation *op) {
   loc = op->getLoc();
   end = op->getBlock()->getTerminator();
+  if (matrixPairs) {
+    if (auto n = dyn_cast<NeighborhoodOp>(op)) {
+      return lowerNeighborhoodExec(n);
+    }
+
+  }
   if (throughExec) {
     if (auto o = dyn_cast<NeighborhoodOp>(op))
       return lowerNeighborhoodExec(o);
@@ -2605,15 +2703,15 @@ static LogicalResult convertStateFlow(func::FuncOp function) {
 /// a step, the sets of md_exec have the sizes of that step. A cell and the
 /// constants the body reads are made again in the function, so that the
 /// passes that need the op of a cell find it.
-static LogicalResult outlineSteps(ModuleOp module, func::FuncOp function) {
+static LogicalResult outlineSteps(ModuleOp module, func::FuncOp function, StringRef marker) {
   SmallVector<scf::ForOp> loops;
   function.walk([&](scf::ForOp loop) {
-    if (loop->hasAttr(kStepLoop))
+    if (loop->hasAttr(marker))
       loops.push_back(loop);
   });
   unsigned number = 0;
   for (scf::ForOp loop : loops) {
-    loop->removeAttr(kStepLoop);
+    loop->removeAttr(marker);
     llvm::SetVector<Value> captured;
     getUsedValuesDefinedAbove(loop.getRegion(), captured);
     // The values made again in the function, and those passed to it.
@@ -2771,7 +2869,9 @@ LogicalResult Lowering::run(func::FuncOp function) {
                          declare("mdrtDistPhase", type, false),
                          ValueRange{value});
   };
+  DominanceInfo dominance(function);
   for (Operation *op : ops) {
+    if (grouped.contains(op)) continue;
     int phase = 0;
     if (statistics) {
       if (isa<SumPairsOp, GatherPairsOp>(op)) phase = DistPairs;
@@ -2785,10 +2885,14 @@ LogicalResult Lowering::run(func::FuncOp function) {
           mark(&step.getBody()->front(), DistStep);
       if (phase) mark(op, phase);
     }
-    if (failed(lower(op)))
+    if (matrixPairs && isa<SumPairsOp, GatherPairsOp>(op)) {
+      loc = op->getLoc();
+      end = op->getBlock()->getTerminator();
+      if (failed(lowerPairGroup(op, dominance))) return failure();
+    } else if (failed(lower(op))) {
       return failure();
-    if (phase)
-      mark(op, -phase);
+    }
+    if (phase) mark(op, -phase);
   }
   // The casts of the structural conversion: a cast of a state to its tuple
   // takes the tuple of the state; a cast of a tuple to a state goes with the
@@ -2818,10 +2922,11 @@ LogicalResult Lowering::run(func::FuncOp function) {
       return cast.emitOpError() << "a state is left after its lowering";
     cast.erase();
   }
-  if (throughExec) {
-    if (failed(outlineSteps(module, function)))
+  if (throughExec || matrixPairs) {
+    if (failed(outlineSteps(module, function, matrixPairs ? "md_dist.domain_loop" : kStepLoop)))
       return failure();
-  } else {
+  }
+  if (!throughExec) {
     function.walk([](scf::ForOp loop) { loop->removeAttr(kStepLoop); });
   }
   // Distinct potential terms can produce separate reductions of the same
@@ -2850,6 +2955,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
   excludedPairs.clear();
   imageShifts.clear();
   storage.clear();
+  grouped.clear();
   relations.clear();
   ownedEpochs.clear();
   localEpochs.clear();
@@ -2864,8 +2970,14 @@ public:
   using ConvertMDDistToLoopsBase::ConvertMDDistToLoopsBase;
   void runOnOperation() final {
     ModuleOp module = getOperation();
-    Lowering lowering(module, false, 64, 3, haloEvents || mpi, mpi, parallelDomains);
+    Lowering lowering(module, false, matrixWidth, 3, haloEvents || mpi, mpi, parallelDomains);
+    if (!(matrixSkin >= 0) || matrixWidth <= 0) {
+      module.emitError("matrix-skin must be nonnegative and matrix-width positive");
+      return signalPassFailure();
+    }
+    lowering.matrixSkin = matrixSkin;
     lowering.fixedPoint = fixedPoint;
+    lowering.matrixPairs = matrixPairs && !fixedPoint;
     SmallVector<func::FuncOp> functions(module.getOps<func::FuncOp>());
     for (func::FuncOp function : functions)
       if (failed(lowering.run(function)))

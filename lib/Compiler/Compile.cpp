@@ -353,16 +353,21 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
   }
   os << "md-differentiate,md-expand-truncation,md-inline,"
      << "dyn-expand-couplings,md-bypass-updates,";
-  if (control.distribution)
+  if (control.distribution) {
     os << "md-dist-owner-computes,"
        << (program.domainGroupSteps ? "" : control.deterministic
            ? "md-distribute-driver-steps{wrap-drift=true}," : "md-distribute-driver-steps,")
        << "md-exec-assign-algebra,"
-       << "convert-md-dist-to-loops{halo-events=true"
-       << (control.deterministic ? " fixed-point=true" : "")
-       << (control.threads > 1 ? " parallel-domains=true" : "")
+       << "convert-md-dist-to-loops{halo-events=true";
+    if (control.deterministic)
+      os << " fixed-point=true";
+    else
+      os << " matrix-pairs=true matrix-skin=" << program.skin
+         << " matrix-width=" << program.neighborWidth;
+    os << (control.threads > 1 ? " parallel-domains=true" : "")
        << (control.distribution->transport == "mpi" ? " mpi=true" : "")
        << "},lower-mdrt-halo-events,";
+  }
   os << "convert-md-to-md-exec{skin=" << program.skin
      << " width=" << program.neighborWidth << "},";
   os << "md-exec-reuse-neighbors";
