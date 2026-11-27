@@ -138,6 +138,7 @@
         "resolved_choices": {
           "type": "object",
           "properties": {
+            "neighbor_structure": {"type": "object", "required": ["category", "requested", "value", "reason", "towers", "override"], "properties": {"category": {"const": "rule"}, "requested": {"const": "AUTO"}, "value": {"enum": ["matrix", "groups", "towers"]}, "reason": {"type": "string"}, "towers": {"type": "string"}, "towers_refusal": {"type": "string"}, "override": {"type": "string"}, "towers_rule": {"type": "object"}}, "additionalProperties": false},
             "step_graph": {
               "type": "object",
               "required": [

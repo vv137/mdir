@@ -456,6 +456,11 @@ struct Control {
   /// log, the manifest, and `mdir check`.
   NeighborStructure neighborStructureRequested = NeighborStructure::Auto;
   std::string neighborStructureReason;
+  /// Under `AUTO` in `mdir run` and `mdir check`, why TOWERS was taken or
+  /// not (D[best-defaults]): the rule of the traversal table, or the
+  /// refusal of the preflight that sent the run back to the rule of D261.
+  /// Empty where the structure was given or no front end asked.
+  std::string towersAutoReason;
   /// `[performance] rigid_units`, whether it was given, and its route
   /// once resolved (`resolveRigidUnits`).
   RigidUnits rigidUnits = RigidUnits::Auto;

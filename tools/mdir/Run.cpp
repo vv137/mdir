@@ -590,12 +590,11 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       control->neighborStructure = NeighborStructure::Towers;
       control->pairlistDistance = givenPairlist;
       control->prunedDistance = givenPruned;
-      control->neighborStructureReason = "TOWERS: " + rule.reason;
+      control->neighborStructureReason = rule.reason;
+      control->towersAutoReason = "taken: " + rule.reason;
     } else {
-      control->neighborStructureReason +=
-          "; TOWERS not taken: " + rule.reason;
+      control->towersAutoReason = "not taken: " + rule.reason;
     }
-    traversalChoice["towers_reason"] = rule.reason;
   }
   // Back to the rule of D261 where the TOWERS preflight refuses an input
   // that AUTO took for it.
@@ -603,8 +602,8 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     control->neighborStructure = listRule.structure;
     control->pairlistDistance = listRule.pairlist;
     control->prunedDistance = listRule.pruned;
-    control->neighborStructureReason =
-        listRule.reason + "; TOWERS refused at preflight: " + why;
+    control->neighborStructureReason = listRule.reason;
+    control->towersAutoReason = "refused at preflight: " + why;
     traversalChoice["towers_refusal"] = std::move(why);
     autoTowers = false;
   };
@@ -1594,6 +1593,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       traversalChoice["value"] =
           getNeighborStructureName(control->neighborStructure);
       traversalChoice["reason"] = control->neighborStructureReason;
+      traversalChoice["towers"] = control->towersAutoReason;
       traversalChoice["override"] = "[execution] neighbor_structure";
       resolvedChoices["neighbor_structure"] = std::move(traversalChoice);
     }
@@ -1985,6 +1985,10 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     output.log.print("MDIR: note: %s\n", note.c_str());
   // The structure that `AUTO` took, and why (D261); a
   // structure that was given is not repeated.
+  // Why AUTO took TOWERS or not (D[best-defaults]), a line of its own.
+  if (!control->towersAutoReason.empty())
+    output.log.print("MDIR: AUTO traversal: TOWERS %s\n",
+                     control->towersAutoReason.c_str());
   if (control->neighborStructureRequested == NeighborStructure::Auto &&
       control->neighborStructure == NeighborStructure::Towers) {
     output.log.print("MDIR: neighbor structure: TOWERS (AUTO: %s)\n",

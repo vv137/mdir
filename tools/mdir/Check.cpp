@@ -679,6 +679,9 @@ static void describeRun(const Control &control, const System &system,
   if (control.neighborStructureRequested == NeighborStructure::Auto)
     std::printf(" (AUTO: %s)", control.neighborStructureReason.c_str());
   std::printf("\n");
+  if (!control.towersAutoReason.empty())
+    std::printf("AUTO traversal:     TOWERS %s\n",
+                control.towersAutoReason.c_str());
   // The reaches that are "AUTO" (D281): check measures nothing; it
   // names the defaults or the cache, and whether `mdir run` would search.
   if (control.isSkinAuto())
@@ -813,6 +816,9 @@ static llvm::json::Object makeJSON(const Control &control, const System &system,
                getNeighborStructureName(control.neighborStructureRequested)},
               {"structure", getNeighborStructureName(control.neighborStructure)},
               {"reason", control.neighborStructureReason},
+              {"towers_auto", control.towersAutoReason.empty()
+                                  ? Value(nullptr)
+                                  : Value(control.towersAutoReason)},
               {"pairlist_distance_angstrom", control.pairlistDistance},
               {"pruned_distance_angstrom",
                control.prunedDistance != 0.0 ? Value(control.prunedDistance)
@@ -893,9 +899,10 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
       control->neighborStructure = NeighborStructure::Towers;
       control->pairlistDistance = givenPairlist;
       control->prunedDistance = givenPruned;
-      control->neighborStructureReason = "TOWERS: " + rule.reason;
+      control->neighborStructureReason = rule.reason;
+      control->towersAutoReason = "taken: " + rule.reason;
     } else {
-      control->neighborStructureReason += "; TOWERS not taken: " + rule.reason;
+      control->towersAutoReason = "not taken: " + rule.reason;
     }
   }
   std::optional<llvm::json::Object> towers;
@@ -906,8 +913,8 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
       control->neighborStructure = listStructure;
       control->pairlistDistance = listPairlist;
       control->prunedDistance = listPruned;
-      control->neighborStructureReason =
-          listReason + "; TOWERS refused at preflight: " + why;
+      control->neighborStructureReason = listReason;
+      control->towersAutoReason = "refused at preflight: " + why;
       if (control->towersShapeGiven)
         shape = checkTowersShape(*control, *system, /*setup=*/false);
       else
