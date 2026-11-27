@@ -1408,6 +1408,13 @@ from below. Reversing the choices bounds it from above. Only intervals
 that cross a cell or image boundary need a new exact decision as the
 particles move within their coordinate bounds.
 
+At a reporting step, energy, force, and virial kernels on the same
+topology relation use the same assignment of tuples to midpoint owners
+and the same local row indices. These tables depend on the relation,
+coordinates, and halo. Computing a new observable at that configuration
+requires its own force-law arithmetic but no second exchange to locate
+the same members.
+
 The final step of a reporting interval can use the same reference positions
 and candidate matrix as the preceding plain steps. Both sites test the
 maximum displacement against half the skin before reuse. The scope of

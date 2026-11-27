@@ -185,3 +185,9 @@ The checkpoint execution fingerprint retains the configured
 `[execution] threads` value by maintainer decision. Changing the configured
 count changes that fingerprint and its dependent checksum. The physical
 checkpoint datasets remain bitwise equal across team sizes.
+
+At a fixed configuration, the energy, force, and virial kernels can use
+the same read-only local tuple schedule. The lowering reuses a table only
+within its defining block, for the same relation, halo, and position
+field. Constraint row numbers refer to the group layout and require no
+position-field match. Each kernel still reads its own current geometry.

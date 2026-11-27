@@ -169,6 +169,10 @@ private:
   int64_t haloMode(HaloOp op);
   llvm::DenseMap<std::pair<Block *,Value>,Value> topologyShards;
   llvm::DenseMap<Value, Value> tupleSchedules;
+  // A schedule used solely by tuple kernels is read-only. Group row
+  // numbers depend on the group layout alone.
+  using TupleRowKey = std::tuple<Block *, Value, Value, Value, Type>;
+  llvm::DenseMap<TupleRowKey, Value> sharedTupleRows;
   llvm::DenseSet<std::pair<Block *, Value>> sharedTuplePositions;
   LogicalResult lowerPartition(PartitionOp op);
   LogicalResult lowerMigrate(MigrateOp op);
@@ -1608,6 +1612,12 @@ LogicalResult Lowering::lowerTupleRows(TupleRowsOp op) {
       llvm::all_of(op.getRows().getUsers(), [](Operation *u) { return isa<TupleKernelOp>(u); })) {
     Type i64 = b.getI64Type();
     Value handle = op.getGroup() ? storage[layoutOf(op.getHalo())].handle : storage[op.getHalo()].handle;
+    TupleRowKey rowKey{op->getBlock(), op.getTuples(), handle,
+                       op.getGroup() ? Value() : op.getPositions(), op.getRows().getType()};
+    if (Value existing = sharedTupleRows.lookup(rowKey)) {
+      op.getRows().replaceAllUsesWith(existing);
+      return success();
+    }
     auto key = std::make_pair(op->getBlock(),op.getPositions());
     Value &shard = topologyShards[key];
     if (!op.getGroup() && !shard) {
@@ -1645,6 +1655,7 @@ LogicalResult Lowering::lowerTupleRows(TupleRowsOp op) {
     Value table = func::CallOp::create(b, loc, view, schedule).getResult(0);
     Value rows = memref::CastOp::create(b, loc, op.getRows().getType(), table);
     tupleSchedules[rows] = schedule;
+    sharedTupleRows[rowKey] = rows;
     op.getRows().replaceAllUsesWith(rows);
     OpBuilder cleanup(end);
     func::CallOp::create(cleanup, loc, declare("mdrtDistReleaseSchedule",
@@ -3746,6 +3757,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
   scopedExclusions.clear();
   sharedTuplePositions.clear();
   tupleSchedules.clear();
+  sharedTupleRows.clear();
   topologyShards.clear();
   ownedEpochs.clear();
   localEpochs.clear();
