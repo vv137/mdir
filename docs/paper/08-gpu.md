@@ -1410,3 +1410,17 @@ were 6.57–6.86 ms/step and on eight they were 13.47–15.07.
 For STMV on two domains, migration took 16.09 and 16.11 ms/step.
 The rank clocks include steps that rebuilt the halo. Rates in the
 table come from separate unprofiled runs.
+
+On two GPUs, selecting unique Cellulose pairs while building the
+neighbor list reduced mean double-precision time from 50.815 to
+43.622 ms/step in an A/B/B/A comparison. The one-GPU distributed
+baseline was 18.730 ms/step. This change also exceeded the Factor IX
+mixed bounds, with errors of 2.799096 kcal/mol in potential and
+9.671699 kcal/mol in virial. It was excluded from the reported
+implementation.
+
+STMV showed a separate cost on eight GPUs. Having each rank classify
+one destination halo and share the resulting rows cut mean double
+halo-build time from 52.679 to 12.284 ms/step. Total step time fell from
+136.732 to 95.887. This prototype exceeded the Factor IX mixed potential
+and virial limits at eight ranks.

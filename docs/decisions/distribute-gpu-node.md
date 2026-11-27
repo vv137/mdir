@@ -605,3 +605,56 @@ step for ordinary execution, 176.40 on one distributed rank and
 counts were 2.13, 29.13 and 30.51. At two ranks, rank zero uploaded
 22.19 MB/step. The owned and ghost rows together accounted for 385,403
 identities at step 103. Four 64-bit copies at that size transfer 12.33 MB.
+
+At two domains, both precision modes exchange a complete set of coordinates
+to assign bonded tuples by midpoint. In double precision, rank zero
+contributed 4.909 MB per step for Cellulose and 12.845 MB for STMV to
+the NCCL all-gather. It also sent 13.440 and 37.582 MB per step,
+respectively, in peer messages. The Cellulose rank called six MPI
+all-gathers and five MPI all-reduces per step. STMV called six of each.
+These are application payloads in decimal megabytes.
+
+The following double-precision Cellulose trials used the same allocation
+for each A/B/B/A sequence. The times are ms/step. The identity upload
+must precede use on the compute stream. Omitting that dependency caused
+a potential error of 15,235.74 kcal/mol at the first halo rebuild.
+
+| Two-domain change | A | B | B | A | Reduction in mean time |
+|---|---:|---:|---:|---:|---:|
+| Reuse the halo identity buffer with a stream wait | 50.250 | 48.269 | 47.517 | 50.394 | 4.8% |
+| Reuse the tuple incidence for the same topology and coordinates | 51.930 | 46.915 | 47.992 | 50.789 | 7.6% |
+| Select unique pairs while building the explicit list | 51.412 | 43.893 | 43.350 | 50.218 | 14.2% |
+
+For each of these changes, Cellulose double stayed within 0.000003
+kcal/mol of ordinary for both quantities over 205 frames. The
+two-domain Factor IX mixed potential and virial errors were
+3.173127 / 10.307203 for identity reuse, 3.045264 / 10.219408 for
+incidence reuse, and 2.799096 / 9.671699 kcal/mol for unique-list
+construction. Each exceeded the corresponding calibrated limits.
+
+For STMV on two GPUs, unique-list construction reduced the double mean
+from 136.504 to 108.519 ms/step and the mixed mean from 125.758 to
+100.770. The one-GPU distributed baselines were 48.129 and 42.704.
+On one GPU, retaining the original bonded member tables in device
+memory reduced the double time from 18.737 to 16.764 on Cellulose and
+from 47.704 to 45.047 on STMV. The one-GPU goals were 12.530 and
+32.486 ms/step. Factor IX mixed still reached 3.006331 kcal/mol in
+potential and 10.191476 kcal/mol in virial with the retained tables.
+
+On eight GPUs, assigning a destination halo to each rank and exchanging
+its ordered identity and image records reduced repeated classification.
+For Cellulose double, the mean halo-build time over all eight ranks fell
+from 13.405 to 3.970 ms/step and the driver time from 46.614 to 38.476.
+For STMV double, the rank mean fell from 52.679 to 12.284 and the driver
+time from 136.732 to 95.887. In mixed precision the STMV driver time fell
+from 136.515 to 93.787. The eight-rank protein check exceeded the mixed
+limits on Factor IX (3.191403 / 11.512909 kcal/mol) and the virial limit
+on JAC-RF (1.383398 kcal/mol). The measured runtime changes remain
+experimental.
+
+With this halo implementation, four GPUs took 38.072 and 37.836 ms/step
+on Cellulose in double and mixed precision, compared with 38.476 and
+38.571 on eight. Four GPUs took 92.949 and 93.310 on STMV, compared
+with 95.887 and 93.787 on eight. Sharing classification improved the
+four-domain run as well. Neither system achieved the four-to-eight
+target in these measurements.
