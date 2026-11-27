@@ -84,6 +84,7 @@ In the default configuration, without the flush in `mdrtFlagFinish` the results 
 1. *Exact matches only, 256 graphs.* On TIP3P 10k the cache thrashed: the run made 1,220 graphs and released 964 in 4,000 steps, and gained about 1%.
 2. *Exact matches only, 4,096 graphs.* The temporaries of a step move in the pool after each output, so a new set of spans appeared every 1,000 steps. The run made 2,101 graphs in 10,000 steps, and their instantiations made it 10 to 25% slower than LAUNCH.
 3. *Spans that end only at waits* (`MDRT_SPANS_SPLIT=0`). The event of a flag is then issued at the wait, so the device idles while the host decides. TIP3P 10k ran at 780 ns/day against 1,741 with LAUNCH.
+4. *The first launch at once after a drained stream.* After a wait of the stream, the device is idle until the host issues the next span. Issuing its first kernel directly changed the rate by 0.5% on TIP3P 10k and by under 0.2% on JAC (NVE and NPT) and TIP3P 10k with TOWERS, in one job of two runs each. It was left out.
 
 The design of Section 1, with 16 graphs a shape, made 239 graphs in the 40,000 steps of TIP3P 10k below and updated 2.3 kernel nodes a step. It issued 76% of the spans as graphs; the others were spans of one kernel or seen once. JAC (GROUPS) made 134 graphs and issued 60% of its spans as graphs. A build of the dual list changes a count that one refresh kernel takes, so the spans around it repeat less.
 
@@ -120,6 +121,17 @@ Spans overlap the host's decisions but do not remove them: the host still reads 
 |---|---:|---:|---:|
 | TIP3P 10k, MATRIX | 2.00 | 0.25 | 8 B at each build (0.14); 8 kB of the reductions at each coupling step (0.10) |
 | JAC, GROUPS dual list | 3.00 | 0.21 | 20 B at each build (0.11); 8 kB at each coupling step (0.10) |
+| Factor IX, GROUPS dual list | 3.00 | 0.22 | 20 B at each build (0.12); 8 kB at each coupling step (0.10) |
 | TIP3P 10k and JAC, TOWERS | 1.10 | 0.10 | 8 kB at each coupling step (0.10) |
+
+The device stands idle after each read that drains the stream. Gaps are from nsys traces, from the end of the copy to the start of the next device work, median per occurrence:
+
+| Read | main | branch |
+|---|---:|---:|
+| 8 B after a build of the matrix (TIP3P 10k) | 9.0 µs | 10.9 µs |
+| 20 B after a build of the groups (JAC) | 9.6 µs | 13.0 µs |
+| 8 kB of the reductions at a coupling step (TIP3P 10k, JAC, TOWERS) | 10.0 to 11.2 µs | 28.4 to 30.7 µs |
+
+On the branch the host records and issues a span before the device starts; under node tracing each graph launch also costs more. Weighted by how often they occur (a build every 7 to 9 steps, a coupling step every 10), these gaps come to 2.3 to 2.4 µs a step on main and 4.7 to 4.8 µs on the branch, under tracing. A span of the coupling step begins with the scaling of the velocities by the new factor, which the host computes from the read.
 
 The flags are the tests of validity, pruning and the constraints. Each ends a span, and the event of each is in a graph that the device runs while the host records the next work. A wait of the stream drains the device: a build reads the sizes that set the grids of the pair kernels, and a coupling step reads the kinetic energy for the factor of V-rescale. The next decisions to move to the device are these two: grids from the room of the structure, with the growth read late, as #929 began for the matrix; and the factor of V-rescale from the kinetic energy on the device, with the draws of the host.
