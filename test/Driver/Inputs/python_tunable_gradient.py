@@ -106,6 +106,10 @@ def dipeptide(tunables, gradient=True):
     system.truncation = mdir.Truncation.Switch
     system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
     system.electrostatics = mdir.Electrostatics.PME
+    # The tolerance of before D[pme-default-tolerance]: the evaluation of
+    # the derivative and the step differ in the energy by a part that grows
+    # with erfc(beta r_c), within the bound below at this tolerance.
+    system.pme_tolerance = 1e-5
     system.dispersion = mdir.DispersionCorrection.None_
     system.pair_terms = [soft_term()]
     system.tuple_terms = [spring_term()]
