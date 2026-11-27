@@ -344,6 +344,9 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
   llvm::raw_string_ostream os(pipeline);
   os << "md-check-exchange,";
   if (control.distribution) {
+    // Group distribution replaces the native tuple operations that carry
+    // the disjoint-union proof used to bypass other groups' corrections.
+    if (program.domainGroupSteps) os << "md-bypass-updates,";
     if (program.domainTopology) os << "md-differentiate,";
     const auto &grid = program.domainGrid;
     os << "md-distribute{grid=" << grid[0] << "," << grid[1] << "," << grid[2]

@@ -222,3 +222,8 @@ The driver distributes an immutable field without a periodic image once
 per field and layout within a block. When both operands are invariant
 over an enclosing step loop, their owned rows are available before
 that loop. Distributions of evolving fields still follow their inputs.
+
+Disjoint constraint sets read the same uncorrected particle field at
+their own members. The distributed driver applies D83 while the native
+tuple operations still carry the union proof. This lets multiple group
+projections read a single distributed copy of the input.
