@@ -295,11 +295,16 @@ struct Chunk {
     llvm::SmallDenseSet<Value> defined;
     bool drift = true;
     bool guardIntegration = false;
+    // Whether a side stream was forked and not yet joined.
+    bool sideOpen = false;
     for (Operation &op : loop.getBody()->without_terminator()) {
       if (isa<gpu::AllocOp, gpu::DeallocOp, memref::StoreOp>(op)) continue;
       if (auto f = dyn_cast<func::CallOp>(op)) {
         StringRef n = f.getCallee();
         if (n == "mdrtFlagStart") {
+          if (sideOpen)
+            return f.emitError("step_graph: a side-stream window crosses "
+                               "the end of the drift phase");
           drift = false;
           SmallVector<Value> inputs{cache,address(map.lookupOrDefault(positions)),word(atoms)};
           for (Value v : flags) inputs.push_back(v ? address(v) : word(0));
@@ -316,8 +321,18 @@ struct Chunk {
           continue;
         }
         if (n == "mdrtDeferStops" || n == "mdrtStopPending" || n == "mdrtCountBuild") continue;
+        // The forks and joins of the side streams are event records and
+        // waits, which the capture follows into the side streams; a window
+        // must open and close within one phase (D[concurrent-terms]).
+        bool sideCall = n == "mdrtSideBegin" || n == "mdrtSideEnd" ||
+                        n == "mdrtSide2Begin" || n == "mdrtSide2End" ||
+                        n == "mdrtSideJoin";
+        if (n == "mdrtSideBegin" || n == "mdrtSide2Begin")
+          sideOpen = true;
+        else if (n == "mdrtSideJoin")
+          sideOpen = false;
         if (!(n.starts_with("mdrt_gpu_pme_") || n.starts_with("mdrtCudaFFT") ||
-              n == "mdrtCooperativeGridSize"))
+              n == "mdrtCooperativeGridSize" || sideCall))
           return f.emitError("step_graph: unexpected host call in plain TOWERS graph");
       }
       if (auto cond = dyn_cast<scf::IfOp>(op))
@@ -379,6 +394,9 @@ struct Chunk {
         });
       }
     }
+    if (sideOpen)
+      return loop.emitError("step_graph: a side-stream window is not joined "
+                            "within the step");
     call("mdrtStepEnd", cache);
     b.setInsertionPointAfter(record);
     Value accepted = call("mdrtStepRun", {cache,old.front(),k}).getResult(0);
