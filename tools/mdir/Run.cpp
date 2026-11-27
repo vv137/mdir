@@ -966,6 +966,24 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     }
   }
   graphChoice["value"] = control->stepGraph;
+  // Whether the runtime records spans (D[step-no-host-wait]): the value,
+  // unless MDRT_SPANS says otherwise or a variable that observes each
+  // launch turns them off. The record says which.
+  bool spansOn = control->target == Target::GPU && !trial &&
+                 (control->stepGraph == "SPANS" || control->stepGraph == "GRAPH");
+  if (control->target == Target::GPU && !trial) {
+    const char *forced = std::getenv("MDRT_SPANS");
+    if (forced && *forced) {
+      spansOn = std::strcmp(forced, "0") != 0;
+      graphChoice["spans_reason"] = std::string("MDRT_SPANS=") + forced;
+    }
+    for (const char *observer : {"MDRT_WAIT", "MDRT_PROFILE", "MDRT_TRACE"})
+      if (spansOn && std::getenv(observer)) {
+        spansOn = false;
+        graphChoice["spans_reason"] = std::string(observer) + " observes each launch";
+      }
+  }
+  graphChoice["spans"] = spansOn;
   std::string graphReport = llvm::formatv("{0}", llvm::json::Value(llvm::json::Object(graphChoice))).str();
   // The stored forces use the writer's strict pair predicate. Rebuild
   // them at the restored positions if the requested traversal or its
@@ -2270,9 +2288,8 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   }
   // The work between host boundaries is recorded and a sequence that
   // repeats is replayed as a CUDA graph (D[step-no-host-wait]).
-  // MDRT_SPANS=0 or 1 in the environment overrides the choice.
-  bool spans = onDevice && !trial &&
-               (control->stepGraph == "SPANS" || control->stepGraph == "GRAPH");
+  // The choice, with the overrides of the environment, is spansOn.
+  bool spans = onDevice && spansOn;
   using SpansEnable = void (*)(int32_t);
   auto spansEnable = reinterpret_cast<SpansEnable>(
       onDevice ? findRuntime("", "mdrtSpansEnable") : nullptr);
@@ -2396,18 +2413,20 @@ static int runControlImpl(StringRef controlFile, Emit emit,
 
   // What the spans issued (D[step-no-host-wait]).
   if (void *read = onDevice ? findRuntime("", "mdrtSpansCounts") : nullptr) {
-    int64_t counts[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    int64_t counts[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
     reinterpret_cast<void (*)(int64_t *)>(read)(counts);
-    if (counts[0] + counts[1] > 0)
+    if (counts[0] + counts[1] + counts[8] > 0)
       output.log.print(
           "MDIR: spans: %lld issued as CUDA graphs and %lld as recorded, "
           "%lld graphs made, %lld captures refused, %lld graphs released, "
           "%lld kernel nodes updated, %lld updates refused; %lld kernels and "
-          "transforms recorded\n",
+          "transforms recorded, %lld launches not recorded for their "
+          "arguments\n",
           static_cast<long long>(counts[0]), static_cast<long long>(counts[1]),
           static_cast<long long>(counts[2]), static_cast<long long>(counts[3]),
           static_cast<long long>(counts[5]), static_cast<long long>(counts[6]),
-          static_cast<long long>(counts[7]), static_cast<long long>(counts[4]));
+          static_cast<long long>(counts[7]), static_cast<long long>(counts[4]),
+          static_cast<long long>(counts[8]));
   }
 
   // The runtime has counted the builds of the neighbor structures.

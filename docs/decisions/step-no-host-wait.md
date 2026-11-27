@@ -21,7 +21,9 @@ The runtime keeps the graphs of spans by their *shape*, the ops without their ar
 - a span of a shape of which 16 graphs are held takes the graph of that shape used least recently: the kernel nodes whose arguments or grid differ are updated (`cuGraphExecKernelNodeSetParams`) and the graph is issued;
 - a span seen for the first time, or with fewer than two kernels and transforms, is issued as recorded.
 
-The updates are what makes the graphs repeat. Two steps of one run rarely issue the same argument bytes: the banks of the positions and forces alternate, the outer loops of the schedule permute them with other periods, the temporaries of a step move in the pool after an output, and a build changes the counts of a list. On TIP3P 10k a cache of exact matches made a new graph every five steps, and the instantiations cost more than the graphs saved (Section 5). With updates, a run of 40,000 steps made 239 graphs (Section 5). The cache holds at most 1,024 graphs; the one used least recently is released, after a wait for the stream, when it is full (`MDRT_SPANS_CACHE` sets a smaller room for the tests). A graph whose update the driver refuses is marked dead and never matched again; the log counts the refusals. When a program is unloaded, its graphs and the layouts of its kernels' arguments are released, since another program may later have kernels at the same handles.
+The updates are what makes the graphs repeat. Two steps of one run rarely issue the same argument bytes: the banks of the positions and forces alternate, the outer loops of the schedule permute them with other periods, the temporaries of a step move in the pool after an output, and a build changes the counts of a list. On TIP3P 10k a cache of exact matches made a new graph every five steps, and the instantiations cost more than the graphs saved (Section 5). With updates, a run of 40,000 steps made 239 graphs (Section 5). The cache holds at most 1,024 graphs; the one used least recently is released, after a wait for the stream, when it is full (`MDRT_SPANS_CACHE` sets a smaller room for the tests). A graph whose update the driver refuses is marked dead and never matched again; the log counts the refusals. When a program is unloaded, its graphs and the layouts of its kernels' arguments are released, since another program may later have kernels at the same handles. A trim of the device memory (`mdrtDeviceTrim`, and the retry of an allocation that the driver refused) releases them too; they are made again as the spans repeat. A launch is recorded only when `cuFuncGetParamInfo` gave the layout of its arguments in full and the layout has as many arguments as the launch passes. Otherwise the launch goes as it is, and the log counts it.
+
+**Device memory.** With `MDIR_DEVICE_MEMORY=2` the graphs are an account of their own. On Cellulose NPT (408,609 particles, 2,000 steps, RTX 4090), 319 graphs grew the driver's use of the device by 56 MiB, to at most 1,175 MiB against 1,119 MiB with `MDRT_SPANS=0` (two runs each, the same numbers). The allocator's peak, 483.6 MiB, is the same.
 
 The read of a mapped flag ends a span too (`mdrtFlagStart`), so that the device runs the work before the flag while the host records the work that it issues before the wait, the reciprocal sum of D179 among it. Its event is the place's own event, not one of a ring, so that the span repeats from step to step; a place has one read in flight (D118). In a capture the event is recorded as an external event node, which the host can wait for while the rest of the graph runs.
 
@@ -43,13 +45,17 @@ So in the deterministic mode the checkpoint and every row of the log are bitwise
 | `"GRAPH"` | The TOWERS chunks of D439, and spans for the other steps. |
 | `"AUTO"` | As in D439; the setup trial runs both candidates without spans. |
 
-`MDRT_SPANS=0` or `1` overrides the key, and `MDRT_WAIT`, `MDRT_PROFILE` and `MDRT_TRACE` turn spans off (`docs/environment.md`). A simulation of the Python interface refuses `SPANS`. The log ends with the counts of the spans: those issued as graphs and as recorded, the graphs made and released, the captures refused, the kernel nodes updated and the updates refused, and the kernels and transforms recorded.
+`mdir run` applies `MDRT_SPANS=0` or `1` over the key, and `MDRT_WAIT`, `MDRT_PROFILE` and `MDRT_TRACE` turn spans off; `resolved_choices.step_graph` records whether spans are on (`spans`) and which variable decided (`spans_reason`, `docs/environment.md`). Teardown turns them off whatever the variables say. A simulation of the Python interface refuses `SPANS`. The log ends with the counts of the spans: those issued as graphs and as recorded, the graphs made and released, the captures refused, the kernel nodes updated and the updates refused, and the kernels and transforms recorded.
 
 ## 4. Validation
 
 `test/Driver/step-spans-gpu.test` (`Inputs/check_step_spans.py`) runs the dipeptide in water (1,168 particles, PME, SHAKE and SETTLE, V-rescale every 10 steps, 300 steps of 2 fs) on the GPU. The oracle is the same program submitted with `LAUNCH`:
 
 - **Deterministic mode, MATRIX: bitwise.** The checkpoint (positions, velocities, forces, cell) and every row of the log are compared byte for byte, in mixed and double precision, NVT and NPT (stochastic cell rescaling every 10 steps). Each SPANS run made graphs and updated kernel nodes, with 1,006 (NVT) and 1,087 (NPT) graph launches.
+- **A continuation.** From a checkpoint at step 150 with `energy_interval = 40`, which does not divide 150, 160 steps more: the four rows (the last at step 310) and the checkpoint are byte for byte those of LAUNCH (compare #1014, which concerns `GRAPH`).
+- **Injected faults.** A refused kernel-node update (`MDRT_SPANS_UPDATE_FAULT`): the graph is marked dead, the log counts one refusal, and the run stays bitwise. A layout of arguments given in part (`MDRT_SPANS_LAYOUT_FAULT`): no launch is recorded, the log counts them, and the run stays bitwise.
+- **The release at unload.** `MDRT_SPANS_UNLOAD_REPORT` shows that the unload of the program released every graph the cache held.
+- **The record.** `resolved_choices.step_graph.spans` is true by default; with `MDRT_SPANS=0` it is false and `spans_reason` is `MDRT_SPANS=0`. `mdir pin` prints `step_graph = "SPANS"`.
 - **The other configurations: bitwise.**
   - the default without the key (category `rule`);
   - spans that end only at the waits (`MDRT_SPANS_SPLIT=0`);
@@ -80,7 +86,7 @@ In the default configuration, without the flush in `mdrtFlagFinish` the results 
 
 **Conditional nodes.** An IF node (`scripts/benchmarks/step-graph/conditional.cu`) adds 2.5 µs to its site when its body is skipped and 5.1 µs when it runs, against static nodes with the same kernels. A rebuild behind an IF node in every step would cost that every step. That is a fifth of the 10 to 13 µs a step that graphs remove at these sizes (#60). Spans place the rebuild outside the graphs instead.
 
-**Three designs that were measured and dropped.**
+**Four designs that were measured and dropped.**
 1. *Exact matches only, 256 graphs.* On TIP3P 10k the cache thrashed: the run made 1,220 graphs and released 964 in 4,000 steps, and gained about 1%.
 2. *Exact matches only, 4,096 graphs.* The temporaries of a step move in the pool after each output, so a new set of spans appeared every 1,000 steps. The run made 2,101 graphs in 10,000 steps, and their instantiations made it 10 to 25% slower than LAUNCH.
 3. *Spans that end only at waits* (`MDRT_SPANS_SPLIT=0`). The event of a flag is then issued at the wait, so the device idles while the host decides. TIP3P 10k ran at 780 ns/day against 1,741 with LAUNCH.

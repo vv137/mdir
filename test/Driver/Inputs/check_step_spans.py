@@ -16,10 +16,10 @@ DECK = """[input]
 format      = "AMBER"
 topology    = "{inputs}/dipeptide.prmtop"
 coordinates = "{inputs}/dipeptide.inpcrd"
-
+{restart}
 [output]
 manifest = "choices.jsonl"
-energy_interval = 20
+energy_interval = {energy}
 checkpoint = "state.h5"
 checkpoint_interval = {steps}
 
@@ -71,7 +71,7 @@ interval      = 10
 
 
 def run(name, mode, precision="MIXED", structure="MATRIX", deterministic=True,
-        ensemble="NVT", steps=300, env=None):
+        ensemble="NVT", steps=300, env=None, energy=20, checkpoint=None):
     directory = work / name
     directory.mkdir(parents=True)
     coupling = {"NVT": NVT, "NPT": NPT, "NVE": ""}[ensemble]
@@ -80,7 +80,8 @@ def run(name, mode, precision="MIXED", structure="MATRIX", deterministic=True,
         inputs=inputs, steps=steps, ensemble=ensemble, coupling=coupling,
         pressure="pressure    = 1.0\n" if ensemble == "NPT" else "",
         precision=precision, structure=structure,
-        deterministic=str(deterministic).lower(), mode=line))
+        deterministic=str(deterministic).lower(), mode=line, energy=energy,
+        restart=f'checkpoint = "{checkpoint}"\n' if checkpoint else ""))
     environment = dict(__import__("os").environ)
     environment.pop("MDRT_SPANS", None)
     environment.update(env or {})
@@ -97,8 +98,10 @@ def run(name, mode, precision="MIXED", structure="MATRIX", deterministic=True,
                  ("position/value", "velocity/value", "force/value", "box/edges/value")
                  if "particles/all/" + k in f}
     rows = re.findall(r"^INFO: +\d+ .+$", log.stdout, re.M)
+    skipped = re.search(r"(\d+) launches not recorded for their arguments", log.stdout)
     return dict(choice=choice, spans=spans and tuple(map(int, spans.groups())),
-                state=state, rows=rows)
+                state=state, rows=rows, stderr=log.stderr,
+                unrecorded=int(skipped[1]) if skipped else None)
 
 
 def bitwise(a, b, what):
@@ -116,6 +119,11 @@ assert refused == 0 and released == 0 and unchanged == 0, default["spans"]
 assert graphs > 0 and made > 0, default["spans"]
 # Most of the work of the steps goes out as graphs.
 assert graphs > recorded, default["spans"]
+
+# `mdir pin` prints the resolved default.
+pin = subprocess.check_output([mdir, "pin", "choices.jsonl"], cwd=work / "default", text=True)
+assert 'step_graph = "SPANS"' in pin, pin
+print("pin: SPANS")
 
 # Deterministic mode: the same kernels, arguments and order, so the
 # checkpoint and every row of the log are bitwise those of LAUNCH, in
@@ -138,6 +146,46 @@ whole = run("no-split", "SPANS", env={"MDRT_SPANS_SPLIT": "0"})
 assert whole["spans"][2] > 0, whole["spans"]
 bitwise(default, whole, "no split")
 print("no split: bitwise")
+
+# A continuation from step 150, which an energy interval of 40 does not
+# divide, writes the rows and the checkpoint of LAUNCH (compare #1014).
+for mode in ("LAUNCH", "SPANS"):
+    run(f"first-{mode}", mode, steps=150, energy=50)
+second = {mode: run(f"continued-{mode}", mode, steps=160, energy=40,
+                    checkpoint=str(work / f"first-{mode}" / "state.h5"))
+          for mode in ("LAUNCH", "SPANS")}
+steps = [r.split()[1] for r in second["SPANS"]["rows"]]
+assert len(steps) == 4 and steps[-1] == "310", second["SPANS"]["rows"]
+assert second["SPANS"]["spans"][2] > 0, second["SPANS"]["spans"]
+bitwise(second["LAUNCH"], second["SPANS"], "continuation")
+print("continuation: bitwise")
+
+# A refused update (injected): the graph is marked dead and never taken
+# again; the results stay bitwise.
+refused = run("update-fault", "SPANS", env={"MDRT_SPANS_UPDATE_FAULT": "3"})
+assert refused["spans"][6] == 1, refused["spans"]
+bitwise(default, refused, "refused update")
+print("refused update: bitwise")
+
+# A layout of arguments that the driver did not give in full (injected):
+# no launch is recorded, and the results stay bitwise.
+partial = run("layout-fault", "SPANS", env={"MDRT_SPANS_LAYOUT_FAULT": "1"})
+assert partial["unrecorded"] and partial["unrecorded"] > 0, partial["unrecorded"]
+assert partial["spans"] is None or partial["spans"][2] == 0, partial["spans"]
+bitwise(default, partial, "layout")
+print("layout: bitwise")
+
+# The unload of the program releases its graphs.
+unload = run("unload", "SPANS", env={"MDRT_SPANS_UNLOAD_REPORT": "1"})
+released = re.search(r"the unload of a program released (\d+) graphs of spans", unload["stderr"])
+assert released and int(released[1]) == unload["spans"][2] - unload["spans"][4], \
+    (unload["stderr"][-300:], unload["spans"])
+print("unload: released")
+
+# An override of the environment is recorded.
+assert default["choice"]["spans"] is True and "spans_reason" not in default["choice"]
+off_choice = run("override-record", "SPANS", env={"MDRT_SPANS": "0"})["choice"]
+assert off_choice["spans"] is False and off_choice["spans_reason"] == "MDRT_SPANS=0", off_choice
 
 # A cache of four graphs releases graphs as it goes, and the results stay
 # bitwise.

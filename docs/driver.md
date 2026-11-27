@@ -424,8 +424,9 @@ give the discarded warm chunks (`warm_s`) and retained ordinary chunks
 (`timed_s`). Construction chunks are excluded from both chunk totals.
 PTX, cubin and host object counts distinguish cache hits from compilation.
 `shared_lowering` indicates reuse of the other candidate’s common passes. Set `step_graph` to the
-record's `value` to pin that choice and skip the trial. Python exposes the
-same strings through `Execution.step_graph`. `mdir pin MANIFEST` prints
+record's `value` to pin that choice and skip the trial. Python exposes
+`LAUNCH`, `GRAPH` and `AUTO` through `Execution.step_graph` and refuses
+`SPANS`. `mdir pin MANIFEST` prints
 the latest invocation’s resolved `[execution]` keys as TOML, including
 the TOWERS shape when present and the step timings in a comment. Python's segmented simulations
 currently resolve AUTO to LAUNCH. See D439.

@@ -196,6 +196,12 @@
                 "reason": {
                   "type": "string"
                 },
+                "spans": {
+                  "type": "boolean"
+                },
+                "spans_reason": {
+                  "type": "string"
+                },
                 "below_noise": {
                   "type": "boolean"
                 },

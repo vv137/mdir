@@ -35,6 +35,8 @@ void mdrtDeviceAuditMetadataCopy(uintptr_t destination) {
 }
 static const char *getKernelName(CUfunction function);
 void mdrtSpansFlush(void);
+/* The number of arguments of the launch in progress, -1 if unknown. */
+static int64_t launchCount = -1;
 static void releaseAllSpans(void);
 
 /* A failure of the driver is reported and ends the run: compiled code has no
@@ -224,6 +226,7 @@ enum {
   ACCOUNT_CONSTANTS,
   ACCOUNT_MANAGED,
   ACCOUNT_KEPT,
+  ACCOUNT_SPANS,
   NUM_ACCOUNTS
 };
 static const char *const accountNames[NUM_ACCOUNTS] = {
@@ -236,7 +239,8 @@ static const char *const accountNames[NUM_ACCOUNTS] = {
     "the structures of the tuples",
     "the constants of the bodies",
     "the memory shared with the host",
-    "the memory of an embedding program"};
+    "the memory of an embedding program",
+    "the graphs of spans"};
 static int64_t accountGrowth[NUM_ACCOUNTS], accountAsked[NUM_ACCOUNTS];
 static int64_t accountEvents[NUM_ACCOUNTS];
 static int memoryDetail = -1;
@@ -616,9 +620,10 @@ void mgpuLaunchKernel(CUfunction function, intptr_t gridX, intptr_t gridY,
                       intptr_t gridZ, intptr_t blockX, intptr_t blockY,
                       intptr_t blockZ, int32_t sharedMemory, CUstream stream,
                       void **parameters, void **extra, size_t count) {
-  (void)count;
+  launchCount = (int64_t)count;
   launchKernel(function, gridX, gridY, gridZ, blockX, blockY, blockZ,
                sharedMemory, stream, parameters, extra, 0, 0, 0, 0);
+  launchCount = -1;
 }
 
 void mgpuLaunchKernelCooperative(CUfunction function, intptr_t gridX,
@@ -754,6 +759,9 @@ struct ParamLayout {
   CUfunction function;
   uint32_t count, total;
   uint32_t *sizes;
+  /* Whether cuFuncGetParamInfo ended at the index past the last argument
+     (CUDA_ERROR_INVALID_VALUE) rather than at another error. */
+  int complete;
 };
 
 struct Span {
@@ -791,7 +799,7 @@ static int numSpans = 0;
 static uint64_t spanSeen[SPAN_SEEN];
 static uint64_t spanClock = 0;
 static struct ParamLayout layouts[LAYOUTS];
-static int64_t spanCounts[8];
+static int64_t spanCounts[9];
 
 static int issueFFT(int fft, int plan, uint64_t in, uint64_t out);
 static void retainFFTPlanHandle(int plan, int delta);
@@ -805,12 +813,10 @@ static int spanSplitAtFlags(void) {
   return split;
 }
 
-/* MDRT_SPANS=0 or 1 overrides mdrtSpansEnable; MDRT_WAIT, MDRT_PROFILE
-   and MDRT_TRACE, which observe each launch, turn the record off. */
+/* MDRT_WAIT, MDRT_PROFILE and MDRT_TRACE, which observe each launch, turn
+   the record off; the driver applies MDRT_SPANS and records the choice
+   (resolved_choices.step_graph.spans). */
 static int spansOverride(int on) {
-  const char *value = getenv("MDRT_SPANS");
-  if (value && *value)
-    on = strcmp(value, "0") != 0;
   if (getenv("MDRT_WAIT") || getenv("MDRT_PROFILE") || getenv("MDRT_TRACE"))
     on = 0;
   return on;
@@ -832,13 +838,16 @@ static struct ParamLayout *getLayout(CUfunction function) {
     size_t offset, size;
     uint32_t count = 0, room = 16;
     uint32_t *sizes = malloc(room * sizeof *sizes), total = 0;
-    while (cuFuncGetParamInfo(function, count, &offset, &size) ==
+    CUresult result;
+    while ((result = cuFuncGetParamInfo(function, count, &offset, &size)) ==
            CUDA_SUCCESS) {
       if (count == room)
         sizes = realloc(sizes, (room *= 2) * sizeof *sizes);
       sizes[count++] = (uint32_t)size;
       total += ((uint32_t)size + 7u) & ~7u;
     }
+    l->complete = result == CUDA_ERROR_INVALID_VALUE &&
+                  getenv("MDRT_SPANS_LAYOUT_FAULT") == NULL;
     l->function = function;
     l->count = count;
     l->total = total;
@@ -880,8 +889,14 @@ static int recordLaunch(CUfunction function, intptr_t gridX, intptr_t gridY,
   if (!isRecording() || extra || (stream && stream != sharedStream))
     return 0;
   struct ParamLayout *layout = getLayout(function);
-  if (!layout)
+  /* A layout that the driver did not give in full, or that disagrees with
+     the number of arguments of the launch, is not recorded: the launch goes
+     as it is. */
+  if (!layout || !layout->complete ||
+      (launchCount >= 0 && launchCount != (int64_t)layout->count)) {
+    ++spanCounts[8];
     return 0;
+  }
   struct SpanOp *op = appendOp(SPAN_KERNEL);
   op->function = function;
   op->grid[0] = (uint32_t)gridX, op->grid[1] = (uint32_t)gridY,
@@ -1016,6 +1031,11 @@ static void releaseSpan(struct Span *s) {
 
 static void rebuildSpanIndex(void);
 static void releaseAllSpans(void) {
+  /* MDRT_SPANS_UNLOAD_REPORT, for the tests: how many graphs the unload of
+     a program released. */
+  if (numSpans && getenv("MDRT_SPANS_UNLOAD_REPORT"))
+    fprintf(stderr, "mdrt: the unload of a program released %d graphs of spans\n",
+            numSpans);
   for (int i = 0; i != numSpans; ++i)
     releaseSpan(&spanCache[i]);
   numSpans = 0;
@@ -1104,8 +1124,12 @@ static int captureSpan(struct Span *s) {
     return 0;
   CUresult issued = issueOps(spanOps, numSpanOps, spanBytes, 1);
   CUresult ended = cuStreamEndCapture(sharedStream, &graph);
-  if (issued != CUDA_SUCCESS || ended != CUDA_SUCCESS || !graph ||
-      cuGraphInstantiate(&exec, graph, 0) != CUDA_SUCCESS) {
+  int64_t before = beginAccount();
+  CUresult instantiated = issued == CUDA_SUCCESS && ended == CUDA_SUCCESS && graph
+                              ? cuGraphInstantiate(&exec, graph, 0)
+                              : CUDA_ERROR_INVALID_VALUE;
+  endAccount(ACCOUNT_SPANS, before, 0);
+  if (instantiated != CUDA_SUCCESS) {
     if (graph)
       cuGraphDestroy(graph);
     return 0;
@@ -1115,6 +1139,17 @@ static int captureSpan(struct Span *s) {
   s->nodes = malloc(numSpanOps * sizeof *s->nodes);
   s->updatable = mapNodes(graph, spanOps, numSpanOps, s->nodes);
   return 1;
+}
+
+/* MDRT_SPANS_UPDATE_FAULT=<n>, for the tests: the n-th update of a kernel
+   node is taken as refused by the driver, after it was made. */
+static int updateFault(void) {
+  static long fault = -2, made = 0;
+  if (fault == -2) {
+    const char *value = getenv("MDRT_SPANS_UPDATE_FAULT");
+    fault = value && *value ? strtol(value, NULL, 10) : -1;
+  }
+  return fault > 0 && ++made == fault;
 }
 
 /* Gives graph `s` the arguments and grids of the record, whose shape is
@@ -1148,7 +1183,8 @@ static int updateSpan(struct Span *s) {
     params.sharedMemBytes = op->shared;
     params.kernelParams = args;
     if (cuGraphExecKernelNodeSetParams(s->exec, s->nodes[i], &params) !=
-        CUDA_SUCCESS)
+            CUDA_SUCCESS ||
+        updateFault())
       return 0;
     ++spanCounts[6];
   }
@@ -1415,9 +1451,10 @@ void mdrtSpansSuspend(int32_t suspend) {
 
 /* The counts for the log: graph launches, spans issued as recorded,
    graphs made, captures that failed, kernels and transforms recorded,
-   graphs released, kernel nodes updated, updates refused. */
-void mdrtSpansCounts(int64_t counts[8]) {
-  for (int i = 0; i != 8; ++i)
+   graphs released, kernel nodes updated, updates refused, launches not
+   recorded for their layout. */
+void mdrtSpansCounts(int64_t counts[9]) {
+  for (int i = 0; i != 9; ++i)
     counts[i] = spanCounts[i];
 }
 
@@ -2646,6 +2683,9 @@ static uint64_t trimIdle(void) {
   if (isDriverGone())
     return 0;
   finish();
+  /* The graphs of spans hold device memory of the driver; they are made
+     again as the spans repeat. */
+  releaseAllSpans();
   mergeIdle();
   /* Only an arena that is idle as a whole goes back; the idle pieces of an
      arena that holds a block in use stay. */
