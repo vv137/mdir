@@ -123,7 +123,7 @@ static std::string getStageBodiesPass(StringRef arch) {
 /// `blocks` at any count, which the tests of small systems need), and
 /// `MDIR_PAIR_SUMS` those of the loops over groups (D291).
 /// The options of md-exec-assign-streams for `[execution] term_streams`
-/// (D87, D429, D[concurrent-terms]).
+/// (D87, D429, D449).
 static std::string getStreamOptions(const Control &control) {
   StringRef streams = control.resolveTermStreams().first;
   if (streams == "RECIPROCAL")
@@ -389,7 +389,7 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
   os << "md-exec-fuse-loops"
      << (control.target == Target::GPU ? "{integration-runs=true}" : "")
      // The loops over tuples get a destination of their own where they may
-     // run beside the pairs (D[concurrent-terms]).
+     // run beside the pairs (D449).
      << ",md-exec-accumulate-destinations"
      << (control.resolveTermStreams().first == "TERMS"
              ? "{separate-tuples=true}"

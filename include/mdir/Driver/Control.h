@@ -452,7 +452,7 @@ struct Control {
   /// Empty when the work between host boundaries can be recorded and
   /// replayed as CUDA graphs (SPANS, and GRAPH outside the TOWERS chunks).
   llvm::StringRef spansRefusal() const;
-  /// `[execution] term_streams` (D[concurrent-terms]): `SINGLE`, every
+  /// `[execution] term_streams` (D449): `SINGLE`, every
   /// force term on one stream; `RECIPROCAL`, the reciprocal sums of PME on
   /// a second stream beside the direct sum (D87, D429); `TERMS`, the loops
   /// over tuples (bonded terms, exclusion corrections) there as well, with

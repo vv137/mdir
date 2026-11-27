@@ -337,7 +337,7 @@ deterministic mode two runs on a GPU are bitwise identical, and so is a
 run with the reciprocal sum on a second stream against the serial one
 (`pme-gpu.test`, D87), and so is a run with the tuples in their own
 destination on a third stream against the same program on one stream, in
-mixed and double precision (`term-streams-gpu.test`, D[concurrent-terms]). The spatial sort changes the order of sums; runs
+mixed and double precision (`term-streams-gpu.test`, D449). The spatial sort changes the order of sums; runs
 with and without it agree to about $10^{-10}$ (`reorder.test`).
 
 A Python simulation run in parts (Section 3.6, D215) equals

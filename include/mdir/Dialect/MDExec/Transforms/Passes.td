@@ -965,7 +965,7 @@ def AccumulateDestinations
     order: equal, not to the bit.
 
     With `separate-tuples`, a chain whose loops over pairs come first and
-    whose loops over tuples follow becomes two chains (D[concurrent-terms]):
+    whose loops over tuples follow becomes two chains (D449):
     the loops over pairs accumulate into one destination and the loops over
     tuples into another, from zeros, and the loop over particles adds the
     second to the first, `a + (b0 + b1 + ...)` in place of
@@ -1008,7 +1008,7 @@ def AssignStreams : Pass<"md-exec-assign-streams", "::mlir::ModuleOp"> {
 
     With `tuples`, a loop over tuples also goes to the second stream if it
     can move up past a loop over pairs before it in its block, so that it
-    runs beside the pairs (D[concurrent-terms]). It can where it writes a
+    runs beside the pairs (D449). It can where it writes a
     destination of its own (`md-exec-accumulate-destinations{separate-tuples=true}`).
     A loop over particles that stops it, writing what it reads (the
     positions in f32 that the tuples take), moves up first, as far as it is

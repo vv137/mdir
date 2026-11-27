@@ -755,7 +755,7 @@ includes that third-round outlier, while the first two ratios are about
 The force terms of a step read the positions and meet at the kick. On one
 stream they run one after another, so the device time of a step is the sum
 of their kernels and the gaps between them. `[execution] term_streams`
-(D[concurrent-terms]) runs the reciprocal sums of PME on a second stream
+(D449) runs the reciprocal sums of PME on a second stream
 (`RECIPROCAL`) and also the loops over tuples on a third (`TERMS`); the
 argument that the results are those of one stream is that of D87, with the
 order of each sum fixed by the program (Section 8).

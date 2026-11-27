@@ -196,7 +196,7 @@ static int waitsAlways = -1;
    the first can run beside it (mdrtSideBegin). Work issued between
    mdrtSideBegin and mdrtSideEnd goes to the second stream, after what the
    first stream had been given; between mdrtSide2Begin and mdrtSide2End
-   to the third, beside the first two (D[concurrent-terms]). mdrtSideJoin
+   to the third, beside the first two (D449). mdrtSideJoin
    makes the first stream wait for both. The forks and the joins are
    events recorded and waited for on the streams, so that a capture of the
    first stream into a graph takes the side streams in as branches that

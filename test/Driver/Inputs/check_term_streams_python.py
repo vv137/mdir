@@ -1,4 +1,4 @@
-"""D[concurrent-terms]: Execution.term_streams in Python: the values, the
+"""D449: Execution.term_streams in Python: the values, the
 plan's record, and the refusal of an unknown value."""
 from pathlib import Path
 import sys

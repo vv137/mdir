@@ -671,7 +671,7 @@ follow, in the order of the pipeline that `tools/mdir/Run.cpp` builds:
 | `md-alg-transform-collections`, `convert-md-alg-to-gpu` | On a device, after `convert-md-exec-to-gpu`: the place of the collection-level transformations of the `md_alg` ops of the neighbor builds, which runs the shared analysis of the collections and changes nothing (D408, D409), and their lowering by the shared emitters, which records the policy of each (D408) |
 | `md-exec-release-dead-storage` | On a device, after `convert-md-alg-to-gpu`: releases, before the loop over steps, each buffer of the storage that no point after its last use in the setup touches or needs, by the liveness of the storage with `kills=proven` (D412, D414); a buffer that is pinned, carried, read after the loop, or given to a function that may keep it keeps its storage |
 | `check-read-only-arguments` | Where the lowering to loops or to a device ends, proves that the code writes no buffer that the entry declares read-only, the model, or fails the compile naming the use (D258) |
-| `md-exec-assign-streams` | Optionally moves an op to a second stream (the reciprocal sums) or a third (the loops over tuples) where an independence proof holds (D87, D[concurrent-terms]; off by default, `term_streams`) |
+| `md-exec-assign-streams` | Optionally moves an op to a second stream (the reciprocal sums) or a third (the loops over tuples) where an independence proof holds (D87, D449; off by default, `term_streams`) |
 
 The fused loop of the kick, the drift, and the test of validity of the
 mixture, after these passes and before the lowering, abridged:

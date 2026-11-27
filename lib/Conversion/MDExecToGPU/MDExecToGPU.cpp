@@ -1804,7 +1804,7 @@ void Lowering::findOnceRuns(func::FuncOp function) {
       // the same destination do so with atomics, in any order, as they do
       // one after the other (D84).
       // A run is on one stream: its kernel is launched once, at its last
-      // loop (D[concurrent-terms]).
+      // loop (D449).
       bool joins = !run.empty() &&
                    md_exec::getSideLane(loop) ==
                        md_exec::getSideLane(run.front()) &&
@@ -2065,7 +2065,7 @@ LogicalResult Lowering::lowerScatterAdd(md_exec::ScatterAddOp op) {
 /// is marked to run on the second stream, that work goes there: between
 /// calls of mdrtSideBegin and mdrtSideEnd, and it must allocate and free no
 /// memory of the device, since the allocator hands a freed block to the
-/// next allocation without waiting (D87, D[concurrent-terms]). The
+/// next allocation without waiting (D87, D449). The
 /// reciprocal sums issue these calls themselves.
 LogicalResult
 Lowering::lowerOnSide(Operation *at, llvm::function_ref<LogicalResult()> lower) {
@@ -2402,7 +2402,7 @@ void Lowering::findRows(func::FuncOp function) {
       ValueRange scratch = isa<md_exec::PairForOp>(op)
                                ? cast<md_exec::PairForOp>(op).getScratch()
                                : cast<md_exec::TupleForOp>(op).getScratch();
-      // A run is on one stream (D[concurrent-terms]).
+      // A run is on one stream (D449).
       bool joins = !run.empty() && getPositions(&op) == getPositions(run[0]) &&
                    md_exec::getSideLane(&op) == md_exec::getSideLane(run[0]);
       // The loops over pairs of a run share the order of one structure.
@@ -2583,7 +2583,7 @@ bool Lowering::recordIntegration(ArrayRef<Operation *> run) {
   for (Operation *op : run) {
     auto loop = cast<md_exec::TupleForOp>(op);
     // A loop on the second stream is issued there alone, not in a kernel
-    // with loops of the first (D[concurrent-terms]).
+    // with loops of the first (D449).
     if (loop->hasAttr(md_exec::kSideAttrName))
       return false;
     // The loops take the particles of one set, have no reductions but a
@@ -11537,7 +11537,7 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   WalkResult sides = function.walk([&](Operation *op) {
     if (!op->hasAttr(md_exec::kSideAttrName))
       return WalkResult::advance();
-    // A loop over tuples may run there too (D[concurrent-terms]): it
+    // A loop over tuples may run there too (D449): it
     // declares what it reads and writes, its tables included, and its
     // lowering allocates nothing, which the lowering checks.
     auto tuple = dyn_cast<md_exec::TupleForOp>(op);

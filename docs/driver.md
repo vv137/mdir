@@ -434,7 +434,7 @@ the TOWERS shape when present and the step timings in a comment. Python's segmen
 currently resolve AUTO to LAUNCH. See D439.
 
 The `[execution] term_streams` key chooses the device streams of the
-force terms (D[concurrent-terms]). `"SINGLE"`, the default, issues every
+force terms (D449). `"SINGLE"`, the default, issues every
 term on one stream. `"RECIPROCAL"` runs the reciprocal sums of PME on a
 second stream beside the direct sum (D87, D429). `"TERMS"` also runs the
 loops over tuples (bonded terms, 1–4 pairs, exclusion corrections) on a

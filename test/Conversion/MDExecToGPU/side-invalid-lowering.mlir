@@ -1,6 +1,6 @@
 // RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu -split-input-file -verify-diagnostics
 
-// D[concurrent-terms]: the refusals of the lowering of a loop over tuples
+// D449: the refusals of the lowering of a loop over tuples
 // marked for a side stream. A loop names a stream that does not exist; a
 // loop whose kernel calls a function that allocates device memory, which
 // on a side stream would let the pool hand a block to the next allocation

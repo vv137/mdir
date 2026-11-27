@@ -75,7 +75,7 @@ struct Chain {
 } // namespace
 
 /// Marks, within this pass, the sum of the two chains of a split
-/// (D[concurrent-terms]); removed when the pass ends.
+/// (D449); removed when the pass ends.
 static constexpr llvm::StringLiteral kSplitSum = "md_exec.split_sum";
 
 /// The chains of sums of the kernel of `op`, from the first.
@@ -419,7 +419,7 @@ static bool sinkAfter(Operation *loop, Operation *after) {
 /// Returns true if it did. With `separateTuples`, the loops over tuples
 /// that follow the loops over pairs of the chain accumulate into their own
 /// destination, which the loop over particles adds to that of the pairs
-/// (D[concurrent-terms]); after that split it clears `separateTuples`, and
+/// (D449); after that split it clears `separateTuples`, and
 /// the sum of the two chains is not rewritten again (kSplitSum).
 static bool accumulateOnce(ParticleForOp op, bool &separateTuples) {
   Block &kernel = op.getKernel().front();

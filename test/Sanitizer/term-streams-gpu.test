@@ -1,4 +1,4 @@
-# D[concurrent-terms]: `term_streams = "TERMS"` under compute-sanitizer: the
+# D449: `term_streams = "TERMS"` under compute-sanitizer: the
 # NPT run of pme-side-gpu.test on examples/ala3, 20 steps in mixed
 # precision, with the reciprocal sums on the second stream and the loops
 # over tuples on the third, beside the loops over pairs. memcheck,

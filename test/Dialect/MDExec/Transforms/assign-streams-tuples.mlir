@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s --md-exec-assign-streams="reciprocal=true tuples=true" -split-input-file | FileCheck %s
 // RUN: mdir-opt %s --md-exec-assign-streams -split-input-file | FileCheck %s --check-prefix=OFF
 
-// D[concurrent-terms]: loops over tuples on the third stream
+// D449: loops over tuples on the third stream
 // (md_exec.lane = 2). Ops of one side stream are ordered by it; an op of
 // another stream inside a window must be independent of the side op.
 

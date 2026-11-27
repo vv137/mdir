@@ -561,7 +561,7 @@ void StorageLivenessBuilder::findCompletions(Region &body) {
     bool side = false;
     llvm::BitVector pending(n);
     for (Operation &op : *block) {
-      // Either side stream (D[concurrent-terms]).
+      // Either side stream (D449).
       if (isStreamCall(&op, "mdrtSideBegin") ||
           isStreamCall(&op, "mdrtSide2Begin"))
         side = true;

@@ -106,7 +106,7 @@ func.func @writes_forces(%n: index, %k: index, %cell: !md.cell) {
 
 // -----
 
-// D[concurrent-terms]: a loop over tuples on the second stream and a loop
+// D449: a loop over tuples on the second stream and a loop
 // on the first that adds to the same forces before the join. The two
 // would add to one buffer at once, in an order that the streams decide.
 
@@ -161,7 +161,7 @@ func.func @tuples_reduce(%members: memref<?x2xi32>, %n: index,
 
 // -----
 
-// D[concurrent-terms], the rule across streams: a loop over tuples on the
+// D449, the rule across streams: a loop over tuples on the
 // third stream and a reciprocal sum on the second write one buffer before
 // the join. Each side stream orders only its own ops, so the two would run
 // at once.

@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s --md-exec-accumulate-destinations=separate-tuples=true | FileCheck %s
 // RUN: mdir-opt %s --md-exec-accumulate-destinations | FileCheck %s --check-prefix=ONE
 
-// D[concurrent-terms]: the loops over tuples after the loops over pairs
+// D449: the loops over tuples after the loops over pairs
 // accumulate into a destination of their own, so that the two chains
 // write disjoint memory.
 

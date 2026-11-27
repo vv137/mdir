@@ -1,7 +1,7 @@
 // Ops that run on a second stream beside those they are independent of.
 //
 // See the description of the pass in Passes.td, and D87 and
-// D[concurrent-terms] in docs/decisions for the argument that it is
+// D449 in docs/decisions for the argument that it is
 // correct.
 
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
@@ -101,7 +101,7 @@ public:
 
     // A loop over tuples goes to the second stream if it can move up past
     // a loop over pairs before it in its block: then it runs beside the
-    // pairs (D[concurrent-terms]). The loops of one chain of tuples follow
+    // pairs (D449). The loops of one chain of tuples follow
     // each other there, in their order, and after the reciprocal sum, on
     // the same stream.
     if (tuples) {

@@ -1,6 +1,6 @@
 // RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu | FileCheck %s
 
-// D[concurrent-terms]: two loops over tuples marked for the third stream
+// D449: two loops over tuples marked for the third stream
 // (lane 2), with a destination of their own, are issued there (one kernel,
 // as one run of loops), beside a loop over tuples on the first stream that writes
 // another buffer; the first stream waits at the join, before the loop over

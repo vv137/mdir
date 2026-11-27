@@ -1,4 +1,4 @@
-# D[concurrent-terms]: `[execution] term_streams`, without a device. The
+# D449: `[execution] term_streams`, without a device. The
 # program of a GPU run of the dipeptide in water, after
 # md-exec-assign-streams: with TERMS the loops over tuples of an ordinary
 # step are marked for the third stream and stand before the loop over

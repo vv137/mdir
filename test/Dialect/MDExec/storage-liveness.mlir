@@ -487,7 +487,7 @@ func.func @side(%out: memref<4xf32, 1>, %n: index, %c: i1) {
   return
 }
 
-// A launch on the third stream (D[concurrent-terms]) uses A until the
+// A launch on the third stream (D449) uses A until the
 // streams are joined, as one on the second does.
 // CHECK-LABEL: storage liveness of @side_third (kills=stores): 2 buffers, 5 points in the step
 // CHECK-NEXT: s0 {{%[a-z_0-9]+}} : memref<4xf32, 1> step(1-4) first 1 last 4{{$}}

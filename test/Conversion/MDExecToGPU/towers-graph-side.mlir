@@ -1,6 +1,6 @@
 // RUN: mdir-opt %s --mdir-towers-step-graph -split-input-file -verify-diagnostics | FileCheck %s
 
-// D[concurrent-terms]: the side streams of term_streams in the plain TOWERS
+// D449: the side streams of term_streams in the plain TOWERS
 // step graph (D439). A minimal ordinary step: the drift check
 // (mdrtFlagStart), a PME stage, the force publication (towers_finish), the
 // certificate (mdrtFlagFinish) and the two step counters. The capture

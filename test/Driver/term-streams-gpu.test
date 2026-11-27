@@ -1,4 +1,4 @@
-# D[concurrent-terms]. The loops over tuples (bonded terms, exclusion
+# D449. The loops over tuples (bonded terms, exclusion
 # corrections) in a force destination of their own run on a third stream
 # beside the loops over pairs and the reciprocal sum of PME. The dipeptide
 # in water, PME, SHAKE and SETTLE, 20 steps with energies and frames every 5:

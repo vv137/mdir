@@ -1,4 +1,4 @@
-"""D[concurrent-terms]: where md-exec-assign-streams puts the force terms of
+"""D449: where md-exec-assign-streams puts the force terms of
 an ordinary step, read from the storage form after the pass.
 
     check_term_streams_ir.py STREAMS_MLIR VALUE

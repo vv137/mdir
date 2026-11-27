@@ -457,7 +457,7 @@ or a pair list before the join (D429). It is off by default: once the kernels of
 cheap, sharing the device with the loop over pairs, the longest part of a
 step, lengthened the step.
 
-**A third stream for the tuples** (D[concurrent-terms]). The loops over
+**A third stream for the tuples** (D449). The loops over
 tuples (bonded terms, 1–4 pairs, exclusion corrections) depend only on the
 positions and meet the direct and reciprocal forces at the kick. They can
 run beside the pairs only if they write other memory, so with

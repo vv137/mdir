@@ -91,7 +91,7 @@ snake case; defaults and the supported physics subset are those of
 | InitialState | `positions`, `velocities`, `cell` |
 | Integrator | `method`, `friction` (D249), `timestep`, `minimize`, `minimize_step` |
 | Ensemble | `kind`, `temperature`, `thermostat`, `friction`, `chain_length` (D249), `tau_t`, `pressure`, `tau_p`, `compressibility`, `barostat_coupling`, `barostat_work`, `compressibility_z`, `surface_tension`, `surfaces` (D247), `coupling_period`, `com_period`, `seed` |
-| Execution | `target`, `precision`, `device`, `threads`, `deterministic`, `reorder`, `fast_math`, `neighbor_capacity` (D227), `neighbor_structure` (D245), `step_graph` (D439), `term_streams` (D[concurrent-terms]) |
+| Execution | `target`, `precision`, `device`, `threads`, `deterministic`, `reorder`, `fast_math`, `neighbor_capacity` (D227), `neighbor_structure` (D245), `step_graph` (D439), `term_streams` (D449) |
 | Schedule | `steps`, `energy_period` |
 
 `Execution.neighbor_capacity` is `[execution] neighbor_capacity` of the

@@ -80,7 +80,7 @@ inline constexpr llvm::StringLiteral kSideAttrName = "md_exec.side";
 
 /// The name of the integer attribute that puts a marked op on another side
 /// stream than the second: `md_exec.lane = 2` for the third
-/// (D[concurrent-terms]).
+/// (D449).
 inline constexpr llvm::StringLiteral kLaneAttrName = "md_exec.lane";
 
 /// The stream of a marked op: 1 for the second stream, or the lane that
@@ -92,7 +92,7 @@ unsigned getSideLane(mlir::Operation *op);
 /// Another op marked for the same side stream does not end the window: it
 /// runs after `side` there, in the order of the program; one marked for
 /// another side stream runs beside it and must be independent of it
-/// (D[concurrent-terms]).
+/// (D449).
 mlir::Operation *findJoin(mlir::Operation *side, BufferAliases &aliases);
 
 /// Checks that the op `side`, marked to run on a side stream, is followed

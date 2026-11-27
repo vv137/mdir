@@ -356,7 +356,7 @@ Operation *md_exec::findJoin(Operation *side, BufferAliases &aliases) {
   for (; next && !next->hasTrait<OpTrait::IsTerminator>();
        next = next->getNextNode()) {
     // An op marked for the same side stream runs after it there, in the
-    // order of the program (D[concurrent-terms]).
+    // order of the program (D449).
     if (getSideLane(next) == getSideLane(side))
       continue;
     if (isa<JoinOp>(next) || !areIndependent(side, next, aliases))
@@ -373,7 +373,7 @@ LogicalResult md_exec::verifySide(Operation *side, BufferAliases &aliases) {
     // Another op marked for the same side stream runs after this one
     // there; the ops of the other streams after it must still be
     // independent of this one, which may be running then
-    // (D[concurrent-terms]).
+    // (D449).
     if (getSideLane(next) == getSideLane(side))
       continue;
     if (!areIndependent(side, next, aliases)) {

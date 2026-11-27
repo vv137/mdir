@@ -323,7 +323,7 @@ struct Chunk {
         if (n == "mdrtDeferStops" || n == "mdrtStopPending" || n == "mdrtCountBuild") continue;
         // The forks and joins of the side streams are event records and
         // waits, which the capture follows into the side streams; a window
-        // must open and close within one phase (D[concurrent-terms]).
+        // must open and close within one phase (D449).
         bool sideCall = n == "mdrtSideBegin" || n == "mdrtSideEnd" ||
                         n == "mdrtSide2Begin" || n == "mdrtSide2End" ||
                         n == "mdrtSideJoin";

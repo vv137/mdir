@@ -1,4 +1,4 @@
-# D[concurrent-terms]: the side streams of term_streams inside a captured
+# D449: the side streams of term_streams inside a captured
 # TOWERS step graph (D439). See Inputs/check_term_streams_graph.py.
 # REQUIRES: cuda, towers-mma, hdf5, h5py
 # RUN: rm -rf %t && mkdir %t

@@ -3415,7 +3415,7 @@ mdir::driver::Control::resolveTermStreams() const {
   if (target != Target::GPU)
     return {"SINGLE", "the CPU target runs on one stream"};
   // A destination of their own would add the forces of the tuples to those
-  // of the pairs in another order than one stream does (D[concurrent-terms]).
+  // of the pairs in another order than one stream does (D449).
   if (termStreams == "TERMS" && deterministic)
     return {"RECIPROCAL",
             "the deterministic mode keeps the tuples with the pairs"};

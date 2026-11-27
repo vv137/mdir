@@ -1247,7 +1247,7 @@ The reference of every op is [dialects/md_exec.md](dialects/md_exec.md).
 | `md_exec.scatter_add` | $a_i \mathrel{+}= \sum_{k : \mathrm{idx}_k = i} v_k$: values added into a field at the rows that indices name (D291, [device-primitives.md](device-primitives.md)). |
 | `md_exec.reciprocal` | What `md.reciprocal` computes, in the execution IR; Section 10.8 and [pme.md](pme.md) describe its lowerings. |
 | `md_exec.linear_transform` | The unnormalized real three-dimensional FFT, forward or backward, between a real grid and its packed half-spectrum, with its adjoint and the pairing under which it is one declared in the IR (D306, [primitives-map.md](primitives-map.md)). |
-| `md_exec.join` | Storage form only: the ops marked `md_exec.side` before it run on a side stream beside the ops between them and it (D81, D87); the first stream waits for both side streams there (D[concurrent-terms]). |
+| `md_exec.join` | Storage form only: the ops marked `md_exec.side` before it run on a side stream beside the ops between them and it (D81, D87); the first stream waits for both side streams there (D449). |
 | `md_exec.rebuild_count` | The number of times a neighbor structure has been built. |
 | `md_exec.zeros`, `md_exec.empty` | Destinations of loops. |
 | `md_exec.pair_for` | Runs a kernel over the pairs of a neighbor structure. |
