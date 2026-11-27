@@ -3048,8 +3048,15 @@ Error Reader::readExecution(const toml::table &table) {
                                   {"target", "threads", "precision",
                                    "neighbor_capacity", "fast_math",
                                    "spatial_order", "deterministic",
-                                   "neighbor_structure", "towers_shape", "step_graph"}))
+                                   "neighbor_structure", "towers_shape", "step_graph",
+                                   "term_streams"}))
     return error;
+  StringRef streams = "SINGLE";
+  if (Error error = readChoice<StringRef>(table, "term_streams", streams,
+          {{"SINGLE", "SINGLE"}, {"RECIPROCAL", "RECIPROCAL"},
+           {"TERMS", "TERMS"}}))
+    return error;
+  control.termStreams = streams.str();
   StringRef mode = "SPANS";
   if (Error error = readChoice<StringRef>(table, "step_graph", mode,
           {{"LAUNCH", "LAUNCH"}, {"SPANS", "SPANS"}, {"GRAPH", "GRAPH"},
@@ -3399,6 +3406,35 @@ Error Reader::read(const toml::table &root) {
 StringRef mdir::driver::Control::spansRefusal() const {
   if (target != Target::GPU) return "SPANS requires the GPU target";
   return {};
+}
+
+std::pair<StringRef, StringRef>
+mdir::driver::Control::resolveTermStreams() const {
+  if (termStreams == "SINGLE")
+    return {"SINGLE", ""};
+  if (target != Target::GPU)
+    return {"SINGLE", "the CPU target runs on one stream"};
+  // A destination of their own would add the forces of the tuples to those
+  // of the pairs in another order than one stream does (D[concurrent-terms]).
+  if (termStreams == "TERMS" && deterministic)
+    return {"RECIPROCAL",
+            "the deterministic mode keeps the tuples with the pairs"};
+  return {termStreams, ""};
+}
+
+llvm::json::Object mdir::driver::Control::termStreamsRecord() const {
+  auto [value, why] = resolveTermStreams();
+  // A rule of the request, the target and the mode (#952). TERMS adds the
+  // forces of the tuples apart from those of the pairs, which changes the
+  // rounding of their sum.
+  return llvm::json::Object{
+      {"requested", termStreams},
+      {"value", value.str()},
+      {"category", "rule"},
+      {"reason", why.empty() ? "as requested" : why.str()},
+      {"inputs", llvm::json::Object{{"target", target == Target::GPU ? "GPU" : "CPU"},
+                                    {"deterministic", deterministic}}},
+      {"changes_rounding", value == "TERMS"}};
 }
 
 StringRef mdir::driver::Control::stepGraphRefusal(size_t constraints) const {

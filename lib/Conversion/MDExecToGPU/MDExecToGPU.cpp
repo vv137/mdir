@@ -311,6 +311,8 @@ public:
   /// may allocate or free memory of the device. A function of the runtime without a body
   /// may, unless it was audited not to.
   bool allocates(Operation *op);
+  LogicalResult lowerOnSide(Operation *at,
+                            llvm::function_ref<LogicalResult()> lower);
 
   /// Whether the renumbered members of the tuples, their incidence
   /// structures, and the copies of the members on the device are taken from
@@ -1763,7 +1765,7 @@ void Lowering::findOnceRuns(func::FuncOp function) {
     auto tuple = dyn_cast<md_exec::TupleForOp>(op);
     return tuple && !inRows.contains(op) &&
            (usesBondedUnits(tuple) || evaluatesOnce(tuple)) &&
-           tuple.getReduce().empty() && !op->hasAttr(md_exec::kSideAttrName);
+           tuple.getReduce().empty();
   };
   auto finish = [&](SmallVector<md_exec::TupleForOp> &run) {
     // A loop whose kernel computes the sums of a term over centers is a
@@ -1801,7 +1803,11 @@ void Lowering::findOnceRuns(func::FuncOp function) {
       // reads: then the loops of the run may run at once. Loops that add to
       // the same destination do so with atomics, in any order, as they do
       // one after the other (D84).
+      // A run is on one stream: its kernel is launched once, at its last
+      // loop (D[concurrent-terms]).
       bool joins = !run.empty() &&
+                   md_exec::getSideLane(loop) ==
+                       md_exec::getSideLane(run.front()) &&
                    loop.getPositions() == run.front().getPositions() &&
                    loop.getCellMutable().get() ==
                        run.front().getCellMutable().get();
@@ -2052,6 +2058,49 @@ LogicalResult Lowering::lowerScatterAdd(md_exec::ScatterAddOp op) {
   table.emitFlush(kernel);
   gpu::TerminatorOp::create(kernel, loc);
   bringIn(launch);
+  return success();
+}
+
+/// Lowers the op `at` by `lower`, which issues its work before `at`. If `at`
+/// is marked to run on the second stream, that work goes there: between
+/// calls of mdrtSideBegin and mdrtSideEnd, and it must allocate and free no
+/// memory of the device, since the allocator hands a freed block to the
+/// next allocation without waiting (D87, D[concurrent-terms]). The
+/// reciprocal sums issue these calls themselves.
+LogicalResult
+Lowering::lowerOnSide(Operation *at, llvm::function_ref<LogicalResult()> lower) {
+  if (!at->hasAttr(md_exec::kSideAttrName))
+    return lower();
+  OpBuilder builder(at);
+  Location loc = at->getLoc();
+  FunctionType none = builder.getFunctionType({}, {});
+  unsigned lane = md_exec::getSideLane(at);
+  if (lane != 1 && lane != 2)
+    return at->emitOpError() << "names side stream " << lane
+                             << "; there are streams 1 and 2";
+  auto begin = func::CallOp::create(
+      builder, loc,
+      getOrDeclare(lane == 2 ? "mdrtSide2Begin" : "mdrtSideBegin", none),
+      ValueRange());
+  if (failed(lower()))
+    return failure();
+  builder.setInsertionPoint(at);
+  auto end = func::CallOp::create(
+      builder, loc,
+      getOrDeclare(lane == 2 ? "mdrtSide2End" : "mdrtSideEnd", none),
+      ValueRange());
+  bool launches = false;
+  for (Operation *issued = begin->getNextNode(); issued != end;
+       issued = issued->getNextNode()) {
+    if (allocates(issued))
+      return at->emitOpError()
+             << "allocates or frees memory on a second stream";
+    issued->walk([&](gpu::LaunchOp) { launches = true; });
+  }
+  if (!launches)
+    return at->emitOpError()
+           << "runs on a second stream, but its lowering launches nothing "
+              "there";
   return success();
 }
 
@@ -2353,7 +2402,9 @@ void Lowering::findRows(func::FuncOp function) {
       ValueRange scratch = isa<md_exec::PairForOp>(op)
                                ? cast<md_exec::PairForOp>(op).getScratch()
                                : cast<md_exec::TupleForOp>(op).getScratch();
-      bool joins = !run.empty() && getPositions(&op) == getPositions(run[0]);
+      // A run is on one stream (D[concurrent-terms]).
+      bool joins = !run.empty() && getPositions(&op) == getPositions(run[0]) &&
+                   md_exec::getSideLane(&op) == md_exec::getSideLane(run[0]);
       // The loops over pairs of a run share the order of one structure.
       if (auto pair = dyn_cast<md_exec::PairForOp>(op))
         for (Operation *member : run)
@@ -2531,6 +2582,10 @@ bool Lowering::recordIntegration(ArrayRef<Operation *> run) {
   bool readsBefore = false;
   for (Operation *op : run) {
     auto loop = cast<md_exec::TupleForOp>(op);
+    // A loop on the second stream is issued there alone, not in a kernel
+    // with loops of the first (D[concurrent-terms]).
+    if (loop->hasAttr(md_exec::kSideAttrName))
+      return false;
     // The loops take the particles of one set, have no reductions but a
     // flag each at most, the test of the constraints that the member at
     // place 0 sets (D278), and write none of what the
@@ -10922,9 +10977,11 @@ static LogicalResult keepReadbacksOnDevice(func::FuncOp function) {
     bool inside = false;
     for (Operation &op : *block) {
       if (auto call = dyn_cast<func::CallOp>(op)) {
-        if (call.getCallee() == "mdrtSideBegin")
+        if (call.getCallee() == "mdrtSideBegin" ||
+            call.getCallee() == "mdrtSide2Begin")
           inside = true;
-        else if (call.getCallee() == "mdrtSideEnd")
+        else if (call.getCallee() == "mdrtSideEnd" ||
+                 call.getCallee() == "mdrtSide2End")
           inside = false;
       }
       if (inside)
@@ -11480,9 +11537,19 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   WalkResult sides = function.walk([&](Operation *op) {
     if (!op->hasAttr(md_exec::kSideAttrName))
       return WalkResult::advance();
-    if (!isa<md_exec::ReciprocalOp>(op)) {
+    // A loop over tuples may run there too (D[concurrent-terms]): it
+    // declares what it reads and writes, its tables included, and its
+    // lowering allocates nothing, which the lowering checks.
+    auto tuple = dyn_cast<md_exec::TupleForOp>(op);
+    if (!isa<md_exec::ReciprocalOp>(op) && !tuple) {
       op->emitOpError() << "cannot run on a second stream; only the "
-                           "reciprocal sums of PME can";
+                           "reciprocal sums of PME and loops over tuples "
+                           "can";
+      return WalkResult::interrupt();
+    }
+    if (tuple && !tuple.getReduce().empty()) {
+      op->emitOpError() << "cannot run on a second stream: it reduces "
+                           "values, which the host may read";
       return WalkResult::interrupt();
     }
     return failed(md_exec::verifySide(op, aliases)) ? WalkResult::interrupt()
@@ -11636,7 +11703,7 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
     if (inOnceRuns.contains(op)) {
       auto run = onceRuns.find(op);
       if (run != onceRuns.end()) {
-        if (failed(lowerOnceRun(run->second)))
+        if (failed(lowerOnSide(op, [&] { return lowerOnceRun(run->second); })))
           return failure();
         // The arithmetic of a fused term over centers goes after its loop.
         for (md_exec::TupleForOp loop : run->second)
@@ -11650,7 +11717,7 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
     if (inRows.contains(op)) {
       auto run = rows.find(op);
       if (run != rows.end()) {
-        if (failed(lowerRows(run->second)))
+        if (failed(lowerOnSide(op, [&] { return lowerRows(run->second); })))
           return failure();
         for (Operation *loop : run->second)
           lowered.push_back(loop);
@@ -11667,7 +11734,9 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
       }
       continue;
     }
-    if (failed(lowerOp(op)))
+    if (failed(isa<md_exec::TupleForOp>(op)
+                   ? lowerOnSide(op, [&] { return lowerOp(op); })
+                   : lowerOp(op)))
       return failure();
   }
   rows.clear();

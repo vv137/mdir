@@ -192,14 +192,22 @@ static unsigned borrowedStreamDepth = 0;
 static CUevent streamScopeEvent = NULL;
 static int waitsAlways = -1;
 
-/* A second stream, on which work that is independent of what follows it on
+/* Side streams, on which work that is independent of what follows it on
    the first can run beside it (mdrtSideBegin). Work issued between
-   mdrtSideBegin and mdrtSideEnd goes there, after what the first stream
-   had been given; mdrtSideJoin makes the first stream wait for it. */
-static CUstream sideStream = NULL;
-static int onSide = 0;
-static CUevent forkEvent = NULL, joinEvent = NULL;
-static int joinPending = 0;
+   mdrtSideBegin and mdrtSideEnd goes to the second stream, after what the
+   first stream had been given; between mdrtSide2Begin and mdrtSide2End
+   to the third, beside the first two (D[concurrent-terms]). mdrtSideJoin
+   makes the first stream wait for both. The forks and the joins are
+   events recorded and waited for on the streams, so that a capture of the
+   first stream into a graph takes the side streams in as branches that
+   end at the join (CUDA programming guide, stream capture across
+   streams). */
+enum { SIDE_LANES = 2 };
+static CUstream sideStreams[SIDE_LANES];
+static int sideLane = -1;
+#define onSide (sideLane >= 0)
+static CUevent forkEvent = NULL, joinEvents[SIDE_LANES];
+static int joinPending[SIDE_LANES];
 
 /* Whether the device may still be running work that was issued. */
 static int isPending = 0;
@@ -647,36 +655,48 @@ CUstream mgpuStreamCreate(void) {
   if (!sharedStream && !borrowedStreamDepth)
     check(cuStreamCreate(&sharedStream, CU_STREAM_NON_BLOCKING),
           "cuStreamCreate");
-  return onSide ? sideStream : sharedStream;
+  return onSide ? sideStreams[sideLane] : sharedStream;
 }
 
-void mdrtSideBegin(void) {
+static void sideBegin(int lane) {
   mgpuStreamCreate();
+  /* A recorded span ends where a side stream forks: the work of the
+     side streams is issued as launched (D448), for either lane. */
   mdrtSpansFlush();
-  if (!sideStream) {
-    check(cuStreamCreate(&sideStream, CU_STREAM_NON_BLOCKING),
-          "cuStreamCreate");
+  if (!forkEvent)
     check(cuEventCreate(&forkEvent, CU_EVENT_DISABLE_TIMING),
           "cuEventCreate");
-    check(cuEventCreate(&joinEvent, CU_EVENT_DISABLE_TIMING),
+  if (!sideStreams[lane]) {
+    check(cuStreamCreate(&sideStreams[lane], CU_STREAM_NON_BLOCKING),
+          "cuStreamCreate");
+    check(cuEventCreate(&joinEvents[lane], CU_EVENT_DISABLE_TIMING),
           "cuEventCreate");
   }
   check(cuEventRecord(forkEvent, sharedStream), "cuEventRecord");
-  check(cuStreamWaitEvent(sideStream, forkEvent, 0), "cuStreamWaitEvent");
-  onSide = 1;
+  check(cuStreamWaitEvent(sideStreams[lane], forkEvent, 0),
+        "cuStreamWaitEvent");
+  sideLane = lane;
 }
 
-void mdrtSideEnd(void) {
-  check(cuEventRecord(joinEvent, sideStream), "cuEventRecord");
-  onSide = 0;
-  joinPending = 1;
+static void sideEnd(int lane) {
+  check(cuEventRecord(joinEvents[lane], sideStreams[lane]), "cuEventRecord");
+  sideLane = -1;
+  joinPending[lane] = 1;
 }
+
+void mdrtSideBegin(void) { sideBegin(0); }
+void mdrtSideEnd(void) { sideEnd(0); }
+void mdrtSide2Begin(void) { sideBegin(1); }
+void mdrtSide2End(void) { sideEnd(1); }
 
 void mdrtSideJoin(void) {
-  if (!joinPending)
-    return;
-  check(cuStreamWaitEvent(sharedStream, joinEvent, 0), "cuStreamWaitEvent");
-  joinPending = 0;
+  for (int lane = 0; lane != SIDE_LANES; ++lane) {
+    if (!joinPending[lane])
+      continue;
+    check(cuStreamWaitEvent(sharedStream, joinEvents[lane], 0),
+          "cuStreamWaitEvent");
+    joinPending[lane] = 0;
+  }
 }
 
 /* Transfer the ordering of the runtime's work without synchronizing the
@@ -822,8 +842,13 @@ static int spansOverride(int on) {
   return on;
 }
 
+/* Nothing records from a fork to its join, on any side lane: the first
+   stream waits there for work that no span holds. */
 static int isRecording(void) {
-  return spansOn > 0 && !spansSuspended && !onSide && !joinPending &&
+  int joining = 0;
+  for (int lane = 0; lane != SIDE_LANES; ++lane)
+    joining |= joinPending[lane];
+  return spansOn > 0 && !spansSuspended && !onSide && !joining &&
          !borrowedStreamDepth;
 }
 
@@ -1620,8 +1645,9 @@ static void finish(void) {
   if (!isPending || (!sharedStream && !borrowedStreamDepth))
     return;
   double start = begin();
-  if (sideStream)
-    check(cuStreamSynchronize(sideStream), "cuStreamSynchronize");
+  for (int lane = 0; lane != SIDE_LANES; ++lane)
+    if (sideStreams[lane])
+      check(cuStreamSynchronize(sideStreams[lane]), "cuStreamSynchronize");
   check(cuStreamSynchronize(sharedStream), "cuStreamSynchronize");
   end(WAIT, start);
   isPending = 0;

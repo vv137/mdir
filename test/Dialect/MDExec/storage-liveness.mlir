@@ -487,6 +487,40 @@ func.func @side(%out: memref<4xf32, 1>, %n: index, %c: i1) {
   return
 }
 
+// A launch on the third stream (D[concurrent-terms]) uses A until the
+// streams are joined, as one on the second does.
+// CHECK-LABEL: storage liveness of @side_third (kills=stores): 2 buffers, 5 points in the step
+// CHECK-NEXT: s0 {{%[a-z_0-9]+}} : memref<4xf32, 1> step(1-4) first 1 last 4{{$}}
+// CHECK-NEXT: s1 {{%[a-z_0-9]+}} : memref<4xf32, 1> step(2-3) first 2 last 3{{$}}
+// CHECK-NEXT: s0 interferes in the step with s1{{$}}
+// CHECK-NEXT: s1 interferes in the step with s0{{$}}
+func.func @side_third(%out: memref<4xf32, 1>, %n: index, %c: i1) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %f = arith.constant 1.0 : f32
+  %A = gpu.alloc () : memref<4xf32, 1>
+  %B = gpu.alloc () : memref<4xf32, 1>
+  scf.for %i = %c0 to %n step %c1 {
+    func.call @mdrtSide2Begin() : () -> ()
+    gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1) threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+      memref.store %f, %A[%c0] : memref<4xf32, 1>
+      gpu.terminator
+    }
+    func.call @mdrtSide2End() : () -> ()
+    gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1) threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+      memref.store %f, %B[%c0] : memref<4xf32, 1>
+      gpu.terminator
+    }
+    gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1) threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+      %v = memref.load %B[%c0] : memref<4xf32, 1>
+      memref.store %v, %out[%c0] : memref<4xf32, 1>
+      gpu.terminator
+    }
+    func.call @mdrtSideJoin() : () -> ()
+  }
+  return
+}
+
 // A write in one branch of an if is not a kill where the branches join:
 // A is carried.
 // CHECK-LABEL: storage liveness of @branch (kills=stores): 2 buffers, 7 points in the step
@@ -730,3 +764,5 @@ func.func private @keep(index)
 func.func private @mdrtSideBegin()
 func.func private @mdrtSideEnd()
 func.func private @mdrtSideJoin()
+func.func private @mdrtSide2Begin()
+func.func private @mdrtSide2End()

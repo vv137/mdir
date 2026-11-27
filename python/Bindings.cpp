@@ -727,6 +727,7 @@ PYBIND11_MODULE(_core, m) {
   property(execution, "fast_math", &model::Execution::fastMath);
   property(execution, "neighbor_capacity", &model::Execution::neighborCapacity);
   property(execution, "step_graph", &model::Execution::stepGraph);
+  property(execution, "term_streams", &model::Execution::termStreams);
   property(execution, "neighbor_structure", &model::Execution::neighborStructure);
   property(execution, "rigid_units", &model::Execution::rigidUnits);
   auto schedule = input<model::Schedule>(m, "Schedule");
@@ -842,6 +843,8 @@ PYBIND11_MODULE(_core, m) {
       d["step_graph_requested"] = c.execution.stepGraph;
       if (c.execution.stepGraph == "AUTO")
         d["step_graph_reason"] = resolved.stepGraphRefusal(p.prepared->system.numConstraints).str();
+      d["term_streams"] = resolved.resolveTermStreams().first.str();
+      d["term_streams_requested"] = c.execution.termStreams;
       d["neighbor_structure"] = driver::getNeighborStructureName(resolved.neighborStructure);
       d["neighbor_structure_requested"] =
           driver::getNeighborStructureName(resolved.neighborStructureRequested);

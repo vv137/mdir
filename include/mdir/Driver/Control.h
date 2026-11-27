@@ -12,6 +12,7 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/JSON.h"
 
 #include <array>
 #include <cstdint>
@@ -454,6 +455,21 @@ struct Control {
   /// Empty when the work between host boundaries can be recorded and
   /// replayed as CUDA graphs (SPANS, and GRAPH outside the TOWERS chunks).
   llvm::StringRef spansRefusal() const;
+  /// `[execution] term_streams` (D[concurrent-terms]): `SINGLE`, every
+  /// force term on one stream; `RECIPROCAL`, the reciprocal sums of PME on
+  /// a second stream beside the direct sum (D87, D429); `TERMS`, the loops
+  /// over tuples (bonded terms, exclusion corrections) there as well, with
+  /// a force destination of their own.
+  std::string termStreams = "SINGLE";
+  /// The schedule that the compiler gives the force terms, and why it
+  /// differs from `termStreams` where it does (empty otherwise): one
+  /// stream on the CPU; `TERMS` keeps the tuples with the pairs in the
+  /// deterministic mode, whose sums of forces stay those of one stream.
+  std::pair<llvm::StringRef, llvm::StringRef> resolveTermStreams() const;
+  /// The record of the choice for the log and the manifest (#952): the
+  /// request, the value, the category (a rule), the reason, its inputs,
+  /// and whether it changes the rounding of the sum of the forces.
+  llvm::json::Object termStreamsRecord() const;
   TowersShape towersShape;
   TowersSetup towersSetup;
   bool towersShapeGiven = false, towersShapeTable = false;

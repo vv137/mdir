@@ -535,7 +535,8 @@ Effects StorageLivenessBuilder::effectsOf(Operation *point, const Aliases &a,
 
 /// The completions: for each asynchronous op that touches a buffer, its
 /// buffers are used again at every wait its token reaches; for each op on
-/// a side stream (between `mdrtSideBegin` and `mdrtSideEnd`), at the next
+/// a side stream (between `mdrtSideBegin` and `mdrtSideEnd`, or
+/// `mdrtSide2Begin` and `mdrtSide2End`), at the next
 /// `mdrtSideJoin` of its block or of a block around it.
 void StorageLivenessBuilder::findCompletions(Region &body) {
   body.walk([&](Operation *op) {
@@ -560,9 +561,12 @@ void StorageLivenessBuilder::findCompletions(Region &body) {
     bool side = false;
     llvm::BitVector pending(n);
     for (Operation &op : *block) {
-      if (isStreamCall(&op, "mdrtSideBegin"))
+      // Either side stream (D[concurrent-terms]).
+      if (isStreamCall(&op, "mdrtSideBegin") ||
+          isStreamCall(&op, "mdrtSide2Begin"))
         side = true;
-      else if (isStreamCall(&op, "mdrtSideEnd"))
+      else if (isStreamCall(&op, "mdrtSideEnd") ||
+               isStreamCall(&op, "mdrtSide2End"))
         side = false;
       else if (isStreamCall(&op, "mdrtSideJoin") && pending.any()) {
         completions.try_emplace(&op, n).first->second |= pending;

@@ -64,6 +64,11 @@ static bool isOrdinaryLoop(scf::ForOp loop) {
 
 struct TowersStepGraph : PassWrapper<TowersStepGraph, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TowersStepGraph)
+  StringRef getArgument() const final { return "mdir-towers-step-graph"; }
+  StringRef getDescription() const final {
+    return "Replace ordinary TOWERS step loops with captured step graphs "
+           "(D439), as the GPU lowering pipeline runs it";
+  }
   void runOnOperation() override {
     ModuleOp mod = getOperation();
     bool trial = mod->hasAttr("mdir.step_graph_trial");
@@ -107,4 +112,6 @@ namespace mdir {
 std::unique_ptr<Pass> createTowersStepGraph() {
   return std::make_unique<TowersStepGraph>();
 }
+// For the tests of the graph builder's refusals (mdir-opt).
+void registerTowersStepGraph() { PassRegistration<TowersStepGraph>(); }
 }

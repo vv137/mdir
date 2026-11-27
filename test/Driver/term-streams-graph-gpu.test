@@ -1,0 +1,10 @@
+# D[concurrent-terms]: the side streams of term_streams inside a captured
+# TOWERS step graph (D439). See Inputs/check_term_streams_graph.py.
+# REQUIRES: cuda, towers-mma, hdf5, h5py
+# RUN: rm -rf %t && mkdir %t
+# RUN: %h5md_python %S/Inputs/check_term_streams_graph.py %S/Inputs/dipeptide %t mdir | FileCheck %s
+# CHECK: one step, TERMS against SINGLE: forces agree
+# CHECK: LAUNCH TERMS: agrees
+# CHECK: GRAPH RECIPROCAL: agrees
+# CHECK: GRAPH TERMS: agrees
+# CHECK: the captured step forks and joins both side streams

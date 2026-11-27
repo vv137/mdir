@@ -122,6 +122,17 @@ static std::string getStageBodiesPass(StringRef arch) {
 /// `MDIR_TUPLE_SUMS` the tables of the tuples (D283; `atomics` none,
 /// `blocks` at any count, which the tests of small systems need), and
 /// `MDIR_PAIR_SUMS` those of the loops over groups (D291).
+/// The options of md-exec-assign-streams for `[execution] term_streams`
+/// (D87, D429, D[concurrent-terms]).
+static std::string getStreamOptions(const Control &control) {
+  StringRef streams = control.resolveTermStreams().first;
+  if (streams == "RECIPROCAL")
+    return "{reciprocal=true}";
+  if (streams == "TERMS")
+    return "{reciprocal=true tuples=true}";
+  return "";
+}
+
 static std::string getScatterOptions(const Control &control) {
   std::string options;
   if (const char *spread = std::getenv("MDIR_PME_SPREAD")) {
@@ -377,7 +388,13 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
     os << "md-exec-expose-validity,";
   os << "md-exec-fuse-loops"
      << (control.target == Target::GPU ? "{integration-runs=true}" : "")
-     << ",md-exec-accumulate-destinations,"
+     // The loops over tuples get a destination of their own where they may
+     // run beside the pairs (D[concurrent-terms]).
+     << ",md-exec-accumulate-destinations"
+     << (control.resolveTermStreams().first == "TERMS"
+             ? "{separate-tuples=true}"
+             : "")
+     << ","
      << "md-exec-narrow-sums,";
   if (control.fastMath)
     os << "md-exec-simplify-distance{radial=true},";
@@ -457,7 +474,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
     else if (fftChoice == "on" || (fftChoice == "auto" && measuredTarget))
       os << " pme-axis-fft=" << fftChoice;
     os << (control.precision == Precision::Double ? "" : " tables=f32")
-       << "},md-exec-assign-streams,"
+       << "},md-exec-assign-streams" << getStreamOptions(control) << ","
        // The batched bodies of models in stages (D293).
        << (control.stagedModels.empty() ? "" : getStageBodiesPass(arch))
        // The loops over pairs over groups become md_alg.traverse_pairs
