@@ -137,20 +137,34 @@ fixed-point mode, which is the reference executor's.
 
 ## Checkpoint fingerprint
 
-The execution group of the fingerprint records `[distribute] traversal`
-and `[distribute] transport` as resolved, and outside the deterministic
-mode `[distribute] domains`, the grid resolved for the cell. The
-deterministic contract makes the trajectory, and the checkpoint file, the
-same on every grid (`distributed-restart.test` compares the bytes of
-checkpoints written on 1, 2, 8, and 16 domains), so its grid is left out
-and a continuation on another grid is accepted without a note. Under that
-contract, `--continue` of a deterministic run refuses a control file that
-adds or drops `[distribute]`: the sums of the other driver are of another
+*Ruled by the maintainer on the PR.* The execution group of the fingerprint
+records `[distribute] traversal`, `[distribute] transport`, and
+`[distribute] domains`, the grid resolved for the cell, in every mode. A
+continuation on another grid is a note, not a refusal; in the deterministic
+mode the note says that the deterministic contract keeps the bits on any
+grid. The checkpoint files of two grids then differ in that entry alone
+(`distributed-restart.test` compares their numerical datasets and their
+fingerprints without it, and the bytes of the trajectories).
+
+`--continue` of a deterministic run refuses a control file that adds or
+drops `[distribute]`: the sums of the other driver are of another
 arithmetic, and the continuation could not give the bits of the
 uninterrupted run. Outside the deterministic mode every change of
 `[distribute]` is a note, as for `[execution] threads`.
-`test/Driver/distribute-continue.test` checks the records, the refused
-continuations in both directions, and the accepted ones.
+
+`mdir run --continue --force` continues past every refusal of the
+fingerprint: that one, and another physics or coupling, whose forces and
+coupling state the run then evaluates at its first step, as a run from
+`checkpoint` of `[input]` does. The flag follows `--no-append`, a modifier
+that goes with `--continue` alone; `mdir run` had no flag that overrides a
+refusal. A forced continuation notes each overridden difference in the log,
+lists them in `forced_overrides` of the manifest's start event, and records
+them in `/parameters/mdir/forced_continuations` of every checkpoint that
+follows, with those of earlier parts, which `mdir checkpoint` prints.
+`test/Driver/distribute-continue.test` checks the records, the grid notes in
+both modes, the refusals in both directions without the flag, `--force`
+alone, and forced continuations past a dropped `[distribute]` and past
+another $\epsilon$.
 
 ## Rebuilds in the deterministic mode
 
