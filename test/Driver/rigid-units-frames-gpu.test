@@ -30,6 +30,14 @@
 # RUN: mkdir -p %t/scattered
 # RUN: %python %S/Inputs/kind_pairs_mixture.py %t/scattered scattered
 # RUN: %mdir_python %S/Inputs/rigid_units_frames.py scattered %t/scattered/system.top %t/scattered/system.gro 3 10 | tee %t/scattered.txt | FileCheck %s -DS=scattered
+# `mdir run` warns of that kind in its log, as `mdir check` does, and runs
+# the other kinds as units.
+# RUN: printf '[execution]\ntarget = "GPU"\nprecision = "MIXED"\n[performance]\nrigid_units = "ON"\n' >> %t/scattered/run.toml
+# RUN: cd %t/scattered && mdir run run.toml > %t/scattered/run.log 2>&1
+# RUN: FileCheck %s --check-prefix=SCATTERED-LOG < %t/scattered/run.log
+# SCATTERED-LOG: MDIR: rigid units: ON: the units (ON was given)
+# SCATTERED-LOG: MDIR: kind 3: not taken: 2 molecules not of consecutive particles; its particles run in the rest
+# SCATTERED-LOG: MDIR: warning: kind 3: 2 of 2 molecules are not of consecutive particles in the input
 #
 # The anchors of the rest, with PME: alanine dipeptide in OPC under NPT
 # (Amber's extra point, not linear in its frame, so compared from the first

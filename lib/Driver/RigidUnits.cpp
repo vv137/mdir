@@ -296,6 +296,9 @@ llvm::Error mdir::driver::resolveRigidUnits(Control &control,
     const Topology &topology = *system.topology;
     RigidGroups groups = findRigidGroups(topology);
     unsigned takenCount = 0;
+    // Whether a kind is not taken for being scattered alone: a kind that
+    // the reasons of before D[water-layout] would have taken.
+    bool scatteredAlone = false;
     std::vector<bool> inKind(topology.getNumParticles(), false);
     // Two or more particles, by count, then by first particle: the order
     // of D403's kinds, with the kinds of one particle left out (the
@@ -307,6 +310,8 @@ llvm::Error mdir::driver::resolveRigidUnits(Control &control,
       entry.places = kind.size;
       entry.frame = kind.frame.size();
       entry.sites = kind.sites.size();
+      // Counted whatever reason comes first, for `mdir check --json`.
+      entry.scattered = kind.scattered;
       auto plural = [](size_t n) { return n == 1 ? "" : "s"; };
       if (kind.size < 2)
         entry.reason = "one particle";
@@ -329,7 +334,7 @@ llvm::Error mdir::driver::resolveRigidUnits(Control &control,
                                      "particles; its particles run in the "
                                      "rest",
                                      kind.scattered, plural(kind.scattered));
-        entry.scattered = kind.scattered;
+        scatteredAlone = true;
         if (on)
           route.warnings.push_back(
               {"rigid_units_scattered",
@@ -400,14 +405,13 @@ llvm::Error mdir::driver::resolveRigidUnits(Control &control,
     if (on) {
       if (route.kinds.empty())
         return refuse("no rigid kind: the system has no rigid group (D403)");
-      // Only kinds that are not of consecutive particles stand in the way:
-      // the run takes the general route, which runs every input, and says
-      // why (D[water-layout]).
-      bool onlyScattered =
-          !takenCount && llvm::any_of(route.kinds, [](const auto &kind) {
-            return kind.scattered;
-          });
-      if (onlyScattered) {
+      // A refusal depends only on the reasons of before D[water-layout]:
+      // where no kind is taken but a kind is passed over for being
+      // scattered alone, those reasons would have taken it, so the run
+      // takes the general route, which runs every input, and says why. A
+      // kind that a reason of before refuses refuses as before, scattered
+      // or not.
+      if (!takenCount && scatteredAlone) {
         route.reason = "ON was given, but no kind of consecutive particles "
                        "is eligible: the general route";
         control.rigidUnitsRoute = std::move(route);

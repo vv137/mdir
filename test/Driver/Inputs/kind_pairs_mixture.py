@@ -2,7 +2,9 @@
 
     python kind_pairs_mixture.py DIRECTORY [incomplete | outside | ions |
                                             site-first | scattered |
-                                            scattered-only]
+                                            scattered-only |
+                                            incomplete-scattered |
+                                            scattered-unexcluded]
 
 three waters of three sites (TIP3P), two of four sites whose site is a
 linear combination of the frame ([ virtual_sites3 ] of type 1, the
@@ -21,6 +23,9 @@ before its frame, so that the frame takes places 1 to 3 of a copy;
 `scattered` lists an ion of its own, not bonded to it and not excluded,
 between the second hydrogen and the site, so that the copy is not of
 consecutive particles. `scattered-only` writes those two waters alone.
+`incomplete-scattered` writes the waters of `scattered` and the molecules
+of `incomplete`, alone. `scattered-unexcluded` writes the waters of
+`scattered-only` without their exclusions.
 """
 import math
 import random
@@ -29,7 +34,11 @@ from pathlib import Path
 
 work = Path(sys.argv[1])
 variant = sys.argv[2] if len(sys.argv) > 2 else None
-assert variant in (None, 'incomplete', 'outside', 'ions', 'site-first', 'scattered', 'scattered-only')
+assert variant in (None, 'incomplete', 'outside', 'ions', 'site-first', 'scattered', 'scattered-only',
+                   'incomplete-scattered', 'scattered-unexcluded')
+scattered = variant in ('scattered', 'scattered-only', 'incomplete-scattered',
+                        'scattered-unexcluded')
+incomplete = variant in ('incomplete', 'incomplete-scattered')
 random.seed(859)
 
 # name: (atoms as (name, type, charge, mass), the frame distances
@@ -48,18 +57,20 @@ MOLECULES = {
 if variant == 'outside':
     atoms, frame, site = MOLECULES['LJ3']
     MOLECULES['LJ3'] = (atoms + [('NA', 'NA', 1.0, 22.99)], frame, site)
-if variant in ('scattered', 'scattered-only'):
+if scattered:
     atoms, frame, site = MOLECULES['OPC']
     MOLECULES['OPC'] = (atoms + [('NA', 'NA', 1.0, 22.99)], frame, site)
 # The order in which each molecule's atoms are written, as indices into its
 # list of atoms: the frame, then the site, then any atom that is not bonded.
 ORDER = {'OPC': [3, 0, 1, 2] if variant == 'site-first' else
-         [0, 1, 2, 4, 3] if variant in ('scattered', 'scattered-only') else [0, 1, 2, 3]}
+         [0, 1, 2, 4, 3] if scattered else [0, 1, 2, 3]}
 COUNTS = [('SOL', 3), ('OPC', 2), ('LJ3', 2), ('NA', 1)]
 if variant == 'ions':
     COUNTS = [('NA', 2)]
-if variant == 'scattered-only':
+if variant in ('scattered-only', 'scattered-unexcluded'):
     COUNTS = [('OPC', 2)]
+if variant == 'incomplete-scattered':
+    COUNTS = [('OPC', 2), ('LJ3', 2)]
 # type: (sigma nm, epsilon kJ/mol)
 TYPES = {'OW': (0.315061, 0.636386), 'HW': (0.0, 0.0), 'OP': (0.316655, 0.890359),
          'HP': (0.0, 0.0), 'EP': (0.0, 0.0), 'S': (0.36, 1.0), 'C': (0.34, 0.4),
@@ -124,10 +135,11 @@ for name, (atoms, frame, site) in MOLECULES.items():
         top += ['[ settles ]', f'  {at[0]}  1  {frame[0]}  {frame[1]}']
     if site:
         top += ['[ virtual_sites3 ]', f'  {at[3]}  {at[0]}  {at[1]}  {at[2]}  1  {site[0]!r}  {site[1]!r}']
-    if len(atoms) > 1 and not (variant == 'incomplete' and name == 'LJ3'):
+    unexcluded = (incomplete and name == 'LJ3') or (variant == 'scattered-unexcluded' and name == 'OPC')
+    if len(atoms) > 1 and not unexcluded:
         # The ion of `scattered` is a molecule of its own, excluded from none.
         joined = [at[i] for i in range(len(atoms))
-                  if not (variant in ('scattered', 'scattered-only') and name == 'OPC' and i == 4)]
+                  if not (scattered and name == 'OPC' and i == 4)]
         top.append('[ exclusions ]')
         for i in sorted(joined):
             top.append('  ' + '  '.join(str(j) for j in [i] + [k for k in sorted(joined) if k != i]))

@@ -227,6 +227,30 @@
 # SCATTERED-AUTO-NOT: not of consecutive particles in the input
 # SCATTERED-AUTO: rigid units: AUTO: general
 # SCATTERED-AUTO-NOT: not of consecutive particles in the input
+#
+# A refusal under ON depends only on the reasons of before D[water-layout]:
+# a scattered kind neither causes one nor hides one. Beside a kind refused
+# for its exclusions, the scattered waters, which `main` took, give the
+# general route, not a refusal. Waters that are scattered and also lack
+# their exclusions are refused with `main`'s message, and the JSON counts
+# them as scattered under that reason.
+# RUN: mkdir -p %t/incomplete-scattered %t/scattered-unexcluded
+# RUN: %python %S/Inputs/kind_pairs_mixture.py %t/incomplete-scattered incomplete-scattered
+# RUN: printf '[execution]\ntarget = "GPU"\nprecision = "MIXED"\n[performance]\nrigid_units = "ON"\n' >> %t/incomplete-scattered/run.toml
+# RUN: mdir check %t/incomplete-scattered/run.toml 2>&1 | FileCheck %s --check-prefix=INCOMPLETE-SCATTERED
+# INCOMPLETE-SCATTERED: warning: kind 1: 2 of 2 molecules are not of consecutive particles in the input
+# INCOMPLETE-SCATTERED: rigid units: ON: general (ON was given, but no kind of consecutive particles is eligible: the general route)
+# INCOMPLETE-SCATTERED-NEXT: kind 1: not taken: 2 molecules not of consecutive particles; its particles run in the rest
+# INCOMPLETE-SCATTERED-NEXT: kind 2: not taken: one particle
+# INCOMPLETE-SCATTERED-NEXT: kind 3: not taken: 2 molecules with a pair of their own that is not excluded
+# RUN: %python %S/Inputs/kind_pairs_mixture.py %t/scattered-unexcluded scattered-unexcluded
+# RUN: cp %t/scattered-unexcluded/run.toml %t/scattered-unexcluded/auto.toml
+# RUN: printf '[execution]\ntarget = "GPU"\nprecision = "MIXED"\n[performance]\nrigid_units = "ON"\n' >> %t/scattered-unexcluded/run.toml
+# RUN: not mdir check %t/scattered-unexcluded/run.toml 2>&1 | FileCheck %s --check-prefix=SCATTERED-UNEXCLUDED
+# SCATTERED-UNEXCLUDED-NOT: not of consecutive particles in the input
+# SCATTERED-UNEXCLUDED: 'rigid_units = "ON"' cannot apply: no kind is eligible (kind 1: 2 molecules with a pair of their own that is not excluded; kind 2: one particle)
+# RUN: mdir check --json %t/scattered-unexcluded/auto.toml | %python -c "import json, sys; k = json.load(sys.stdin)['run']['rigid_units']['kinds'][0]; print(k['reason'], k['scattered'])" | FileCheck %s --check-prefix=SCATTERED-UNEXCLUDED-JSON
+# SCATTERED-UNEXCLUDED-JSON: 2 molecules with a pair of their own that is not excluded 2
 # RUN: %python %S/Inputs/kind_pairs_mixture.py %t/site-first site-first
 # RUN: printf '[execution]\ntarget = "GPU"\nprecision = "MIXED"\n[performance]\nrigid_units = "ON"\n' >> %t/site-first/run.toml
 # RUN: mdir check %t/site-first/run.toml | FileCheck %s --check-prefix=SITE-FIRST
