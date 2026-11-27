@@ -182,6 +182,7 @@ struct Halo {
 static _Atomic uint64_t lastExclusionVersion;
 struct Exclusions {
   uint64_t version;
+  int64_t directoryExtent;
   size_t references, count;
   uint64_t pairs[];
 };
@@ -207,6 +208,7 @@ static struct Exclusions *newExclusions(size_t count) {
   if (!e) fail("out of memory building exclusions");
   e->version = atomic_fetch_add_explicit(&lastExclusionVersion, 1, memory_order_relaxed) + 1;
   if (!e->version) fail("exclusion relation version exhausted");
+  e->directoryExtent = 0;
   e->references = 1;
   e->count = count;
   return e;
@@ -1835,19 +1837,18 @@ int64_t _mlir_ciface_mdrtDistExclusionShard(struct Members *members) {
   slice.sizes[0] = hi-lo;
   struct Exclusions *local = (void *)(intptr_t)_mlir_ciface_mdrtDistExclusions(&slice);
   if (peers == 1) return (int64_t)(intptr_t)local;
+  int last = local->count ? (int)(local->pairs[local->count-1] >> 32) : -1;
+  int64_t extent = 1 + (int64_t)mdrtMPIMax(last);
   struct Route r = beginRoute();
-  for (size_t i = 0; i < local->count; ++i) countRoute(&r,(local->pairs[i] >> 32)%peers);
+  for (size_t i = 0; i < local->count; ++i)
+    countRoute(&r,mdrtMPIOwner(extent,local->pairs[i] >> 32));
   finishRoute(&r);
   struct Exclusions *shard = newExclusions(r.receives);
-  uint64_t *out = malloc((r.sends ? (size_t)r.sends : 1)*sizeof *out);
-  if (!out) fail("out of memory routing exclusion keys");
-  for (size_t i = 0; i < local->count; ++i) {
-    uint64_t key = local->pairs[i];
-    out[r.cursor[(key >> 32)%peers]++] = key;
-  }
-  mdrtMPIExchangeRecords(out,r.send,r.sendOffset,shard->pairs,r.recv,r.recvOffset,sizeof *out);
-  qsort(shard->pairs,shard->count,sizeof *out,compareKeys);
-  free(out); free(local); free(r.send);
+  shard->directoryExtent = extent;
+  mdrtMPIExchangeRecords(local->pairs,r.send,r.sendOffset,shard->pairs,r.recv,r.recvOffset,
+                         sizeof *local->pairs);
+  qsort(shard->pairs,shard->count,sizeof *shard->pairs,compareKeys);
+  free(local); free(r.send);
   return (int64_t)(intptr_t)shard;
 }
 
@@ -1881,13 +1882,13 @@ int64_t mdrtDistHaloExclusions(int64_t halo, int64_t handle) {
   for (size_t i = 0; i < n; ++i)
     if (!i || ids[i] != ids[i-1]) ids[unique++] = ids[i];
   struct Route request = beginRoute();
-  for (size_t i = 0; i < unique; ++i) countRoute(&request,ids[i]%peers);
+  for (size_t i = 0; i < unique && ids[i] < (uint64_t)shard->directoryExtent; ++i)
+    countRoute(&request,mdrtMPIOwner(shard->directoryExtent,ids[i]));
   finishRoute(&request);
-  uint64_t *send = malloc((unique ? unique : 1)*sizeof *send);
   uint64_t *recv = malloc((request.receives ? (size_t)request.receives : 1)*sizeof *recv);
-  if (!send || !recv) fail("out of memory requesting exclusion rows");
-  for (size_t i = 0; i < unique; ++i) send[request.cursor[ids[i]%peers]++] = ids[i];
-  mdrtMPIExchangeRecords(send,request.send,request.sendOffset,recv,request.recv,request.recvOffset,sizeof *recv);
+  if (!recv) fail("out of memory requesting exclusion rows");
+  mdrtMPIExchangeRecords(ids,request.send,request.sendOffset,recv,request.recv,request.recvOffset,sizeof *recv);
+  free(ids);
   struct Route reply = beginRoute();
   for (int p = 0; p < peers; ++p)
     for (int j = request.recvOffset[p]; j < request.recvOffset[p]+request.recv[p]; ++j) {
@@ -1896,8 +1897,7 @@ int64_t mdrtDistHaloExclusions(int64_t halo, int64_t handle) {
       reply.send[p] += hi-lo;
     }
   finishRoute(&reply);
-  free(send);
-  send = malloc((reply.sends ? (size_t)reply.sends : 1)*sizeof *send);
+  uint64_t *send = malloc((reply.sends ? (size_t)reply.sends : 1)*sizeof *send);
   if (!send) fail("out of memory returning exclusion keys");
   for (int p = 0; p < peers; ++p)
     for (int j = request.recvOffset[p]; j < request.recvOffset[p]+request.recv[p]; ++j) {
@@ -1907,15 +1907,9 @@ int64_t mdrtDistHaloExclusions(int64_t halo, int64_t handle) {
     }
   struct Exclusions *local = newExclusions(reply.receives);
   mdrtMPIExchangeRecords(send,reply.send,reply.sendOffset,local->pairs,reply.recv,reply.recvOffset,sizeof *send);
-  size_t kept = 0;
-  for (size_t i = 0; i < local->count; ++i) {
-    uint64_t partner = (uint32_t)local->pairs[i];
-    if (bsearch(&partner,ids,unique,sizeof *ids,compareKeys))
-      local->pairs[kept++] = local->pairs[i];
-  }
-  local->count = kept;
-  qsort(local->pairs,kept,sizeof *send,compareKeys);
-  free(ids); free(send); free(recv); free(request.send); free(reply.send);
+  /* Each peer returns sorted keys for a disjoint interval of smaller
+     endpoints. A key with an absent partner cannot match a candidate. */
+  free(send); free(recv); free(request.send); free(reply.send);
   mdrtDistFreeExclusions((int64_t)(intptr_t)h->exclusions);
   h->directoryVersion = shard->version;
   h->exclusions = local;

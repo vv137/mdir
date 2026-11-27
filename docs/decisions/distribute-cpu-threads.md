@@ -162,9 +162,10 @@ until all intervals have contributed. A complete-field consumer at an output
 boundary materializes particle-set order.
 
 Each rank reads an interval of exclusion tuples. It sends each unordered pair
-to the directory rank of the smaller identity. A new halo requests its owned
-and ghost identities and keeps the returned keys whose other endpoint is also
-present. An immutable relation version identifies this projection to the
+to the directory rank of the smaller identity. Directory ranks own consecutive
+identity intervals. A new halo requests sorted owned and ghost identities.
+The replies concatenate in key order. A returned pair whose second endpoint
+is absent cannot match any local candidate. An immutable relation version identifies this projection to the
 candidate matrix.
 
 The midpoint candidate builder bins the explicit owned and ghost image

@@ -1464,3 +1464,10 @@ Successive constraint projections can use the same owned mass field on
 a retained layout. Its native-to-spatial permutation takes place outside
 the step loop when the field and layout are invariant. Within a step,
 equal field and layout operands also share the resulting owned rows.
+
+The exclusion directory partitions keys by contiguous intervals of the
+smaller particle identity. For each new halo, the requester sends its
+sorted local identities in interval order. Each reply is sorted, so
+concatenating the replies supplies the binary-search table directly.
+The table can include an absent second endpoint without changing a
+candidate comparison.
