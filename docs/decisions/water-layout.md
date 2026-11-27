@@ -31,7 +31,7 @@ RTX 4090, mixed precision, `rigid_units = "ON"` with the groups, `main` at 03506
 
 The writer takes about 3% of the step on every system, small and large. Its test of the reference points and its check of the extents are part of that time: D422 measured them at 0.65 to 0.70 µs a call. Any layout keeps the test and the check, because the theorem of validity needs them at every step.
 
-The unpack shows only in the loop over pairs. The ablation of Section 4 removes the table and changes nothing else. The loop of a step became 1.6 to 4.0% faster: TIP3P 9,989 atoms 32.99 to 32.09 µs a call, JAC 56.25 to 54.69, Factor IX 190.88 to 183.30, and Cellulose 1,009.4 to 992.8. The partner's members are found once for each entry, and their loads stand before the atomics of its forces. The table's dependent load lies on that path.
+The unpack shows only in the loop over pairs. There, the partner's members are found once for each entry, and their loads stand before the atomics of its forces, so the table's dependent load lies on that path. Section 5 measures the loop with and without the table.
 
 ## 3. The layout
 
@@ -59,7 +59,29 @@ The unpack shows only in the loop over pairs. The ablation of Section 4 removes 
 - **Writing the frames in the integration kernel, where SETTLE has a water's new positions.** That would save the writer's loads of the positions and its launch. The test, the check, and the stores of the frames would stay. Under a barostat, the scaling after the constraints moves the positions again, so the writer would still be needed on those steps. It is left for a decision of its own, with its measurement. The kernel of an integration run is shared by every program, so its bytes are a gate that this decision does not need to open.
 - **Keeping the table for kinds that are not consecutive.** Two code paths for one list, for inputs that interleave molecules. The reason in `mdir check` names them instead.
 
-## 5. Validation
+## 5. The kernels after
+
+The same captures for `main` and this decision, with the same controls (RTX 4090, mixed, `ON`). Each figure is µs a call, averaged over every call of the kernel in the capture. The loop over pairs includes its calls that prune and that evaluate the energy.
+
+| System | Writer, `main` | Writer, this | Loop, `main` | Loop, this | Loop ratio |
+|---|---:|---:|---:|---:|---:|
+| TIP3P, 9,989 atoms | 3.51 | 2.66 | 32.96 | 31.86 | 0.967 |
+| TIP3P, 19,880 atoms | 3.80 | 3.06 | 49.24 | 47.74 | 0.970 |
+| ubiquitin, OPC | 4.19 | 3.35 | 39.64 | 39.95 | 1.008 |
+| large OPC box | 6.81 | 4.55 | 72.71 | 71.45 | 0.983 |
+| JAC, NVE | 4.06 | 3.50 | 55.55 | 53.77 | 0.968 |
+| JAC, NPT | 4.11 | 3.51 | 49.50 | 47.98 | 0.969 |
+| Factor IX, NVE | 11.25 | 6.89 | 188.93 | 181.91 | 0.963 |
+| Factor IX, NPT | 11.24 | 6.88 | 167.16 | 161.43 | 0.966 |
+| Cellulose, NVE | 45.18 | 29.90 | 985.68 | 984.24 | 0.999 |
+| Cellulose, NPT | 45.41 | 30.05 | 881.12 | 878.45 | 0.997 |
+
+- The writer is 14 to 39% faster.
+- The loop is about 3% faster on the TIP3P boxes, JAC, and Factor IX.
+- The loop is unchanged within 0.3% on Cellulose, and 0.8% slower on ubiquitin in OPC.
+- The rates of whole steps follow in the pull request, by the timing protocol.
+
+## 6. Validation
 
 See the pull request for the numbers. The gates:
 - Programs off the route are unchanged: the corpus of D406 (`check.py compare`) on `sm_89`, and the checkpoints.
