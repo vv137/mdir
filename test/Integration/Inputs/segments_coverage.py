@@ -547,6 +547,14 @@ if mode == 'emit':
     if '--join-copies' in flags:
         excluded = np.concatenate([excluded.reshape(-1, 2),
                                    [[int(kinds[0][1][0][0]), int(kinds[0][1][1][0])]]])
+    if '--scatter-copy' in flags:
+        # The first copy of the first kind with its last two places
+        # exchanged: its places are no longer consecutive particles
+        # (D[water-layout]), which the setup must refuse.
+        model, tuples = kinds[0]
+        tuples = np.array(tuples, copy=True)
+        tuples[0][[-1, -2]] = tuples[0][[-2, -1]]
+        kinds[0] = (model, tuples)
     # With --writer, every particle's position: the writer forms the frames
     # of the units from all their members.
     refs = np.arange(N) if '--writer' in flags else np.unique(unit_ref)

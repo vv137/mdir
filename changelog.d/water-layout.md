@@ -4,4 +4,4 @@
 
 ### Performance
 
-- **The loop over the pairs of rigid units no longer looks up each member in a table** (D[water-layout], #794). On an RTX 4090 in mixed precision with `rigid_units = "ON"`, the loop is 1.6 to 4.0% faster per call on TIP3P, JAC, Factor IX, and Cellulose.
+- **The step with `rigid_units = "ON"` is 1.7 to 3.7% shorter** (D[water-layout], #794), on average over two jobs of two rounds. Measured on an RTX 4090 in mixed precision at 2 fs, against `main` with `ON`, on TIP3P boxes of 9,989 and 19,880 atoms and on JAC, Factor IX, and Cellulose under NVE and NPT. The writer of the frames is 14 to 39% faster per call. The loop over the pairs no longer looks up each member in a table, and it is about 3% faster on all of these systems except Cellulose. Programs under `AUTO` and `OFF` are unchanged.

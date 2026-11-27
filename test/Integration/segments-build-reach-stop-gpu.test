@@ -33,3 +33,14 @@
 # RUN: mdir-opt %t/copies/harness.mlir --convert-md-exec-to-gpu --convert-md-alg-to-gpu \
 # RUN: | mlir-opt %lower_gpu_to_llvm \
 # RUN: | not mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s --check-prefix=JOINED
+#
+# A copy of the taken kind whose places are not consecutive particles: the
+# list reads a copy from the particle of its place 0 (D[water-layout]), so
+# the setup counts such copies on the host and the run stops.
+# RUN: mkdir -p %t/scattered
+# RUN: %mdir_python %S/Inputs/segments_coverage.py system growth %S/../Driver/Inputs %t/scattered 1
+# RUN: %mdir_python %S/Inputs/segments_coverage.py emit growth %S/../Driver/Inputs %t/scattered --scatter-copy
+# RUN: mdir-opt %t/scattered/harness.mlir --convert-md-exec-to-gpu --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | not mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s --check-prefix=SCATTERED
+# SCATTERED: 1 copies of a taken rigid kind are not consecutive particles in the order of the state; the list of units reads each copy from its first particle

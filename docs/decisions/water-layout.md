@@ -15,19 +15,20 @@ Every member access therefore took two dependent loads, `order[place]` and then 
 
 ## 2. The measurement before the design
 
-RTX 4090, mixed precision, `rigid_units = "ON"` with the groups, `main` at 03506508. Each figure comes from one Nsight Systems capture of the kernels, from the step and system sizes of the table. The step is the log's rate during the capture.
+RTX 4090, mixed precision, `rigid_units = "ON"` with the groups, `main` at 03506508. Each figure comes from one Nsight Systems capture of the kernels: 12,000 steps, 6,000 for Factor IX, and 3,000 for Cellulose, with an energy row every 500 steps. The step is the log's rate during the capture.
 
 | System | Taken copies | Rest | Step, µs | Writer, µs a step | Writer share |
 |---|---:|---:|---:|---:|---:|
-| TIP3P, 9,989 atoms | 3,222 | 323 | 118 | 3.53 | 3.0% |
-| TIP3P, 19,880 atoms | 6,513 | 341 | 139 | 3.84 | 2.8% |
-| ubiquitin, OPC | 6,166 | 1,265 | 145 | 4.22 | 2.9% |
-| large OPC box | 16,329 | 0 | 210 | 6.98 | 3.3% |
-| JAC, NVE | 7,023 | 2,489 | 148 | 4.13 | 2.8% |
-| Factor IX, NVE | 28,358 | 5,832 | 359 | 11.48 | 3.2% |
-| Factor IX, NPT | 28,358 | 5,832 | 380 | 11.48 | 3.0% |
-| Cellulose, NVE | 105,855 | 91,044 | 1,559 | 46.17 | 3.0% |
-| Cellulose, NPT | 105,855 | 91,044 | 1,642 | 46.31 | 2.8% |
+| TIP3P, 9,989 atoms, NVT | 3,222 | 323 | 113 | 3.51 | 3.1% |
+| TIP3P, 19,880 atoms, NVT | 6,513 | 341 | 134 | 3.80 | 2.8% |
+| ubiquitin, OPC, NVE | 6,166 | 1,265 | 142 | 4.19 | 2.9% |
+| large OPC box, NVE | 16,329 | 0 | 205 | 6.81 | 3.3% |
+| JAC, NVE | 7,023 | 2,489 | 144 | 4.06 | 2.8% |
+| JAC, NPT | 7,023 | 2,489 | 161 | 4.11 | 2.6% |
+| Factor IX, NVE | 28,358 | 5,832 | 349 | 11.25 | 3.2% |
+| Factor IX, NPT | 28,358 | 5,832 | 372 | 11.24 | 3.0% |
+| Cellulose, NVE | 105,855 | 91,044 | 1,527 | 45.17 | 3.0% |
+| Cellulose, NPT | 105,855 | 91,044 | 1,609 | 45.40 | 2.8% |
 
 The writer takes about 3% of the step on every system, small and large. Its test of the reference points and its check of the extents are part of that time: D422 measured them at 0.65 to 0.70 µs a call. Any layout keeps the test and the check, because the theorem of validity needs them at every step.
 
@@ -41,7 +42,7 @@ The unpack shows only in the loop over pairs. There, the partner's members are f
 
 **The check.** The setup loops on the host over the copies of each taken kind, as it did to fill the table. It now checks that the places of each copy are consecutive particles. Where one is not, it stops the run with `mdrtSegmentsStopScattered` and the count. By the argument above this cannot happen for a kind that `ON` takes, so the check guards the argument; it is not a refusal.
 
-**Eligibility.** A kind that D403 counts as `scattered` (some molecule not of consecutive particles in the input) is not taken, with the reason "N molecules not of consecutive particles". Such inputs exist only where a topology interleaves another molecule's particles into a water's. Of the readers today, GROMACS's `[ moleculetype ]` can describe it; an Amber prmtop can too. The other kinds are taken as before, so the kind after it in the order may take its slot (`test/Driver/rigid-units-route.test`, `SCATTERED`).
+**Eligibility.** A kind that D403 counts as `scattered` (some molecule not of consecutive particles in the input) is not taken, with the reason "N molecules not of consecutive particles". Such inputs exist only where a topology interleaves another molecule's particles into a molecule's, which a GROMACS `[ moleculetype ]` can describe (`kind_pairs_mixture.py scattered`). The other kinds are taken as before, so the kind after it in the order may take its slot (`test/Driver/rigid-units-route.test`, `SCATTERED`).
 
 **The writer.** One kernel a step, as in D422, now with a thread for each member of the unit at each place: $M p + k$ for place $p$ and member $k$, over the places of the last build (`sizes[0]` on the host, which the build already reads back). The thread loads the place's value of `order` and takes the rank of the place from where the ranks begin (`rankPlaces`), as the pack of a build does. It never reads `placeOf` or `unitValue`. A copy's reference point is its anchor, the particle at place $\mathrm{frame}_0$. The rest's comes, as before, from `unitRef`, found through `unitOfParticle`. An empty place is not written: the refresh that built the list wrote it as zeros, and nothing writes it again until the next build. Every frame holds the same numbers as before, formed by the same operations (D95; D422, Section 2). Only the thread that writes a value and the order of the stores change.
 
@@ -79,7 +80,21 @@ The same captures for `main` and this decision, with the same controls (RTX 4090
 - The writer is 14 to 39% faster.
 - The loop is about 3% faster on the TIP3P boxes, JAC, and Factor IX.
 - The loop is unchanged within 0.3% on Cellulose, and 0.8% slower on ubiquitin in OPC.
-- The rates of whole steps follow in the pull request, by the timing protocol.
+
+**The rate.** The timing protocol, on RTX 4090s at 2 fs, in two jobs on two devices. Each job runs two rounds, the second in reverse order. In each round `main` with `ON`, this decision with `ON`, and `main`'s default program run interleaved. Each run is a wall run with a row every hundredth of its steps, and the rate is the trimmed stationary mean. Under load the SM clocks were 2,685 to 2,790 MHz. Each ratio is the mean over the four job and round pairs, with the range in parentheses.
+
+| System | `main`, `ON`, ns/day | This, `ON`, ns/day | This / `main`, a step | `main`, default, ns/day |
+|---|---:|---:|---:|---:|
+| TIP3P, 9,989 atoms, NVT | 1,708.1 | 1,755.6 | 0.973 (0.965–0.977) | 1,675.3 |
+| TIP3P, 19,880 atoms, NVT | 1,399.5 | 1,423.2 | 0.983 (0.981–0.986) | 1,280.0 |
+| JAC, NVE | 1,299.7 | 1,336.6 | 0.972 (0.967–0.979) | 1,263.0 |
+| JAC, NPT | 1,142.6 | 1,172.7 | 0.974 (0.973–0.977) | 1,154.2 |
+| Factor IX, NVE | 515.3 | 532.1 | 0.969 (0.963–0.974) | 566.7 |
+| Factor IX, NPT | 478.8 | 493.7 | 0.970 (0.966–0.975) | 529.5 |
+| Cellulose, NVE | 113.8 | 118.2 | 0.963 (0.962–0.965) | 147.9 |
+| Cellulose, NPT | 107.7 | 111.0 | 0.970 (0.968–0.972) | 141.7 |
+
+The step with `ON` is shorter on every system, in every round. That is more than the kernels alone account for, since the host waits for the writer's flags every step (D422, Section 5) and the writer now ends sooner. The default program is the same program on both trees (Section 6), so its rate is given once. `ON` is still slower than the default on JAC NPT, Factor IX, and Cellulose, as D422 found for Cellulose. That is the open question of `AUTO`'s rule, not this decision's.
 
 ## 6. Validation
 
