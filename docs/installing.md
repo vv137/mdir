@@ -50,7 +50,7 @@ and when it runs.
 | Volta | 7.0 | V100 | 12.x or earlier; not 13 | Source build only. Tested with CUDA 12.9 on V100; two tests of the suite are open (#992) |
 | Turing | 7.5 | T4, RTX 20 series | 12.x or 13.x | Expected to work |
 | Ampere | 8.0, 8.6 | A100, RTX 30 series | 12.x or 13.x | Tested on RTX 3090 |
-| Ada | 8.9 | L40, RTX 40 series | 12.x or 13.x | Tested on RTX 4090 |
+| Ada Lovelace | 8.9 | L40, RTX 40 series | 12.x or 13.x | Tested on RTX 4090 |
 | Hopper | 9.0 | H100, H200 | 12.x or 13.x | Expected to work |
 | Blackwell | 10.0, 12.0 | B200, RTX 50 series, RTX PRO 6000 Blackwell | 12.8 or later | Tested on RTX 5090 and RTX PRO 6000 Blackwell |
 
