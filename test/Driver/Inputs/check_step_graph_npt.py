@@ -130,6 +130,11 @@ assert abs(resumed[2]["state"]["time"].item() - 0.300) < 1e-12
 steps = resumed[2]["rows"][:, 0]
 assert steps[-1] == 300 and (steps[steps > 200] == np.arange(220, 301, 20)).all(), steps
 compare(*resumed, "continuation")
+# A row interval that does not divide the restart step: the rows fall on the
+# steps of LAUNCH (#1014).
+resumed = [run(f"resume30-{name}", mode, steps=90, energy=30, checkpoint=checkpoint)
+           for name, mode in (("launch", "LAUNCH"), ("again", "LAUNCH"), ("graph", "GRAPH"))]
+compare(*resumed, "continuation, rows every 30 steps")
 
 # The other couplings and a triclinic cell.
 for label, keys, source in (("semi-isotropic", 'coupling = "SEMI_ISOTROPIC"\n', inputs),

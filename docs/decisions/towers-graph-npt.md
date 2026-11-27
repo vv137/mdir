@@ -81,9 +81,9 @@ The chunk graphs are keyed by their banks and buffers (D439). The barostat does 
 Relative L2 differences from the first LAUNCH run. The bound is the larger of ten times the spread and $10^{-5}$.
 
 - **A stale cell.** With `MDRT_STEP_MIRROR_FAULT=1` the runtime writes the mirror once, as a graph that took the cell by value would behave. The test requires that run to differ from LAUNCH by more than 100 times the bound. It does, by four orders of magnitude.
-- **A continuation** from the GRAPH checkpoint at step 200, 100 steps more with a row every 20 steps: the same bound against two LAUNCH continuations, and the rows at steps 220 to 300. (A row interval that does not divide the restart step is the subject of #1014.)
+- **A continuation** from the GRAPH checkpoint at step 200, 100 steps more with a row every 20 steps: the same bound against two LAUNCH continuations, and the rows at steps 220 to 300; and 90 steps more with a row every 30 steps, an interval that does not divide the restart step, whose rows fall on the steps of LAUNCH (#1014, #1023).
 - **Semi-isotropic and anisotropic coupling, and a triclinic cell** (the dipeptide's cell tilted to γ = 88°), 100 steps each, with the same bound.
-- **A crushed cell** (50,000 bar): LAUNCH and GRAPH stop at the same kernel after the same rows.
+- **A crushed cell** (50,000 bar): LAUNCH and GRAPH stop at the same kernel after the same rows. The message of that stop is #1027.
 - **Refusals.** No barostat case remains refused. `test/Driver/step-graph.test` (`check_step_graph_scope.py`) checks that `mdir check` keeps GRAPH, and leaves AUTO to its trial, in the three couplings.
 - **The suite's inputs** (one-off, not in the suite): JAC, Factor IX and TIP3P 10k NPT with the launch shapes of Section 6 cover tower heights FULL and HALF, split 2 and two blocks per SM. In 100 steps with a row at every scaling, against two LAUNCH runs:
 
@@ -114,5 +114,5 @@ ns/day, first job / second job, each the mean of its two passes.
 
 ## 7. What remains
 
-- The coupling step stays a host boundary (Section 3.1). A coupling step on the device would compute the V-rescale factor, the strain, the scaled cell and the bath there and write the mirror. It would read back to the host only at outputs. That is a decision of its own; the counter-based draws of both factors are already functions of the step.
+- The coupling step stays a host boundary (Section 3.1). The maintainer ruled that the whole coupling step moves to the device as a change of its own, #1026: the V-rescale factor, the strain, the scaled cell and the bath computed there, the cell written into the mirror of this decision, and reads to the host only at outputs. It removes the boundary in SPANS as well as in GRAPH.
 - The TOWERS virial of the step before a scaling is copied to the host apart from the step's reduction (the 24 B copy of Section 3.1).
