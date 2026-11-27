@@ -3482,6 +3482,7 @@ void Lowering::shardDriverLoop(scf::ForOp root) {
       arg.setType(seed.getType());
       loop.getResult(i).setType(seed.getType());
     }
+    DenseMap<Value,Value> expanded;
     for (Operation &op : llvm::make_early_inc_range(*loop.getBody())) {
       OpBuilder b(&op);
       if (auto nested = dyn_cast<scf::ForOp>(op)) { visit(nested); continue; }
@@ -3514,8 +3515,13 @@ void Lowering::shardDriverLoop(scf::ForOp root) {
       }
       // A host observation, permutation or other complete-field consumer
       // sees the original particle set at its actual point of use.
-      for (OpOperand &operand : op.getOpOperands())
-        if (inSet(operand.get(),shardSet)) operand.set(expand(b,operand.get()));
+      for (OpOperand &operand : op.getOpOperands()) {
+        Value shard = operand.get();
+        if (!inSet(shard,shardSet)) continue;
+        Value &full = expanded[shard];
+        if (!full) full = expand(b,shard);
+        operand.set(full);
+      }
     }
   };
   visit(root);

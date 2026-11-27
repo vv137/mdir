@@ -1449,3 +1449,8 @@ of a finite Cartesian midpoint is monotone. The two binary64 thresholds
 at which it enters and leaves a domain therefore preserve the original
 rounded division at both faces. Tests of interval endpoints and individual
 midpoints use the same thresholds throughout a matrix selection.
+
+The constraint-group reporting sums can read the same full positions
+and velocities for several relations. When they reference the same
+immutable field value in one block, the first such use gathers its
+identity intervals. Subsequent sums reuse that complete view.

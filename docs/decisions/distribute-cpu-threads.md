@@ -206,3 +206,8 @@ entering and leaving each domain along each axis. Bisection over ordered
 binary64 numerators evaluates the original division, wrapping and cell
 index at each probe. The resulting half-open interval serves both the
 Verlet membership bounds and the individual tests of ambiguous pairs.
+
+Reporting consumers in a block share the complete view of each distinct
+native field. Several constraint relations can therefore read the same
+positions, velocities, or forces after a single interval collection per
+field. A new field value or a different execution block has its own view.
