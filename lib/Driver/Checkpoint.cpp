@@ -159,6 +159,8 @@ std::string hashState(const Checkpoint &state) {
     numbers(state.masterCell);
   numbers(state.barostatState);
   numbers(state.thermostatState);
+  if (!state.forcedContinuations.empty())
+    text(state.forcedContinuations);
   for (const char *group : fingerprintGroups)
     text(getFingerprintText(state.fingerprint, group));
   std::array<uint8_t, 32> digest = hash.final();
@@ -262,7 +264,11 @@ private:
 /// does nothing.
 class Writer {
 public:
-  explicit Writer(hid_t file) : file(file) {}
+  Writer(hid_t file, bool omitTimes)
+      : file(file), datasets(H5Pcreate(H5P_DATASET_CREATE), H5Pclose) {
+    failed = !datasets.isValid() ||
+             (omitTimes && H5Pset_obj_track_times(datasets, false) < 0);
+  }
 
   bool hasFailed() const { return failed; }
 
@@ -306,8 +312,8 @@ public:
       return;
     Handle space(H5Screate_simple(shape.size(), shape.data(), nullptr),
                  H5Sclose);
-    Handle dataset(H5Dcreate2(parent, name, type, space, H5P_DEFAULT,
-                              H5P_DEFAULT, H5P_DEFAULT),
+    Handle dataset(H5Dcreate2(parent, name, type, space, H5P_DEFAULT, datasets,
+                              H5P_DEFAULT),
                    H5Dclose);
     failed |= !dataset.isValid() ||
               H5Dwrite(dataset, type, H5S_ALL, H5S_ALL, H5P_DEFAULT, data) < 0;
@@ -324,8 +330,8 @@ public:
     H5Tset_size(type, text.size() + 1);
     H5Tset_strpad(type, H5T_STR_NULLTERM);
     Handle space(H5Screate(H5S_SCALAR), H5Sclose);
-    Handle dataset(H5Dcreate2(parent, name, type, space, H5P_DEFAULT,
-                              H5P_DEFAULT, H5P_DEFAULT),
+    Handle dataset(H5Dcreate2(parent, name, type, space, H5P_DEFAULT, datasets,
+                              H5P_DEFAULT),
                    H5Dclose);
     failed |= !dataset.isValid() ||
               H5Dwrite(dataset, type, H5S_ALL, H5S_ALL, H5P_DEFAULT,
@@ -347,6 +353,7 @@ public:
 
 private:
   hid_t file;
+  Handle datasets;
   bool failed = false;
 };
 
@@ -502,7 +509,7 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
     if (!file.isValid())
       return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                      "cannot write '%s'", partial.c_str());
-    Writer writer(file);
+    Writer writer(file, checkpoint.omitObjectTimes);
     size_t count = checkpoint.getNumParticles();
 
     {
@@ -600,6 +607,9 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
       writer.writeAttribute(mdir, "frames", H5T_NATIVE_INT64,
                             &checkpoint.frames);
       writer.writeReal(mdir, "bath", checkpoint.bath);
+      if (!checkpoint.forcedContinuations.empty())
+        writer.writeText(mdir, "forced_continuations",
+                         checkpoint.forcedContinuations);
       // The states of [free_energy] and the one of the run (D161).
       if (!checkpoint.freeEnergy.empty()) {
         writer.writeText(mdir, "free_energy", checkpoint.freeEnergy);
@@ -805,6 +815,9 @@ mdir::driver::readCheckpoint(const std::string &path) {
                        checkpoint.frames);
   reader.readAttribute("/parameters/mdir", "bath", H5T_NATIVE_DOUBLE,
                        checkpoint.bath);
+  if (reader.hasAttribute("/parameters/mdir", "forced_continuations"))
+    reader.readText("/parameters/mdir", "forced_continuations",
+                    checkpoint.forcedContinuations);
   // The state of the last scaling of a barostat that scales every step
   // (D92, D119): nine numbers.
   if (reader.has("/parameters/mdir/master_cell"))

@@ -36,6 +36,11 @@ private:
   Location loc;
   VectorType vec;
 };
+/// Names the quantity of a sum for the words of the deterministic
+/// distributed mode, which fit their format to it (D[distribute-driver]).
+void setQuantity(OpBuilder &builder, Operation *sum, StringRef quantity) {
+  sum->setAttr("md_dist.quantity", builder.getStringAttr(quantity));
+}
 } // namespace
 
 Value mdir::driver::builder::buildKineticVector(OpBuilder &builder,
@@ -44,6 +49,7 @@ Value mdir::driver::builder::buildKineticVector(OpBuilder &builder,
   auto vec = VectorType::get({3}, builder.getF64Type());
   auto sum = mdir::md::SumParticlesOp::create(
       builder, loc, vec, ValueRange{velocities, masses});
+  setQuantity(builder, sum, "kinetic energy");
   {
     OpBuilder::InsertionGuard guard(builder);
     Kernel k(builder);
@@ -63,6 +69,7 @@ Value mdir::driver::builder::buildKineticEnergy(OpBuilder &builder,
   auto loc = builder.getUnknownLoc();
   auto sum = mdir::md::SumParticlesOp::create(
       builder, loc, builder.getF64Type(), ValueRange{velocities, masses});
+  setQuantity(builder, sum, "kinetic energy");
   {
     OpBuilder::InsertionGuard guard(builder);
     Kernel k(builder);
@@ -83,6 +90,7 @@ Value mdir::driver::builder::buildMomentum(OpBuilder &builder, Value velocities,
   auto vec = VectorType::get({3}, builder.getF64Type());
   auto sum = mdir::md::SumParticlesOp::create(
       builder, loc, vec, ValueRange{velocities, masses});
+  setQuantity(builder, sum, "momentum");
   {
     OpBuilder::InsertionGuard guard(builder);
     Kernel k(builder);
@@ -100,6 +108,7 @@ Value mdir::driver::builder::buildForceSquare(OpBuilder &builder, Value forces,
   auto vec = VectorType::get({3}, builder.getF64Type());
   auto sum = mdir::md::SumParticlesOp::create(
       builder, loc, vec, ValueRange{forces, masses});
+  setQuantity(builder, sum, "force square");
   {
     OpBuilder::InsertionGuard guard(builder);
     Kernel k(builder);
@@ -159,6 +168,7 @@ Value mdir::driver::builder::buildHalfStepKinetic(
   auto vec = VectorType::get({3}, f64);
   auto sum = mdir::md::SumParticlesOp::create(
       builder, loc, vec, ValueRange{first, second, masses});
+  setQuantity(builder, sum, "kinetic energy");
   {
     OpBuilder::InsertionGuard guard(builder);
     Kernel k(builder);

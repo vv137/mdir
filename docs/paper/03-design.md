@@ -1722,3 +1722,63 @@ op. Activity retains the operation that prevented a proof, and diagnostics
 routed through sums or intermediate fields point at that operation's
 location. The numerical semantics are unchanged. An injected unsupported
 scalar operation tests that the error names the source term.
+
+For an orthorhombic box with edge lengths $L_i$, a Cartesian grid with
+$g_i$ divisions on each axis gives subdomains with volume
+$V_d=\prod_i(L_i/g_i)$. A boundary normal to axis $i$ has area
+$V_d g_i/L_i$. Thus at fixed domain count the minimum-area factorization
+minimizes $\sum_i g_i/L_i$. D[distribute-driver] uses the same geometric
+criterion for an integer domain count as the potential rewrite.
+
+D[distribute-driver] stores the physical state in the original particle
+order at a step boundary. Restart reconstructs the partition and ghost
+images. In deterministic mode, each drift wraps the position into the
+primary cell before checking halo coverage. For each axis the pair loop
+evaluates $(x_i-x_j)-nL$ using the unshifted owner coordinates and the
+halo's integral image $n$. An owned row has $n=0$. Since the cutoff is
+strictly below half the shortest edge, two distinct images cannot both
+lie within the open cutoff ball. Coverage supplies the accepted image.
+Changing ownership can therefore change its row index alone. The
+subtraction and the multiplication by the cell edge have the same
+operands and evaluation order on each grid.
+
+For a component $t$ in the internal units of Section 2, define
+$\mathsf w(t)=\mathrm{round}(2^{\ell_\mathrm Q}t)$ with ties away from zero,
+the word of the format Q$\ell_\mathrm Q$. Each term contributes at most
+$2^{-\ell_\mathrm Q-1}$ absolute quantization error. For $M_\mathrm Q$
+terms bounded by $T_\mathrm Q$, every subtotal has absolute value at most
+$M_\mathrm Q(2^{\ell_\mathrm Q}T_\mathrm Q+1/2)$ in words. Thus any
+grouping is representable if this bound is below $2^{63}$. The format is
+fitted to its quantity. Q40 allows force and gathered-field magnitudes
+below $2^{23}$ in physical units, with half a quantum of $2^{-41}$.
+Q32 gives energy, virial, kinetic energy, and momentum a range below
+$2^{31}$ and a half quantum of $2^{-33}$. The sum $\sum_i F_i^2/m_i$ of
+the kinetic correction is a square of forces of the Q40 range, below
+$2^{46}$ per particle and axis for masses of at least 1 amu: Q16 gives it
+$2^{47}$ in $(\mathrm{kJ/mol/nm})^2/\mathrm{amu}$, and a quantum that the
+factor $\Delta t^2/8$ of the correction scales below $10^{-10}$ kJ/mol per
+particle at $\Delta t \le 0.01$ ps. Directed energy and virial count both
+orientations. Their words carry one extra factor of two until final
+conversion. The singular repulsive potential admits no finite universal
+$T_\mathrm Q$. The implementation checks the rounded term before
+converting to a signed 64-bit word, and a range error names the quantity.
+For a set of $N\leq 2^{32}$ particles there are at most $N(N-1)$ directed
+pair visits. Multiplying this count by $2^{63}$ gives a strict upper bound
+of $2^{127}$ on the magnitude of any subtotal. Consequently a signed
+128-bit accumulator covers every ordering, including a large intermediate
+cancellation. The layout checks the particle count. The implementation
+checks wide addition and narrows the completed quantity with a range
+check. An intermediate subtotal may exceed the 64-bit output range.
+A directed observable's completed unhalved word has twice the physical
+scale, so the largest positive physical value it can report is below
+$2^{30}$ in internal energy units. The conversion of a completed word $k$
+to binary64, $k\,2^{-\ell_\mathrm Q}$, is exact for $|k|\le 2^{53}$ and
+rounds to nearest above: below $2^{13}$ kJ/mol/nm for a Q40 force and
+$2^{21}$ kJ/mol for a Q32 energy it is exact. Above, it is still a function
+of $k$ alone, so that the value is the same under every partition.
+For representable sums, associativity of integer addition gives the
+same final word under any partition of the pair set. In NVE the two
+kicks and drift are functions of the previous physical state and these
+forces. Induction from the indexed initial velocities, or from the
+stored checkpoint state, gives the same subsequent trajectory on the
+same build and traversal.

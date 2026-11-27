@@ -882,8 +882,8 @@ before any domain writes the new epoch, and stops all of them. A
 transport of #828 keeps these three: a reduced bit for the branch, a
 reduced maximum for capacities, and an agreed failure.
 
-*The boundary with the driver.* The driver does not emit this loop yet
-(#832). It is to build, from the run's potential and integrator: the
+*The boundary with the driver.* D[distribute-driver] emits the CPU velocity Verlet loop
+(#832). It builds, from the run's potential and integrator: the
 decomposition from `[distribute]` (`domains`, `transport`, `traversal`,
 Section 13); the state type of the integrator's per-particle state (for
 velocity Verlet the positions, velocities, forces, and masses, and every
@@ -1072,8 +1072,8 @@ rules of the AD (Section 11; built, Section 14), EAM (built, Section 15), the sc
 3. **Communication**, in the order of Section 9.
 4. **Outputs and checkpoints** stay in the order of the particle set,
    independent of the number of domains; the grid and the transport go in
-   the run manifest (D168). Results are the same to the bit for a fixed
-   grid, not across grids.
+   the run manifest (D168). Deterministic driver runs reproduce the same bits across grids
+   on the same build, including a continuation on a different grid.
 
 The order of the passes of Section 11 stands as designed.
 
@@ -1542,3 +1542,26 @@ a field computed from the positions
   come with the new gather.
 - Derivatives in parameters or fields on domains; migration; MPI. The
   `mixed` mode and GPUs run through `md_exec` (Section 7.2, 7.4).
+
+### Distribution statistics and restart boundaries
+
+D[distribute-driver] measures rows where the runtime builds each live halo.
+The import size counts periodic images separately. Each copy or transpose
+scales its edge multiplicity by the actual field width in bytes. Rebuilding
+ownership counts incoming and outgoing identities once per change of owner.
+Phase markers enclose the compiled operations. Each completed Verlet step
+advances the trace counter from the checkpoint's absolute step. The merged
+log samples these counters at energy intervals.
+
+The checkpoint boundary follows the last drift, coverage decision, migration
+when due, and kick. The writer stages global positions, velocities, forces,
+cell and coupling state in particle-set order, flushes a temporary HDF5
+file, keeps the preceding generation, and renames the new generation.
+Ownership, ghosts and migration epochs are transient. Initial velocity
+component draws have six uniform words per particle at step zero. Indexed
+access to the seeded xoshiro transition preserves the previous serial draws.
+NVE takes no subsequent random draws. V-rescale in the ordinary driver uses
+Philox with the seed, absolute step, entity zero and stream zero. Supporting
+a distributed bath would also require identical kinetic-energy input to
+that draw. Deterministic NVE tests compare the numerical dataset bytes across
+decompositions, including a change of decomposition at restart.

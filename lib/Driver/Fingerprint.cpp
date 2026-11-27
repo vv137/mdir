@@ -1,6 +1,7 @@
 // What defined a run (D172).
 
 #include "mdir/Driver/Fingerprint.h"
+#include "mdir/Dialect/MDDist/Grid.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -272,6 +273,24 @@ mdir::driver::getRunFingerprint(StringRef controlFile, const Control &control,
   // The execution choices of the "same accuracy" class (#790), which a
   // continuation may change as it may [execution] (D424).
   addTables("execution", {"performance"});
+  // [distribute] as resolved (D[distribute-driver]): a count of domains and
+  // the grid it chooses for the cell are one grid, and an omitted key is
+  // its default. A continuation on another grid is a note; the
+  // deterministic mode keeps its bits on any grid.
+  if (const auto &distribution = control.distribution) {
+    add("execution", "[distribute] traversal",
+        getFingerprintString(distribution->traversal));
+    add("execution", "[distribute] transport",
+        getFingerprintString(distribution->transport));
+    std::array<int64_t, 3> grid = distribution->grid;
+    if (distribution->domains)
+      llvm::copy(mdir::md_dist::selectGrid(distribution->domains, system.box),
+                 grid.begin());
+    add("execution", "[distribute] domains",
+        "[" + getFingerprintInteger(grid[0]) + ", " +
+            getFingerprintInteger(grid[1]) + ", " +
+            getFingerprintInteger(grid[2]) + "]");
+  }
 
   // The files that define the topology, by their contents: another name
   // for the same file is not a change.

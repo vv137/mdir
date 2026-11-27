@@ -1,0 +1,82 @@
+# [distribute] in the fingerprint of a checkpoint (D[distribute-driver]):
+# its traversal, its transport, and its grid as resolved for the cell.
+# REQUIRES: hdf5
+# RUN: rm -rf %t && mkdir -p %t/first && cd %t/first
+# RUN: sed -e 's|argon.pdb|%S/../../examples/argon/argon.pdb|' -e 's/= 2000$/= 5/' \
+# RUN:     -e 's/= 100$/= 5/' -e 's/= 16$/= 1/' -e 's/= 9.5$/= 8.65/' -e '/^trajectory/d' \
+# RUN:     -e '/^\[output\]/a checkpoint = "state.h5"\ncheckpoint_interval = 5\nmanifest = "run.jsonl"' \
+# RUN:     %S/../../examples/argon/argon.toml > base.toml
+# RUN: cp base.toml run.toml && printf 'deterministic = true\n[distribute]\ndomains = [2, 1, 1]\n' >> run.toml
+# RUN: mdir run run.toml > run.log
+# RUN: mdir checkpoint --print=fingerprint state.h5 | FileCheck %s --check-prefix=RECORD
+# RECORD: execution [distribute] domains = [2, 1, 1]
+# RECORD-NEXT: execution [distribute] transport = "local"
+# RECORD-NEXT: execution [distribute] traversal = "directed"
+
+# Another grid continues the deterministic run, with a note that its bits
+# stay those of the run.
+# RUN: cp -r %t/first %t/grid && cd %t/grid
+# RUN: sed -e 's/^steps *= 5$/steps = 10/' -e 's/domains = .*/domains = 8/' run.toml > next.toml
+# RUN: mdir run --continue next.toml \
+# RUN:   | FileCheck %s --check-prefix=GRID --implicit-check-not='whose bits follow them'
+# GRID: MDIR: note: the run continues on another grid of domains, whose bits the deterministic contract keeps (checkpoint -> control file):
+# GRID-NEXT: [distribute] domains: [2, 1, 1] -> [2, 2, 2]
+
+# Without [distribute], the sums of the ordinary driver would not give the
+# bits of the uninterrupted run: --continue refuses it, and --force goes on
+# with a record of what it overrode, in the log, the manifest, and the
+# checkpoint.
+# RUN: cp -r %t/first %t/ordinary && cd %t/ordinary
+# RUN: sed -e 's/^steps *= 5$/steps = 10/' -e '/^\[distribute\]/d' -e '/^domains/d' run.toml > next.toml
+# RUN: not mdir run --continue next.toml 2>&1 | FileCheck %s --check-prefix=ORDINARY
+# ORDINARY: was written by a deterministic run with [distribute], whose fixed-point sums --continue keeps; continue it with [distribute], on any grid, or begin a new run from it as 'checkpoint' of [input], or override it with --continue --force
+# RUN: not mdir run --force next.toml 2>&1 | FileCheck %s --check-prefix=ALONE
+# ALONE: mdir: --force goes with --continue
+# RUN: mdir run --continue --force next.toml | FileCheck %s --check-prefix=FORCED
+# FORCED: MDIR: note: --force continues the run past the differences of its fingerprint that --continue refuses; the checkpoints and the manifest record them (checkpoint -> control file):
+# FORCED-NEXT: [distribute] domains: [2, 1, 1] -> (none)
+# FORCED-NEXT: [distribute] transport: "local" -> (none)
+# FORCED-NEXT: [distribute] traversal: "directed" -> (none)
+# RUN: FileCheck %s --check-prefix=FORCED-MANIFEST < run.jsonl
+# FORCED-MANIFEST: "forced_overrides":[{"checkpoint":"[2, 1, 1]","control":"(none)","group":"execution","name":"[distribute] domains"}
+# RUN: %python %S/Inputs/manifest_schema.py %S/../../docs/run-manifest.schema.json run.jsonl
+# RUN: mdir checkpoint state.h5 | FileCheck %s --check-prefix=FORCED-RECORD
+# FORCED-RECORD: part: 2
+# FORCED-RECORD: forced: part 2: execution [distribute] domains: [2, 1, 1] -> (none)
+# FORCED-RECORD-NEXT: forced: part 2: execution [distribute] transport: "local" -> (none)
+
+# And a deterministic ordinary run does not continue over domains.
+# RUN: mkdir -p %t/plain && cd %t/plain
+# RUN: cp ../first/base.toml run.toml && printf 'deterministic = true\n' >> run.toml
+# RUN: mdir run run.toml > run.log
+# RUN: sed -e 's/^steps *= 5$/steps = 10/' run.toml > next.toml
+# RUN: printf '[distribute]\ndomains = [2, 1, 1]\n' >> next.toml
+# RUN: not mdir run --continue next.toml 2>&1 | FileCheck %s --check-prefix=PLAIN
+# PLAIN: was written by a deterministic run without [distribute], whose fixed-point sums --continue keeps; continue it without [distribute] or begin
+
+# Another physics is refused by --continue as before, and --force continues
+# with the forces of the new physics, evaluated at its first step.
+# RUN: cp -r %t/first %t/physics && cd %t/physics
+# RUN: sed -e 's/^steps *= 5$/steps = 10/' -e 's/^epsilon .*/epsilon = 0.25/' run.toml > next.toml
+# RUN: not mdir run --continue next.toml 2>&1 | FileCheck %s --check-prefix=PHYSICS
+# PHYSICS: was written by a run of other physics or coupling, which --continue does not change; begin a new run from it as 'checkpoint' of [input] instead, or override it with --continue --force. What differs (checkpoint -> control file):
+# PHYSICS-NEXT: {{\[\[}}energy.type{{\]\]}}
+# RUN: mdir run --continue --force next.toml | FileCheck %s --check-prefix=PHYSICS-FORCED
+# PHYSICS-FORCED: MDIR: note: --force continues the run past the differences of its fingerprint
+# PHYSICS-FORCED-NEXT: {{\[\[}}energy.type{{\]\]}}
+# PHYSICS-FORCED: MDIR: note: 'state.h5' was written by a run of other physics or coupling; the run evaluates the forces
+# RUN: mdir checkpoint state.h5 | FileCheck %s --check-prefix=PHYSICS-RECORD
+# PHYSICS-RECORD: forced: part 2: physics {{\[\[}}energy.type{{\]\]}}
+
+# Outside the deterministic mode another grid continues the run with a note
+# of the change, whose bits follow it.
+# RUN: mkdir -p %t/free && cd %t/free
+# RUN: cp ../first/base.toml run.toml && printf '[distribute]\ndomains = [2, 1, 1]\n' >> run.toml
+# RUN: mdir run run.toml > run.log
+# RUN: mdir checkpoint --print=fingerprint state.h5 | FileCheck %s --check-prefix=FREE
+# FREE: execution [distribute] domains = [2, 1, 1]
+# RUN: sed -e 's/^steps *= 5$/steps = 10/' -e 's/domains = .*/domains = 8/' run.toml > next.toml
+# RUN: mdir run --continue next.toml \
+# RUN:   | FileCheck %s --check-prefix=NOTE --implicit-check-not='deterministic contract keeps'
+# NOTE: MDIR: note: the run continues with other settings of its execution, whose bits follow them
+# NOTE-NEXT: [distribute] domains: [2, 1, 1] -> [2, 2, 2]

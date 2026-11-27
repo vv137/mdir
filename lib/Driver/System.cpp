@@ -2,6 +2,7 @@
 
 #include "mdir/Driver/System.h"
 
+#include "InitialVelocityDraws.h"
 #include "mdir/Driver/Cell.h"
 #include "mdir/Driver/Expression.h"
 #include "mdir/Driver/Selection.h"
@@ -1140,52 +1141,6 @@ llvm::Expected<System> mdir::driver::readSystem(const Control &control) {
   return std::move(system);
 }
 
-namespace {
-
-/// A generator of random numbers whose sequence is fixed by its definition,
-/// not by a library: splitmix64 for the state, xoshiro256** for the numbers.
-/// See Steele et al., OOPSLA '14, 453 (2014), and Blackman and Vigna, ACM
-/// Trans. Math. Softw. 47(4), 1 (2021); docs/references.md.
-class Generator {
-public:
-  explicit Generator(uint64_t seed) {
-    for (uint64_t &word : state) {
-      seed += 0x9e3779b97f4a7c15ull;
-      uint64_t z = seed;
-      z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
-      z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
-      word = z ^ (z >> 31);
-    }
-  }
-
-  /// A number in (0, 1].
-  double nextUniform() {
-    auto rotate = [](uint64_t x, int k) { return (x << k) | (x >> (64 - k)); };
-    uint64_t result = rotate(state[1] * 5, 7) * 9;
-    uint64_t t = state[1] << 17;
-    state[2] ^= state[0];
-    state[3] ^= state[1];
-    state[1] ^= state[2];
-    state[0] ^= state[3];
-    state[2] ^= t;
-    state[3] = rotate(state[3], 45);
-    return (static_cast<double>(result >> 11) + 1.0) * 0x1.0p-53;
-  }
-
-  /// A number from the normal distribution, by the method of Box and
-  /// Muller, Ann. Math. Stat. 29, 610 (1958).
-  double nextNormal() {
-    double radius = std::sqrt(-2.0 * std::log(nextUniform()));
-    double angle = 2.0 * M_PI * nextUniform();
-    return radius * std::cos(angle);
-  }
-
-private:
-  uint64_t state[4];
-};
-
-} // namespace
-
 double mdir::driver::getKineticEnergy(const System &system) {
   double twice = 0.0;
   for (size_t i = 0, e = system.getNumParticles(); i != e; ++i)
@@ -1343,8 +1298,9 @@ void mdir::driver::resolveNeighborStructure(Control &control,
 
 void mdir::driver::assignVelocities(const Control &control, System &system) {
   size_t count = system.getNumParticles();
-  Generator generator(control.seed);
+  InitialVelocityDraws generator(control.seed);
   for (size_t i = 0; i != count; ++i) {
+    generator.particle(i);
     // A virtual site has no mass and no velocity.
     double width =
         system.masses[i] > 0.0

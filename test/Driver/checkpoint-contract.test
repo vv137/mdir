@@ -87,7 +87,7 @@
 # RUN: sed -e 's|^pairlist_distance = 10.0|pairlist_distance = 11.0|' %t/stop.toml > %t/reach.toml
 # RUN: mdir run --continue %t/reach.toml | FileCheck %s --check-prefix=REACH
 
-# MASS:      mdir: '{{.*}}stop.h5' was written by a run of other physics or coupling, which --continue does not change; begin a new run from it as 'checkpoint' of [input] instead. What differs (checkpoint -> control file):
+# MASS:      mdir: '{{.*}}stop.h5' was written by a run of other physics or coupling, which --continue does not change; begin a new run from it as 'checkpoint' of [input] instead, or override it with --continue --force. What differs (checkpoint -> control file):
 # MASS-NEXT:   {{\[\[}}energy.type{{\]\]}}: [{epsilon=0.238465,mass=39.95,name="AR",sigma=3.4},{{.*}}] -> [{epsilon=0.238465,mass=20,name="AR",sigma=3.4},{{.*}}]
 # MASS-NEXT:   the masses: sha256:{{[0-9a-f]+}} -> sha256:{{[0-9a-f]+}}
 # METHOD:    What differs (checkpoint -> control file):

@@ -159,6 +159,7 @@ struct BlockMean {
 /// code calls write to it.
 struct Output {
   Log log;
+  std::function<void()> finishDistribution;
   /// Records a checkpoint stop before its direct process exit (D168).
   std::function<llvm::Error(int64_t, const char *)> recordStop;
   int64_t lastMinimizationStep = 0;
@@ -356,6 +357,7 @@ struct Output {
   /// Whether the velocities are coupled, and the energy that the coupling
   /// has taken from the system so far, in kJ/mol. The total energy with it
   /// is conserved.
+  bool distributedWordEnergy = false;
   bool couples = false;
   double bath = 0.0;
   /// A Nose-Hoover chain (D163a): the positions of its thermostats, then

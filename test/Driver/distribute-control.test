@@ -1,0 +1,32 @@
+# A control-file velocity Verlet trajectory with a short skin and checkpoints.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: sed -e 's|argon.pdb|%S/../../examples/argon/argon.pdb|' \
+# RUN:     -e 's/= 2000$/= 20/' -e 's/= 100$/= 5/' -e 's/= 16$/= 1/' \
+# RUN:     -e 's/= 9.5$/= 8.65/' %S/../../examples/argon/argon.toml > %t/base.toml
+# RUN: cp %t/base.toml %t/grid.toml && printf '\n[distribute]\ndomains = 8\n' >> %t/grid.toml
+# RUN: cd %t && env MDRT_DIST_TRACE=1 mdir run grid.toml > out 2> trace
+# RUN: FileCheck %s --check-prefix=GRID < %t/out
+# RUN: FileCheck %s --check-prefix=REBUILD < %t/trace
+# GRID: MDIR: domain grid 2 x 2 x 2, local transport, directed traversal
+# REBUILD: mdrt_dist: migrate:
+# RUN: sed 's/domains = 8/domains = [1, 0, 2]/' %t/grid.toml > %t/bad.toml
+# RUN: not mdir run %t/bad.toml 2>&1 | FileCheck %s --check-prefix=ZERO
+# ZERO: domain division must be a positive integer
+# RUN: sed 's/domains = 8/domains = [2, 2]/' %t/grid.toml > %t/bad.toml
+# RUN: not mdir run %t/bad.toml 2>&1 | FileCheck %s --check-prefix=SHAPE
+# SHAPE: domains grid requires three positive integers
+# RUN: sed 's/domains = 8/domains = [9223372036854775807, 2, 1]/' %t/grid.toml > %t/bad.toml
+# RUN: not mdir run %t/bad.toml 2>&1 | FileCheck %s --check-prefix=OVERFLOW
+# OVERFLOW: product of domain divisions overflows i64
+# RUN: sed 's/domains = 8/traversal = "both"/' %t/grid.toml > %t/bad.toml
+# RUN: not mdir run %t/bad.toml 2>&1 | FileCheck %s --check-prefix=TRAVERSAL
+# TRAVERSAL: expected one of directed, unique
+# RUN: sed '/^\[output\]/a manifest="refused.jsonl"\nlog="refused.log"' %t/bad.toml > %t/refuse.toml
+# RUN: cd %t && not mdir run refuse.toml 2>&1 | FileCheck %s --check-prefix=TRAVERSAL
+# RUN: FileCheck %s --check-prefix=REFUSED < %t/refused.jsonl
+# RUN: FileCheck %s --check-prefix=TRAVERSAL < %t/refused.log
+# REFUSED: "event":"refused"
+# REFUSED-SAME: expected one of directed, unique
+# RUN: cd %t && not mdir run refuse.toml 2>&1 | FileCheck %s --check-prefix=TRAVERSAL
+# RUN: FileCheck %s --check-prefix=SECOND < %t/refused.jsonl
+# SECOND: "invocation":2

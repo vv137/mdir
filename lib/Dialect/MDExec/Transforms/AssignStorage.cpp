@@ -2064,6 +2064,34 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     if (failed(checkStored(op, from.getResult().getType(), storedType)))
       return failure();
     Value buffer = mapping.lookup(from.getBuffer());
+    if (from->hasAttr("mdrt.collect_buffer")) {
+      // Each other use fills the buffer before this handoff.
+      auto allocated = from.getBuffer().getDefiningOp<memref::AllocOp>();
+      if (onDevice || !allocated ||
+          llvm::any_of(from.getBuffer().getUsers(), [&](Operation *user) {
+            if (user == op)
+              return false;
+            auto store = dyn_cast<memref::StoreOp>(user);
+            if (!store || store.getMemRef() != from.getBuffer())
+              return true;
+            Operation *ancestor = op->getBlock()->findAncestorOpInBlock(*user);
+            return !ancestor || !ancestor->isBeforeInBlock(op);
+          }))
+        return op->emitOpError(
+            "collected field requires its own filled allocation");
+      Type field = from.getResult().getType();
+      Attribute set = getParticleSet(field);
+      Value size = sizes.lookup(set);
+      if (!size)
+        return op->emitOpError(
+            "collected field requires a known particle-set extent");
+      Value held =
+          scope.request(getStorageType(field), size, set, op->getLoc());
+      memref::CopyOp::create(builder, op->getLoc(), buffer, held);
+      memref::DeallocOp::create(builder, op->getLoc(), buffer);
+      bind(from.getResult(), held, scope);
+      return success();
+    }
     if (deviceInput) {
       buffer = tagInputBuffer(builder, op->getLoc(),
                               getStorageType(from.getResult().getType()),
@@ -2121,6 +2149,23 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     buffers[from.getResult()] = device;
     if (!givenAnew && !isReadOnly)
       hostBuffers[{buffer.getType(), set}].push_back(buffer);
+    return success();
+  }
+  if (auto snapshot = dyn_cast<mdrt::SnapshotOp>(op)) {
+    Value buffer;
+    if (onDevice)
+      return snapshot.emitOpError("requires CPU storage");
+    if (failed(getBuffer(snapshot.getField(), scope, buffer)))
+      return failure();
+    auto type = cast<MemRefType>(snapshot.getResult().getType());
+    if (type != mdrt::getBufferType(snapshot.getField().getType()))
+      return snapshot.emitOpError(
+          "requires the buffer shape and type of its field");
+    Value size = memref::DimOp::create(builder, op->getLoc(), buffer, 0);
+    auto copy =
+        memref::AllocOp::create(builder, op->getLoc(), type, ValueRange{size});
+    memref::CopyOp::create(builder, op->getLoc(), buffer, copy);
+    mapping.map(snapshot.getResult(), copy.getResult());
     return success();
   }
   if (auto to = dyn_cast<mdrt::ToBufferOp>(op)) {

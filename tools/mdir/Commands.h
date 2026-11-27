@@ -29,6 +29,9 @@ struct RunOptions {
   /// Continue the run from its own checkpoint, if there is one, until it
   /// has taken its `steps`; begin it if there is none.
   bool continues = false;
+  /// With `continues`: continue past the differences of the fingerprint
+  /// that --continue refuses, recording them (`--force`).
+  bool forced = false;
   /// Append the outputs of a continued run to its files, rather than
   /// write them to files of a part of their own (D130, D149).
   bool appends = true;

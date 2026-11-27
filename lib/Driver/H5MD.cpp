@@ -228,7 +228,7 @@ std::vector<hsize_t> getShape(hid_t dataset) {
 
 /// A dataset of rows that grows along its first extent, with `rows` rows
 /// in a chunk. `shape[0]` is not read.
-hid_t createSeries(hid_t parent, const char *name, hid_t type,
+hid_t createSeries(hid_t properties, hid_t parent, const char *name, hid_t type,
                    std::vector<hsize_t> shape, hsize_t rows) {
   std::vector<hsize_t> most = shape, chunk = shape;
   shape[0] = 0;
@@ -236,7 +236,7 @@ hid_t createSeries(hid_t parent, const char *name, hid_t type,
   chunk[0] = rows;
   Handle space(H5Screate_simple(shape.size(), shape.data(), most.data()),
                H5Sclose);
-  Handle create(H5Pcreate(H5P_DATASET_CREATE), H5Pclose);
+  Handle create(H5Pcopy(properties), H5Pclose);
   H5Pset_chunk(create, chunk.size(), chunk.data());
   return H5Dcreate2(parent, name, type, space, H5P_DEFAULT, create,
                     H5P_DEFAULT);
@@ -364,6 +364,10 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
   h->file = H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
   if (h->file < 0)
     return makeError("cannot write '" + path + "'");
+  Handle datasets(H5Pcreate(H5P_DATASET_CREATE), H5Pclose);
+  if (!datasets.isValid() ||
+      (options.omitObjectTimes && H5Pset_obj_track_times(datasets, false) < 0))
+    return makeError("cannot configure H5MD dataset creation");
   bool ok = true;
   // The `unit` attributes, in the form asked for; every other string of
   // the file is of fixed length.
@@ -416,9 +420,12 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
       Handle position(H5Gcreate2(all, "position", H5P_DEFAULT, H5P_DEFAULT,
                                  H5P_DEFAULT),
                       H5Gclose);
-      h->step = createSeries(position, "step", H5T_STD_I64LE, {0}, 1024);
-      h->time = createSeries(position, "time", H5T_IEEE_F64LE, {0}, 1024);
-      h->position = createSeries(position, "value", real, {0, count, 3}, rows);
+      h->step =
+          createSeries(datasets, position, "step", H5T_STD_I64LE, {0}, 1024);
+      h->time =
+          createSeries(datasets, position, "time", H5T_IEEE_F64LE, {0}, 1024);
+      h->position =
+          createSeries(datasets, position, "value", real, {0, count, 3}, rows);
       ok &= h->step >= 0 && h->time >= 0 && h->position >= 0;
       ok = ok && writeUnit(h->time, "ps") &&
            writeUnit(h->position, "nm");
@@ -452,10 +459,10 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
                      H5Gclose);
         link(edges);
         h->edges = options.triclinic
-                       ? createSeries(edges, "value", H5T_IEEE_F64LE,
+                       ? createSeries(datasets, edges, "value", H5T_IEEE_F64LE,
                                       {0, 3, 3}, 1024)
-                       : createSeries(edges, "value", H5T_IEEE_F64LE, {0, 3},
-                                      1024);
+                       : createSeries(datasets, edges, "value", H5T_IEEE_F64LE,
+                                      {0, 3}, 1024);
         ok = ok && h->edges >= 0 && writeUnit(h->edges, "nm");
       }
     }
@@ -468,11 +475,12 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
       link(velocity, !shifted);
       if (shifted) {
         h->velocityTime =
-            createSeries(velocity, "time", H5T_IEEE_F64LE, {0}, 1024);
+            createSeries(datasets, velocity, "time", H5T_IEEE_F64LE, {0}, 1024);
         ok = ok && h->velocityTime >= 0 &&
              writeUnit(h->velocityTime, "ps");
       }
-      h->velocity = createSeries(velocity, "value", real, {0, count, 3}, rows);
+      h->velocity =
+          createSeries(datasets, velocity, "value", real, {0, count, 3}, rows);
       ok = ok && h->velocity >= 0 && writeUnit(h->velocity, "nm ps-1");
     }
     if (options.forces) {
@@ -480,7 +488,8 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
                               H5P_DEFAULT),
                    H5Gclose);
       link(force);
-      h->force = createSeries(force, "value", real, {0, count, 3}, rows);
+      h->force =
+          createSeries(datasets, force, "value", real, {0, count, 3}, rows);
       ok = ok && h->force >= 0 &&
            writeUnit(h->force, "kJ mol-1 nm-1");
     }
@@ -489,7 +498,7 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
       hsize_t extent = count;
       Handle space(H5Screate_simple(1, &extent, nullptr), H5Sclose);
       Handle dataset(H5Dcreate2(all, name, fileType, space, H5P_DEFAULT,
-                                H5P_DEFAULT, H5P_DEFAULT),
+                                datasets, H5P_DEFAULT),
                      H5Dclose);
       ok = ok && dataset.isValid() &&
            H5Dwrite(dataset, memoryType, H5S_ALL, H5S_ALL, H5P_DEFAULT,
@@ -514,7 +523,8 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
                                 H5P_DEFAULT, H5P_DEFAULT),
                      H5Gclose);
         link(group);
-        h->energy = createSeries(group, "value", H5T_IEEE_F64LE, {0}, 1024);
+        h->energy =
+            createSeries(datasets, group, "value", H5T_IEEE_F64LE, {0}, 1024);
         ok = ok && h->energy >= 0 && writeUnit(h->energy, "kJ mol-1");
       }
       if (options.tunables) {
@@ -522,7 +532,8 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
                                 H5P_DEFAULT, H5P_DEFAULT),
                      H5Gclose);
         link(group);
-        h->version = createSeries(group, "value", H5T_STD_I64LE, {0}, 1024);
+        h->version =
+            createSeries(datasets, group, "value", H5T_STD_I64LE, {0}, 1024);
         ok = ok && h->version >= 0;
       }
     }

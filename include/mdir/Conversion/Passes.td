@@ -756,6 +756,12 @@ def MDDistPrintSchedule
   }];
 }
 
+def MDistributeDriverSteps : Pass<"md-distribute-driver-steps", "::mlir::ModuleOp"> {
+  let options = [Option<"wrapDrift", "wrap-drift", "bool", "false",
+                       "keep the position representative independent of halo rebuilds">];
+  let summary = "Carry the velocity Verlet state on domains through output intervals";
+}
+
 def ConvertMDDistToLoops
     : Pass<"convert-md-dist-to-loops", "::mlir::ModuleOp"> {
   let summary = "Runs every domain of md_dist in one process";
@@ -789,6 +795,8 @@ def ConvertMDDistToLoops
                            "::mlir::scf::SCFDialect",
                            "::mlir::vector::VectorDialect"];
   let options = [
+    Option<"fixedPoint", "fixed-point", "bool", "false",
+           "use checked, decomposition-independent integer reductions">,
     Option<"haloEvents", "halo-events", "bool", /*default=*/"false",
            "emit start and immediate wait for each halo transfer; "
            "lower with --lower-mdrt-halo-events">

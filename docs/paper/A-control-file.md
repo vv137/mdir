@@ -576,3 +576,23 @@ strategy switch is `MDIR_STAGE_SHORT_REDUCTIONS`, documented in
 [environment.md](../environment.md).
 
 D350 formalizes the internal neighbor-group buffer ABI and adds no control-file key or input behavior.
+
+### CPU decomposition (D[distribute-driver])
+
+Within `[distribute]`, `domains` accepts a positive count or three positive
+axis counts and defaults to 1. A count chooses the factorization with the
+smallest domain surface area for the input cell. The traversal is
+`"directed"` (default) or `"unique"`, and the in-process transport is
+`"local"`. Without the table the ordinary single-domain pipeline runs.
+
+The run log reports the selected factors, domain bounds, imports and
+interval traffic. Set `MDIR_DIST_STEP_TRACE` to a fresh prefix for
+rank-local per-step files. The checkpoint and continuation keys also
+apply to distributed runs. A continuation may change `domains`;
+the manifest records both layouts. The deterministic distributed CPU path
+uses checked fixed-point words across grids and restarts, and its
+`--continue` refuses a control file that adds or drops `[distribute]`
+unless `mdir run --continue --force` overrides it, which the log, the
+manifest, and the checkpoints record; the checkpoint's fingerprint records
+the traversal, the transport, and the grid, whose change is a note
+(D[distribute-driver]).

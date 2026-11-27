@@ -13,6 +13,7 @@
 
 #include "mdir/Dialect/MD/MDExchange.h"
 #include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MDDist/Grid.h"
 #include "mdir/Dialect/MDDist/MDDistDialect.h"
 #include "mdir/Dialect/MDDist/MDDistOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -457,46 +458,6 @@ LogicalResult Distributor::run() {
 }
 
 namespace {
-/// Choose the factor grid with the smallest surface area of an
-/// orthorhombic domain box. For fixed N and volume, the varying factor is
-/// gx/Lx + gy/Ly + gz/Lz. The order of iteration breaks equal-score ties
-/// lexicographically. This geometric model is a compile-time choice, not a
-/// measurement of transport cost (Plimpton 1995; Saunders et al. 2018).
-static SmallVector<int64_t, 3> selectGrid(int64_t count,
-                                           ArrayRef<double> edges) {
-  SmallVector<int64_t> factors;
-  for (int64_t candidate = 1; candidate <= count / candidate; ++candidate)
-    if (count % candidate == 0) {
-      factors.push_back(candidate);
-      if (candidate != count / candidate)
-        factors.push_back(count / candidate);
-    }
-  llvm::sort(factors);
-  SmallVector<int64_t, 3> best;
-  long double bestScore = std::numeric_limits<long double>::infinity();
-  for (int64_t gx : factors) {
-    int64_t rest = count / gx;
-    for (int64_t gy : factors) {
-      if (rest % gy)
-        continue;
-      int64_t gz = rest / gy;
-      long double score = static_cast<long double>(gx) / edges[0] +
-                          static_cast<long double>(gy) / edges[1] +
-                          static_cast<long double>(gz) / edges[2];
-      // A permutation of an exactly tied grid can round its three adds in
-      // another order. Keep the lexicographically first one within that
-      // rounding, as the score is only a geometric estimate.
-      long double tie = 8 * std::numeric_limits<long double>::epsilon() *
-                        std::max(score, bestScore);
-      if (best.empty() || score < bestScore - tie) {
-        bestScore = score;
-        best = {gx, gy, gz};
-      }
-    }
-  }
-  return best;
-}
-
 class Distribute : public impl::DistributeBase<Distribute> {
 public:
   using impl::DistributeBase<Distribute>::DistributeBase;
@@ -555,7 +516,7 @@ public:
         return signalPassFailure();
       }
     SmallVector<int64_t, 3> divisions =
-        domains ? selectGrid(domains, box)
+        domains ? md_dist::selectGrid(domains, box)
                 : SmallVector<int64_t, 3>(grid.begin(), grid.end());
     for (PotentialOp potential : selected) {
       Distributor distributor(potential, divisions, kind, reach);

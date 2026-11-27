@@ -264,7 +264,7 @@ llvm::Error Manifest::write(Object event) {
   return llvm::Error::success();
 }
 
-llvm::Error Manifest::start(const std::string &given, bool append, Object metadata) {
+llvm::Error Manifest::open(const std::string &given, bool append) {
   path = given;
   if (append && llvm::sys::fs::exists(path)) {
     std::ifstream previous(path);
@@ -278,15 +278,20 @@ llvm::Error Manifest::start(const std::string &given, bool append, Object metada
       const Object *record = json ? json->getAsObject() : nullptr;
       int64_t number = record ? record->getInteger("invocation").value_or(0) : 0;
       auto event = record ? record->getString("event") : std::nullopt;
+      bool refused =
+          event && *event == "refused" && record->getString("reason");
       bool start = event && *event == "start";
       bool end = event && *event == "end";
-      bool valid = record && record->getInteger("schema_version") == 1 && number > 0 &&
-          record->getString("timestamp_utc") &&
-          ((start && number == last + 1) ||
-           (end && last > 0 && number == last && !ended));
+      bool valid = record && record->getInteger("schema_version") == 1 &&
+                   number > 0 && record->getString("timestamp_utc") &&
+                   (((start || refused) && number == last + 1) ||
+                    (event && *event == "domain_setup" && last > 0 &&
+                     number == last && !ended && record->getArray("domains")) ||
+                    (end && last > 0 && number == last && !ended));
       if (end && record) {
         auto status = record->getString("status");
-        valid &= status && (*status == "completed" || *status == "stopped");
+        valid &= status && (*status == "completed" || *status == "stopped" ||
+                            *status == "refused");
       }
       if (!json)
         llvm::consumeError(json.takeError());
@@ -296,7 +301,7 @@ llvm::Error Manifest::start(const std::string &given, bool append, Object metada
             "manifest '%s' has malformed or unsupported history; use a new manifest path",
             path.c_str());
       last = number;
-      ended = end;
+      ended = end || refused;
     }
     if (previous.bad())
       return llvm::createStringError(llvm::inconvertibleErrorCode(),
@@ -307,9 +312,29 @@ llvm::Error Manifest::start(const std::string &given, bool append, Object metada
   if (!file)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "cannot open manifest '%s'", path.c_str());
+  return llvm::Error::success();
+}
+
+llvm::Error Manifest::start(const std::string &given, bool append,
+                            Object metadata) {
+  if (auto e = open(given, append))
+    return e;
   began = std::chrono::steady_clock::now();
   metadata["event"] = "start";
   return write(std::move(metadata));
+}
+
+llvm::Error Manifest::refuse(const std::string &given, llvm::StringRef reason) {
+  if (auto e = open(given, true))
+    return e;
+  return write(Object{{"event", "refused"}, {"reason", reason}});
+}
+
+llvm::Error Manifest::domainSetup(llvm::json::Array domains) {
+  if (!file)
+    return llvm::Error::success();
+  return write(
+      Object{{"event", "domain_setup"}, {"domains", std::move(domains)}});
 }
 
 llvm::Error Manifest::finish(StringRef status, int64_t step, StringRef reason) {

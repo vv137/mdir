@@ -35,6 +35,10 @@ public:
 
   Error read(const toml::table &root);
 
+  /// Whether [distribute] itself refused the run, which the run then records
+  /// as the refusal of its distributed setup.
+  bool distributionRefused = false;
+
 private:
   Error fail(const toml::node &node, const llvm::Twine &message) {
     return llvm::createStringError(
@@ -145,6 +149,8 @@ private:
   Error resolveCoupling();
   Error readBoundary(const toml::table &table);
   Error readExecution(const toml::table &table);
+  /// [distribute], read after the tables whose conditions it checks.
+  Error readDistribute(const toml::table &table);
 
   StringRef path;
   Control &control;
@@ -3094,16 +3100,68 @@ Error Reader::readExecution(const toml::table &table) {
   return readBool(table, "spatial_order", control.reorder);
 }
 
+Error Reader::readDistribute(const toml::table &table) {
+  if (Error error = checkKeywords(table, "distribute",
+                                  {"domains", "transport", "traversal"}))
+    return error;
+  auto &dist = control.distribution.emplace();
+  dist.gridGiven = table.contains("domains");
+  dist.transportGiven = table.contains("transport");
+  dist.traversalGiven = table.contains("traversal");
+  if (const auto *node = table.get("domains")) {
+    if (auto *grid = node->as_array()) {
+      if (grid->size() != 3)
+        return fail(*node, "domains grid requires three positive integers");
+      int64_t product = 1;
+      for (size_t axis = 0; axis < 3; ++axis) {
+        const auto *division = (*grid)[axis].as_integer();
+        if (!division || division->get() < 1)
+          return fail((*grid)[axis],
+                      "domain division must be a positive integer");
+        dist.grid[axis] = division->get();
+        if (dist.grid[axis] > INT64_MAX / product)
+          return fail(*node, "product of domain divisions overflows i64");
+        product *= dist.grid[axis];
+      }
+    } else if (node->is_integer() && node->as_integer()->get() > 0) {
+      dist.domains = node->as_integer()->get();
+    } else {
+      return fail(*node,
+                  "domains requires a positive count or a three-axis grid");
+    }
+  }
+  if (Error err = readChoice<std::string>(table, "transport", dist.transport,
+                                          {{"local", "local"}}))
+    return err;
+  if (Error err = readChoice<std::string>(
+          table, "traversal", dist.traversal,
+          {{"directed", "directed"}, {"unique", "unique"}}))
+    return err;
+  if (control.pairlistDistance <= control.cutoffDistance)
+    return fail(table, "distributed halo coverage requires a positive skin");
+  if (control.precision == Precision::Single)
+    return fail(table,
+                "distributed state requires mixed or double position storage");
+  if (control.target != Target::CPU)
+    return fail(table, "distributed execution requires a CPU target");
+  if (control.pme || control.ljpme)
+    return fail(table, "reciprocal sums require a distributed mesh");
+  if (!control.periodic || control.barostat)
+    return fail(table, "distributed execution requires a fixed periodic cell");
+  if (control.minimize || control.thermostat ||
+      control.integrator != Integrator::VelocityVerlet)
+    return fail(table, "distributed dynamics requires NVE velocity Verlet");
+  return Error::success();
+}
+
 Error Reader::read(const toml::table &root) {
-  if (Error error = checkKeywords(
-          root, "the control file",
-          {"input", "output", "free_energy", "energy", "pme", "lj_pme",
-           "dynamics",
-           "minimize",
-           "ensemble", "thermostat", "barostat",
-           "boundary", "execution", "constraints", "restraints",
-           "performance"},
-          {}))
+  if (Error error = checkKeywords(root, "the control file",
+                                  {"input", "output", "free_energy", "energy",
+                                   "pme", "lj_pme", "dynamics", "minimize",
+                                   "ensemble", "thermostat", "barostat",
+                                   "boundary", "execution", "distribute",
+                                   "constraints", "restraints", "performance"},
+                                  {}))
     return error;
 
   auto getTable = [&](StringRef name, bool required,
@@ -3307,6 +3365,14 @@ Error Reader::read(const toml::table &root) {
   if (table)
     if (Error error = readExecution(*table))
       return error;
+
+  if (Error error = getTable("distribute", false, table))
+    return error;
+  if (table)
+    if (Error error = readDistribute(*table)) {
+      distributionRefused = true;
+      return error;
+    }
 
   // Execution choices of the "same accuracy" class (#790). The rigid
   // units (D424): `ON` is refused where the route cannot
@@ -3703,6 +3769,11 @@ llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {
 }
 
 llvm::Expected<Control> mdir::driver::readControl(StringRef path) {
+  return readControl(path, nullptr);
+}
+
+llvm::Expected<Control>
+mdir::driver::readControl(StringRef path, Control *refusedDistribution) {
   toml::parse_result result = toml::parse_file(std::string_view(path));
   if (!result) {
     const toml::parse_error &error = result.error();
@@ -3714,8 +3785,11 @@ llvm::Expected<Control> mdir::driver::readControl(StringRef path) {
 
   Control control;
   Reader reader(path, control);
-  if (Error error = reader.read(result.table()))
+  if (Error error = reader.read(result.table())) {
+    if (refusedDistribution && reader.distributionRefused)
+      *refusedDistribution = std::move(control);
     return std::move(error);
+  }
   return control;
 }
 

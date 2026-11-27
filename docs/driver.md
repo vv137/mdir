@@ -743,6 +743,11 @@ A checkpoint is a file in the H5MD format [[deBuyl2014]](references.md#debuyl201
 /parameters/mdir/fingerprint  physics, coupling, execution: a string each,
                               a line per entry, "<name>\t<value>"
                               (D172)
+forced_continuations          an attribute of /parameters/mdir, after
+                              `mdir run --continue --force`: a line per
+                              overridden entry, "part <n>: <group> <name>:
+                              <checkpoint> -> <control file>", in the hash
+                              of the state (D[distribute-driver])
 /parameters/mdir/free_energy_lambda  with [free_energy], the components of
                               the state of the run, with the attributes
                               free_energy (the states in one line) and
@@ -807,11 +812,18 @@ run, an entry each, in three groups:
 |---|---|
 | physics | Every key of `[energy]`, `[pme]`, `[lj_pme]`, `[constraints]`, `[restraints]`, `[boundary]`, and `[free_energy]` as the control file writes it, in a canonical form (keys sorted, a floating-point number as the shortest text of its double, so that `9` and `9.0` are one value, and an integer exactly: below $2^{53}$ in magnitude as the text of its double, from $2^{53}$ on with all its digits, D347, and a value that names a choice in its documented spelling, #702); SHA-256 of the contents of the files of the topology (Amber, GROMACS with its included files, CHARMM structure and parameters), of the masses, and of the reference of positional restraints |
 | coupling | Every key of `[dynamics]` but `steps`, and of `[ensemble]`, `[thermostat]`, and `[barostat]` |
-| execution | Every key of `[execution]`, and `pairlist_distance`, `pruned_distance`, and `rebuild_interval` of `[energy]`, which decide how the forces are found and not what they are |
+| execution | Every key of `[execution]`, and `pairlist_distance`, `pruned_distance`, and `rebuild_interval` of `[energy]`, which decide how the forces are found and not what they are; with `[distribute]`, its `traversal`, `transport`, and grid (`[distribute] domains`, three divisions) as resolved for the cell (D[distribute-driver]) |
 
 A value longer than 160 characters is recorded as its SHA-256. The
 entries are the keys as written, not the values the driver resolves: a
-key added with its default value counts as a change. `mdir checkpoint
+key added with its default value counts as a change. The entries of
+`[distribute]` are the exception, resolved values: `domains = 8` and
+`domains = [2, 2, 2]` are one grid for a cubic cell. Another grid is a
+note on `--continue`; in the deterministic mode the note says that the
+deterministic contract keeps the bits on any grid. `--continue` of a
+deterministic run refuses a control file that adds or drops
+`[distribute]`, whose sums are of the other arithmetic (fixed-point words
+against floating-point sums), unless `--force` is given (Section 2.7). `mdir checkpoint
 --print=fingerprint file.h5` lists them.
 
 A value that names a choice, which the reader reads without regard to
@@ -874,6 +886,7 @@ mdir run --continue --max-walltime 23:50 md.toml
 | Option | What it does |
 |---|---|
 | `--continue` | Continues the run from the checkpoint of `[output]` until it has taken `steps` steps from the step it began at (D129). Without a checkpoint the run begins; with one that holds the last step it says that the run is complete and exits with 0. It refuses a checkpoint of other physics or coupling, naming each change (Section 2.6), and steps that remain if they are not whole intervals of the outputs and of the coupling. Raising `steps` extends a run. |
+| `--force` | With `--continue`, continues past the differences of the checkpoint's fingerprint that `--continue` refuses: another physics or coupling, whose forces and coupling state the run then evaluates at its first step as a run from `checkpoint` of `[input]` does, and in the deterministic mode a `[distribute]` added or dropped (Section 2.6). The log notes each difference it overrides, the start event of the manifest lists them in `forced_overrides`, and every checkpoint that follows records them in `/parameters/mdir/forced_continuations`, with those of earlier parts, which `mdir checkpoint` prints, so that a bug report shows them (D[distribute-driver]). Without `--continue` it is an error. |
 | `--no-append` | With `--continue`, writes the outputs that follow, the log, manifest, files of columns, and frames, to `<name>.partNNNN<ext>`, NNNN the part of the run; later continuations append to the files of that part, which the checkpoint records. Without it, the outputs are appended to the files of the run after what was written past the checkpoint is removed (D130, D149). A run without `--continue` keeps the outputs of an earlier run as `#<name>.<n>#` (Section 2.8). |
 | `--max-walltime <time>` | Stops at the last checkpoint that leaves time, within `<time>` from the start of `mdir`, for one more interval between checkpoints as long as the longest so far (D131). In hours (`23.5`) or as `H:MM[:SS]`. The stop waits for the write of its checkpoint, which the interval does not hold since the write runs beside the steps (D336): under a second on STMV. |
 
@@ -952,7 +965,7 @@ in their calls.
 **Run manifest (D168).** Optional `manifest = "run.jsonl"` in `[output]`
 writes UTF-8 JSON Lines, one object per line, with `schema_version = 1`.
 It records executions, not trajectory frames. A `start` event precedes
-execution and an `end` event records `completed` or `stopped`; a start
+execution and an `end` event records `completed`, `stopped`, or a distributed setup refusal (`refused`); a start
 without an end means completion was not recorded (for example, a crash
 or a forced kill). Each event has an `invocation` number local to the file.
 The [JSON schema](run-manifest.schema.json) defines every event. The start
@@ -1003,8 +1016,7 @@ An already complete run leaves the manifest untouched. A malformed or
 unsupported existing manifest is refused before appending; use a new
 manifest path to retain a damaged file. The manifest is disabled when its
 key is omitted; `mdir check` reports its path without creating it, and
-`mdir emit` creates no manifest. An execution that fails before the start
-record is written has no record. A manifest is provenance, not a restart
+`mdir emit` creates no manifest. A rejected distributed setup can create a standalone `refused` event with its reason before the start record. A manifest is provenance, not a restart
 compatibility check or a copy of its inputs.
 
 **Files of columns.** The energies and the terms over centers share one
@@ -1694,3 +1706,84 @@ when unused, so a constant cannot silently replace a coordinate and its
 force. Compound terms accept declared `lambda_<name>` components through
 the existing lambda bindings, with forces, component derivatives, and
 state energy differences computed by the same differentiation path.
+
+### CPU spatial decomposition (D[distribute-driver])
+
+```toml
+[distribute]
+domains = [2, 1, 1]
+transport = "local"
+traversal = "directed"
+```
+
+The optional table selects the distributed velocity Verlet entry. Its
+default grid is one domain. An integer count chooses the minimum-area
+factor grid for the cell, using the lexicographically first grid on ties.
+An explicit grid has three positive integer divisions, with x varying
+fastest. Directed traversal evaluates both centers. Unique traversal
+evaluates each pair once and returns the neighbor contribution. The halo
+reach is the outer pair-list distance in angstroms. The manifest records
+the resolved grid, traversal, transport, and reach under
+`effective.distribute`.
+
+The CPU path takes a fixed periodic orthorhombic cell, NVE velocity Verlet
+and finite-range pair kernels with real particle parameters. The state
+uses a positive skin. Reciprocal space needs a distributed mesh, bonded
+terms and exclusions need cross-domain partners, and constraints need a
+distributed constraint solve. Analytic EAM has an IR oracle in ML2
+Section 15.
+
+The setup log and the manifest start event give the requested domain count,
+factor grids and their scores in inverse nm, the source of each choice, and
+the real-space cutoff and skin in Ang. The first halo adds a
+`domain_setup` manifest event. Each entry gives the domain, rank, lower
+and upper Cartesian bounds in Ang, owned and ghost row counts, and the
+position import in bytes (three doubles per ghost image). The geometric import
+volume in cubic Ang is the shell within halo reach of the domain box,
+including its rounded edges and corners. A rejected distributed control records the reason in its log and manifest:
+a refusal of `[distribute]` itself, of the builder (constraints, a
+triclinic cell), or a diagnostic of the passes of `md_dist` (the exclusions
+of bonded terms, a table of types). Any other error of the control file is
+reported as without the table.
+An existing MDIR log and a valid manifest history accept another refusal.
+An unsafe output alias or unrecognized existing file is protected and the
+reason goes to stderr.
+
+At each energy interval, `DIST:` rows give the latest occupancy,
+migrations since the last interval, and logical bytes per directed domain
+edge. Self-image copies count toward logical bytes. Only edges between
+different ranks count toward network payload. Rank shares divide by the sum
+over ranks for that counter. Phase times in seconds cover pair loops, other
+particle terms, halo copy and sum, ordered reduction, migration, and
+collective wait. The wall clock also includes unclassified work. The end
+table includes setup and the last partial interval. For strong-scaling
+efficiency divide a measured one-rank time by the rank count times the
+critical (maximum) wall time for the same system, grid, and step count.
+
+Set `MDIR_DIST_STEP_TRACE` to a file prefix to write per-step rows to
+`<prefix>.rank<R>.log`. Each invocation requires fresh trace paths.
+Restart uses `[output] checkpoint` and `--continue` as usual. The
+checkpoint carries the physical state in input particle order, including
+the boundary forces. It carries the seed and the absolute step. A new
+partition rebuilds ownership and halo membership before integration.
+With `[execution] deterministic = true`, a continued distributed run on
+another grid uses the same pair words and physical state as an uninterrupted
+run on the same build. Use an explicit one-domain grid for this comparison.
+Omitting the distribution table selects the ordinary driver and its existing
+floating-point reduction, which a deterministic `--continue` refuses (the
+fingerprint, below). A fixed-point range diagnostic names the quantity of
+the term or completed sum that cannot be represented. The formats are
+fitted to their quantities: Q32 for pair energies, virials, kinetic
+energies, and momenta, Q40 for forces, and Q16 for the sum of $F^2/m$ of
+the kinetic correction, whose square of forces leaves the range of Q32
+(below $2^{31}$) for the 864 atoms of argon with 250 times the example's
+$\epsilon$ (distribute-word-formats.test). A decoded word is exact below
+$2^{53}$: $2^{13}$ kJ/mol/nm for a force, $2^{21}$ kJ/mol for a Q32 energy,
+$2^{20}$ for the Q33 total, $2^{37}$ for a Q16 sum; above, the conversion rounds to
+nearest, a function of the word, so that the value is still the same on
+every grid. Intermediate signed
+128-bit subtotals retain cancellation. Deterministic HDF5 output omits
+dataset creation timestamps. Matching invocation histories yield identical
+checkpoint files. A continuation records its part number in the checkpoint
+and includes that history in its checksum. The stored physical arrays and
+the H5MD trajectory reproduce the uninterrupted run.

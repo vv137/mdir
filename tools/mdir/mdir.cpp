@@ -54,6 +54,13 @@ static llvm::cl::opt<bool> continueRun(
                    "none; a complete run exits with 0"),
     llvm::cl::sub(runCommand));
 
+static llvm::cl::opt<bool> forceContinue(
+    "force",
+    llvm::cl::desc("With --continue, continue past the differences of the "
+                   "checkpoint's fingerprint that --continue refuses, which "
+                   "the log, the manifest, and the checkpoints record"),
+    llvm::cl::sub(runCommand));
+
 static llvm::cl::opt<bool> checkJSON(
     "json", llvm::cl::desc("Print the preflight report as JSON"),
     llvm::cl::sub(checkCommand));
@@ -127,7 +134,7 @@ int main(int argc, char **argv) {
   llvm::cl::ParseCommandLineOptions(
       argc, argv,
       "MDIR: compiles and runs molecular dynamics\n\n"
-      "  mdir run <control file> [--continue [--no-append]] "
+      "  mdir run <control file> [--continue [--no-append] [--force]] "
       "[--max-walltime=<time>]\n"
       "  mdir emit <control file> [--stage=module|lowered|pipeline] "
       "[--segments] [--profile-map=<file>]\n"
@@ -146,8 +153,13 @@ int main(int argc, char **argv) {
     RunOptions options;
     options.continues = continueRun;
     options.appends = !noAppend;
+    options.forced = forceContinue;
     if (noAppend && !continueRun) {
       llvm::errs() << "mdir: --no-append goes with --continue\n";
+      return 1;
+    }
+    if (forceContinue && !continueRun) {
+      llvm::errs() << "mdir: --force goes with --continue\n";
       return 1;
     }
     if (!maxWalltime.empty()) {

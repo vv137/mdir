@@ -103,6 +103,13 @@ void driver::printParsedModule(Program &program) {
 llvm::Error mdir::driver::builder::serializeNativeProgram(Program &program,
                                                        TermIRPlan &plan) {
   auto native = plan.getModule();
+  if (program.distributed)
+    native->setAttr("md_dist.driver", mlir::UnitAttr::get(native.getContext()));
+  else
+    // The quantities of the sums are for the fixed-point formats of the
+    // domains (D[distribute-driver]); an ordinary module keeps its text.
+    native.walk(
+        [](mlir::Operation *op) { op->removeAttr("md_dist.quantity"); });
   std::string printed;
   llvm::raw_string_ostream os(printed);
   mlir::OpPrintingFlags flags;

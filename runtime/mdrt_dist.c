@@ -12,6 +12,8 @@
    of each domain when a halo is built, and the rows each transfer moves:
    the schedule as it runs. */
 
+#include "mdrt_dist_stats.h"
+#include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -40,6 +42,15 @@ static double *at2(struct Memref2D *m, int64_t i, int64_t j) {
 static double *at3(struct Memref3D *m, int64_t d, int64_t r, int64_t c) {
   return m->aligned + m->offset + d * m->strides[0] + r * m->strides[1] +
          c * m->strides[2];
+}
+
+static _Thread_local struct DistObserver *observer;
+
+void mdrtDistObserve(struct DistObserver *value) { observer = value; }
+
+void mdrtDistPhase(int64_t phase) {
+  if (observer)
+    observer->phase(observer->context, phase);
 }
 
 static int tracing(void) {
@@ -74,8 +85,209 @@ struct Halo {
   int64_t *rows;    /* [domains] */
   /* [domains * capacity] each: the source's owner, its owned row, its
      identity, and the image n (3 per ghost). */
+  struct Edge {
+    int64_t from, to, rows;
+  } *edges;
+  size_t edgeCount;
   int64_t *sourceDomain, *sourceRow, *ids, *image;
 };
+
+static const char *const quantityNames[DistQuantityCount] = {
+    "pair energy or virial",
+    "force or gathered field",
+    "particle sum",
+    "kinetic energy",
+    "momentum",
+    "sum of F^2/m (the kinetic correction)"};
+
+static const char *quantityName(int64_t quantity) {
+  return quantity >= 0 && quantity < DistQuantityCount ? quantityNames[quantity]
+                                                       : "quantity";
+}
+
+/* Word conversion is defined even for a singular pair or huge finite input:
+   the rounded value is checked before the cast. */
+int64_t mdrtDistWord(double x, double scale, int64_t quantity) {
+  double w = round(x * scale);
+  if (!(w >= -0x1p63 && w < 0x1p63)) {
+    char message[160];
+    snprintf(message, sizeof message,
+             "deterministic fixed-point %s term outside signed 64-bit range",
+             quantityName(quantity));
+    fail(message);
+  }
+  return (int64_t)w;
+}
+
+/* At most 2^32 particles: N(N-1) directed visits of words below 2^63 then
+   bound every subtotal below 2^127. */
+void mdrtDistCheckWordCount(int64_t count) {
+  if (count < 0 || count > INT64_C(4294967296))
+    fail("deterministic pair count exceeds the signed 128-bit accumulation "
+         "bound");
+}
+
+typedef __int128 DistWide;
+/* Bucket the local rows by their current Cartesian image. Each center
+   covers three adjacent x bins in each of nine (y,z) slabs. The caller
+   still evaluates the original distance, cutoff and identity predicate. */
+void _mlir_ciface_mdrtDistPairCells(int64_t d, int64_t owned, int64_t count,
+                                    double cutoff, struct Memref3D *xo,
+                                    struct Memref3D *xg,
+                                    struct Memref3D *shifts, int64_t shifted,
+                                    struct Memref1I *order,
+                                    struct Memref1I *spans) {
+  if (!owned)
+    return;
+  int64_t *rows = order->aligned + order->offset;
+  int64_t *ranges = spans->aligned + spans->offset;
+  double lo[3] = {INFINITY, INFINITY, INFINITY};
+  double hi[3] = {-INFINITY, -INFINITY, -INFINITY};
+  double magnitude = cutoff;
+  for (int64_t r = 0; r < count; ++r)
+    for (int k = 0; k < 3; ++k) {
+      double x = r < owned ? *at3(xo, d, r, k) : *at3(xg, d, r - owned, k);
+      double shift = shifted && r >= owned ? *at3(shifts, d, r - owned, k) : 0;
+      magnitude = fmax(magnitude, fmax(fabs(x), fabs(shift)));
+      x += shift;
+      if (!isfinite(x))
+        fail("non-finite pair cell coordinate");
+      lo[k] = fmin(lo[k], x);
+      hi[k] = fmax(hi[k], x);
+    }
+  /* Include the rounding error of binning x + image when the pair uses
+     (center - x) - image. Coarsen unusually sparse boxes to bound storage. */
+  double width = cutoff + (32 * DBL_EPSILON) * magnitude;
+  int64_t shape[3];
+  for (;;) {
+    double bins = 1;
+    for (int k = 0; k < 3; ++k) {
+      double n = floor((hi[k] / width) - (lo[k] / width)) + 1;
+      if (n > count) {
+        bins = INFINITY;
+        break;
+      }
+      shape[k] = (int64_t)n;
+      bins *= n;
+    }
+    if (bins <= 4.0 * count)
+      break;
+    width *= 2;
+  }
+  int64_t nbin = shape[0] * shape[1] * shape[2];
+  int64_t *offset = calloc(nbin + 1, sizeof *offset);
+  int64_t *cell = malloc(count * sizeof *cell);
+  if (!offset || !cell)
+    fail("out of memory building pair cells");
+  for (int64_t r = 0; r < count; ++r) {
+    int64_t bin = 0;
+    for (int k = 2; k >= 0; --k) {
+      double x = r < owned ? *at3(xo, d, r, k) : *at3(xg, d, r - owned, k);
+      if (shifted && r >= owned)
+        x += *at3(shifts, d, r - owned, k);
+      bin = bin * shape[k] + (int64_t)floor(x / width - lo[k] / width);
+    }
+    cell[r] = bin;
+    ++offset[bin + 1];
+  }
+  for (int64_t b = 1; b <= nbin; ++b)
+    offset[b] += offset[b - 1];
+  /* Fill backward. offset[b+1] then points at the start of bin b. */
+  for (int64_t r = count; r-- > 0;)
+    rows[--offset[cell[r] + 1]] = r;
+  for (int64_t i = 0; i < owned; ++i) {
+    int64_t x = cell[i] % shape[0], yz = cell[i] / shape[0];
+    int64_t y = yz % shape[1], z = yz / shape[1];
+    for (int dz = -1; dz <= 1; ++dz)
+      for (int dy = -1; dy <= 1; ++dy) {
+        int64_t begin = 0, end = 0;
+        if (y + dy >= 0 && y + dy < shape[1] && z + dz >= 0 &&
+            z + dz < shape[2]) {
+          int64_t slab = ((z + dz) * shape[1] + y + dy) * shape[0];
+          int64_t first = slab + (x > 0 ? x - 1 : x);
+          int64_t last = slab + (x + 1 < shape[0] ? x + 1 : x);
+          begin = offset[first + 1];
+          end = last + 1 == nbin ? count : offset[last + 2];
+        }
+        *ranges++ = begin;
+        *ranges++ = end;
+      }
+  }
+  free(cell);
+  free(offset);
+}
+
+DistWide mdrtDistAddWide(DistWide a, DistWide b) {
+  DistWide result;
+  if (__builtin_add_overflow(a, b, &result))
+    fail("deterministic fixed-point sum exceeds signed 128-bit range");
+  return result;
+}
+
+int64_t mdrtDistNarrowWord(DistWide value, int64_t quantity) {
+  if (value < INT64_MIN || value > INT64_MAX) {
+    char message[160];
+    snprintf(message, sizeof message,
+             "deterministic fixed-point %s exceeds signed 64-bit range",
+             quantityName(quantity));
+    fail(message);
+  }
+  return (int64_t)value;
+}
+
+void _mlir_ciface_mdrtDistImageShifts(int64_t handle, struct Memref3D *shifts) {
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  if (!h || !shifts || shifts->sizes[0] != h->layout->domains ||
+      shifts->sizes[2] != 3)
+    fail("deterministic pair geometry requires a complete halo image field");
+  for (int64_t d = 0; d < h->layout->domains; ++d)
+    if (shifts->sizes[1] < h->rows[d])
+      fail("missing halo rows for deterministic pair geometry");
+  for (int64_t d = 0; d < h->layout->domains; ++d)
+    for (int64_t g = 0; g < h->rows[d]; ++g)
+      for (int c = 0; c < 3; ++c)
+        *at3(shifts, d, g, c) =
+            (double)h->image[3 * (d * h->capacity + g) + c] *
+            h->layout->edges[c];
+}
+
+struct Memref3W {
+  DistWide *allocated, *aligned;
+  int64_t offset, sizes[3], strides[3];
+};
+
+static DistWide *wordAt(struct Memref3W *m, int64_t d, int64_t r, int64_t c) {
+  return m->aligned + m->offset + d * m->strides[0] + r * m->strides[1] +
+         c * m->strides[2];
+}
+
+void _mlir_ciface_mdrtDistHaloSumWords(int64_t handle, struct Memref3W *owned,
+                                       struct Memref3W *ghosts,
+                                       struct Memref3D *out) {
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  int64_t components = owned->sizes[2];
+  if (observer)
+    for (size_t i = 0; i < h->edgeCount; ++i) {
+      struct Edge edge = h->edges[i];
+      observer->transfer(observer->context, edge.to, edge.from,
+                         edge.rows * components * (int64_t)sizeof(DistWide));
+    }
+  for (int64_t d = 0; d < h->layout->domains; ++d)
+    for (int64_t g = 0; g < h->rows[d]; ++g) {
+      int64_t slot = d * h->capacity + g;
+      for (int64_t c = 0; c < components; ++c) {
+        DistWide *to =
+            wordAt(owned, h->sourceDomain[slot], h->sourceRow[slot], c);
+        *to = mdrtDistAddWide(*to, *wordAt(ghosts, d, g, c));
+      }
+    }
+  for (int64_t d = 0; d < h->layout->domains; ++d)
+    for (int64_t r = 0; r < h->layout->rows[d]; ++r)
+      for (int64_t c = 0; c < components; ++c)
+        *at3(out, d, r, c) =
+            (double)mdrtDistNarrowWord(*wordAt(owned, d, r, c), DistPairForce) *
+            0x1p-40;
+}
 
 /* The cell of the grid that fractional coordinate `u` along an axis of `g`
    divisions falls in. */
@@ -262,6 +474,8 @@ int64_t _mlir_ciface_mdrtDistMigrate(int64_t oldHandle,
     }
     int64_t d = cell[0] + next->grid[0] *
                             (cell[1] + next->grid[1] * cell[2]);
+    if (observer && old->owner[j] != d)
+      observer->migration(observer->context, old->owner[j], d);
     next->owner[j] = d;
     next->row[j] = next->rows[d];
     next->ids[d * cap + next->rows[d]] = j;
@@ -396,6 +610,35 @@ int64_t _mlir_ciface_mdrtDistHalo(int64_t layout, struct Memref3D *x,
     fail("out of memory");
   for (int64_t d = 0; d < domains; ++d)
     visitGhosts(h, x, d, 1);
+  if (observer) {
+    // Count neighbor multiplicities once per halo, including periodic
+    // self-images. Later transfers scale these counts by their field width.
+    int64_t *counts = calloc(domains, sizeof *counts);
+    if (!counts)
+      fail("out of memory counting halo imports");
+    for (int64_t d = 0; d < domains; ++d) {
+      double lo[3], hi[3];
+      domainBox(h->layout, x, d, lo, hi);
+      observer->domain(observer->context, d, h->layout->rows[d], h->rows[d], lo,
+                       hi);
+      for (int64_t g = 0; g < h->rows[d]; ++g)
+        ++counts[h->sourceDomain[d * cap + g]];
+      size_t neighbors = 0;
+      for (int64_t e = 0; e < domains; ++e)
+        neighbors += counts[e] != 0;
+      if (neighbors) {
+        h->edges =
+            realloc(h->edges, (h->edgeCount + neighbors) * sizeof *h->edges);
+        if (!h->edges)
+          fail("out of memory counting halo edges");
+      }
+      for (int64_t e = 0; e < domains; ++e)
+        if (counts[e]) {
+          h->edges[h->edgeCount++] = (struct Edge){e, d, counts[e]};
+          counts[e] = 0;
+        }
+    }
+  }
   if (tracing())
     for (int64_t d = 0; d < domains; ++d)
       fprintf(stderr,
@@ -476,6 +719,12 @@ static int64_t movedRows(struct Halo *h) {
 void _mlir_ciface_mdrtDistHaloCopy(int64_t handle, struct Memref3D *owned,
                                    struct Memref3D *ghosts, int64_t image) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
+  if (observer)
+    for (size_t i = 0; i < h->edgeCount; ++i) {
+      struct Edge edge = h->edges[i];
+      observer->transfer(observer->context, edge.from, edge.to,
+                         edge.rows * owned->sizes[2] * (int64_t)sizeof(double));
+    }
   int64_t k = owned->sizes[2];
   for (int64_t d = 0; d < h->layout->domains; ++d)
     for (int64_t g = 0; g < h->rows[d]; ++g) {
@@ -499,6 +748,12 @@ void _mlir_ciface_mdrtDistHaloCopy(int64_t handle, struct Memref3D *owned,
 void _mlir_ciface_mdrtDistHaloSum(int64_t handle, struct Memref3D *ghosts,
                                   struct Memref3D *owned) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
+  if (observer)
+    for (size_t i = 0; i < h->edgeCount; ++i) {
+      struct Edge edge = h->edges[i];
+      observer->transfer(observer->context, edge.to, edge.from,
+                         edge.rows * owned->sizes[2] * (int64_t)sizeof(double));
+    }
   int64_t k = owned->sizes[2];
   for (int64_t d = 0; d < h->layout->domains; ++d)
     for (int64_t g = 0; g < h->rows[d]; ++g) {
@@ -543,6 +798,7 @@ void mdrtDistReleaseHalo(int64_t handle) {
     return;
   mdrtDistReleaseLayout((int64_t)(intptr_t)h->layout);
   free(h->rows);
+  free(h->edges);
   free(h->sourceDomain);
   free(h->sourceRow);
   free(h->ids);

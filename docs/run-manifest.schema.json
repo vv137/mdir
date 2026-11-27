@@ -4,6 +4,31 @@
   "oneOf": [
     {
       "type": "object",
+      "required": ["schema_version", "event", "invocation", "timestamp_utc", "reason"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "event": {"const": "refused"},
+        "invocation": {"type": "integer", "minimum": 1},
+        "timestamp_utc": {"type": "string"},
+        "reason": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["schema_version", "event", "invocation", "timestamp_utc", "domains"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "event": {"const": "domain_setup"},
+        "invocation": {"type": "integer", "minimum": 1},
+        "timestamp_utc": {"type": "string"},
+        "domains": {"type": "array", "items": {"type": "object",
+          "required": ["domain", "rank", "lower_angstrom", "upper_angstrom", "owned", "ghosts", "position_import_bytes"]}}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
       "properties": {
         "schema_version": {
           "const": 1
@@ -429,6 +454,30 @@
             },
             "rigid_units_reason": {
               "type": "string"
+            },
+            "distribute": {
+              "type": "object",
+              "properties": {
+                "grid": {
+                  "type": "array",
+                  "items": {"type": "integer", "minimum": 1},
+                  "minItems": 3,
+                  "maxItems": 3
+                },
+                "transport": {"const": "local"},
+                "traversal": {"enum": ["directed", "unique"]},
+                "ranks": {"type": "integer", "minimum": 1},
+                "cutoff_angstrom": {"type": "number"},
+                "skin_angstrom": {"type": "number"},
+                "grid_reason": {"type": "string"},
+                "requested_count": {"type": ["integer", "null"]},
+                "candidates": {"type": "array"},
+                "transport_source": {"enum": ["requested", "default"]},
+                "traversal_source": {"enum": ["requested", "default"]},
+                "reach_angstrom": {"type": "number", "exclusiveMinimum": 0}
+              },
+              "required": ["grid", "transport", "traversal", "reach_angstrom"],
+              "additionalProperties": false
             },
             "rigid_units_route": {
               "type": "object",
@@ -981,6 +1030,28 @@
         "continued": {
           "type": "boolean"
         },
+        "forced_overrides": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "group": {
+                "enum": ["physics", "coupling", "execution"]
+              },
+              "name": {
+                "type": "string"
+              },
+              "checkpoint": {
+                "type": "string"
+              },
+              "control": {
+                "type": "string"
+              }
+            },
+            "required": ["group", "name", "checkpoint", "control"],
+            "additionalProperties": false
+          }
+        },
         "compile_seconds": {
           "type": "number",
           "minimum": 0
@@ -1105,6 +1176,7 @@
         "status": {
           "enum": [
             "completed",
+            "refused",
             "stopped"
           ]
         },

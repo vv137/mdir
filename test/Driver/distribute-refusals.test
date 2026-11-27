@@ -1,0 +1,114 @@
+# Every refusal of a distributed run, each by a control file that differs
+# from an accepted one in the condition alone (D[distribute-driver]).
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: sed -e 's|argon.pdb|%S/../../examples/argon/argon.pdb|' \
+# RUN:     -e 's/= 2000$/= 10/' -e 's/= 100$/= 5/' -e 's/= 16$/= 1/' \
+# RUN:     -e 's/= 9.5$/= 8.65/' -e '/^trajectory/d' \
+# RUN:     %S/../../examples/argon/argon.toml > %t/base.toml
+# RUN: cp %t/base.toml %t/grid.toml && printf '\n[distribute]\ndomains = 8\n' >> %t/grid.toml
+# RUN: mdir run %t/grid.toml | FileCheck %s --check-prefix=ACCEPTED
+# ACCEPTED: MDIR: domain grid 2 x 2 x 2, local transport, directed traversal
+
+# The control file. A halo of the cutoff alone misses the pairs that enter
+# the cutoff between two rebuilds.
+# RUN: sed 's/= 8.65$/= 8.5/' %t/grid.toml > %t/skin.toml
+# RUN: not mdir run %t/skin.toml 2>&1 | FileCheck %s --check-prefix=SKIN
+# SKIN: distributed halo coverage requires a positive skin
+# RUN: sed 's/"DOUBLE"/"SINGLE"/' %t/grid.toml > %t/single.toml
+# RUN: not mdir run %t/single.toml 2>&1 | FileCheck %s --check-prefix=SINGLE
+# SINGLE: distributed state requires mixed or double position storage
+# RUN: sed 's/"CPU"/"GPU"/' %t/grid.toml > %t/gpu.toml
+# RUN: not mdir run %t/gpu.toml 2>&1 | FileCheck %s --check-prefix=TARGET
+# TARGET: distributed execution requires a CPU target
+# RUN: sed 's/^type = "PERIODIC"/type = "NONE"/;/^box/d' %t/grid.toml > %t/open.toml
+# RUN: not mdir run %t/open.toml 2>&1 | FileCheck %s --check-prefix=CELL
+# CELL: distributed execution requires a fixed periodic cell
+# RUN: sed -e 's/ensemble    = "NVE"/ensemble    = "NPT"\npressure = 1.0/' \
+# RUN:     -e 's/^\[boundary\]/[thermostat]\nmethod = "V-RESCALE"\ntime_constant = 1.0\ninterval = 1\n[barostat]\nmethod = "C-RESCALE"\ntime_constant = 2.0\n[boundary]/' \
+# RUN:     %t/grid.toml > %t/npt.toml
+# RUN: not mdir run %t/npt.toml 2>&1 | FileCheck %s --check-prefix=CELL
+# RUN: sed -e 's/ensemble    = "NVE"/ensemble    = "NVT"/' \
+# RUN:     -e 's/^\[boundary\]/[thermostat]\nmethod = "V-RESCALE"\ntime_constant = 1.0\ninterval = 1\n[boundary]/' \
+# RUN:     %t/grid.toml > %t/nvt.toml
+# RUN: not mdir run %t/nvt.toml 2>&1 | FileCheck %s --check-prefix=NVE
+# NVE: distributed dynamics requires NVE velocity Verlet
+# RUN: sed 's/"VELOCITY_VERLET"/"LEAPFROG"/' %t/grid.toml > %t/leapfrog.toml
+# RUN: not mdir run %t/leapfrog.toml 2>&1 | FileCheck %s --check-prefix=NVE
+# RUN: sed -e '/^\[dynamics\]/,/^\[ensemble\]/{/^\[ensemble\]/!d}' \
+# RUN:     -e 's/^\[ensemble\]/[minimize]\nsteps = 10\n[ensemble]/' %t/grid.toml > %t/minimize.toml
+# RUN: not mdir run %t/minimize.toml 2>&1 | FileCheck %s --check-prefix=NVE
+
+# The forms of 'domains': a count must be a positive integer.
+# RUN: sed 's/domains = 8/domains = 0/' %t/grid.toml > %t/zero.toml
+# RUN: not mdir run %t/zero.toml 2>&1 | FileCheck %s --check-prefix=COUNT
+# RUN: sed 's/domains = 8/domains = -2/' %t/grid.toml > %t/negative.toml
+# RUN: not mdir run %t/negative.toml 2>&1 | FileCheck %s --check-prefix=COUNT
+# RUN: sed 's/domains = 8/domains = 2.5/' %t/grid.toml > %t/float.toml
+# RUN: not mdir run %t/float.toml 2>&1 | FileCheck %s --check-prefix=COUNT
+# COUNT: domains requires a positive count or a three-axis grid
+# RUN: sed 's/domains = 8/domains = [2, 2.0, 2]/' %t/grid.toml > %t/axis.toml
+# RUN: not mdir run %t/axis.toml 2>&1 | FileCheck %s --check-prefix=AXIS
+# AXIS: domain division must be a positive integer
+
+# An error elsewhere in a control file with [distribute] is that error, not
+# a refusal of the distribution: nothing is written to the log.
+# RUN: sed -e 's/^cutoff .*/cutof = 8.5/' -e '/^\[output\]/a log = "typo.log"' %t/grid.toml > %t/typo.toml
+# RUN: cd %t && not mdir run typo.toml 2> typo.err
+# RUN: FileCheck %s --check-prefix=TYPO < %t/typo.err
+# TYPO-NOT: distributed setup refused
+# TYPO: cutof
+# RUN: test ! -e %t/typo.log
+
+# The trace of the steps may not take the name of a checkpoint.
+# RUN: sed '/^\[output\]/a checkpoint = "t.rank0.log"\ncheckpoint_interval = 5' %t/grid.toml > %t/trace.toml
+# RUN: cd %t && env MDIR_DIST_STEP_TRACE=t not mdir run trace.toml 2>&1 | FileCheck %s --check-prefix=TRACE
+# TRACE: distributed trace path conflicts with checkpoint
+
+# A topology: the dipeptide in water of amber.test, on two domains.
+# RUN: mkdir -p %t/topology && cd %t/topology
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd .
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/amber.test | sed '1d;$d' > base.toml
+# RUN: printf '\n[execution]\ntarget = "CPU"\nprecision = "DOUBLE"\n[distribute]\ndomains = [2, 1, 1]\n' >> base.toml
+# RUN: sed 's/"CUTOFF"/"PME"/' base.toml > pme.toml
+# RUN: not mdir run pme.toml 2>&1 | FileCheck %s --check-prefix=MESH
+# RUN: sed 's/^electrostatics = "CUTOFF"/&\nlennard_jones = "PME"/' base.toml > ljpme.toml
+# RUN: not mdir run ljpme.toml 2>&1 | FileCheck %s --check-prefix=MESH
+# MESH: reciprocal sums require a distributed mesh
+# The builder: constraints, whose partners may lie in other domains.
+# RUN: sed -e 's/^\[boundary\]/[constraints]\nrigid_water = true\n&/' \
+# RUN:     -e '/^\[output\]/a log = "rigid.log"\nmanifest = "rigid.jsonl"' base.toml > rigid.toml
+# RUN: not mdir run rigid.toml 2>&1 | FileCheck %s --check-prefix=CONSTRAINTS
+# RUN: FileCheck %s --check-prefix=CONSTRAINTS-LOG < rigid.log
+# RUN: FileCheck %s --check-prefix=CONSTRAINTS < rigid.jsonl
+# CONSTRAINTS: distributed constraints require cross-domain constraint partners
+# CONSTRAINTS-LOG: MDIR: distributed setup refused: distributed constraints require cross-domain constraint partners
+# The compiler: the exclusions of the bonds are pairs of a tuple set, which
+# the passes of md_dist refuse with a diagnostic, which the run records as
+# the refusal of the distribution.
+# RUN: sed '/^\[output\]/a log = "bonds.log"\nmanifest = "bonds.jsonl"' base.toml > bonds.toml
+# RUN: not mdir run bonds.toml 2>&1 | FileCheck %s --check-prefix=EXCLUSIONS
+# RUN: FileCheck %s --check-prefix=EXCLUSIONS-LOG < bonds.log
+# RUN: FileCheck %s --check-prefix=EXCLUSIONS-MANIFEST < bonds.jsonl
+# EXCLUSIONS: 'md.neighborhood' op cannot be distributed: exclusions are pairs of a tuple set
+# EXCLUSIONS-LOG: MDIR: distributed setup refused: 'md.neighborhood' op cannot be distributed: exclusions
+# EXCLUSIONS-MANIFEST: "event":"refused"
+# EXCLUSIONS-MANIFEST-SAME: exclusions are pairs of a tuple set
+# The tilt of a triclinic cell: the water of prolate-triclinic.test.
+# RUN: cp %S/Inputs/triclinic/water.top %S/Inputs/triclinic/dodecahedron.gro .
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/prolate-triclinic.test | sed '1d;$d' \
+# RUN:   | sed -e 's/"PME"/"CUTOFF"/' -e '/^\[pme\]/d' -e '/^kernel/d' > tilt.toml
+# RUN: printf '[distribute]\ndomains = [2, 1, 1]\n' >> tilt.toml
+# RUN: not mdir run tilt.toml 2>&1 | FileCheck %s --check-prefix=TILT
+# TILT: distributed halos require an orthorhombic cell
+
+# A table of types, which [[energy.pair_override]] gives a pair, is an
+# integer field that the reference executor of the domains does not carry:
+# charged.toml as written, which distribute-oracle.test takes without it.
+# RUN: mkdir -p %t/override && cd %t/override
+# RUN: sed -e 's|Inputs/mixture.pdb|%S/Inputs/mixture.pdb|' -e '/^\[output\]/a log = "override.log"' \
+# RUN:     %S/charged.toml > override.toml
+# RUN: printf '\n[distribute]\ndomains = [2, 2, 2]\n' >> override.toml
+# RUN: not mdir run override.toml 2>&1 | FileCheck %s --check-prefix=OVERRIDE
+# RUN: FileCheck %s --check-prefix=OVERRIDE-LOG < override.log
+# OVERRIDE: 'md_dist.distribute' op the reference executor runs f64 only
+# OVERRIDE-LOG: MDIR: distributed setup refused: 'md_dist.distribute' op the reference executor runs f64 only

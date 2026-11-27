@@ -1,0 +1,10 @@
+# One distributed step against the ordinary CPU step: energy, virial, and
+# forces on argon and on the charged mixture, in mixed and double,
+# deterministic or not, over a directed and a unique traversal. The bounds
+# and their derivation are in the comment of the script.
+# REQUIRES: hdf5, h5py
+# RUN: rm -rf %t.argon %t.charged
+# RUN: %h5md_python %S/Inputs/distribute_oracle.py %t.argon %S/../../examples/argon/argon.toml mdir | FileCheck %s
+# RUN: %h5md_python %S/Inputs/distribute_oracle.py %t.charged %S/charged.toml mdir --without-override | FileCheck %s
+# CHECK-NOT: FAIL
+# CHECK: distributed and ordinary steps agree within the error model

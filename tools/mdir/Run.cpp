@@ -5,60 +5,64 @@
 
 #include "BuildInfo.h"
 #include "Commands.h"
-#include "TowersShape.h"
+#include "DistributionLog.h"
 #include "Manifest.h"
+#include "TowersShape.h"
 
-#include "mdir/Conversion/GPUToBinary.h"
+#include "mdir/Compiler/Compile.h"
+#include "mdir/Compiler/JITEngine.h"
+#include "mdir/Compiler/ProfileMap.h"
+#include "mdir/Compiler/Skins.h"
 #include "mdir/Conversion/AxisFFTEmitter.h"
+#include "mdir/Conversion/GPUToBinary.h"
 #include "mdir/Conversion/MDAlgLowering.h"
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Dialect/Dyn/DynDialect.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MD/Transforms/DerivativeInterface.h"
 #include "mdir/Dialect/MD/Transforms/Passes.h"
+#include "mdir/Dialect/MDDist/Grid.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
-#include "mdir/Driver/H5MD.h"
 #include "mdir/Driver/Builder.h"
-#include "mdir/Driver/Prolate.h"
-#include "mdir/Compiler/Compile.h"
-#include "mdir/Compiler/JITEngine.h"
-#include "mdir/Compiler/ProfileMap.h"
-#include "mdir/Compiler/Skins.h"
 #include "mdir/Driver/Checkpoint.h"
 #include "mdir/Driver/Control.h"
 #include "mdir/Driver/Fingerprint.h"
+#include "mdir/Driver/H5MD.h"
 #include "mdir/Driver/ModelTerm.h"
 #include "mdir/Driver/Output.h"
+#include "mdir/Driver/Prolate.h"
 #include "mdir/Driver/RigidUnits.h"
 #include "mdir/Driver/System.h"
 
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Parser/Parser.h"
-#include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassInstrumentation.h"
-#include <set>
+#include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
-#include "llvm/Support/Path.h"
-#include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/Path.h"
+#include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
+#include <set>
 
 #include <chrono>
 #include <cmath>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <optional>
 #include <unistd.h>
 
@@ -453,9 +457,62 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // Read
   //===--------------------------------------------------------------------===//
 
-  auto control = readControl(controlFile);
+  // The refusal of a distributed setup by [distribute], the builder, or the
+  // passes of md_dist: the reason goes to the log and the manifest that the
+  // control names as well. It may precede the checks of the paths of the
+  // ordinary run: an existing diagnostic history is kept, and the inputs,
+  // the trajectory, and the checkpoints are not overwritten.
+  auto refuse = [&](const Control &c, llvm::Error e) {
+    std::string reason = llvm::toString(std::move(e));
+    if (emit == Emit::Run && (!c.logFile.empty() || !c.manifestFile.empty())) {
+      auto inputs = getManifestInputs(controlFile, c, System{});
+      auto diagnosticPath = [&](const std::string &path,
+                                const std::string &other) {
+        if (path.empty())
+          return false;
+        std::vector<std::string> reserved{
+            other,      c.energyFile,     c.trajectoryFile, c.observablesFile,
+            c.pullFile, c.freeEnergyFile, c.profileMapFile, c.restartOutput};
+        if (!c.restartOutput.empty()) {
+          reserved.push_back(getPreviousCheckpointPath(c.restartOutput));
+          reserved.push_back(c.restartOutput + ".partial");
+        }
+        if (auto error = checkManifestPath(path, inputs, reserved)) {
+          warn(llvm::toString(std::move(error)));
+          return false;
+        }
+        return true;
+      };
+      if (diagnosticPath(c.logFile, c.manifestFile)) {
+        // A rejected control may point at an unrelated file. Only append
+        // to a recognizable MDIR log or create an unused path.
+        const char *mode = "wx";
+        if (llvm::sys::fs::exists(c.logFile)) {
+          std::ifstream previous(c.logFile);
+          char signature[5]{};
+          if (previous.read(signature, 4) && StringRef(signature) == "MDIR")
+            mode = "a";
+        }
+        if (FILE *file = std::fopen(c.logFile.c_str(), mode)) {
+          std::fprintf(file, "MDIR: distributed setup refused: %s\n",
+                       reason.c_str());
+          std::fclose(file);
+        } else {
+          warn("cannot record refusal in log '" + c.logFile +
+               "': " + std::strerror(errno));
+        }
+      }
+      Manifest refusal;
+      if (diagnosticPath(c.manifestFile, c.logFile))
+        if (auto err = refusal.refuse(c.manifestFile, reason))
+          warn(llvm::toString(std::move(err)));
+    }
+    return fail(reason);
+  };
+  Control rejected;
+  auto control = readControl(controlFile, &rejected);
   if (!control)
-    return fail(control.takeError());
+    return refuse(rejected, control.takeError());
   // What the run writes (D149). Its log goes to the standard output from
   // here, and to the file of [output] as well once that is open.
   Output output;
@@ -608,27 +665,96 @@ static int runControlImpl(StringRef controlFile, Emit emit,
               change.after;
     return text;
   };
+  // The differences that `--continue --force` overrides (D[distribute-driver]):
+  // the log notes them, the manifest and the new checkpoint record them.
+  std::vector<FingerprintChange> forcedChanges;
+  bool forcedRecompute = false;
   if (own) {
     // A run continues as it was: another physics or coupling is another
     // run, which begins from the checkpoint as 'checkpoint' of [input].
+    // --force continues it anyway, evaluating its forces and coupling state
+    // anew as such a run does.
     std::vector<FingerprintChange> changes =
         compareFingerprints(own->fingerprint, fingerprint, "physics");
     std::vector<FingerprintChange> coupling =
         compareFingerprints(own->fingerprint, fingerprint, "coupling");
     changes.insert(changes.end(), coupling.begin(), coupling.end());
-    if (!changes.empty())
-      return fail("'" + control->restartInput + "' was written by a run of "
-                  "other physics or coupling, which --continue does not "
-                  "change; begin a new run from it as 'checkpoint' of "
-                  "[input] instead. What differs (checkpoint -> control "
-                  "file):" + describe(changes));
+    if (!changes.empty()) {
+      if (!options.forced)
+        return fail("'" + control->restartInput +
+                    "' was written by a run of "
+                    "other physics or coupling, which --continue does not "
+                    "change; begin a new run from it as 'checkpoint' of "
+                    "[input] instead, or override it with --continue "
+                    "--force. What differs (checkpoint -> control file):" +
+                    describe(changes));
+      forcedChanges.insert(forcedChanges.end(), changes.begin(), changes.end());
+      forcedRecompute = true;
+    }
+    // A deterministic distributed run gives the same bits on every grid,
+    // so --continue may take another (D[distribute-driver]); without
+    // [distribute], or with it where the run had none, the sums are of
+    // another arithmetic, and the run would not reproduce its uninterrupted
+    // course, which a deterministic continuation promises.
+    auto isDistribution = [](const FingerprintEntry &entry) {
+      return entry.group == "execution" &&
+             StringRef(entry.name).starts_with("[distribute]");
+    };
+    auto distributed = [&](const Fingerprint &entries) {
+      return llvm::any_of(entries, isDistribution);
+    };
+    auto deterministic = [](const Fingerprint &entries) {
+      return llvm::any_of(entries, [](const FingerprintEntry &entry) {
+        return entry.name == "[execution] deterministic" &&
+               entry.value == "true";
+      });
+    };
     std::vector<FingerprintChange> execution =
         compareFingerprints(own->fingerprint, fingerprint, "execution");
-    if (!execution.empty())
+    bool bitwise = deterministic(own->fingerprint) && control->deterministic;
+    if (bitwise && distributed(own->fingerprint) != distributed(fingerprint)) {
+      if (!options.forced)
+        return fail("'" + control->restartInput + "' was written by a " +
+                    "deterministic run " +
+                    (distributed(own->fingerprint) ? "with" : "without") +
+                    " [distribute], whose fixed-point sums --continue keeps; "
+                    "continue it " +
+                    (distributed(own->fingerprint)
+                         ? "with [distribute], on any grid,"
+                         : "without [distribute]") +
+                    " or begin a new run from it as 'checkpoint' of [input], "
+                    "or override it with --continue --force");
+      for (const FingerprintChange &change : execution)
+        if (StringRef(change.name).starts_with("[distribute]"))
+          forcedChanges.push_back(change);
+    }
+    // Another grid under the deterministic contract keeps the bits.
+    std::vector<FingerprintChange> grid, other;
+    for (const FingerprintChange &change : execution)
+      (bitwise && change.name == "[distribute] domains" &&
+               change.before != "(none)" && change.after != "(none)"
+           ? grid
+           : other)
+          .push_back(change);
+    if (!grid.empty())
+      notes.push_back("the run continues on another grid of domains, whose "
+                      "bits the deterministic contract keeps (checkpoint -> "
+                      "control file):" +
+                      describe(grid));
+    if (!other.empty())
       notes.push_back("the run continues with other settings of its "
                       "execution, whose bits follow them (checkpoint -> "
                       "control file):" +
-                      describe(execution));
+                      describe(other));
+    if (!forcedChanges.empty())
+      notes.push_back("--force continues the run past the differences of its "
+                      "fingerprint that --continue refuses; the checkpoints "
+                      "and the manifest record them (checkpoint -> control "
+                      "file):" +
+                      describe(forcedChanges));
+  } else if (options.forced) {
+    notes.push_back("--force overrides nothing: there is no checkpoint to "
+                    "continue");
   }
 
   StringRef integrator =
@@ -704,7 +830,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     // and are taken only where this run has the same
     // (D172). Otherwise the run evaluates them at its
     // first step, as production after equilibration with restraints must.
-    if (!own) {
+    if (!own || forcedRecompute) {
       std::vector<FingerprintChange> physics =
           compareFingerprints(checkpoint->fingerprint, fingerprint, "physics");
       std::vector<FingerprintChange> coupling = compareFingerprints(
@@ -931,6 +1057,8 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // (#568, the equivalence check of the builder).
   if (options.segments)
     *control = compiler::getSegmentsControl(*control);
+  if (llvm::Error error = checkDistributedSystem(*control, *system))
+    return refuse(*control, std::move(error));
   auto program = buildProgram(*control, *system);
   if (!program)
     return fail(program.takeError());
@@ -1039,6 +1167,15 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   std::string reproducer = "mdir-reproducer.mlir";
   if (const char *path = std::getenv("MDIR_REPRODUCER"))
     reproducer = path;
+  std::string distDiagnostic;
+  std::optional<mlir::ScopedDiagnosticHandler> handler;
+  if (control->distribution)
+    handler.emplace(&context, [&](mlir::Diagnostic &diagnostic) {
+      if (diagnostic.getSeverity() == mlir::DiagnosticSeverity::Error &&
+          distDiagnostic.empty())
+        distDiagnostic = diagnostic.str();
+      return mlir::failure(); // Also emit the diagnostic at its IR location.
+    });
   // Unsupported ordinary-loop layouts are choices for AUTO. Keep genuine
   // compiler errors on the usual error path.
   mlir::ScopedDiagnosticHandler graphDiagnostics(&context, [&](mlir::Diagnostic &diag) {
@@ -1053,11 +1190,15 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // Its executable already contains the lowered kernels and host entry.
   if ((!trial || !trial->compiled.entry) && mlir::failed(manager.run(*module))) {
     if (trial && !trial->refusal.empty()) return 0;
+    if (!distDiagnostic.empty())
+      return refuse(*control,
+                    llvm::createStringError("%s", distDiagnostic.c_str()));
     return fail("cannot compile the run; this is a defect of mdir. The "
                 "input of the passes is in '" + reproducer + "'. Please "
                 "report it with the directory that `mdir bug-report " +
                 controlFile + "` writes");
   }
+  handler.reset();
   // The execution parameters of the md_alg ops, for the log and the
   // manifest (D408).
   auto [algPolicy, algPolicyLine] = takeAlgPolicy(*module);
@@ -1418,6 +1559,49 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   for (double &value : startValues)
     arguments.push_back(&value);
 
+  int distRank = 0, distRanks = 1;
+  llvm::json::Object distribution;
+  if (const auto &dist = control->distribution) {
+    const auto &grid = program->domainGrid;
+    const char *source = dist->domains
+                             ? "minimum surface area; lexicographic ties"
+                         : dist->gridGiven ? "explicit grid"
+                                           : "default one domain";
+    llvm::json::Array candidates;
+    if (dist->domains)
+      mdir::md_dist::selectGrid(
+          dist->domains, system->box,
+          [&](int64_t x, int64_t y, int64_t z, long double score) {
+            candidates.push_back(
+                llvm::json::Object{{"grid", llvm::json::Array{x, y, z}},
+                                   {"score_per_nm", double(score)}});
+            output.log.print(
+                "MDIR: grid candidate %lld x %lld x %lld score %.17g /nm\n",
+                (long long)x, (long long)y, (long long)z, double(score));
+          });
+    distribution = llvm::json::Object{
+        {"grid", llvm::json::Array{grid[0], grid[1], grid[2]}},
+        {"grid_reason", source},
+        {"requested_count", dist->domains ? llvm::json::Value(dist->domains)
+                                          : llvm::json::Value(nullptr)},
+        {"candidates", std::move(candidates)},
+        {"transport", dist->transport},
+        {"transport_source", dist->transportGiven ? "requested" : "default"},
+        {"traversal", dist->traversal},
+        {"traversal_source", dist->traversalGiven ? "requested" : "default"},
+        {"ranks", distRanks},
+        {"cutoff_angstrom", control->cutoffDistance},
+        {"skin_angstrom", control->pairlistDistance - control->cutoffDistance},
+        {"reach_angstrom", control->pairlistDistance}};
+    output.log.print(
+        "MDIR: grid choice %s, requested count %lld, ranks %d; %s transport "
+        "(%s), %s traversal (%s); reach %g Ang = cutoff %g Ang + skin %g Ang\n",
+        source, (long long)dist->domains, distRanks, dist->transport.c_str(),
+        dist->transportGiven ? "requested" : "default", dist->traversal.c_str(),
+        dist->traversalGiven ? "requested" : "default",
+        control->pairlistDistance, control->cutoffDistance,
+        control->pairlistDistance - control->cutoffDistance);
+  }
   if (!control->manifestFile.empty()) {
     auto device = getManifestDevice(control->target);
     if (!device)
@@ -1520,6 +1704,8 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       if (checkpoint)
         effective["input_box_rounding_delta_nm"] = deltas(inputBoxRounding);
     }
+    if (control->distribution)
+      effective["distribute"] = std::move(distribution);
     if (towersShapeReport.getAsObject())
       effective["towers_shape"] = towersShapeReport;
     if (!towersCellHeight.empty())
@@ -1539,6 +1725,15 @@ static int runControlImpl(StringRef controlFile, Emit emit,
         {"part", part}, {"continued", options.continues},
         {"compile_seconds", compileTime},
         {"compile_cache", std::move(cacheRecord)}};
+    if (!forcedChanges.empty()) {
+      llvm::json::Array overridden;
+      for (const FingerprintChange &change : forcedChanges)
+        overridden.push_back(llvm::json::Object{{"group", change.group},
+                                                {"name", change.name},
+                                                {"checkpoint", change.before},
+                                                {"control", change.after}});
+      metadata["forced_overrides"] = std::move(overridden);
+    }
     if (llvm::Error error = manifest.start(getOutputPath(control->manifestFile),
                                             options.continues, std::move(metadata)))
       return fail(std::move(error));
@@ -1566,6 +1761,8 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   output.timestep = control->timestep;
   // Langevin dynamics exchanges energy with the bath in every step, which
   // the run does not count (D135): its log has no conserved energy.
+  output.distributedWordEnergy =
+      control->distribution && control->deterministic;
   output.couples = control->getCouplingPeriod() > 0 && !control->isLangevin();
   output.changesCell = control->barostat;
   if (control->barostat && control->precision != Precision::Double) {
@@ -1650,6 +1847,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       // potential energy of a frame is that of the row of its step, where
       // every frame is a step of energy.
       H5MDOptions options;
+      options.omitObjectTimes = output.distributedWordEnergy;
       options.single = control->trajectorySingle;
       options.variableStrings = control->trajectoryVariableStrings;
       options.energy = !control->minimize && control->energyPeriod > 0 &&
@@ -1768,6 +1966,15 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   if (writesCheckpoints) {
     output.checkpointPath = control->restartOutput;
     Checkpoint &checkpoint = output.checkpoint;
+    checkpoint.omitObjectTimes = output.distributedWordEnergy;
+    // A forced continuation is recorded in every checkpoint that follows
+    // it, with the earlier ones of the run.
+    if (own)
+      checkpoint.forcedContinuations = own->forcedContinuations;
+    for (const FingerprintChange &change : forcedChanges)
+      checkpoint.forcedContinuations +=
+          "part " + std::to_string(part) + ": " + change.group + " " +
+          change.name + ": " + change.before + " -> " + change.after + "\n";
     checkpoint.masses = system->masses;
     checkpoint.species.assign(system->types.begin(), system->types.end());
     for (int i = 0; i != 3; ++i) {
@@ -1829,6 +2036,16 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     output.log.print("MDIR: %zu particles, %lld steps of %g ps\n",
                  count, static_cast<long long>(control->numSteps),
                  control->timestep);
+  if (control->distribution) {
+    const auto &grid = program->domainGrid;
+    output.log.print(
+        "MDIR: domain grid %lld x %lld x %lld, %s transport, "
+        "%s traversal, halo reach %g Ang\n",
+        static_cast<long long>(grid[0]), static_cast<long long>(grid[1]),
+        static_cast<long long>(grid[2]),
+        control->distribution->transport.c_str(),
+        control->distribution->traversal.c_str(), control->pairlistDistance);
+  }
   if (program->pme)
     output.log.print("MDIR: PME force-only product rule: %s\n", pmeForceProduct);
   // The parameters that the prolate kernel derives (D266).
@@ -2019,9 +2236,39 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     if (void *enter = findRuntime("mdrtTuplesEnter", "mdrtDeviceTuplesEnter"))
       reinterpret_cast<void (*)(void *)>(enter)(tupleStore);
 
+  std::optional<DistributionLog> distLog;
+  using Observe = void (*)(DistObserver *);
+  Observe observe = nullptr;
+  if (control->distribution) {
+    const auto &g = program->domainGrid;
+    distLog.emplace(output.log, manifest, distRank, distRanks,
+                    g[0] * g[1] * g[2], firstStep, control->energyPeriod,
+                    control->pairlistDistance);
+    bool opened = distLog->open(std::getenv("MDIR_DIST_STEP_TRACE"),
+                                control->restartOutput);
+    if (!opened) {
+      output.log.print("MDIR: distributed setup refused: %s\n",
+                       distLog->error.c_str());
+      if (auto e = manifest.finish("refused", firstStep, distLog->error))
+        return fail(std::move(e));
+      return fail(distLog->error);
+    }
+    observe = reinterpret_cast<Observe>(
+        findRuntime("mdrtDistObserve", "mdrtDistObserve"));
+    if (!observe)
+      return fail("distributed statistics require mdrtDistObserve");
+    observe(&distLog->observer);
+    output.finishDistribution = [&] {
+      observe(nullptr);
+      distLog->finish();
+    };
+  }
   begin = std::chrono::steady_clock::now();
   output.lastCheckpoint = begin;
   compiled.entry(arguments.data());
+  if (distLog) {
+    output.finishDistribution();
+  }
   // The wait of the end of the run: the checkpoint at the last step is
   // written by a thread of its own (D336), and the run ends
   // once it has passed all three of its events (CheckpointThread in
@@ -2030,6 +2277,8 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // And for the frames that the thread of the frames still holds
   // (D400).
   finishFrames(output);
+  if (distLog && !distLog->error.empty())
+    return fail(distLog->error);
   double runTime = std::chrono::duration<double>(
                        std::chrono::steady_clock::now() - begin)
                        .count();

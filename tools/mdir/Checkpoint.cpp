@@ -4,6 +4,8 @@
 
 #include "mdir/Driver/Checkpoint.h"
 
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdio>
@@ -90,6 +92,14 @@ int mdir::tool::describeCheckpoints(llvm::ArrayRef<std::string> files,
                   static_cast<long long>(first->frames));
     std::printf("fingerprint:     %zu entries (--print=fingerprint)\n",
                 first->fingerprint.size());
+    // The differences that a forced continuation overrode.
+    if (!first->forcedContinuations.empty()) {
+      llvm::SmallVector<llvm::StringRef> lines;
+      llvm::StringRef(first->forcedContinuations)
+          .split(lines, '\n', -1, /*KeepEmpty=*/false);
+      for (llvm::StringRef line : lines)
+        std::printf("forced:          %s\n", line.str().c_str());
+    }
     // The additional entries of a Python simulation (D223).
     if (!first->frontEnd.empty())
       std::printf("front end:       %s\n", first->frontEnd.c_str());

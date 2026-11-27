@@ -41,6 +41,8 @@ struct H5MDOptions {
   /// The program that writes the file, the front end ("python", or empty
   /// for `mdir run`), and the precision mode of the run.
   std::string creatorVersion, frontEnd, precision;
+  /// Writer policy. Wall-clock metadata varies between equivalent runs.
+  bool omitObjectTimes = false;
 };
 
 /// What a frame holds besides the state.
