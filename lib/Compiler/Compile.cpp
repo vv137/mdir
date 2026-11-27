@@ -546,6 +546,11 @@ std::string mdir::compiler::getPipeline(const Control &control,
   // (D271).
   os << "md-exec-assign-storage,convert-md-exec-to-loops{kept-tuples=true"
      << (threaded ? "" : " atomic-grid=false") << "}"
+     // The procedure of a domain that the matrix pairs outline is called
+     // at every step and frees what it allocates at its end
+     // (D[distribute-pair-lowering]).
+     << (control.distribution && !control.deterministic
+             ? ",md-dist-release-domain-buffers" : "")
      // The code writes no buffer of the model that the entry takes
      // (D258): proven here, or no compile.
      << ",check-read-only-arguments"

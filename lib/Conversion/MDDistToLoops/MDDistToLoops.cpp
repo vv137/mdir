@@ -2906,6 +2906,10 @@ static LogicalResult outlineSteps(ModuleOp module, func::FuncOp function, String
     auto step = func::FuncOp::create(b, loop.getLoc(), name,
                                      b.getFunctionType(inputs, results));
     step.setPrivate();
+    // A procedure of a domain is called at every step: the buffers it
+    // allocates are freed at its end (md-dist-release-domain-buffers).
+    if (marker == "md_dist.domain_loop")
+      step->setAttr("md_dist.domain_procedure", b.getUnitAttr());
     Block *entry = step.addEntryBlock();
     IRMapping mapping;
     for (auto [argument, value] :

@@ -1615,6 +1615,17 @@ the host lane width. Threads divide the center rows. For two-ended
 kernels both the center and neighbor updates are atomic, including when
 the center itself is a ghost.
 
+The driver calls the procedure once per domain and step. The packed
+local rows and the storage that `md-exec-assign-storage` gives its
+fields belong to the call: `md-dist-release-domain-buffers` frees each
+buffer that the procedure allocates at the end of its block, after
+`convert-md-exec-to-loops`. A buffer that could outlive the call, by a
+return, a yield, a raw pointer, or an external function that may keep
+it, is a compile error. Only `mdrtDistMatrixRebuild` among the runtime's
+functions is given such a buffer, and it copies the positions it needs.
+Without the release every call kept its buffers, and memory grew by
+about the size of the local fields at each step.
+
 The halo owns the candidate matrix, its row lengths, and the reference
 positions. The ordinary binned MATRIX builder grows overflowing rows.
 Its search box encloses the local coordinates with a gap exceeding the
