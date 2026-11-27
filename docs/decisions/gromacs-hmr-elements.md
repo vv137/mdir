@@ -19,8 +19,8 @@ said so before the run.
 reader: `file` (Amber's `ATOMIC_NUMBER`, the at.num column of
 `[ atomtypes ]`, CHARMM's element of `MASS`), `name_and_mass` (Amber
 without `ATOMIC_NUMBER`), `mass` (CHARMM without an element), or `none`
-(GROMACS without the at.num column, where the run takes a hydrogen by a
-mass below 1.2 amu). `mdir check` prints the count of each element and of
+(GROMACS without the at.num column, where the run takes a hydrogen as
+below). `mdir check` prints the count of each element and of
 each source, with the count of fallbacks (all but `file`), and the
 constraints by kind: the bonds of hydrogen of SHAKE in their groups, and
 the rigid waters of SETTLE. The JSON report has them in
@@ -47,12 +47,33 @@ the text:
 Each names the type and where its element is corrected. The exit status
 and the run are unchanged.
 
+*The bonds of hydrogen without the at.num column.* A GROMACS topology
+without the at.num column gives no atomic number. The reader took a
+hydrogen there by a mass below 1.2 amu, which a repartitioned hydrogen is
+not, so its bond was left free, with no wrong number in the file to warn
+about. It now also takes a particle named with an H first and below 4.1
+amu (`isHydrogenWithoutNumber`, `include/mdir/Driver/Topology.h`). grompp
+takes the hydrogens of `constraints = h-bonds` by the first letter of the
+name alone; the bound of 4.1 amu, that of the Amber reader's inference,
+keeps a heavy atom named H (mercury, HG) out. The atomic numbers stay
+absent; only the bonds of hydrogen and their constraints change, and only
+for particles named H of 1.2 to 4.1 amu: repartitioned hydrogens and
+deuterium. This changes the results of such inputs: their bonds of
+hydrogen are constrained under `hydrogen_bonds = true`, as grompp
+constrains them; an input with the at.num column, or without it and
+without such particles, runs as before. It departs from the ruling, under which `mdir run`
+keeps "constraining ... every topology exactly as [it does] today"; the PR
+asks the maintainer to confirm it, and it is a commit of its own.
+
 *Checked.* `check-elements.test` generates from the dipeptide of
 `gromacs-dipeptide.test` (`Inputs/hmr_topology.py`) the repartitioned
 topology with the at.num given, guessed from the masses as ParmEd 4.3.1
 writes them from a prmtop without `ATOMIC_NUMBER` (the same at.num for
 every type), and absent, and one with type names CA and C0 of carbon; and
-an Amber topology without `ATOMIC_NUMBER`. With the at.num given, the 12
+an Amber topology without `ATOMIC_NUMBER`. Without the at.num column, 12
+bonds of hydrogen and 2343 degrees of freedom, as grompp gives (main: 0
+and 2355); with the first hydrogen named X1, 11 and 2344, as grompp
+gives, and the warning `element_light_atom` for it. With the at.num given, the 12
 bonds of hydrogen and the 382 waters are constrained, 2343 degrees of
 freedom, as grompp of GROMACS 2026.3 gives for the same system, and no
 warning. With them guessed, 0 bonds are constrained, 2355 degrees of

@@ -293,10 +293,11 @@ of GROMACS's `[ atomtypes ]`, the element of CHARMM's `MASS`) or from a
 fallback: from the name and the mass (Amber without `ATOMIC_NUMBER`), from
 the mass alone (CHARMM without an element), or none (GROMACS without the
 at.num column; `?` in the counts). A particle without an element is
-counted as H where the run takes it for a hydrogen, below 1.2 amu, and
-`none` is a massless site. The element is what the run takes: the readers
-assign the same atomic numbers as before, and a wrong number given by the
-file is kept.
+counted as H where the run takes it for a hydrogen: below 1.2 amu, or
+named with an H first and below 4.1 amu (a hydrogen of repartitioned
+mass; [constraints.md](constraints.md), Section 1.2). `none` is a massless
+site. The element is what the run takes: the readers assign the same
+atomic numbers as before, and a wrong number given by the file is kept.
 
 Three warnings, `element_group_mass`, `element_light_atom`, and
 `element_type_name`, flag an element that other evidence contradicts,

@@ -1182,7 +1182,8 @@ llvm::Error TopologyReader::expandMolecule(const MoleculeType &molecule,
     const AtomType *type = findType(molecule.atoms[atom].type);
     if (type->atomicNumber >= 0)
       return type->atomicNumber == 1;
-    return molecule.atoms[atom].mass < 1.2;
+    return isHydrogenWithoutNumber(molecule.atoms[atom].mass,
+                                   molecule.atoms[atom].name);
   };
 
   // The terms that MDIR takes as terms given by expressions (D136), in the

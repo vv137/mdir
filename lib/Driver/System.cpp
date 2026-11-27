@@ -1029,7 +1029,9 @@ static llvm::Error findShakes(Topology &topology) {
   };
   auto isHydrogen = [&](unsigned atom) {
     int number = topology.atomicNumbers[atom];
-    return number > 0 ? number == 1 : topology.masses[atom] < 1.2;
+    return number > 0 ? number == 1
+                      : isHydrogenWithoutNumber(topology.masses[atom],
+                                                topology.atomNames[atom]);
   };
   std::map<unsigned, size_t> groupOf;
   std::vector<bool> taken(topology.getNumParticles(), false);

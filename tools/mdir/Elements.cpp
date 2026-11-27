@@ -140,15 +140,18 @@ tool::ElementReport mdir::tool::diagnoseElements(const Control &control,
     return topology.typeNames[topology.types[i]];
   };
   // The atomic number as the run takes it: that of the topology, and for a
-  // particle without one a hydrogen below 1.2 amu, as the readers of
-  // GROMACS and the bonds of hydrogen take it (lib/Driver/Gromacs.cpp,
-  // lib/Driver/System.cpp).
+  // particle without one a hydrogen as the reader of GROMACS and the bonds
+  // of hydrogen take it (isHydrogenWithoutNumber).
   auto numberOf = [&](size_t i) {
     int number = i < topology.atomicNumbers.size() ? topology.atomicNumbers[i]
                                                    : -1;
     if (number >= 0)
       return number;
-    return topology.masses[i] > 0.0 && topology.masses[i] < 1.2 ? 1 : -1;
+    return topology.masses[i] > 0.0 &&
+                   isHydrogenWithoutNumber(topology.masses[i],
+                                           topology.atomNames[i])
+               ? 1
+               : -1;
   };
 
   std::map<std::pair<int, ElementSource>, size_t> counts;
@@ -194,8 +197,8 @@ tool::ElementReport mdir::tool::diagnoseElements(const Control &control,
   auto describe = [&](size_t i) {
     int number = numberOf(i);
     if (number < 0)
-      return std::string("no element (none in the file, and not below "
-                         "1.2 amu)");
+      return std::string("no element (none in the file, and neither below "
+                         "1.2 amu nor named H below 4.1 amu)");
     return getElementSymbol(number) + " (" + getSourceText(sourceOf(i)) +
            ")";
   };

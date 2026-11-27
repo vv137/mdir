@@ -1,3 +1,12 @@
+### Changed
+
+- **A GROMACS topology without the at.num column of `[ atomtypes ]` has its
+  repartitioned hydrogens constrained.** With `hydrogen_bonds = true` a
+  particle named with an H first and below 4.1 amu is now taken for a
+  hydrogen, as grompp takes it by the name; before, only a mass below 1.2
+  amu was, and the bonds of hydrogens of 3.024 amu were left free. This
+  changes the results of such inputs (#469, D[gromacs-hmr-elements]).
+
 ### Added
 
 - **`mdir check` reports the elements of a topology and where each comes

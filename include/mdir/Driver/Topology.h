@@ -103,6 +103,20 @@ struct ExternalTerm {
   std::vector<std::string> observe;
 };
 
+/// Whether a particle without an atomic number (GROMACS without the at.num
+/// column) is a hydrogen: below 1.2 amu, or named with an H first and
+/// below 4.1 amu, a hydrogen whose mass has been repartitioned (#469,
+/// D[gromacs-hmr-elements]). grompp takes the hydrogens of
+/// `constraints = h-bonds` by the first letter of the name; the bound of
+/// 4.1 amu is that of the Amber reader's inference.
+inline bool isHydrogenWithoutNumber(double mass, llvm::StringRef name) {
+  if (mass < 1.2)
+    return true;
+  llvm::StringRef trimmed = name.ltrim();
+  return mass < 4.1 && !trimmed.empty() &&
+         (trimmed.front() == 'H' || trimmed.front() == 'h');
+}
+
 struct Topology {
   /// GROMACS topology files actually opened, including active includes.
   std::vector<std::string> sourceFiles;
@@ -133,7 +147,7 @@ struct Topology {
     /// Inferred from the mass alone.
     Mass,
     /// None: GROMACS without the at.num column. Only whether the particle
-    /// is a hydrogen is inferred, from a mass below 1.2 amu.
+    /// is a hydrogen is inferred (isHydrogenWithoutNumber).
     None,
   };
   /// The force-field atom types of the particles, which the diagnosis of

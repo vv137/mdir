@@ -13,6 +13,7 @@ Inputs/dipeptide, as ParmEd writes it) and writes into OUTPUT_DIR:
                a conversion from a prmtop without ATOMIC_NUMBER wrote them
                (H as He, CT as Li, N as C);
   absent.top   the same masses without the at.num column;
+  unnamed.top  absent.top with the first hydrogen named X1;
   plain.top    the masses of the input without the at.num column;
   names.top    given.top with the type CX named CA (carbon, whose two letters
                are the symbol of calcium) and a type C0 of carbon (the name
@@ -130,7 +131,16 @@ def main():
     masses = first_masses(hmr)
     guess = lambda t: min(WEIGHTS, key=lambda w: abs(w[1] - masses[t]))[0]
     write("guessed.top", with_numbers(hmr, guess))
-    write("absent.top", with_numbers(hmr, lambda t: None))
+    absent = with_numbers(hmr, lambda t: None)
+    write("absent.top", absent)
+    unnamed, done = [], False
+    for section, line in sections(absent):
+        f = fields(line)
+        if section == "atoms" and len(f) >= 8 and f[4] == "H1" and not done:
+            f[4], done = "X1", True
+            line = " ".join(f)
+        unnamed.append(line)
+    write("unnamed.top", unnamed)
     write("plain.top", with_numbers(lines, lambda t: None))
 
     # CX renamed CA, and the CT of the methyl of NME named C0, both carbon.

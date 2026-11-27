@@ -16,6 +16,7 @@
 # RUN: sed 's/TOPOLOGY/given.top/' %t/run.toml > %t/given.toml
 # RUN: sed 's/TOPOLOGY/guessed.top/' %t/run.toml > %t/guessed.toml
 # RUN: sed 's/TOPOLOGY/absent.top/' %t/run.toml > %t/absent.toml
+# RUN: sed 's/TOPOLOGY/unnamed.top/' %t/run.toml > %t/unnamed.toml
 # RUN: sed 's/TOPOLOGY/plain.top/' %t/run.toml > %t/plain.toml
 # RUN: sed 's/TOPOLOGY/names.top/' %t/run.toml > %t/names.toml
 
@@ -64,17 +65,29 @@
 # JSON-NEXT: warnings element_group_mass=6 element_light_atom=3 element_type_name=8
 
 # Without the at.num column, the elements come from a fallback: the run
-# takes a hydrogen by a mass below 1.2 amu, which leaves the repartitioned
-# hydrogens free.
+# takes a hydrogen by a mass below 1.2 amu, or by a name that begins with H
+# and a mass below 4.1 amu, as grompp takes it by the name. Main took the
+# repartitioned hydrogens by mass alone, constrained none of their bonds,
+# and gave 2355 degrees of freedom.
 #
 # RUN: mdir check %t/absent.toml 2> %t/absent.err | FileCheck %s --check-prefix=ABSENT
-# RUN: FileCheck %s --check-prefix=ABSENT-WARN < %t/absent.err
-# ABSENT: elements: ? 1168
+# RUN: FileCheck %s --check-prefix=QUIET --allow-empty < %t/absent.err
+# ABSENT: elements: H 776, ? 392
 # ABSENT-NEXT: element sources: 0 from the file, 1168 from a fallback (0 from the name and the mass, 0 from the mass, 1168 none in the file)
-# ABSENT: degrees of freedom: 2355
-# ABSENT: constrained: 0 bonds of hydrogen in 0 groups, 382 rigid waters
-# ABSENT-WARN: warning: elements: 6 particles of the type 'HC' have one bond and a mass of 3.024 amu, below 4.1 amu, but are taken for no element (none in the file, and not below 1.2 amu), not hydrogen, so 'hydrogen_bonds = true' leaves their bonds free; if they are hydrogens, give the type 'HC' the atomic number 1 in an at.num column of [ atomtypes ]
-# ABSENT-WARN-NOT: element_group_mass
+# ABSENT: degrees of freedom: 2343
+# ABSENT: constrained: 12 bonds of hydrogen in 6 groups, 382 rigid waters
+
+# A repartitioned hydrogen whose name does not begin with H is not taken
+# for one, and the check says so; grompp leaves its bond free too (2344
+# degrees of freedom).
+#
+# RUN: mdir check %t/unnamed.toml 2> %t/unnamed.err | FileCheck %s --check-prefix=UNNAMED
+# RUN: FileCheck %s --check-prefix=UNNAMED-WARN < %t/unnamed.err
+# UNNAMED: elements: H 775, ? 393
+# UNNAMED: degrees of freedom: 2344
+# UNNAMED: constrained: 11 bonds of hydrogen in 6 groups, 382 rigid waters
+# UNNAMED-WARN: warning: elements: 1 particle of the type 'HC' has one bond and a mass of 3.024 amu, below 4.1 amu, but is taken for no element (none in the file, and neither below 1.2 amu nor named H below 4.1 amu), not hydrogen, so 'hydrogen_bonds = true' leaves its bond free; if it is a hydrogen, give the type 'HC' the atomic number 1 in an at.num column of [ atomtypes ]
+# UNNAMED-WARN-NOT: warning
 
 # Without the at.num column and without repartitioning, the hydrogens are
 # found by their masses, and nothing is wrong.
