@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <numeric>
 #include <random>
@@ -711,10 +712,44 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
   return result;
 }
 
+void mdir::tool::addSpansChoice(Object &choice, bool onDevice, bool trial) {
+  // Whether the runtime records spans (D[step-no-host-wait]): the value,
+  // unless MDRT_SPANS says otherwise or a variable that observes each
+  // launch turns them off. The record says which.
+  auto value = choice.getString("value");
+  bool on = onDevice && !trial && value && (*value == "SPANS" || *value == "GRAPH");
+  if (onDevice && !trial) {
+    const char *forced = std::getenv("MDRT_SPANS");
+    if (forced && *forced) {
+      on = std::strcmp(forced, "0") != 0;
+      choice["spans_reason"] = std::string("MDRT_SPANS=") + forced;
+    }
+    for (const char *observer : {"MDRT_WAIT", "MDRT_PROFILE", "MDRT_TRACE"})
+      if (on && std::getenv(observer)) {
+        on = false;
+        choice["spans_reason"] = std::string(observer) + " observes each launch";
+      }
+  }
+  choice["spans"] = on;
+}
+
 llvm::json::Object mdir::tool::initialStepGraphChoice(llvm::StringRef request,
-    llvm::StringRef refusal, size_t particles) {
+    llvm::StringRef refusal, size_t particles, bool given,
+    llvm::StringRef spansRefusal) {
   Object choice{{"requested", request.str()}, {"value", request.str()},
                 {"category", "setup trial"}, {"reason", "fixed choice"}};
+  // SPANS, the default, records the work between host boundaries and
+  // replays a sequence that repeats as a CUDA graph (D[step-no-host-wait]).
+  // Without the key it is a rule of the target; a given SPANS that the
+  // target refuses is an error of the caller.
+  if (request == "SPANS" && !given) {
+    choice["category"] = "rule";
+    choice["reason"] = spansRefusal.empty()
+                           ? "the default on the GPU target"
+                           : spansRefusal.str();
+    if (!spansRefusal.empty())
+      choice["value"] = "LAUNCH";
+  }
   if (request != "AUTO")
     return choice;
   // Smallest measured LAUNCH winner in the six-input RTX 4090 comparison.

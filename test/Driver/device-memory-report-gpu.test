@@ -26,6 +26,8 @@
 # CHECK: mdrt: the blocks of the pool {{-?[0-9.]+}} MiB {{[0-9.]+}} MiB {{[0-9]+}}
 # CHECK-NEXT: mdrt: the plans of cuFFT {{-?[0-9.]+}} MiB {{[0-9.]+}} MiB [[PLANS]]{{$}}
 # CHECK-NEXT: mdrt: the structures of the tuples {{-?[0-9.]+}} MiB {{[0-9.]+}} MiB {{[0-9]+}}
+# The executables of the recorded spans (D[step-no-host-wait]), asked for nothing.
+# CHECK-NEXT: mdrt: the graphs of spans {{-?[0-9.]+}} MiB 0.0 MiB {{[1-9][0-9]*}}
 # CHECK-NEXT: mdrt: device memory at the peak in use ({{[0-9.]+}} MiB), by tag and size:
 # CHECK-DAG: mdrt: in use {{[0-9.]+}} MiB {{[0-9]+}} x {{[0-9]+}} bytes groups: entries
 # CHECK-DAG: mdrt: in use {{[0-9.]+}} MiB {{[0-9]+}} x {{[0-9]+}} bytes compiled code

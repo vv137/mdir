@@ -43,7 +43,7 @@ llvm::Expected<std::string> mdir::tool::getExecutionPins(StringRef path) {
   if (file.bad()) return llvm::createStringError("cannot read manifest");
   auto *step = choices ? choices->getObject("step_graph") : nullptr;
   auto mode = step ? step->getString("value") : std::nullopt;
-  if (mode != "GRAPH" && mode != "LAUNCH")
+  if (mode != "GRAPH" && mode != "LAUNCH" && mode != "SPANS")
     return llvm::createStringError("latest manifest start has no resolved step_graph");
   std::string text;
   llvm::raw_string_ostream os(text);

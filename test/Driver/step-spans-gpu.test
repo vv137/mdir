@@ -1,0 +1,18 @@
+# REQUIRES: cuda, hdf5, h5py
+# The work between host boundaries recorded and replayed as CUDA graphs
+# (D[step-no-host-wait]): bitwise the launches one by one in the
+# deterministic mode, mixed and double, NVT and NPT.
+# RUN: rm -rf %t && mkdir %t
+# RUN: %h5md_python %S/Inputs/check_step_spans.py %S/Inputs/dipeptide %t mdir | FileCheck %s
+# CHECK: pin: SPANS
+# CHECK: mixed-nvt: bitwise
+# CHECK: mixed-npt: bitwise
+# CHECK: double-nvt: bitwise
+# CHECK: double-npt: bitwise
+# CHECK: no split: bitwise
+# CHECK: continuation: bitwise
+# CHECK: refused update: bitwise
+# CHECK: layout: bitwise
+# CHECK: unload: released
+# CHECK: small cache: bitwise
+# CHECK: groups: close

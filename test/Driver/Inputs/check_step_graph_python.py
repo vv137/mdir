@@ -26,3 +26,13 @@ except mdir.UnsupportedError as err:
     assert "step_graph" in str(err) and "GPU" in str(err)
 else:
     raise AssertionError("CPU execution accepted GRAPH")
+
+# SPANS records the work of `mdir run` between host boundaries
+# (D[step-no-host-wait]); a simulation of the Python interface refuses it.
+execution.step_graph = "SPANS"
+try:
+    mdir.compile(*args)
+except mdir.UnsupportedError as err:
+    assert "SPANS" in str(err) and "Python" in str(err), err
+else:
+    raise AssertionError("a Python simulation accepted SPANS")

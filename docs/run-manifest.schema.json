@@ -175,6 +175,7 @@
                 "requested": {
                   "enum": [
                     "LAUNCH",
+                    "SPANS",
                     "GRAPH",
                     "AUTO"
                   ]
@@ -182,6 +183,7 @@
                 "value": {
                   "enum": [
                     "LAUNCH",
+                    "SPANS",
                     "GRAPH"
                   ]
                 },
@@ -192,6 +194,12 @@
                   ]
                 },
                 "reason": {
+                  "type": "string"
+                },
+                "spans": {
+                  "type": "boolean"
+                },
+                "spans_reason": {
                   "type": "string"
                 },
                 "below_noise": {
@@ -266,6 +274,12 @@
               "additionalProperties": false,
               "oneOf": [
                 {"properties": {"category": {"const": "setup trial"}}},
+                {
+                  "properties": {
+                    "category": {"const": "rule"},
+                    "requested": {"const": "SPANS"}
+                  }
+                },
                 {
                   "properties": {
                     "category": {"const": "rule"},

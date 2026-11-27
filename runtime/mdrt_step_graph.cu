@@ -16,6 +16,8 @@ extern "C" void mdrtCountBuild();
 extern "C" int mdrtRetainFFTPlan(int64_t, int64_t, int64_t, int, int, const float *);
 extern "C" void mdrtReleaseFFTPlan(int);
 extern "C" void mdrtStopConstraintFailure(int64_t, int64_t);
+extern "C" void mdrtSpansFlush();
+extern "C" void mdrtSpansSuspend(int32_t);
 
 namespace {
 void ck(cudaError_t e, const char *what) {
@@ -222,6 +224,7 @@ extern "C" intptr_t mdrtStepBank(intptr_t handle, int64_t i, int64_t role) {
 
 extern "C" int32_t mdrtStepBegin(intptr_t handle, int64_t site, int64_t count,
                                  int64_t bindingCount, intptr_t data) {
+  mdrtSpansFlush();
   auto &c = *reinterpret_cast<Cache *>(handle);
   auto *table = reinterpret_cast<const int64_t *>(data);
   std::vector<void *> banks;
@@ -252,6 +255,8 @@ extern "C" int32_t mdrtStepBegin(intptr_t handle, int64_t site, int64_t count,
 
 extern "C" void mdrtStepCapture(intptr_t handle) {
   auto &c = *reinterpret_cast<Cache *>(handle);
+  // The launches of the capture reach the stream, not the record.
+  mdrtSpansSuspend(1);
   ck(cudaStreamBeginCapture(c.stream, cudaStreamCaptureModeThreadLocal), "begin drift");
 }
 
@@ -279,9 +284,12 @@ extern "C" void mdrtStepEnd(intptr_t handle) {
   ck(cudaStreamEndCapture(c.stream, &g.phases[g.capturing].force), "end guarded force and kick");
   if (++g.capturing < g.phases.size())
     ck(cudaStreamBeginCapture(c.stream, cudaStreamCaptureModeThreadLocal), "capture reverse bank roles");
+  else
+    mdrtSpansSuspend(0);
 }
 
 extern "C" void mdrtStepSeed(intptr_t handle, int64_t start, double initialTime, double dt) {
+  mdrtSpansFlush();
   auto &c = *reinterpret_cast<Cache *>(handle);
   Progress p{start, start, dt, initialTime, initialTime, 0, 0};
   ck(cudaMemcpyAsync(c.state, &p, sizeof(p), cudaMemcpyHostToDevice, c.stream), "restore checkpoint clock");
@@ -293,12 +301,14 @@ __global__ void acceptedBoundary(Progress *p) {
   p->time = p->originTime + double(p->accepted - p->origin) * p->dt;
 }
 extern "C" void mdrtStepBoundary(intptr_t handle) {
+  mdrtSpansFlush();
   auto &c = *reinterpret_cast<Cache *>(handle);
   acceptedBoundary<<<1,1,0,c.stream>>>(c.state);
   ck(cudaGetLastError(), "advance boundary step");
 }
 
 extern "C" int64_t mdrtStepRead(intptr_t handle, int64_t expected) {
+  mdrtSpansFlush();
   auto &c = *reinterpret_cast<Cache *>(handle);
   int64_t accepted = -1;
   ck(cudaMemcpyAsync(&accepted, &c.state->accepted, sizeof(accepted), cudaMemcpyDeviceToHost, c.stream),
@@ -313,6 +323,7 @@ extern "C" int64_t mdrtStepRead(intptr_t handle, int64_t expected) {
 }
 
 extern "C" int64_t mdrtStepRun(intptr_t handle, int64_t start, int64_t k) {
+  mdrtSpansFlush();
   auto &c = *reinterpret_cast<Cache *>(handle);
   auto &g = *c.current;
   g.published = 0;
@@ -361,6 +372,7 @@ extern "C" void mdrtStepCheck(intptr_t handle, int64_t accepted) {
   std::exit(1);
 }
 extern "C" void mdrtStepDestroy(intptr_t handle) {
+  mdrtSpansFlush();
   auto *c = reinterpret_cast<Cache *>(handle);
   for (auto &g : c->graphs) {
     for (auto &entry : g.ringExecs) ck(cudaGraphExecDestroy(entry.second), "release replay");
@@ -379,6 +391,7 @@ extern "C" void mdrtStepDestroy(intptr_t handle) {
 // Timers exist only during setup. Discard the first half of the chunks
 // after excluding graph construction, then pool elapsed time per step.
 extern "C" void mdrtStepTrialBegin() {
+  mdrtSpansFlush();
   if (!trial.start) {
     ck(cudaEventCreate(&trial.start), "create trial start");
     ck(cudaEventCreate(&trial.stop), "create trial end");
@@ -387,6 +400,7 @@ extern "C" void mdrtStepTrialBegin() {
   ck(cudaEventRecord(trial.start, mgpuStreamCreate()), "begin ordinary chunk trial");
 }
 extern "C" void mdrtStepTrialEnd(int64_t steps) {
+  mdrtSpansFlush();
   ck(cudaEventRecord(trial.stop, mgpuStreamCreate()), "end ordinary chunk trial");
   ck(cudaEventSynchronize(trial.stop), "wait for ordinary chunk trial");
   float ms;

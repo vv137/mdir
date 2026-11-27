@@ -391,9 +391,17 @@ HDF5 was built but does not test checkpoints, PME, constraints, or the
 stability of a user's system; use `mdir check FILE` and the test suite for
 those concerns.
 
-The `[execution] step_graph` key controls submission of the ordinary steps
-between coupling and output boundaries. The default, `"LAUNCH"`, submits
-each step's kernels from the host. `"GRAPH"` uses CUDA graph replay for
+The `[execution] step_graph` key controls how the host submits the work of
+the steps. The default, `"SPANS"`, records the launches, transforms, sets
+and flag events between two host boundaries (a wait of a flag, a copy, a
+change of stream, a growth of a structure) and issues them together at the
+boundary; a span whose kernels, grids and argument bytes repeat an earlier
+one is issued as the CUDA graph made at its second recording
+(D[step-no-host-wait]). The results are bitwise those of `"LAUNCH"`, which
+submits each kernel as it comes. On the CPU target the default resolves to
+`"LAUNCH"` (category `rule`), and a given `"SPANS"` is refused. The log ends
+with the counts of the spans. `MDRT_SPANS=0` turns them off for a
+comparison (docs/environment.md). `"GRAPH"` uses CUDA graph replay for
 constrained, fixed-cell TOWERS dynamics with velocity Verlet, Gaussian PME
 and V-rescale. On eligible inputs with at least 408,609 particles, `"AUTO"`
 selects LAUNCH before timing. The log and manifest record category `rule`
@@ -416,8 +424,9 @@ give the discarded warm chunks (`warm_s`) and retained ordinary chunks
 (`timed_s`). Construction chunks are excluded from both chunk totals.
 PTX, cubin and host object counts distinguish cache hits from compilation.
 `shared_lowering` indicates reuse of the other candidate’s common passes. Set `step_graph` to the
-record's `value` to pin that choice and skip the trial. Python exposes the
-same strings through `Execution.step_graph`. `mdir pin MANIFEST` prints
+record's `value` to pin that choice and skip the trial. Python exposes
+`LAUNCH`, `GRAPH` and `AUTO` through `Execution.step_graph` and refuses
+`SPANS`. `mdir pin MANIFEST` prints
 the latest invocation’s resolved `[execution]` keys as TOML, including
 the TOWERS shape when present and the step timings in a comment. Python's segmented simulations
 currently resolve AUTO to LAUNCH. See D439.

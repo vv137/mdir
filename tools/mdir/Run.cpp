@@ -627,6 +627,9 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   if (options.segments) graphRefusal = "GRAPH does not support segmented execution";
   if (control->stepGraph == "GRAPH" && !graphRefusal.empty())
     return fail("step_graph: " + graphRefusal);
+  if (control->stepGraph == "SPANS" && control->stepGraphGiven &&
+      !control->spansRefusal().empty())
+    return fail("step_graph: " + control->spansRefusal());
   InputPaths inputPaths = getManifestInputs(controlFile, *control, *system);
   if (!control->manifestFile.empty() && emit == Emit::Run) {
     auto hashes = hashManifestInputs(inputPaths);
@@ -896,7 +899,9 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     towersShapeReport = std::move(*shape);
   }
   auto graphChoice = initialStepGraphChoice(control->stepGraph, graphRefusal,
-                                            system->getNumParticles());
+                                            system->getNumParticles(),
+                                            control->stepGraphGiven,
+                                            control->spansRefusal());
   control->stepGraph = graphChoice.getString("value")->str();
   if (control->stepGraph == "AUTO") {
     auto start = std::chrono::steady_clock::now();
@@ -961,6 +966,8 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     }
   }
   graphChoice["value"] = control->stepGraph;
+  addSpansChoice(graphChoice, control->target == Target::GPU, trial != nullptr);
+  bool spansOn = *graphChoice.getBoolean("spans");
   std::string graphReport = llvm::formatv("{0}", llvm::json::Value(llvm::json::Object(graphChoice))).str();
   // The stored forces use the writer's strict pair predicate. Rebuild
   // them at the restored positions if the requested traversal or its
@@ -2263,9 +2270,21 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       distLog->finish();
     };
   }
+  // The work between host boundaries is recorded and a sequence that
+  // repeats is replayed as a CUDA graph (D[step-no-host-wait]).
+  // The choice, with the overrides of the environment, is spansOn.
+  bool spans = onDevice && spansOn;
+  using SpansEnable = void (*)(int32_t);
+  auto spansEnable = reinterpret_cast<SpansEnable>(
+      onDevice ? findRuntime("", "mdrtSpansEnable") : nullptr);
+  if (spansEnable)
+    spansEnable(spans);
+
   begin = std::chrono::steady_clock::now();
   output.lastCheckpoint = begin;
   compiled.entry(arguments.data());
+  if (spansEnable)
+    spansEnable(0);
   if (distLog) {
     output.finishDistribution();
   }
@@ -2375,6 +2394,24 @@ static int runControlImpl(StringRef controlFile, Emit emit,
                  "the memory of a warp holds, 256, and took their excluded "
                  "pairs from the rows\n",
                  static_cast<long long>(over));
+
+  // What the spans issued (D[step-no-host-wait]).
+  if (void *read = onDevice ? findRuntime("", "mdrtSpansCounts") : nullptr) {
+    int64_t counts[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+    reinterpret_cast<void (*)(int64_t *)>(read)(counts);
+    if (counts[0] + counts[1] + counts[8] > 0)
+      output.log.print(
+          "MDIR: spans: %lld issued as CUDA graphs and %lld as recorded, "
+          "%lld graphs made, %lld captures refused, %lld graphs released, "
+          "%lld kernel nodes updated, %lld updates refused; %lld kernels and "
+          "transforms recorded, %lld launches not recorded for their "
+          "arguments\n",
+          static_cast<long long>(counts[0]), static_cast<long long>(counts[1]),
+          static_cast<long long>(counts[2]), static_cast<long long>(counts[3]),
+          static_cast<long long>(counts[5]), static_cast<long long>(counts[6]),
+          static_cast<long long>(counts[7]), static_cast<long long>(counts[4]),
+          static_cast<long long>(counts[8]));
+  }
 
   // The runtime has counted the builds of the neighbor structures.
   if (auto count = compiled.lookup("mdrtGetBuildCount")) {
