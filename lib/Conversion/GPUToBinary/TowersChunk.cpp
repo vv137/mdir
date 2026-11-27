@@ -4,17 +4,91 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/IRMapping.h"
+#include "llvm/ADT/MapVector.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include <array>
+#include <functional>
 #include <set>
 
 using namespace mlir;
 namespace {
+// A value of the host that a captured kernel takes by value is fixed at
+// capture. The cell of a barostat is the one such value that changes
+// between chunks: the host keeps it in its own memory, loads it before each
+// chunk, and derives the launch arguments from it with pure arithmetic
+// (D[towers-graph-npt]). Each such argument gets a slot of a device mirror:
+// before each chunk the host computes the arguments from its memory, as
+// the launches of the step would, and writes them there on the stream; the
+// captured kernels read their slots instead of their arguments.
+struct Sink {
+  std::function<bool(Value)> isLeaf;
+  // The value that replaces a varying `v` in a kernel.
+  std::function<Value(OpBuilder &, Location, Value)> slot;
+  DenseMap<Value, bool> memo;
+
+  static bool pure(Operation *op) {
+    return op->getNumRegions() == 0 && isMemoryEffectFree(op) &&
+           isa<arith::ArithDialect, vector::VectorDialect, math::MathDialect>(op->getDialect());
+  }
+  bool varying(Value v) {
+    if (auto it = memo.find(v); it != memo.end()) return it->second;
+    bool result = isLeaf(v);
+    if (!result)
+      if (Operation *def = v.getDefiningOp(); def && pure(def))
+        result = llvm::any_of(def->getOperands(), [&](Value x) { return varying(x); });
+    return memo[v] = result;
+  }
+  // Replace each varying value that `region` takes from above.
+  void sink(Region &region, Location loc) {
+    llvm::SetVector<Value> used;
+    getUsedValuesDefinedAbove(region, used);
+    OpBuilder k(&region.front(), region.front().begin());
+    for (Value v : used) {
+      if (!varying(v)) continue;
+      Value inner = slot(k, loc, v);
+      v.replaceUsesWithIf(inner, [&](OpOperand &use) {
+        return region.isAncestor(use.getOwner()->getParentRegion());
+      });
+    }
+  }
+};
+
+// The words of a slot: 64 bits for each scalar of `type`.
+static int64_t slotWords(Type type) {
+  if (auto vec = dyn_cast<VectorType>(type)) return vec.getNumElements();
+  return 1;
+}
+static bool slotType(Type type) {
+  Type e = getElementTypeOrSelf(type);
+  if (auto vec = dyn_cast<VectorType>(type); vec && vec.getRank() != 1) return false;
+  return e.isIndex() || (e.isIntOrFloat() && e.getIntOrFloatBitWidth() <= 64 &&
+                         (e.isInteger() || e.isF32() || e.isF64()));
+}
+static Value toWord(OpBuilder &b, Location loc, Value x) {
+  Type t = x.getType(), i64 = b.getI64Type();
+  if (t.isIndex()) return arith::IndexCastOp::create(b, loc, i64, x);
+  if (t.isF64()) return arith::BitcastOp::create(b, loc, i64, x);
+  if (t.isF32()) x = arith::BitcastOp::create(b, loc, b.getI32Type(), x);
+  if (x.getType().getIntOrFloatBitWidth() < 64) return arith::ExtUIOp::create(b, loc, i64, x);
+  return x;
+}
+static Value fromWord(OpBuilder &b, Location loc, Value w, Type t) {
+  if (t.isIndex()) return arith::IndexCastOp::create(b, loc, t, w);
+  if (t.isF64()) return arith::BitcastOp::create(b, loc, t, w);
+  if (t.isF32())
+    return arith::BitcastOp::create(b, loc, t, arith::TruncIOp::create(b, loc, b.getI32Type(), w));
+  if (t.getIntOrFloatBitWidth() < 64) return arith::TruncIOp::create(b, loc, t, w);
+  return w;
+}
+
 struct Chunk {
   ModuleOp module;
   scf::ForOp loop;
@@ -27,6 +101,17 @@ struct Chunk {
   Value positions, certificate;
   gpu::GPUFuncOp finish;
   int64_t atoms;
+  // The device mirror of the cell's arguments that the chunk's kernels
+  // read (D[towers-graph-npt]), and how the host computes each slot.
+  static constexpr int64_t mirrorWords = 256;
+  Value mirror;
+  int64_t slots = 0;
+  DenseMap<Value, int64_t> slotOf;
+  SmallVector<std::function<LogicalResult(OpBuilder &, SmallVector<Value> &)>> producers;
+  Region *record = nullptr;
+  llvm::SmallDenseSet<Value> storedInLoop;
+  Sink cells;
+  int variants = 0;
 
   Chunk(ModuleOp mod, scf::ForOp loop, Value cache)
       : module(mod), loop(loop), b(loop), loc(loop.getLoc()), i64(b.getI64Type()),
@@ -40,6 +125,185 @@ struct Chunk {
   func::CallOp call(StringRef name, ValueRange args) {
     return func::CallOp::create(b, loc, module.lookupSymbol<func::FuncOp>(name), args);
   }
+  // Host memory whose loads make an argument varying: a small array of
+  // static shape defined before the chunk, which the chunk does not write.
+  bool hostCell(Value memory) {
+    auto type = dyn_cast<MemRefType>(memory.getType());
+    if (!type || !type.hasStaticShape() || type.getMemorySpace() || type.getNumElements() > 64)
+      return false;
+    return loop.isDefinedOutsideOfLoop(memory) && !storedInLoop.contains(memory);
+  }
+  Value mirrorMemory() {
+    if (mirror) return mirror;
+    Operation *outer = loop;
+    while (auto parent = outer->getParentOfType<scf::ForOp>()) outer = parent;
+    auto host = MemRefType::get({mirrorWords}, i64);
+    auto device = MemRefType::get({mirrorWords}, i64, MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
+    OpBuilder hoist(outer);
+    mirror = gpu::AllocOp::create(hoist, loc, device, Type(), ValueRange{}, ValueRange{},
+                                  ValueRange{}, false).getMemref();
+    hoist.setInsertionPointAfter(outer);
+    Value freed = memref::MemorySpaceCastOp::create(hoist, loc, host, mirror);
+    gpu::DeallocOp::create(hoist, loc, Type(), ValueRange{}, freed);
+    return mirror;
+  }
+  // The value of slot `base` of `type` in a kernel, from `memory`.
+  Value loadSlot(OpBuilder &k, Location at, Value memory, int64_t base, Type type) {
+    SmallVector<Value> parts;
+    Type e = getElementTypeOrSelf(type);
+    for (int64_t j = 0; j < slotWords(type); ++j) {
+      Value index = arith::ConstantIndexOp::create(k, at, base + j);
+      Value w = memref::LoadOp::create(k, at, memory, ValueRange{index});
+      parts.push_back(fromWord(k, at, w, e));
+    }
+    if (isa<VectorType>(type)) return vector::FromElementsOp::create(k, at, cast<VectorType>(type), parts);
+    return parts.front();
+  }
+  // Recompute `v` at the chunk site. Values defined in `inside` are cloned
+  // (pure ops, constants and loads of the host's cell); the others already
+  // dominate the site.
+  // An argument of the region's entry block is resolved by `argument`.
+  FailureOr<Value> recompute(OpBuilder &h, Value v, IRMapping &m, Region *inside,
+                             function_ref<FailureOr<Value>(BlockArgument)> argument = nullptr) {
+    if (Value done = m.lookupOrNull(v)) return done;
+    if (!inside->isAncestor(v.getParentRegion())) return v;
+    if (auto arg = dyn_cast<BlockArgument>(v); arg && argument && arg.getOwner() == &inside->front()) {
+      auto x = argument(arg);
+      if (succeeded(x)) m.map(v, *x);
+      return x;
+    }
+    Operation *def = v.getDefiningOp();
+    if (!def || !(Sink::pure(def) || def->hasTrait<OpTrait::ConstantLike>() ||
+                  (isa<memref::LoadOp>(def) && hostCell(cast<memref::LoadOp>(def).getMemref()))))
+      return failure();
+    for (Value x : def->getOperands())
+      if (failed(recompute(h, x, m, inside, argument))) return failure();
+    Operation *copy = h.clone(*def, m);
+    return copy->getResult(cast<OpResult>(v).getResultNumber());
+  }
+  // A slot for `v`, filled at the chunk site by `value`.
+  FailureOr<int64_t> addSlot(Type type, std::function<FailureOr<Value>(OpBuilder &)> value) {
+    if (!slotType(type) || slots + slotWords(type) > mirrorWords) return failure();
+    int64_t base = slots;
+    slots += slotWords(type);
+    producers.push_back([value](OpBuilder &h, SmallVector<Value> &words) -> LogicalResult {
+      auto x = value(h);
+      if (failed(x)) return failure();
+      Location at = x->getLoc();
+      if (auto vec = dyn_cast<VectorType>(x->getType()))
+        for (int64_t j = 0; j < vec.getNumElements(); ++j)
+          words.push_back(toWord(h, at, vector::ExtractOp::create(h, at, *x, j)));
+      else
+        words.push_back(toWord(h, at, *x));
+      return success();
+    });
+    return base;
+  }
+  bool slotFailed = false;
+  void initCells() {
+    loop.walk([&](memref::StoreOp st) { storedInLoop.insert(st.getMemref()); });
+    cells.isLeaf = [this](Value v) {
+      auto load = v.getDefiningOp<memref::LoadOp>();
+      return load && hostCell(load.getMemref());
+    };
+    cells.slot = [this](OpBuilder &k, Location at, Value v) -> Value {
+      auto it = slotOf.find(v);
+      if (it == slotOf.end()) {
+        auto base = addSlot(v.getType(), [this, v](OpBuilder &h) {
+          IRMapping m;
+          return recompute(h, v, m, record);
+        });
+        if (failed(base)) { slotFailed = true; return v; }
+        it = slotOf.insert({v, *base}).first;
+      }
+      return loadSlot(k, at, mirrorMemory(), it->second, v.getType());
+    };
+  }
+  // A non-pure op of the host outside the kernels must not take a varying
+  // value: what it computed at capture would be replayed.
+  LogicalResult checkHost(Region &region, Sink &sink, const llvm::SmallDenseSet<Operation *> &done) {
+    WalkResult r = region.walk<WalkOrder::PreOrder>([&](Operation *op) {
+      if (isa<gpu::LaunchOp>(op)) {
+        for (Value x : op->getOperands())
+          if (sink.varying(x)) {
+            op->emitError("step_graph: the cell sets a launch dimension in the TOWERS chunk");
+            return WalkResult::interrupt();
+          }
+        return WalkResult::skip();
+      }
+      if (Sink::pure(op) || done.contains(op)) return WalkResult::advance();
+      for (Value x : op->getOperands())
+        if (sink.varying(x)) {
+          op->emitError("step_graph: the cell reaches host work in the TOWERS chunk");
+          return WalkResult::interrupt();
+        }
+      return WalkResult::advance();
+    });
+    return failure(r.wasInterrupted());
+  }
+  // Each kernel of the clone reads its cell arguments from the mirror. A
+  // PME wrapper that takes the cell gets a variant whose kernels do the
+  // same; the host computes their slots through the wrapper's arithmetic.
+  LogicalResult sinkCells(Operation *clone, llvm::SmallDenseSet<Operation *> &done) {
+    if (auto launch = dyn_cast<gpu::LaunchFuncOp>(clone)) {
+      for (Value x : launch.getKernelOperands())
+        if (cells.varying(x))
+          return launch.emitError("step_graph: an outlined TOWERS kernel takes the cell by value");
+      return success();
+    }
+    if (auto call = dyn_cast<func::CallOp>(clone); call && call.getCallee().starts_with("mdrt_gpu_pme_")) {
+      llvm::SmallDenseSet<unsigned> taken;
+      for (auto [i, x] : llvm::enumerate(call.getArgOperands()))
+        if (cells.varying(x)) taken.insert(i);
+      if (taken.empty()) return success();
+      auto original = module.lookupSymbol<func::FuncOp>(call.getCallee());
+      auto variant = original.clone();
+      std::string name;
+      do name = (call.getCallee() + "_cell" + Twine(++variants)).str();
+      while (module.lookupSymbol(name));
+      variant.setSymName(name);
+      module.push_back(variant);
+      Value device = mirrorMemory();
+      unsigned n = variant.getNumArguments();
+      if (failed(variant.insertArgument(n, device.getType(), {}, loc))) return failure();
+      Value memory = variant.getArgument(n);
+      call.getArgOperandsMutable().append(device);
+      Region *body = &variant.getBody();
+      Sink local;
+      local.isLeaf = [&](Value v) {
+        auto arg = dyn_cast<BlockArgument>(v);
+        return arg && arg.getOwner() == &body->front() && taken.contains(arg.getArgNumber());
+      };
+      DenseMap<Value, int64_t> own;
+      local.slot = [&](OpBuilder &k, Location at, Value v) -> Value {
+        auto it = own.find(v);
+        if (it == own.end()) {
+          Operation *site = call;
+          auto base = addSlot(v.getType(), [this, v, site, body](OpBuilder &h) -> FailureOr<Value> {
+            // The wrapper's arguments are the call's operands, recomputed
+            // at the chunk site.
+            IRMapping m, outer;
+            return recompute(h, v, m, body, [&](BlockArgument arg) {
+              return recompute(h, site->getOperand(arg.getArgNumber()), outer, record);
+            });
+          });
+          if (failed(base)) { slotFailed = true; return v; }
+          it = own.insert({v, *base}).first;
+        }
+        return loadSlot(k, at, memory, it->second, v.getType());
+      };
+      variant.walk([&](gpu::LaunchOp launch) { local.sink(launch.getBody(), loc); });
+      if (slotFailed) return call.emitError("step_graph: the cell of a PME wrapper has no slot");
+      if (failed(checkHost(variant.getBody(), local, {}))) return failure();
+      call.setCallee(variant.getSymName());
+      done.insert(call);
+      return success();
+    }
+    clone->walk([&](gpu::LaunchOp launch) { cells.sink(launch.getBody(), loc); });
+    if (slotFailed) return clone->emitError("step_graph: a cell argument has no slot");
+    return success();
+  }
+
   LogicalResult examine() {
     if (!loop.getInductionVar().use_empty() || !matchPattern(loop.getLowerBound(), m_Zero()) ||
         !matchPattern(loop.getStep(), m_One()))
@@ -292,6 +556,9 @@ struct Chunk {
       }
     }
     Value fatal = call("mdrtStepFatalAddress", cache).getResult(0);
+    this->record = &record.getThenRegion();
+    initCells();
+    llvm::SmallDenseSet<Operation *> sunk;
     llvm::SmallDenseSet<Value> defined;
     bool drift = true;
     bool guardIntegration = false;
@@ -351,6 +618,7 @@ struct Chunk {
             }).wasInterrupted())
           continue;
       auto *clone = b.clone(op, map);
+      if (failed(sinkCells(clone, sunk))) return failure();
       // A kernel reads the most recent definition of each field and
       // writes into the proposal. Constraint kernels consume the
       // unconstrained fields produced by the preceding launch.
@@ -407,7 +675,25 @@ struct Chunk {
       return loop.emitError("step_graph: a side-stream window is not joined "
                             "within the step");
     call("mdrtStepEnd", cache);
+    if (failed(checkHost(record.getThenRegion(), cells, sunk))) return failure();
     b.setInsertionPointAfter(record);
+    // The host computes the cell's arguments of this chunk, as the step's
+    // launches would, and the graph reads them from the mirror.
+    if (slots) {
+      Value staging;
+      {
+        OpBuilder::InsertionGuard at(b);
+        b.setInsertionPointAfterValue(cache);
+        staging = memref::AllocaOp::create(b, loc, MemRefType::get({mirrorWords}, i64));
+      }
+      SmallVector<Value> words;
+      for (auto &produce : producers)
+        if (failed(produce(b, words)))
+          return loop.emitError("step_graph: the host cannot compute a cell argument at the chunk");
+      for (auto [i, w] : llvm::enumerate(words))
+        memref::StoreOp::create(b, loc, w, staging, ValueRange{arith::ConstantIndexOp::create(b, loc, i)});
+      call("mdrtStepMirror", {cache, address(mirror), address(staging), word(8 * slots)});
+    }
     Value accepted = call("mdrtStepRun", {cache,old.front(),k}).getResult(0);
     call("mdrtStepCheck", {cache, accepted});
     for (auto [st, prev] : llvm::zip(counts, old)) {
@@ -448,6 +734,7 @@ LogicalResult lowerTowersChunks(ModuleOp module, func::FuncOp fn, ArrayRef<scf::
   declare("mdrtStepEnd", 1, {});
   declare("mdrtStepRun", 3, i64);
   declare("mdrtStepCheck", 2, {});
+  declare("mdrtStepMirror", 4, {});
   auto seed = declare("mdrtStepSeed", 2, {}, 2);
   auto boundary = declare("mdrtStepBoundary", 1, {});
   auto read = declare("mdrtStepRead", 2, i64);

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 #include <unordered_map>
 #include <map>
@@ -93,6 +94,10 @@ struct Cache {
   std::unordered_map<void *, void *> partners;
   std::vector<void *> owned;
   std::vector<int> fftPlans;
+  // The last bytes written to each mirror of host memory.
+  std::unordered_map<void *, std::vector<char>> mirrored;
+  int64_t mirrorWrites = 0, chunks = 0;
+  size_t ownedBytes = 0;
   int failure = 0;
 };
 
@@ -175,6 +180,7 @@ static void *partner(Cache &c, void *src, size_t bytes) {
   c.partners.emplace(src, dst);
   c.partners.emplace(dst, src);
   c.owned.push_back(dst);
+  c.ownedBytes += bytes;
   return dst;
 }
 
@@ -328,6 +334,7 @@ extern "C" int64_t mdrtStepRun(intptr_t handle, int64_t start, int64_t k) {
   auto &g = *c.current;
   g.published = 0;
   if (!k) return start;
+  ++c.chunks;
   Progress p{};
   int64_t cursor = start;
   bool replay = false;
@@ -363,6 +370,42 @@ extern "C" int64_t mdrtStepRun(intptr_t handle, int64_t start, int64_t k) {
   return p.accepted;
 }
 
+// The kernels of a chunk read the arguments that the cell of a barostat sets
+// from a device mirror (D[towers-graph-npt]): the host computes them before
+// each chunk, and the words go by value in a launch on the graph's stream,
+// ahead of the chunk; unchanged words issue nothing.
+namespace {
+struct Words { uint32_t w[512]; };
+__global__ void mirrorWords(uint32_t *dst, Words words, int n) {
+  for (int i = threadIdx.x; i < n; i += blockDim.x) dst[i] = words.w[i];
+}
+}
+extern "C" void mdrtStepMirror(intptr_t handle, intptr_t device, intptr_t host, int64_t bytes) {
+  auto &c = *reinterpret_cast<Cache *>(handle);
+  if (bytes <= 0 || bytes > int64_t(sizeof(Words)) || bytes % 4) {
+    std::fprintf(stderr, "mdrt: TOWERS graph mirror of %lld bytes\n", (long long)bytes);
+    std::exit(1);
+  }
+  auto *dst = reinterpret_cast<void *>(device);
+  const char *src = reinterpret_cast<const char *>(host);
+  auto &last = c.mirrored[dst];
+  if (last.size() == size_t(bytes) && std::equal(last.begin(), last.end(), src)) return;
+  // A fault for the tests: keep the first cell, as a graph that baked it in
+  // would.
+  static const bool fault = [] {
+    const char *v = std::getenv("MDRT_STEP_MIRROR_FAULT");
+    return v && *v && *v != '0';
+  }();
+  if (fault && !last.empty()) return;
+  ++c.mirrorWrites;
+  last.assign(src, src + bytes);
+  mdrtSpansFlush();
+  Words words{};
+  std::memcpy(words.w, src, bytes);
+  mirrorWords<<<1, 128, 0, c.stream>>>(static_cast<uint32_t *>(dst), words, int(bytes / 4));
+  ck(cudaGetLastError(), "write the cell mirror");
+}
+
 extern "C" void mdrtStepCheck(intptr_t handle, int64_t accepted) {
   auto &c = *reinterpret_cast<Cache *>(handle);
   if (!c.failure) return;
@@ -374,6 +417,11 @@ extern "C" void mdrtStepCheck(intptr_t handle, int64_t accepted) {
 extern "C" void mdrtStepDestroy(intptr_t handle) {
   mdrtSpansFlush();
   auto *c = reinterpret_cast<Cache *>(handle);
+  if (c->chunks)
+    std::fprintf(stderr, "mdrt: TOWERS step graph: %zu chunk graphs, %lld chunks, %lld cell writes, "
+                 "%zu proposal banks of %.1f MiB\n",
+                 c->graphs.size(), (long long)c->chunks, (long long)c->mirrorWrites, c->owned.size(),
+                 c->ownedBytes / 1048576.0);
   for (auto &g : c->graphs) {
     for (auto &entry : g.ringExecs) ck(cudaGraphExecDestroy(entry.second), "release replay");
     for (auto &phase : g.phases) {

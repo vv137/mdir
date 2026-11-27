@@ -20,6 +20,7 @@ extern "C" void mdrtStepEnd(intptr_t);
 extern "C" int64_t mdrtStepRun(intptr_t, int64_t, int64_t);
 extern "C" int64_t mdrtStepRead(intptr_t, int64_t);
 extern "C" void mdrtStepDestroy(intptr_t);
+extern "C" void mdrtStepMirror(intptr_t, intptr_t, intptr_t, int64_t);
 
 static void ck(cudaError_t e) {
   if (e != cudaSuccess) {
@@ -28,16 +29,20 @@ static void ck(cudaError_t e) {
   }
 }
 
-__global__ void drift(const double *input, double *proposal, int mode, int *flag, const int *fatal) {
+// Mode 5 drifts by the cell that a mirror holds (D[towers-graph-npt]):
+// 1 for the first chunk and 2 after the host changes it.
+__global__ void drift(const double *input, double *proposal, int mode, int *flag, const int *fatal,
+                      const double *cell) {
   if (fatal && *fatal) return;
-  proposal[0] = input[0] + 1;
+  proposal[0] = input[0] + (mode == 5 ? *cell : 1);
   proposal[1] = mode == 2 && proposal[0] == 4 ? CUDART_INF : 0;
   proposal[2] = 0;
   *flag = mode == 1 && proposal[0] == 4;
 }
 __global__ void force(const double *proposal, int mode, int *status, int *calls, const int *fatal) {
   if (fatal && *fatal) return;
-  *status = proposal[0] == 4 && (mode == 3 || (mode == 4 && *calls == 3));
+  // Mode 5 rejects the first proposal after the cell changed, once.
+  *status = proposal[0] == 4 && (mode == 3 || (mode == 4 && *calls == 3) || (mode == 5 && *calls == 2));
   ++*calls;
 }
 __global__ void integrate(int *calls, const int *certificate, const int *fatal) {
@@ -53,6 +58,8 @@ static void trial(int mode) {
     ck(cudaMemsetAsync(ptr, 0, 3*sizeof(double), stream));
   }
   int *flags;
+  double *cell, host = 1;
+  ck(cudaMalloc(&cell, sizeof(double)));
   ck(cudaMalloc(&flags, 4*sizeof(int)));
   ck(cudaMemsetAsync(flags, 0, 4*sizeof(int), stream));
   constexpr int64_t restart = (int64_t(1) << 32) + 7;
@@ -67,7 +74,7 @@ static void trial(int mode) {
     for (int64_t i = 0; i < phases; ++i) {
       auto *input = reinterpret_cast<double *>(mdrtStepBank(cache,0,0));
       auto *proposal = reinterpret_cast<double *>(mdrtStepBank(cache,1,1));
-      drift<<<1,1,0,stream>>>(input,proposal,mode,flags,fatal);
+      drift<<<1,1,0,stream>>>(input,proposal,mode,flags,fatal,cell);
       mdrtStepDrift(cache,intptr_t(proposal),1,intptr_t(flags),0,0,0);
       force<<<1,1,0,stream>>>(proposal,mode,flags+1,flags+2,fatal);
       mdrtStepForce(cache,intptr_t(flags+1));
@@ -77,13 +84,17 @@ static void trial(int mode) {
     return true;
   };
   if (!capture()) std::exit(2);
+  mdrtStepMirror(cache, intptr_t(cell), intptr_t(&host), sizeof(host));
   int64_t accepted = mdrtStepRun(cache,restart,2);
   if (accepted != restart+2) std::exit(3);
   table[0] = mdrtStepBank(cache,0,2);
   table[3] = mdrtStepBank(cache,1,2);
   capture();
+  if (mode == 5) host = 2;
+  mdrtStepMirror(cache, intptr_t(cell), intptr_t(&host), sizeof(host));
   accepted = mdrtStepRun(cache,accepted,18);
   int expected = mode > 0 && mode < 4 ? 3 : 20;
+  double value = mode == 5 ? 2 + 2 * 18 : expected;
   if (mdrtStepRead(cache,restart+expected) != accepted) std::exit(4);
   int f[4];
   double result;
@@ -91,7 +102,7 @@ static void trial(int mode) {
   auto *published = reinterpret_cast<double *>(mdrtStepBank(cache,0,2));
   ck(cudaMemcpyAsync(&result,published,sizeof(result),cudaMemcpyDeviceToHost,stream));
   ck(cudaStreamSynchronize(stream));
-  if (result != expected || f[2] != expected + (mode == 3 ? 2 : mode == 4 ? 1 : 0) || f[3] != expected) {
+  if (result != value || f[2] != expected + (mode == 3 ? 2 : mode >= 4 ? 1 : 0) || f[3] != expected) {
     std::fprintf(stderr, "transaction mismatch: mode %d value %g force %d kick %d\n",
                  mode,result,f[2],f[3]);
     std::exit(5);
@@ -101,7 +112,8 @@ static void trial(int mode) {
   mdrtStepDestroy(cache);
   for (auto ptr : bank) ck(cudaFree(ptr));
   ck(cudaFree(flags));
+  ck(cudaFree(cell));
 }
 int main() {
-  for (int mode=0;mode<5;++mode) trial(mode);
+  for (int mode=0;mode<6;++mode) trial(mode);
 }

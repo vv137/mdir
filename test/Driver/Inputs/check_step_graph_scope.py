@@ -19,7 +19,6 @@ cases = [
     (prolate.replace("interval = 4", "interval = 1"), "Gaussian PME"),
     (base.replace(pme, "").replace('"PME"', '"CUTOFF"'), "Gaussian PME"),
     (base.replace('"VELOCITY_VERLET"', '"LEAPFROG"'), "velocity Verlet"),
-    (base.replace('"NVT"', '"NPT"') + '\n[barostat]\nmethod = "C-RESCALE"\n', "fixed cell"),
     (base.replace('"V-RESCALE"', '"NOSE-HOOVER"'), "V-rescale"),
     (base.replace("interval = 4", "interval = 1"), "no ordinary steps"),
 ]
@@ -33,3 +32,16 @@ for text, reason in cases:
             assert proc.returncode == 0, (reason, proc.stdout, proc.stderr)
             choice = json.loads(proc.stdout)["run"]["step_graph"]
             assert choice["value"] == "LAUNCH" and reason in choice["reason"], choice
+
+# A barostat is in scope (D[towers-graph-npt]): GRAPH is kept and AUTO is
+# left to its trial, in every coupling of the cell.
+for coupling in ("ISOTROPIC", "SEMI_ISOTROPIC", "ANISOTROPIC"):
+    npt = base.replace('"NVT"', '"NPT"') + f'\n[barostat]\nmethod = "C-RESCALE"\ncoupling = "{coupling}"\n'
+    for request in ("GRAPH", "AUTO"):
+        control.write_text(npt.replace('step_graph = "GRAPH"', f'step_graph = "{request}"'))
+        proc = subprocess.run([sys.argv[2], "check", "--json", str(control)], capture_output=True, text=True)
+        assert proc.returncode == 0, (coupling, request, proc.stdout, proc.stderr)
+        choice = json.loads(proc.stdout)["run"]["step_graph"]
+        assert choice["value"] == request, choice
+        if request == "AUTO":
+            assert choice["reason"] == "setup trial pending", choice

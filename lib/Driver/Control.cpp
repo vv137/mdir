@@ -3442,7 +3442,6 @@ StringRef mdir::driver::Control::stepGraphRefusal(size_t constraints) const {
   if (target != Target::GPU) return "GRAPH requires the GPU target";
   if (neighborStructure != NeighborStructure::Towers) return "GRAPH requires TOWERS";
   if (precision != Precision::Mixed) return "GRAPH requires mixed precision";
-  if (barostat) return "GRAPH requires a fixed cell";
   if (minimize || integrator != Integrator::VelocityVerlet) return "GRAPH requires velocity Verlet dynamics";
   if (!pme || pmeKernel != PMEKernel::Gaussian) return "GRAPH requires Gaussian PME";
   if (!thermostat || thermostatMethod != ThermostatMethod::VRescale) return "GRAPH requires V-rescale";
