@@ -1,4 +1,4 @@
-// The checked words of the deterministic distributed sums (D[distribute-driver]).
+// The checked words of the deterministic distributed sums (D447).
 // RUN: mlir-opt %s %lower_loops_to_llvm > %t
 // RUN: mlir-runner %t -e recover --entry-point-result=i64 --shared-libs=%mdrt | FileCheck %s
 // RUN: not --crash mlir-runner %t -e overflow --entry-point-result=i64 --shared-libs=%mdrt 2>&1 | FileCheck %s --check-prefix=RANGE

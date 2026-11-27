@@ -1,5 +1,5 @@
 # The fixed-point formats of the deterministic distributed sums, each fitted
-# to its quantity (D[distribute-driver]). Sum F^2/m of the kinetic
+# to its quantity (D447). Sum F^2/m of the kinetic
 # correction takes Q16 words: a liquid of argon with epsilon 250 times the
 # example's has a sum of more than 2^31 on each axis, beyond a Q32 word,
 # and runs; with a mass of 0.04 amu and epsilon 8000 times, the sum leaves
@@ -24,7 +24,7 @@
 # LIGHT: mdrt_dist: deterministic fixed-point sum of F^2/m (the kinetic correction) exceeds signed 64-bit range
 
 # The total energy adds the words of the potential and the kinetic energy
-# in Q33 (D[distribute-driver]): a kinetic energy between 2^30 and 2^31
+# in Q33 (D447): a kinetic energy between 2^30 and 2^31
 # kJ/mol fits its own Q32 sum but not the total, and the run stops.
 # RUN: sed -e '/^checkpoint/d' -e 's/= 100$/= 1/' -e 's/^temperature .*/temperature = 1.2e8/' start.toml > hot.toml
 # RUN: printf 'deterministic = true\n[distribute]\ndomains = [2, 1, 1]\n' >> hot.toml

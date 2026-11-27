@@ -35,7 +35,7 @@
 # RUN: | not mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s --check-prefix=JOINED
 #
 # A copy of the taken kind whose places are not consecutive particles: the
-# list reads a copy from the particle of its place 0 (D[water-layout]), so
+# list reads a copy from the particle of its place 0 (D446), so
 # the setup counts such copies on the host and the run stops.
 # RUN: mkdir -p %t/scattered
 # RUN: %mdir_python %S/Inputs/segments_coverage.py system growth %S/../Driver/Inputs %t/scattered 1

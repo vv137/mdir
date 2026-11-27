@@ -297,7 +297,7 @@ llvm::Error mdir::driver::resolveRigidUnits(Control &control,
     RigidGroups groups = findRigidGroups(topology);
     unsigned takenCount = 0;
     // Whether a kind is not taken for being scattered alone: a kind that
-    // the reasons of before D[water-layout] would have taken.
+    // the reasons of before D446 would have taken.
     bool scatteredAlone = false;
     std::vector<bool> inKind(topology.getNumParticles(), false);
     // Two or more particles, by count, then by first particle: the order
@@ -326,7 +326,7 @@ llvm::Error mdir::driver::resolveRigidUnits(Control &control,
                                      kind.outsideExclusions,
                                      plural(kind.outsideExclusions));
       else if (kind.scattered) {
-        // The list reads a copy from its first particle (D[water-layout]):
+        // The list reads a copy from its first particle (D446):
         // a kind with a molecule that is not of consecutive particles is
         // not taken, and its particles run as particles of the rest, an
         // automatic choice that the warning names.
@@ -342,7 +342,7 @@ llvm::Error mdir::driver::resolveRigidUnits(Control &control,
                              "consecutive particles in the input; the list "
                              "of units reads a copy from its first particle, "
                              "so the kind is not taken and its particles run "
-                             "as particles of the rest (D[water-layout])",
+                             "as particles of the rest (D446)",
                              entry.number, kind.scattered, entry.molecules)
                    .str()});
       }
@@ -405,7 +405,7 @@ llvm::Error mdir::driver::resolveRigidUnits(Control &control,
     if (on) {
       if (route.kinds.empty())
         return refuse("no rigid kind: the system has no rigid group (D403)");
-      // A refusal depends only on the reasons of before D[water-layout]:
+      // A refusal depends only on the reasons of before D446:
       // where no kind is taken but a kind is passed over for being
       // scattered alone, those reasons would have taken it, so the run
       // takes the general route, which runs every input, and says why. A

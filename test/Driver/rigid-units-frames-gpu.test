@@ -16,7 +16,7 @@
 # RUN: %mdir_python %S/Inputs/rigid_units_frames.py mixture %t/mixture/system.top %t/mixture/system.gro 3 10 --oracle | tee %t/mixture.txt | FileCheck %s -DS=mixture --check-prefixes=CHECK,ORACLE
 #
 # The same mixture with the site of the waters of four sites listed before
-# their frame (D[water-layout]): a copy is read from its first particle,
+# their frame (D446): a copy is read from its first particle,
 # and its frame atoms are its places 1 to 3. The oracle takes the site at
 # place 3, so the comparison is with the general route alone.
 # RUN: mkdir -p %t/site-first
@@ -25,7 +25,7 @@
 #
 # The mixture with an ion listed inside each water of four sites: that kind
 # is not of consecutive particles, so ON does not take it and its particles
-# run in the rest (D[water-layout]); the run must still agree with the
+# run in the rest (D446); the run must still agree with the
 # general route within the same bounds.
 # RUN: mkdir -p %t/scattered
 # RUN: %python %S/Inputs/kind_pairs_mixture.py %t/scattered scattered

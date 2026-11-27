@@ -95,7 +95,7 @@ struct Checkpoint {
   /// The differences of the fingerprint that `mdir run --continue --force`
   /// overrode in the parts of the run that led to this state, a line each
   /// ("part <n>: <group> <name>: <checkpoint> -> <control file>"); empty if
-  /// none (D[distribute-driver]).
+  /// none (D447).
   std::string forcedContinuations;
   /// The program that wrote the file: its version and commit.
   std::string creator = "MDIR";

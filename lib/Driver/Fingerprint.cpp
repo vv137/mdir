@@ -273,7 +273,7 @@ mdir::driver::getRunFingerprint(StringRef controlFile, const Control &control,
   // The execution choices of the "same accuracy" class (#790), which a
   // continuation may change as it may [execution] (D424).
   addTables("execution", {"performance"});
-  // [distribute] as resolved (D[distribute-driver]): a count of domains and
+  // [distribute] as resolved (D447): a count of domains and
   // the grid it chooses for the cell are one grid, and an omitted key is
   // its default. A continuation on another grid is a note; the
   // deterministic mode keeps its bits on any grid.

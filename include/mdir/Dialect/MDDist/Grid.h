@@ -2,7 +2,7 @@
 #define MDIR_DIALECT_MDDIST_GRID_H
 
 // The grid of domains that a count of domains chooses for a cell
-// (D[distribute-driver]).
+// (D447).
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"

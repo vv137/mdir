@@ -6833,7 +6833,7 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
   // The units of the taken kinds by rank, K - 1 first: the reference
   // particle is the anchor, the first frame atom; the value of `order` is
   // the particle of the copy's place 0, its places being consecutive
-  // particles (D[water-layout]).
+  // particles (D446).
   Neighbors structure;
   structure.segmented = std::make_shared<SegmentedState>();
   SegmentedState &units = *structure.segmented;
@@ -6855,7 +6855,7 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
                                                  ValueRange carried) {
       Value unit = arith::AddIOp::create(in, loc, first, c);
       // The places of a copy are consecutive particles from that of its
-      // place 0, which `order` holds (D[water-layout]); a copy whose
+      // place 0, which `order` holds (D446); a copy whose
       // places are not stops the run below.
       Value base = memref::LoadOp::create(
           in, loc, tuples[f], ValueRange{c, createIndex(in, loc, 0)});
@@ -7730,7 +7730,7 @@ Lowering::UnitFrameValues Lowering::emitUnitFrame(
   auto ix = [&](int64_t v) { return createIndex(at, loc, v); };
   UnitFrameValues values;
   // The places of a copy of a taken kind are consecutive particles from
-  // the one that `held` names (D[water-layout]).
+  // the one that `held` names (D446).
   for (unsigned k = 0; k != m; ++k)
     values.particles.push_back(
         kind == K ? index(held)
@@ -7959,7 +7959,7 @@ LogicalResult Lowering::lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op) {
     // A thread for each member of each place, M = the members of a unit at
     // most: thread M p + k takes member k of the unit at place p, so that
     // the frames are written in the order of the places, which the loops
-    // read (D[water-layout]). The thread of the anchor (k = 0) writes the
+    // read (D446). The thread of the anchor (k = 0) writes the
     // anchor and tests the reference point; the thread of member k >= 1
     // writes its offset and checks its extent. Three threads to a water
     // hide the latency of the loads that one thread a unit leaves exposed.
@@ -8072,7 +8072,7 @@ LogicalResult Lowering::lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op) {
       };
       // The particle of member `which` of a unit of taken kind `kind`:
       // `held` plus the place of frame atom `which`, since the places of a
-      // copy are consecutive particles (D[water-layout]).
+      // copy are consecutive particles (D446).
       auto memberOf = [&](OpBuilder &b, unsigned kind, Value which) -> Value {
         ArrayRef<int64_t> frame = type.getKind(kind).getFrame();
         Value which32 = arith::IndexCastOp::create(b, loc, i32, which);

@@ -882,7 +882,7 @@ before any domain writes the new epoch, and stops all of them. A
 transport of #828 keeps these three: a reduced bit for the branch, a
 reduced maximum for capacities, and an agreed failure.
 
-*The boundary with the driver.* D[distribute-driver] emits the CPU velocity Verlet loop
+*The boundary with the driver.* D447 emits the CPU velocity Verlet loop
 (#832). It builds, from the run's potential and integrator: the
 decomposition from `[distribute]` (`domains`, `transport`, `traversal`,
 Section 13); the state type of the integrator's per-particle state (for
@@ -1545,7 +1545,7 @@ a field computed from the positions
 
 ### Distribution statistics and restart boundaries
 
-D[distribute-driver] measures rows where the runtime builds each live halo.
+D447 measures rows where the runtime builds each live halo.
 The import size counts periodic images separately. Each copy or transpose
 scales its edge multiplicity by the actual field width in bytes. Rebuilding
 ownership counts incoming and outgoing identities once per change of owner.

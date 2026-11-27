@@ -747,7 +747,7 @@ forced_continuations          an attribute of /parameters/mdir, after
                               `mdir run --continue --force`: a line per
                               overridden entry, "part <n>: <group> <name>:
                               <checkpoint> -> <control file>", in the hash
-                              of the state (D[distribute-driver])
+                              of the state (D447)
 /parameters/mdir/free_energy_lambda  with [free_energy], the components of
                               the state of the run, with the attributes
                               free_energy (the states in one line) and
@@ -812,7 +812,7 @@ run, an entry each, in three groups:
 |---|---|
 | physics | Every key of `[energy]`, `[pme]`, `[lj_pme]`, `[constraints]`, `[restraints]`, `[boundary]`, and `[free_energy]` as the control file writes it, in a canonical form (keys sorted, a floating-point number as the shortest text of its double, so that `9` and `9.0` are one value, and an integer exactly: below $2^{53}$ in magnitude as the text of its double, from $2^{53}$ on with all its digits, D347, and a value that names a choice in its documented spelling, #702); SHA-256 of the contents of the files of the topology (Amber, GROMACS with its included files, CHARMM structure and parameters), of the masses, and of the reference of positional restraints |
 | coupling | Every key of `[dynamics]` but `steps`, and of `[ensemble]`, `[thermostat]`, and `[barostat]` |
-| execution | Every key of `[execution]`, and `pairlist_distance`, `pruned_distance`, and `rebuild_interval` of `[energy]`, which decide how the forces are found and not what they are; with `[distribute]`, its `traversal`, `transport`, and grid (`[distribute] domains`, three divisions) as resolved for the cell (D[distribute-driver]) |
+| execution | Every key of `[execution]`, and `pairlist_distance`, `pruned_distance`, and `rebuild_interval` of `[energy]`, which decide how the forces are found and not what they are; with `[distribute]`, its `traversal`, `transport`, and grid (`[distribute] domains`, three divisions) as resolved for the cell (D447) |
 
 A value longer than 160 characters is recorded as its SHA-256. The
 entries are the keys as written, not the values the driver resolves: a
@@ -886,7 +886,7 @@ mdir run --continue --max-walltime 23:50 md.toml
 | Option | What it does |
 |---|---|
 | `--continue` | Continues the run from the checkpoint of `[output]` until it has taken `steps` steps from the step it began at (D129). Without a checkpoint the run begins; with one that holds the last step it says that the run is complete and exits with 0. It refuses a checkpoint of other physics or coupling, naming each change (Section 2.6), and steps that remain if they are not whole intervals of the outputs and of the coupling. Raising `steps` extends a run. |
-| `--force` | With `--continue`, continues past the differences of the checkpoint's fingerprint that `--continue` refuses: another physics or coupling, whose forces and coupling state the run then evaluates at its first step as a run from `checkpoint` of `[input]` does, and in the deterministic mode a `[distribute]` added or dropped (Section 2.6). The log notes each difference it overrides, the start event of the manifest lists them in `forced_overrides`, and every checkpoint that follows records them in `/parameters/mdir/forced_continuations`, with those of earlier parts, which `mdir checkpoint` prints, so that a bug report shows them (D[distribute-driver]). Without `--continue` it is an error. |
+| `--force` | With `--continue`, continues past the differences of the checkpoint's fingerprint that `--continue` refuses: another physics or coupling, whose forces and coupling state the run then evaluates at its first step as a run from `checkpoint` of `[input]` does, and in the deterministic mode a `[distribute]` added or dropped (Section 2.6). The log notes each difference it overrides, the start event of the manifest lists them in `forced_overrides`, and every checkpoint that follows records them in `/parameters/mdir/forced_continuations`, with those of earlier parts, which `mdir checkpoint` prints, so that a bug report shows them (D447). Without `--continue` it is an error. |
 | `--no-append` | With `--continue`, writes the outputs that follow, the log, manifest, files of columns, and frames, to `<name>.partNNNN<ext>`, NNNN the part of the run; later continuations append to the files of that part, which the checkpoint records. Without it, the outputs are appended to the files of the run after what was written past the checkpoint is removed (D130, D149). A run without `--continue` keeps the outputs of an earlier run as `#<name>.<n>#` (Section 2.8). |
 | `--max-walltime <time>` | Stops at the last checkpoint that leaves time, within `<time>` from the start of `mdir`, for one more interval between checkpoints as long as the longest so far (D131). In hours (`23.5`) or as `H:MM[:SS]`. The stop waits for the write of its checkpoint, which the interval does not hold since the write runs beside the steps (D336): under a second on STMV. |
 
@@ -1707,7 +1707,7 @@ force. Compound terms accept declared `lambda_<name>` components through
 the existing lambda bindings, with forces, component derivatives, and
 state energy differences computed by the same differentiation path.
 
-### CPU spatial decomposition (D[distribute-driver])
+### CPU spatial decomposition (D447)
 
 ```toml
 [distribute]

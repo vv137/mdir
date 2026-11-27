@@ -239,7 +239,7 @@ void mdrtSegmentsStopExclusions(int64_t count) {
 }
 
 /* The copies of a taken rigid kind of a list of units are read as
-   consecutive particles, the places of each in order (D[water-layout]);
+   consecutive particles, the places of each in order (D446);
    `count` copies are not. The order of the state keeps each copy whose
    particles are consecutive in the input together, so this is a defect. */
 void mdrtSegmentsStopScattered(int64_t count) {

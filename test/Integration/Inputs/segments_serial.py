@@ -16,7 +16,7 @@ coordinates itself.
 
 The list: the units of each kind in groups of 16 places, a place of a taken
 kind holding the particle of its unit's first place, the places of a unit
-being consecutive particles (D[water-layout]); for each
+being consecutive particles (D446); for each
 segment (f, g), each group of kind f takes every unit of kind g that comes
 after its own (f = g) or every unit (f != g), 64 entries a unit of work,
 with the bit of each place whose unit pairs with the partner. Pairs of the

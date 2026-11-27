@@ -1046,7 +1046,7 @@ def MDAlg_TraversePairsOp : MDAlg_Op<"traverse_pairs", [
     segments, so `counts` holds the entries of each unit of work, at most
     64, and `units` its group; a place of a taken kind holds the particle of
     its unit's first place, and the unit's places are the particles that
-    follow it, stored whole about its anchor (D[water-layout]). `rotate(L)`, in the execution group, is the width of the
+    follow it, stored whole about its anchor (D446). `rotate(L)`, in the execution group, is the width of the
     rotation of the partners of the SIMT schedule (R4).
 
     ```mlir
@@ -1130,7 +1130,7 @@ def MDAlg_TraversePairsOp : MDAlg_Op<"traverse_pairs", [
     ::llvm::StringRef getExchangeOf(unsigned index);
     /// The number of buffers of the buffer form: 7, and 5 more with
     /// `inner`; over segments 1 more, `segments` (a place of a taken kind
-    /// names its unit's first particle, D[water-layout]).
+    /// names its unit's first particle, D446).
     unsigned getNumListBuffers() {
       return (getInner() ? 12 : 7) + (getSegments() ? 1 : 0);
     }

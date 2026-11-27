@@ -15,7 +15,7 @@ enum DistPhase {
   DistStep
 };
 /* The quantities of the fixed-point words of the deterministic mode
-   (D[distribute-driver]); a range error names its quantity. */
+   (D447); a range error names its quantity. */
 enum DistQuantity {
   DistPairEnergy,
   DistPairForce,

@@ -67,7 +67,7 @@ if sys.argv[1] == 'emit':
     system = System(top, gro, kinds.split(','))
     parts = read_dump(dump)
     # The places of a copy are consecutive particles from the one that its
-    # place in `order` holds (D[water-layout]).
+    # place in `order` holds (D446).
     counts = parts['counts'].tolist()
     if drop:
         counts[0] = 0

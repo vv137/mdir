@@ -18,7 +18,7 @@ D403 for the molecules of three Lennard-Jones atoms: `incomplete` drops
 their exclusions, `outside` gives each an ion of its own, not bonded to it,
 that it excludes. `ions` writes the ions alone, two of them: the only rigid
 kind is of one particle. Two variants change the order of the particles of
-the waters of four sites (D[water-layout]): `site-first` lists the site
+the waters of four sites (D446): `site-first` lists the site
 before its frame, so that the frame takes places 1 to 3 of a copy;
 `scattered` lists an ion of its own, not bonded to it and not excluded,
 between the second hydrogen and the site, so that the copy is not of

@@ -24,7 +24,7 @@ namespace driver {
 ///     [thermostat], and [barostat];
 ///   - execution: the keys of [execution] and of [performance], and with
 ///     [distribute] its traversal, its transport, and its grid as resolved
-///     for the cell (D[distribute-driver]).
+///     for the cell (D447).
 /// A value that names a choice is recorded in the spelling that the reader
 /// documents for it, whatever its case in the file (#702): `control` must be
 /// the control file read from `controlFile`, whose choiceSpellings say which

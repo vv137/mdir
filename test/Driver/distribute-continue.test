@@ -1,4 +1,4 @@
-# [distribute] in the fingerprint of a checkpoint (D[distribute-driver]):
+# [distribute] in the fingerprint of a checkpoint (D447):
 # its traversal, its transport, and its grid as resolved for the cell.
 # REQUIRES: hdf5
 # RUN: rm -rf %t && mkdir -p %t/first && cd %t/first

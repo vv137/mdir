@@ -192,7 +192,7 @@ struct RigidUnitsRoute {
     double largestViolation = 0.0, siteOffset = 0.0;
     /// The molecules not of consecutive particles in the input (D403's
     /// count); a kind with any is not taken, and its particles run in the
-    /// rest (D[water-layout]).
+    /// rest (D446).
     size_t scattered = 0;
   };
   /// Every rigid kind, in the order of their numbers.
@@ -849,7 +849,7 @@ struct Control {
   /// (D84).
   bool deterministic = false;
 
-  // [distribute] (D[distribute-driver]): the CPU velocity Verlet loop over
+  // [distribute] (D447): the CPU velocity Verlet loop over
   // spatial domains. Empty without the table, which selects the ordinary
   // driver.
   struct Distribution {

@@ -136,7 +136,7 @@ mlir::LogicalResult lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
 /// The buffers of a list of units (D417, D419), as the runtime holds them
 /// now: the order of the places as the traversal reads it (the particle
 /// of a unit's first place, the places of a copy of a taken kind being
-/// consecutive particles (D[water-layout]), or the particle of the rest),
+/// consecutive particles (D446), or the particle of the rest),
 /// their shifts, the records in the order of the segments (entries, masks,
 /// groups, counts), the first record of each segment, and the place where
 /// each rank begins (the
@@ -211,7 +211,7 @@ struct SerialLists {
   /// offsets of each segment's units of work, (K+1)(K+2)/2 + 1 of them. A
   /// place of a taken kind names the particle of its unit's first place,
   /// and the unit's places are the particles that follow it
-  /// (D[water-layout]).
+  /// (D446).
   mlir::Value segments;
   mlir::Value places, units;
   mlir::Value positions, cell;

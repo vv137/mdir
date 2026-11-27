@@ -1,5 +1,5 @@
 # Every refusal of a distributed run, each by a control file that differs
-# from an accepted one in the condition alone (D[distribute-driver]).
+# from an accepted one in the condition alone (D447).
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: sed -e 's|argon.pdb|%S/../../examples/argon/argon.pdb|' \
 # RUN:     -e 's/= 2000$/= 10/' -e 's/= 100$/= 5/' -e 's/= 16$/= 1/' \

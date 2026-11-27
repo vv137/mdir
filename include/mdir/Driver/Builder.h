@@ -91,7 +91,7 @@ private:
 /// so (D258): a caller may hand it the arrays below.
 struct Program {
   /// Whether the entry runs over the domains of [distribute], and their
-  /// divisions along x, y, and z (D[distribute-driver]).
+  /// divisions along x, y, and z (D447).
   bool distributed = false;
   std::array<int64_t, 3> domainGrid{1, 1, 1};
   /// The module, as text.
@@ -427,7 +427,7 @@ llvm::Expected<Program> buildProgram(const Control &control,
                                      const System &system,
                                      const BuildKept *kept = nullptr);
 
-/// The refusals of [distribute] that need the system (D[distribute-driver]):
+/// The refusals of [distribute] that need the system (D447):
 /// constraints, whose partners may lie in other domains, and a triclinic
 /// cell. buildProgram checks them as well.
 llvm::Error checkDistributedSystem(const Control &control,

@@ -107,7 +107,7 @@ llvm::Error mdir::driver::builder::serializeNativeProgram(Program &program,
     native->setAttr("md_dist.driver", mlir::UnitAttr::get(native.getContext()));
   else
     // The quantities of the sums are for the fixed-point formats of the
-    // domains (D[distribute-driver]); an ordinary module keeps its text.
+    // domains (D447); an ordinary module keeps its text.
     native.walk(
         [](mlir::Operation *op) { op->removeAttr("md_dist.quantity"); });
   std::string printed;

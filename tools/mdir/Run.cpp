@@ -665,7 +665,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
               change.after;
     return text;
   };
-  // The differences that `--continue --force` overrides (D[distribute-driver]):
+  // The differences that `--continue --force` overrides (D447):
   // the log notes them, the manifest and the new checkpoint record them.
   std::vector<FingerprintChange> forcedChanges;
   bool forcedRecompute = false;
@@ -692,7 +692,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       forcedRecompute = true;
     }
     // A deterministic distributed run gives the same bits on every grid,
-    // so --continue may take another (D[distribute-driver]); without
+    // so --continue may take another (D447); without
     // [distribute], or with it where the run had none, the sums are of
     // another arithmetic, and the run would not reproduce its uninterrupted
     // course, which a deterministic continuation promises.

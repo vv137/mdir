@@ -550,7 +550,7 @@ if mode == 'emit':
     if '--scatter-copy' in flags:
         # The first copy of the first kind with its last two places
         # exchanged: its places are no longer consecutive particles
-        # (D[water-layout]), which the setup must refuse.
+        # (D446), which the setup must refuse.
         model, tuples = kinds[0]
         tuples = np.array(tuples, copy=True)
         tuples[0][[-1, -2]] = tuples[0][[-2, -1]]
@@ -696,7 +696,7 @@ wbits, woff = (5, 16) if TRICLINIC else (4, 4)
 excluded_units = {(min(unit_of_rest[int(a)], unit_of_rest[int(b)]), max(unit_of_rest[int(a)], unit_of_rest[int(b)]))
                   for a, b in excluded if int(a) in unit_of_rest and int(b) in unit_of_rest}
 # The value of `order` of a copy: the particle of its first place, the
-# places of a copy being consecutive particles (D[water-layout]).
+# places of a copy being consecutive particles (D446).
 slot_of = {}
 for f, (model, tuples) in enumerate(kinds):
     for c, tup in enumerate(tuples):

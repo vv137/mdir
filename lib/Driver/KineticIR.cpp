@@ -37,7 +37,7 @@ private:
   VectorType vec;
 };
 /// Names the quantity of a sum for the words of the deterministic
-/// distributed mode, which fit their format to it (D[distribute-driver]).
+/// distributed mode, which fit their format to it (D447).
 void setQuantity(OpBuilder &builder, Operation *sum, StringRef quantity) {
   sum->setAttr("md_dist.quantity", builder.getStringAttr(quantity));
 }

@@ -149,7 +149,7 @@ struct Segments {
       unit.members.push_back(toIndex(at, slot));
     } else {
       // The place holds the particle of the copy's first place, and the
-      // places of a copy are consecutive particles (D[water-layout]).
+      // places of a copy are consecutive particles (D446).
       for (int64_t p : type.getKind(kind).getFrame().asArrayRef())
         unit.members.push_back(
             toIndex(at, arith::AddIOp::create(at, loc, slot, i32(at, p))));

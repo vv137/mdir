@@ -1250,7 +1250,7 @@ evaluation of the units differs from the general route's (by 0.32 kJ/mol on
 alanine dipeptide in OPC); `ON` warns there, with the largest violation and
 how far the sites move.
 
-**The layout by molecule** (D[water-layout]). The order of the state keeps
+**The layout by molecule** (D446). The order of the state keeps
 the particles of each copy of a rigid kind consecutive (Section 4.2), so
 a list of units holds no table of members: the place of a copy names the
 particle of the copy's place 0, and its place $p$ is the particle $p$ after

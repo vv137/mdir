@@ -1053,7 +1053,7 @@ the buffers of the groups. Over segments a group is the row of several
 segments, so `counts` holds the entries of each unit of work, at most
 64, and `units` its group; a place of a taken kind holds the particle of
 its unit's first place, and the unit's places are the particles that
-follow it, stored whole about its anchor (D[water-layout]). `rotate(L)`, in the execution group, is the width of the
+follow it, stored whole about its anchor (D446). `rotate(L)`, in the execution group, is the width of the
 rotation of the partners of the SIMT schedule (R4).
 
 ```mlir

@@ -1727,10 +1727,10 @@ For an orthorhombic box with edge lengths $L_i$, a Cartesian grid with
 $g_i$ divisions on each axis gives subdomains with volume
 $V_d=\prod_i(L_i/g_i)$. A boundary normal to axis $i$ has area
 $V_d g_i/L_i$. Thus at fixed domain count the minimum-area factorization
-minimizes $\sum_i g_i/L_i$. D[distribute-driver] uses the same geometric
+minimizes $\sum_i g_i/L_i$. D447 uses the same geometric
 criterion for an integer domain count as the potential rewrite.
 
-D[distribute-driver] stores the physical state in the original particle
+D447 stores the physical state in the original particle
 order at a step boundary. Restart reconstructs the partition and ghost
 images. In deterministic mode, each drift wraps the position into the
 primary cell before checking halo coverage. For each axis the pair loop

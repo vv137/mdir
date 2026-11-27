@@ -1,4 +1,4 @@
-"""Compare one distributed step with the ordinary CPU step (D[distribute-driver]).
+"""Compare one distributed step with the ordinary CPU step (D447).
 
 Usage: distribute_oracle.py ROOT CONTROL MDIR [--without-override]
 
@@ -53,7 +53,7 @@ an absolute floor (quantization and print), and is a bound, not an
 estimate: the largest ratio of a difference to its bound is printed.
 A doubled directed pair, a sign error in an image shift, or a wrong
 fixed-point scale changes a quantity by a fraction of S of order one, far
-outside it (the decision D[distribute-driver] records these trials).
+outside it (the decision D447 records these trials).
 """
 import re
 import shutil

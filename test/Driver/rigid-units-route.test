@@ -190,7 +190,7 @@
 # OUTSIDE: not taken: 2 molecules with an excluded pair outside the molecule
 #
 # The list of units reads a copy of a taken kind from its first particle,
-# its places being consecutive particles (D[water-layout]). A kind whose
+# its places being consecutive particles (D446). A kind whose
 # molecules are not consecutive in the input is not refused: it is not
 # taken, its particles run in the rest, and `mdir check` and the run warn.
 # The waters of four sites with an ion of their own listed between the
@@ -228,7 +228,7 @@
 # SCATTERED-AUTO: rigid units: AUTO: general
 # SCATTERED-AUTO-NOT: not of consecutive particles in the input
 #
-# A refusal under ON depends only on the reasons of before D[water-layout]:
+# A refusal under ON depends only on the reasons of before D446:
 # a scattered kind neither causes one nor hides one. Beside a kind refused
 # for its exclusions, the scattered waters, which `main` took, give the
 # general route, not a refusal. Waters that are scattered and also lack

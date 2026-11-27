@@ -335,7 +335,7 @@ struct Schedule {
 
   /// The particle of member `k` of the unit that a place holds (`held`, the
   /// particle of its first place, or the particle of the rest): the places
-  /// of a copy of a taken kind are consecutive particles (D[water-layout]),
+  /// of a copy of a taken kind are consecutive particles (D446),
   /// so member k is at `held` plus the place of frame atom k.
   Value memberParticle(OpBuilder &b, unsigned kind, Value held, unsigned k) {
     if (kind == K)
