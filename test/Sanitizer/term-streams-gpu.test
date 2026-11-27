@@ -1,0 +1,24 @@
+# D[concurrent-terms]: `term_streams = "TERMS"` under compute-sanitizer: the
+# NPT run of pme-side-gpu.test on examples/ala3, 20 steps in mixed
+# precision, with the reciprocal sums on the second stream and the loops
+# over tuples on the third, both forked before the loops over pairs and
+# issued after them. memcheck, racecheck and synccheck find nothing.
+#
+# REQUIRES: cuda, compute-sanitizer, hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/../../examples/ala3/ala3.prmtop %S/../../examples/ala3/ala3.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/pme-side-gpu.test | sed '1d;$d' > %t/run.toml
+# RUN: printf 'term_streams = "TERMS"\n' >> %t/run.toml
+# RUN: cd %t && env MDIR_PRINT_AFTER=md-exec-assign-streams mdir emit run.toml --stage=lowered 2>&1 >/dev/null | FileCheck %s --check-prefix=SIDE
+# RUN: cd %t && %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run run.toml 2>&1 | FileCheck %s
+# RUN: rm -f %t/out.h5 && cd %t && %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run run.toml 2>&1 | FileCheck %s --check-prefix=RACE
+# RUN: rm -f %t/out.h5 && cd %t && %compute_sanitizer --tool synccheck --error-exitcode 1 mdir run run.toml 2>&1 | FileCheck %s
+
+# SIDE: md_exec.fork 2
+# SIDE: md_exec.pair_for
+# SIDE: md_exec.lane = 2 : i64, md_exec.side
+# SIDE: md_exec.join
+
+# CHECK: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)
