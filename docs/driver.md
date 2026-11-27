@@ -1833,6 +1833,10 @@ particles and participate in the forward and reverse overlap exchanges.
 Each real pencil must cover the assignment overlap, and each transposed
 pencil must contain at least one line.
 
+For disjoint particle and PME ranks, use cyclic process placement when
+the launcher can spread the PME ranks evenly across the allocation.
+Keep the same thread binding within each node.
+
 The setup log gives the resolved pencil decomposition. The phase log
 times `pme_spread`, `pme_overlap` (outgoing charge and returning
 potential), `pme_fft` (local transforms), `pme_transpose`,
