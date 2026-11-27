@@ -267,7 +267,7 @@ SmallVector<Value> kernels::emitPairRowLanes(OpBuilder &builder,
                                              Value counts, Value index,
                                              Value box, Value inverse,
                                              Value central, int64_t width, Value imageShifts, Value imagePositions,
-                                             Value privateOut, Value rowOffset) {
+                                             Value privateOut, Value rowOffset, Value imageResiduals) {
   Location loc = op.getLoc();
   Value positions = op.getPositions();
   SmallVector<Value> insBuffers(op.getIns().begin(), op.getIns().end());
@@ -307,6 +307,9 @@ SmallVector<Value> kernels::emitPairRowLanes(OpBuilder &builder,
   if (imagePositions)
     centralPosition = loadElement(builder, loc, imagePositions, central);
   SmallVector<Value> centralParts = splatComponents(centralPosition);
+  SmallVector<Value> centralLow;
+  if (imageResiduals)
+    centralLow = splatComponents(loadElement(builder, loc, imageResiduals, central));
   SmallVector<Value> centralValues;
   for (Value buffer : insBuffers)
     centralValues.push_back(loadElement(builder, loc, buffer, central));
@@ -377,9 +380,16 @@ SmallVector<Value> kernels::emitPairRowLanes(OpBuilder &builder,
     SmallVector<Value> otherImages, d;
     if (imageShifts)
       otherImages = gather(imageShifts);
-    for (int64_t k = 0; k != 3; ++k)
-      d.push_back(pairDifference(b, loc, centralParts[k], otherPosition[k], computed,
-                                 imageShifts ? otherImages[k] : Value()));
+    if (imageResiduals) {
+      SmallVector<Value> otherLow = gather(imageResiduals);
+      for (int64_t k = 0; k != 3; ++k)
+        d.push_back(splitPairDifference(b, loc, centralParts[k], otherPosition[k],
+                                        centralLow[k], otherLow[k]));
+    } else {
+      for (int64_t k = 0; k != 3; ++k)
+        d.push_back(pairDifference(b, loc, centralParts[k], otherPosition[k], computed,
+                                   imageShifts ? otherImages[k] : Value()));
+    }
     if (op.getImages() != md_exec::Images::Explicit)
       emitLaneMinimumImage(b, loc, d, boxParts, inverseParts);
     Value r2;

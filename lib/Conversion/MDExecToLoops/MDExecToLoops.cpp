@@ -379,11 +379,29 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
   Value inverse = createInverse(builder, loc, box);
 
-  Value imageShifts, imagePositions;
+  Value imageShifts, imagePositions, imageResiduals;
   if (structure.domainMatrix && md_exec::hostpairs::getComputedType(op).isF32()) {
-    // Midpoint rows already carry explicit f64 images. Taking their
-    // difference before narrowing avoids cancellation in bonded liquids.
     imagePositions = structure.imagePositions;
+  }
+  if (imagePositions && structure.midpoint &&
+      !module->hasAttr(md_exec::algebra::kDeterministicAttrName)) {
+    // Preserve the low bits of each translated coordinate for close
+    // pairs. The row loop subtracts only binary32 values [Bowers2006].
+    Value rows = createSize(builder, loc, imagePositions);
+    auto type = MemRefType::get({ShapedType::kDynamic, 3}, builder.getF32Type());
+    Value leading = memref::AllocOp::create(builder, loc, type, ValueRange{rows});
+    imageResiduals = memref::AllocOp::create(builder, loc, type, ValueRange{rows});
+    scf::ParallelOp::create(builder, loc, ValueRange{createIndex(builder, loc, 0)},
+        ValueRange{rows}, ValueRange{createIndex(builder, loc, 1)},
+        [&](OpBuilder &at, Location, ValueRange ivs) {
+          Value position = loadElement(at, loc, imagePositions, ivs[0]);
+          Value high = convertReal(at, loc, position, at.getF32Type());
+          Value low = arith::SubFOp::create(at, loc, position,
+              convertReal(at, loc, high, at.getF64Type()));
+          storeElement(at, loc, high, leading, ivs[0]);
+          storeElement(at, loc, convertReal(at, loc, low, at.getF32Type()), imageResiduals, ivs[0]);
+        });
+    imagePositions = leading;
   }
   if (imagePositions && !structure.midpoint) {
     auto type = MemRefType::get({ShapedType::kDynamic, 3}, builder.getF64Type());
@@ -485,7 +503,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
               [&](OpBuilder &body, Location, Value row, ValueRange accum) {
                 auto values = emitPairRowLanes(body, op, structure.counts, entries,
                     box, inverse, centerRow(body, row), *hostLanes, imageShifts,
-                    imagePositions, scratch, offset);
+                    imagePositions, scratch, offset, imageResiduals);
                 for (auto [i, value] : llvm::enumerate(values))
                   values[i] = arith::AddFOp::create(body, loc, accum[i], value);
                 scf::YieldOp::create(body, loc, values);
@@ -516,10 +534,10 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
         auto emitRow = [&](OpBuilder &at) {
           if (hostLanes)
             return emitPairRowLanes(at, op, structure.counts, entries, box,
-                                    inverse, row, *hostLanes, imageShifts, imagePositions);
+                                    inverse, row, *hostLanes, imageShifts, imagePositions, {}, {}, imageResiduals);
           IRMapping local;
           return emitPairKernel(at, op, structure.counts, entries, box,
-                                inverse, row, local, nullptr, nullptr, nullptr, nullptr, imageShifts, imagePositions);
+                                inverse, row, local, nullptr, nullptr, nullptr, nullptr, imageShifts, imagePositions, imageResiduals);
         };
         SmallVector<Value> contributions;
         if (Value selected = op.getCenterSet()) {
@@ -559,10 +577,12 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
           createReduction(body, loc, contributions, /*isSum=*/true);
       });
 
-  if (imageShifts) {
+  if (imageShifts || imageResiduals)
     memref::DeallocOp::create(builder, loc, imagePositions);
+  if (imageShifts)
     memref::DeallocOp::create(builder, loc, imageShifts);
-  }
+  if (imageResiduals)
+    memref::DeallocOp::create(builder, loc, imageResiduals);
   for (unsigned i = 0, e = op.getNumResults(); i != e; ++i)
     op.getResult(i).replaceAllUsesWith(loop.getResult(i));
   return success();

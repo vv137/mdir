@@ -932,3 +932,10 @@ recipient's existing halo with room for the Verlet displacement bound.
 The tuple keeps its original member and image order. The transpose
 returns its force contributions to the physical owners.
 D[distribute-tuple-cost].
+
+In floating mixed midpoint force evaluation, the explicit-image
+coordinates have a leading binary32 part and a binary32 residual
+[Bowers2006]. Compensating the leading subtraction before adding the
+residual difference [Higham2002] preserves small relative displacements
+in bonded liquids. Midpoint ownership uses the original binary64
+coordinates. D[distribute-mixed-displacement].

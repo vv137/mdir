@@ -218,6 +218,15 @@ A. Bondi, "van der Waals volumes and radii," *J. Phys. Chem.* **68**,
 441–451 (1964).
 [doi:10.1021/j100785a001](https://doi.org/10.1021/j100785a001)
 
+### Bowers2006
+
+K. J. Bowers, E. Chow, H. Xu, et al., "Scalable algorithms for molecular
+dynamics simulations on commodity clusters," *Proceedings of the
+ACM/IEEE Conference on Supercomputing* (2006).
+[doi:10.1145/1188455.1188544](https://doi.org/10.1145/1188455.1188544)
+
+Used for: midpoint molecular dynamics and binary32 short-range numerics.
+
 ### BoxMuller1958
 
 G. E. P. Box, M. E. Muller, "A note on the generation of random normal

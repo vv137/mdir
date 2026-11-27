@@ -1689,3 +1689,10 @@ to the MPI transport size. The particle ranks perform spread and
 gather, and the reciprocal ranks execute the FFT and influence stages
 in the existing force schedule [Hess2008](references.md#hess2008).
 See [D[distribute-pme-rank-groups]](decisions/distribute-pme-rank-groups.md).
+
+Floating mixed midpoint pairs stage each explicit-image coordinate as
+two binary32 parts. The pair loop corrects the leading subtraction
+with both residual parts before squaring [Higham2002](references.md#higham2002)
+[Bowers2006](references.md#bowers2006). The membership filter keeps its
+binary64 geometry and fixed-point runs keep their original displacement
+arithmetic. See [D[distribute-mixed-displacement]](decisions/distribute-mixed-displacement.md).
