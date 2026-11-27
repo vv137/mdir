@@ -1388,14 +1388,20 @@ B-spline transform on each axis. D[prolate-axis-fft] uses the same tables betwee
 transforms for either assignment window. The double mesh uses binary64
 butterflies and cross phases. On observed steps the X pass accumulates the
 energy and six independent virials before scaling the coefficient. The
-setup log and manifest record the backend and reason. For mixed TOWERS on
-`sm_89`, the measured orthorhombic meshes for the original density with
-a six-point prolate window and for C2 with eight terms and order-four
-B-spline assignment are 30³ and 48³. The latter split also qualifies on
-105 × 60 × 60. AUTO uses the axis plan on these meshes and cuFFT on
-189 × 90 × 90. The override also permits measuring unqualified meshes and
-double precision. Unsupported lengths
-such as 188 (prime factor 47) keep cuFFT. The split bandwidth comes from `bandwidth` or the usual
+setup log and manifest record the backend and reason. AUTO uses the axis
+plan only for mixed TOWERS on `sm_89` with `continuity = 2`,
+`basis_terms = 8` and `window = "BSPLINE"` (four points), on the
+orthorhombic meshes where it was faster in both timing orders: 30³, 48³
+and 105 × 60 × 60. It keeps cuFFT on 189 × 90 × 90, where the axis plan
+was slower, and on every other mesh, split, precision or target, each
+with its reason. The prolate window (`window = "PROLATE"`, of any order)
+was not timed: AUTO keeps cuFFT for it, and
+`MDIR_PME_AXIS_FFT=on` selects the axis plan for it. A tilted cell keeps
+cuFFT under AUTO (`unqualified triclinic mesh`); the override runs the
+triclinic axis plan, which the tests compare with cuFFT. The automatic
+grids of the B-spline window are not in the list yet (#1003). The
+override also permits measuring unqualified meshes and double precision.
+Unsupported lengths such as 188 (prime factor 47) keep cuFFT. The split bandwidth comes from `bandwidth` or the usual
 `tolerance` rule. The initial automatic grid spacing is $\pi r_c/c$.
 The original aliasing refinement applies to the original density and
 prolate window. Gaussian inputs reject all three new keys. Prolate inputs

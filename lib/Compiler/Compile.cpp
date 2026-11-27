@@ -431,12 +431,11 @@ std::string mdir::compiler::getPipeline(const Control &control,
         !control.deterministic;
     os << "md-exec-assign-storage{memory=device";
     // D[prolate-axis-fft] qualifies the radial spectrum and assignment
-    // together. The storage pass checks the mesh of each evaluation.
-    bool measuredProlate =
-        (control.pmeContinuity == 2 && control.pmeBasisTerms == 8 &&
-         control.pmeWindow == "BSPLINE") ||
-        (control.pmeContinuity == 0 && control.pmeBasisTerms == 0 &&
-         control.pmeWindow == "PROLATE" && program.pmeOrder == 6);
+    // together. The storage pass checks the mesh of each evaluation. Only
+    // this split was timed; the prolate window keeps cuFFT under AUTO.
+    bool measuredProlate = control.pmeContinuity == 2 &&
+                           control.pmeBasisTerms == 8 &&
+                           control.pmeWindow == "BSPLINE";
     if (program.pmeProlate && fftChoice == "auto" &&
         !(measuredTarget && measuredProlate))
       os << " pme-axis-fft=auto-cufft";

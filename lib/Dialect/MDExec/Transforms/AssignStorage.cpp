@@ -1451,13 +1451,13 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   bool measuredCuFFT = false;
   if (op.getProlate()) {
     // D[prolate-axis-fft]. At setup the driver has already checked the
-    // target and density. Qualify the assignment and grid together.
+    // target and density. Qualify the assignment and grid together: only
+    // the four-point B-spline window was timed; the prolate window keeps
+    // cuFFT under AUTO.
     bool cubic = op.getSplineAssignment() && op.getOrder() == 4;
-    bool plain = !op.getSplineAssignment() && op.getOrder() == 6;
-    measuredMesh = ((cubic || plain) &&
-                    (grid == ArrayRef<int64_t>({30, 30, 30}) ||
-                     grid == ArrayRef<int64_t>({48, 48, 48}))) ||
-                   (cubic && grid == ArrayRef<int64_t>({105, 60, 60}));
+    measuredMesh = cubic && (grid == ArrayRef<int64_t>({30, 30, 30}) ||
+                             grid == ArrayRef<int64_t>({48, 48, 48}) ||
+                             grid == ArrayRef<int64_t>({105, 60, 60}));
     measuredCuFFT = cubic && grid == ArrayRef<int64_t>({189, 90, 90});
   }
   bool requestAxis = axisFFT == "on" || (axisFFT == "auto" && measuredMesh);
@@ -2738,7 +2738,8 @@ public:
     }
     if (axisFFT != "on" && axisFFT != "off" && axisFFT != "auto" &&
         axisFFT != "auto-cufft") {
-      getOperation().emitError("expected pme-axis-fft to be auto, on, or off");
+      getOperation().emitError(
+          "expected pme-axis-fft to be auto, auto-cufft, on, or off");
       return signalPassFailure();
     }
     if (tables != "f64" && tables != "f32") {
