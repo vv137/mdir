@@ -361,8 +361,11 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
      << "dyn-expand-couplings,md-bypass-updates,";
   if (control.distribution && !program.localUniquePairs) {
     os << "md-dist-owner-computes,";
+    // V-rescale uses an owned-row kinetic sum and a particle velocity map.
+    // Both can run inside the same fixed-cell epoch as the Verlet updates.
     if (program.domainGroupSteps && control.distribution->transport == "nccl" &&
-        !control.thermostat && program.skin > 0)
+        program.skin > 0 && (!control.thermostat ||
+          control.thermostatMethod == ThermostatMethod::VRescale))
       os << "md-distribute-driver-steps{group-skin=" << program.skin << "},";
     else if (!program.domainGroupSteps)
       os << (control.deterministic

@@ -1048,6 +1048,10 @@ forces, group corrections and constraint virials. Each group contributes
 on its common owner. The program combines scalar failure flags across
 ranks before continuing the integrator.
 
+V-rescale uses the kinetic sum over disjoint owned velocity rows to
+compute the common scaling factor. Scaling the velocities leaves the
+position reference and its halo valid until the next coverage test.
+
 The domain observable reduction gathers its partials in a single
 collective, then visits them in geometric domain order, including when
 placement permutes ranks. At a face rebuild the ranks exchange record

@@ -144,6 +144,11 @@ these local relations. Constraint failure flags are agreed across ranks
 and virial terms reduce per-domain partials. Only the live global fields
 consumed outside the packed loop are collected at its boundary.
 
+A V-rescale thermostat step uses the same coverage decision. Each domain
+sums kinetic energy over its owned velocities and applies the resulting
+global scale factor to those rows. Thermostat applications reuse the
+current halo and MATRIX while the positions remain covered.
+
 The disjoint solve and its output correction use the integrator's
 working precision. Narrowing this local correction in mixed mode loses
 accuracy for positions close to a periodic face. Bonded tuples retain
