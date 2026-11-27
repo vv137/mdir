@@ -2218,22 +2218,28 @@ void mdrtMPIExpandField(int64_t source, int64_t count, int64_t dest, int64_t wid
 }
 
 DistWide mdrtMPICombineWide(DistWide value) {
+  int peers = mdrtMPISize();
+  if (peers == 1) return mdrtDistAddWide(0,value);
+  DistWide *terms = malloc((size_t)peers*sizeof *terms);
+  if (!terms) fail("out of memory collecting observable words");
+  mdrtMPIGatherRankValue(&value,terms,1);
   DistWide total = 0;
-  for (int p = 0; p < mdrtMPISize(); ++p) {
-    DistWide term = value;
-    mdrtMPIBroadcastWords(&term,1,p);
-    total = mdrtDistAddWide(total,term);
-  }
+  for (int p = 0; p < peers; ++p)
+    total = mdrtDistAddWide(total,terms[p]);
+  free(terms);
   return total;
 }
 
 double mdrtMPICombineDouble(double value) {
+  int peers = mdrtMPISize();
+  if (peers == 1) return 0.0+value;
+  double *terms = malloc((size_t)peers*sizeof *terms);
+  if (!terms) fail("out of memory collecting observable values");
+  mdrtMPIGatherRankValue(&value,terms,0);
   double total = 0;
-  for (int p = 0; p < mdrtMPISize(); ++p) {
-    double term = value;
-    mdrtMPIBroadcast(&term,1,p);
-    total += term;
-  }
+  for (int p = 0; p < peers; ++p)
+    total += terms[p];
+  free(terms);
   return total;
 }
 

@@ -22,6 +22,7 @@ struct HaloRequests;
 struct HaloRequests *mdrtMPIStartHalo(void *send, const int *ns, const int *os,
     void *recv, const int *nr, const int *offsets, int words, int transpose);
 void mdrtMPIWaitHalo(struct HaloRequests *pending);
+void mdrtMPIGatherRankValue(const void *value, void *terms, int words);
 void mdrtMPIShareBlocks(void *values, const int *counts, const int *offsets, int words);
 void mdrtMPIExchange(void *send, int *sendCounts, int *sendOffsets,
                      void *recv, int *recvCounts, int *recvOffsets, int words);

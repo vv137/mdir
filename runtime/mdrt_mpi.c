@@ -152,6 +152,13 @@ void mdrtMPIBroadcast(double *values, int64_t count, int root) {
   }
 }
 
+/* Deliver one observable component per rank in communicator order. */
+void mdrtMPIGatherRankValue(const void *value, void *terms, int words) {
+  MPI_Datatype type = words ? wideWord : MPI_DOUBLE;
+  arrival();
+  MPI_Allgather(value, 1, type, terms, 1, type, comm);
+}
+
 // Each rank has already filled its contiguous interval in domain order.
 void mdrtMPIShareBlocks(void *values, const int *counts, const int *offsets, int words) {
   if (size == 1) return;

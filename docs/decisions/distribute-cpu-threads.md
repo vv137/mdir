@@ -211,3 +211,8 @@ Reporting consumers in a block share the complete view of each distinct
 native field. Several constraint relations can therefore read the same
 positions, velocities, or forces after a single interval collection per
 field. A new field value or a different execution block has its own view.
+
+Each reported native particle sum gathers one value per rank for each
+observable component in a single collective. The fold still visits
+ranks in communicator order, including the checked wide-word addition
+for a deterministic observable.

@@ -1454,3 +1454,8 @@ The constraint-group reporting sums can read the same full positions
 and velocities for several relations. When they reference the same
 immutable field value in one block, the first such use gathers its
 identity intervals. Subsequent sums reuse that complete view.
+
+A scalar component of a sharded particle observable previously required
+one broadcast per rank. An all-gather delivers the same rank-ordered
+sequence in one collective. Its floating and checked integer folds keep
+the original addition order on every rank.
