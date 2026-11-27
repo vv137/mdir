@@ -745,6 +745,7 @@ specification follow those made with it.
 | [D447](decisions/D447.md) | **The CPU control-file driver runs fixed-cell NVE velocity Verlet with finite-range pair terms over the domains of `[distribute]`, and in the deterministic mode reproduces the same bits on every grid.** The CPU control-file driver lowers the fixed-cell velocity Verlet program onto domains. | 2026-11-27 |
 | [D448](decisions/D448.md) | Recorded spans: the work that the host issues between two host boundaries is recorded and issued together, and a sequence that repeats is issued as a CUDA graph. `[execution] step_graph = "SPANS"`, the default on the GPU. | 2026-11-27 |
 | [D449](decisions/D449.md) | **The force terms of a step may run on three device streams, chosen by `[execution] term_streams`.** `SINGLE` (the default) issues every force term on one stream. | 2026-11-27 |
+| [D450](decisions/D450.md) | Graph replay of ordinary TOWERS steps (D439, `step_graph = "GRAPH"`) under stochastic cell rescaling. The kernels of a chunk read the arguments that the cell sets from a device mirror, which the host fills before each chunk. | 2026-11-28 |
 <!-- end decisions-table -->
 
 

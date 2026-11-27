@@ -405,7 +405,7 @@ comparison (docs/environment.md). `"GRAPH"` uses CUDA graph replay for
 constrained TOWERS dynamics with velocity Verlet, Gaussian PME and
 V-rescale, at a fixed cell or under stochastic cell rescaling: the kernels
 of a chunk read the launch arguments that the cell sets from a device
-mirror, which the host fills before each chunk (D[towers-graph-npt]). Its observations fall on the steps of `"LAUNCH"`, counted
+mirror, which the host fills before each chunk (D450). Its observations fall on the steps of `"LAUNCH"`, counted
 from the start step, also when a checkpoint is continued at a step that is
 not a multiple of an interval (#1014). On eligible inputs with at least 408,609 particles, `"AUTO"`
 selects LAUNCH before timing. The log and manifest record category `rule`

@@ -33,7 +33,7 @@ for text, reason in cases:
             choice = json.loads(proc.stdout)["run"]["step_graph"]
             assert choice["value"] == "LAUNCH" and reason in choice["reason"], choice
 
-# A barostat is in scope (D[towers-graph-npt]): GRAPH is kept and AUTO is
+# A barostat is in scope (D450): GRAPH is kept and AUTO is
 # left to its trial, in every coupling of the cell.
 for coupling in ("ISOTROPIC", "SEMI_ISOTROPIC", "ANISOTROPIC"):
     npt = base.replace('"NVT"', '"NPT"') + f'\n[barostat]\nmethod = "C-RESCALE"\ncoupling = "{coupling}"\n'

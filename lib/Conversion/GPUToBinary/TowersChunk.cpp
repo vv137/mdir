@@ -24,7 +24,7 @@ namespace {
 // capture. The cell of a barostat is the one such value that changes
 // between chunks: the host keeps it in its own memory, loads it before each
 // chunk, and derives the launch arguments from it with pure arithmetic
-// (D[towers-graph-npt]). Each such argument gets a slot of a device mirror:
+// (D450). Each such argument gets a slot of a device mirror:
 // before each chunk the host computes the arguments from its memory, as
 // the launches of the step would, and writes them there on the stream; the
 // captured kernels read their slots instead of their arguments.
@@ -102,7 +102,7 @@ struct Chunk {
   gpu::GPUFuncOp finish;
   int64_t atoms;
   // The device mirror of the cell's arguments that the chunk's kernels
-  // read (D[towers-graph-npt]), and how the host computes each slot.
+  // read (D450), and how the host computes each slot.
   static constexpr int64_t mirrorWords = 256;
   Value mirror;
   int64_t slots = 0;

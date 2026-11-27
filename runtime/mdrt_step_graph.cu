@@ -371,7 +371,7 @@ extern "C" int64_t mdrtStepRun(intptr_t handle, int64_t start, int64_t k) {
 }
 
 // The kernels of a chunk read the arguments that the cell of a barostat sets
-// from a device mirror (D[towers-graph-npt]): the host computes them before
+// from a device mirror (D450): the host computes them before
 // each chunk, and the words go by value in a launch on the graph's stream,
 // ahead of the chunk; unchanged words issue nothing.
 namespace {

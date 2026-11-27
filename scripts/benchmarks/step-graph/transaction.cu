@@ -29,7 +29,7 @@ static void ck(cudaError_t e) {
   }
 }
 
-// Mode 5 drifts by the cell that a mirror holds (D[towers-graph-npt]):
+// Mode 5 drifts by the cell that a mirror holds (D450):
 // 1 for the first chunk and 2 after the host changes it.
 __global__ void drift(const double *input, double *proposal, int mode, int *flag, const int *fatal,
                       const double *cell) {

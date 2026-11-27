@@ -1,4 +1,4 @@
-"""Graph replay of TOWERS steps under stochastic cell rescaling (D[towers-graph-npt]).
+"""Graph replay of TOWERS steps under stochastic cell rescaling (D450).
 
 The oracle is the same program submitted with LAUNCH. TOWERS has no
 deterministic mode, so the bound on GRAPH is ten times the spread of two

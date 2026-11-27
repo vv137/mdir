@@ -495,7 +495,7 @@ therefore gives every launch argument that the host derives from the cell
 a slot of a device mirror. Before each chunk the host computes those
 arguments from the current cell and writes them there on the graph's
 stream, and the captured kernels read their slots
-(D[towers-graph-npt]). Each kernel thus receives the bytes that its launch
+(D450). Each kernel thus receives the bytes that its launch
 would have passed at that cell. The TOWERS grid stays that of setup: in
 10,000 scalings of the suite's NPT inputs no bin count that setup would
 choose changed, and the faces kept at least 8.9% of width beyond the

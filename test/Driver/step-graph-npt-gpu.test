@@ -1,5 +1,5 @@
 # Graph replay of TOWERS steps under stochastic cell rescaling
-# (D[towers-graph-npt]): GRAPH against LAUNCH within ten times the LAUNCH
+# (D450): GRAPH against LAUNCH within ten times the LAUNCH
 # spread, isotropic, semi-isotropic, anisotropic and triclinic, and a
 # continuation; a stale cell (MDRT_STEP_MIRROR_FAULT) fails the bound; a
 # crushed cell stops the run.
