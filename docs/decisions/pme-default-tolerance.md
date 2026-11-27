@@ -73,3 +73,21 @@ energy from 20 ps on, in kcal/mol/ns, mean ± standard error:
 The spread between runs is larger at $5\times10^{-5}$; a run at constant
 energy that needs less takes `coulomb_modifier = "POTENTIAL_SHIFT"` or a
 smaller tolerance, as before.
+
+## Continuations
+
+The keys of a control file, and so the fingerprint of D172, are the same
+before and after a change of a default; the β of a run is not. A
+checkpoint therefore records what the run resolved, in a group `resolved`
+of its fingerprint: the Gaussian tolerance (where no β is given), β, the
+grid, and the traversal. A continuation, with `--continue` or as
+`checkpoint` of `[input]`, compares them with its own; a difference is a
+note in the log and `effective.resolved_changes` in the manifest (name,
+the checkpoint's value, the run's, and whether the checkpoint's was
+inferred), not a refusal, as #980 rules for `[distribute]`. The run uses
+its own values. A checkpoint written before the group took the defaults of
+its build: where its fingerprint has neither `[pme] tolerance` nor
+`[pme] beta`, its tolerance is $10^{-5}$ and β follows from the cutoff,
+and the note says that they are inferred. The group is written, hashed
+and read only where present, so that older checkpoints read and verify as
+before (`test/Driver/checkpoint-resolved.test`).

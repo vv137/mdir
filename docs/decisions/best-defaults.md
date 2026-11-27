@@ -8,12 +8,27 @@ input, and the rule of D261 otherwise.
 
 ## The rule
 
+**Device rules (the maintainer's ruling of 2026-11-27).** Feature and
+correctness rules (the MMA screen, shuffle widths, toolkit support) are
+keyed by architecture, the compute capability, and refuse or reroute.
+Performance thresholds are keyed by device model, each with its
+provenance: commit, systems, date. A model without a measured entry never
+borrows another model's threshold: it takes the conservative prior rule,
+logged in the log and the manifest with category `fallback` and the reason
+"unmeasured device", which points to `mdir tune` (#790) or a setup trial.
+Thresholds normalized per SM may come later as a category of their own,
+`derived`, once two models are measured. Moving the other performance
+rules of D420 to model keys is #969.
+
 The traversal table is a table of the device policies of D420, keyed by
-architecture like the others, with its value, its measurement basis and a
-fallback flag. Its one entry is sm_89: TOWERS from 4,608 particles. The
-default entry has no threshold, so every other architecture keeps D261,
-and the reason says that TOWERS was not measured as the choice of AUTO on
-that architecture.
+architecture and device model, with its value, its measurement basis and a
+fallback flag. Its one entry is the RTX 4090 (sm_89): TOWERS from 4,608
+particles, measured with `main` at 03506508 and this decision's branch on
+2026-11-27. The model is the name of the CUDA driver without "NVIDIA" and
+"GeForce" (`MDIR_DEVICE_MODEL` names another, for the tests). Any other
+model, of sm_89 (L4, L40) or of another architecture, takes the default
+entry, which has no threshold: it keeps D261, and the manifest records
+the choice as a `fallback`.
 
 Before the device is asked, the rule keeps D261 for an input that TOWERS
 does not take or that belongs to the list structures:

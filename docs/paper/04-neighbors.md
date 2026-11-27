@@ -1481,7 +1481,7 @@ term and its conversion vote.
 
 **The default.** `neighbor_structure = "AUTO"` takes TOWERS in `mdir run`
 where an entry of the device-rule table (D420) admits the input
-(D[best-defaults]). The entry is measured: on an RTX 4090 (sm_89), with the
+(D[best-defaults]). The entry is measured: on an RTX 4090 (sm_89; the entry is keyed by the device model), with the
 launch derived from the device limits and the frame's spans and no timed
 trial, TOWERS took 0.96 to 0.97 of the matrix's rate on a TIP3P box of
 3,072 atoms and 1.04 to 1.25 times the rate of the structure of Section

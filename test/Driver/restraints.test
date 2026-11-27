@@ -128,6 +128,7 @@ checkpoint = "min.h5"
 
 [output]
 energy_interval = 250
+
 # The energies of this test were pinned at this tolerance (the default
 # before D[pme-default-tolerance]).
 [pme]
