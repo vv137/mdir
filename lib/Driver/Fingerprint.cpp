@@ -1,6 +1,7 @@
 // What defined a run (D172).
 
 #include "mdir/Driver/Fingerprint.h"
+#include "mdir/Driver/Builder.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -311,6 +312,31 @@ mdir::driver::getRunFingerprint(StringRef controlFile, const Control &control,
                             std::tie(b.group, b.name);
                    });
   return fingerprint;
+}
+
+Fingerprint mdir::driver::getResolvedFingerprint(const Control &control,
+                                                 const Program &program) {
+  Fingerprint resolved;
+  auto printed = [](double value, int digits) {
+    char text[64];
+    std::snprintf(text, sizeof(text), "%.*g", digits, value);
+    return std::string(text);
+  };
+  auto add = [&](std::string name, std::string value) {
+    resolved.push_back({"resolved", std::move(name), std::move(value)});
+  };
+  bool gaussian = program.pme && !program.pmeProlate;
+  if (gaussian && control.pmeAlpha == 0.0)
+    add("[pme] tolerance", printed(control.pmeAlphaTolerance, 6));
+  if (gaussian) {
+    add("[pme] beta", printed(program.pmeBeta * units::length, 9));
+    add("[pme] grid", std::to_string(program.pmeGrid[0]) + " " +
+                          std::to_string(program.pmeGrid[1]) + " " +
+                          std::to_string(program.pmeGrid[2]));
+  }
+  add("[execution] neighbor_structure",
+      getNeighborStructureName(control.neighborStructure));
+  return resolved;
 }
 
 std::vector<FingerprintChange>

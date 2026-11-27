@@ -80,7 +80,8 @@ The keys of a control file, and so the fingerprint of D172, are the same
 before and after a change of a default; the β of a run is not. A
 checkpoint therefore records what the run resolved, in a group `resolved`
 of its fingerprint: the Gaussian tolerance (where no β is given), β, the
-grid, and the traversal. A continuation, with `--continue` or as
+grid, and the traversal, the same entries from `mdir run` and from Python
+(`getResolvedFingerprint`). A continuation, with `--continue` or as
 `checkpoint` of `[input]`, compares them with its own; a difference is a
 note in the log and `effective.resolved_changes` in the manifest (name,
 the checkpoint's value, the run's, and whether the checkpoint's was

@@ -1017,26 +1017,13 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // and so the rest of the fingerprint, stay the same.
   llvm::json::Array resolvedChanges;
   {
-    Fingerprint resolved;
+    Fingerprint resolved = getResolvedFingerprint(*control, *program);
+    bool gaussian = program->pme && !program->pmeProlate;
     auto printed = [](double value, int digits) {
       char text[64];
       std::snprintf(text, sizeof(text), "%.*g", digits, value);
       return std::string(text);
     };
-    auto addResolved = [&](std::string name, std::string value) {
-      resolved.push_back({"resolved", std::move(name), std::move(value)});
-    };
-    bool gaussian = program->pme && !program->pmeProlate;
-    if (gaussian && control->pmeAlpha == 0.0)
-      addResolved("[pme] tolerance", printed(control->pmeAlphaTolerance, 6));
-    if (gaussian) {
-      addResolved("[pme] beta", printed(program->pmeBeta * units::length, 9));
-      addResolved("[pme] grid", llvm::formatv("{0} {1} {2}", program->pmeGrid[0],
-                                              program->pmeGrid[1], program->pmeGrid[2])
-                                    .str());
-    }
-    addResolved("[execution] neighbor_structure",
-                getNeighborStructureName(control->neighborStructure));
     const Checkpoint *stored =
         own ? &*own : (isRestart && checkpoint ? &*checkpoint : nullptr);
     if (stored && !fingerprint.empty()) {

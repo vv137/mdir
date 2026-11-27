@@ -22,6 +22,8 @@
 # RUN: FileCheck %s --check-prefix=OLD < %t/continued.log
 # RUN: %python -c "import json; e = [json.loads(l) for l in open('%t/run.jsonl')][-2]['effective']; print(sorted((c['name'], c['checkpoint'], c['run'], c['inferred']) for c in e['resolved_changes']))" | FileCheck %s --check-prefix=OLDJSON
 #
+# RUN: %python %S/Inputs/manifest_schema.py %S/../../docs/run-manifest.schema.json %t/run.jsonl | FileCheck %s --check-prefix=SCHEMA
+#
 # A checkpoint of this build without keys, continued the same way: no note.
 # RUN: cd %t && rm -f state.h5 state.h5.prev run.jsonl && mdir run run.toml > new.log
 # RUN: cd %t && mdir run --continue more.toml > same.log
@@ -38,6 +40,7 @@
 # OLD-NEXT: [pme] tolerance: 1e-05 -> 5e-05
 # OLD-NEXT: [pme] beta: 0.347045919 -> 0.318640149
 # OLDJSON: [('[pme] beta', '0.347045919', '0.318640149', True), ('[pme] tolerance', '1e-05', '5e-05', True)]
+# SCHEMA: valid
 # SAME: INFO:
 # GIVEN: physics or coupling
 # GIVEN: MDIR: note: the run resolves other values than 'state.h5'; it runs with its own (checkpoint -> this run):

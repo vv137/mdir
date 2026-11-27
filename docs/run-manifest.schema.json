@@ -366,6 +366,7 @@
         "effective": {
           "type": "object",
           "properties": {
+            "resolved_changes": {"type": "array", "items": {"type": "object", "required": ["name", "checkpoint", "run", "inferred"], "properties": {"name": {"type": "string"}, "checkpoint": {"type": "string"}, "run": {"type": "string"}, "inferred": {"type": "boolean"}}, "additionalProperties": false}},
             "seed": {
               "type": "string",
               "pattern": "^[0-9]+$"

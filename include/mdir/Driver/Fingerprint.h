@@ -59,6 +59,15 @@ struct FingerprintChange {
   std::string after;
 };
 
+struct Program;
+
+/// The values that a run resolved from its keys and defaults, in the group
+/// "resolved" of the fingerprint (D[pme-default-tolerance]): the tolerance
+/// of Gaussian PME where no beta is given, beta and the grid, and the
+/// traversal. Every front end that writes checkpoints adds them.
+Fingerprint getResolvedFingerprint(const Control &control,
+                                   const Program &program);
+
 /// The entries of `group` that differ between `stored` and `current`, in
 /// the order of their names.
 std::vector<FingerprintChange>
