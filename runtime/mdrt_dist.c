@@ -116,7 +116,8 @@ struct Layout {
   double (*migratedPositions)[3];
   int32_t *groupCenters; /* center + 1; zero for a free atom */
 #ifdef MDIR_ENABLE_MPI
-  int64_t *migrantOffsets, *migrantIds; /* Old rank, then particle identity. */
+  // Indexed by sender rank. Within a sender and destination, IDs are ordered.
+  int64_t *migrantOffsets, *migrantIds;
 #endif
 #ifdef MDIR_ENABLE_NCCL
   struct OwnedTuplePlans *ownedTuplePlans;
@@ -128,7 +129,7 @@ struct Layout {
   int64_t *deviceFaces; /* Packed owner and direction bits by global identity. */
   int64_t *faceCounts;   /* Per owner and direction, updated from face deltas. */
   unsigned *localFaceMasks; /* Device snapshot in this epoch's owned order. */
-  int selfFaces, physicalEpoch;
+  int selfFaces, physicalEpoch, groupedDeviceEpoch;
   double faceReach;
   int *deviceMigrationMap;
   int *migrationCounts, *deviceExportRows;
@@ -1783,6 +1784,96 @@ static void borrowNumbering(struct Layout *old, struct Layout *next) {
   next->stride=old->stride;
 }
 
+static int64_t *exchangeEpochRoutes(const struct Layout *l, int64_t d,
+    int64_t *local, int64_t count, int64_t *offsets) {
+  struct FaceExchange *exchange = mdrtMPIBeginFaces(2 * count, offsets);
+  const int64_t *ids = l->ids + d * l->stride;
+  for (int64_t i = 0; i < count; ++i)
+    local[2 * i] = ids[local[2 * i]];
+  int64_t *records = mdrtMPIFinishFaces(exchange, local, offsets);
+  free(local);
+  return records;
+}
+
+static int64_t *groupedMigrationRoutes(struct Layout *l, struct Memref3D *x,
+    int64_t d, const double *edges, int64_t *offsets) {
+  int rows = l->rows[d];
+  size_t entries = (size_t)rows * 4;
+  int *members = malloc((entries ? entries : 1) * sizeof *members);
+  if (!members) fail("out of memory mapping constraint-group rows");
+  for (size_t r = 0; r < entries; ++r) members[r] = -1;
+  for (size_t g = 0; g < l->groupCount; ++g) {
+    const struct ConstraintGroup *group = &l->groups[g];
+    if (l->owner[group->atoms[0]] != d) continue;
+    int map[4] = {-1, -1, -1, -1};
+    for (int a = 0; a < group->size; ++a) {
+      int id = group->atoms[a];
+      if (l->owner[id] != d) fail("constraint group split before device migration");
+      map[a] = ownedRow(l, id);
+    }
+    for (int a = 0; a < group->size; ++a)
+      memcpy(members + 4LL * map[a], map, sizeof map);
+  }
+  int64_t count = 0;
+  int64_t *local = NULL;
+  if (rows) {
+    int *deviceMembers = mdrtNCCLUploadIndices(members, entries);
+    local = mdrtNCCLEpochRoutes(deviceRows(x, d, rows, 0), rows, d, l->domains,
+                               l->grid, edges, deviceMembers, NULL, 0, 0, &count);
+    mdrtNCCLFreePositions((double *)deviceMembers);
+  }
+  free(members);
+  return exchangeEpochRoutes(l, d, local, count, offsets);
+}
+
+static int64_t groupedDeviceMigration(struct Layout *old, struct Memref3D *x,
+    const double *edges, double reach, int64_t d) {
+  struct Layout *next = calloc(1, sizeof *next);
+  if (!next) fail("out of memory creating grouped device epoch");
+  next->references = 1;
+  next->mpi = old->mpi;
+  next->count = old->count;
+  next->domains = old->domains;
+  next->groupedDeviceEpoch = 1;
+  next->faceReach = reach;
+  memcpy(next->edges, edges, sizeof next->edges);
+  memcpy(next->grid, old->grid, sizeof next->grid);
+  next->groups = malloc(old->groupCount * sizeof *next->groups);
+  next->migrantOffsets = malloc((old->domains + 1) * sizeof *next->migrantOffsets);
+  if (!next->groups || !next->migrantOffsets)
+    fail("out of memory retaining group migration metadata");
+  memcpy(next->groups, old->groups, old->groupCount * sizeof *next->groups);
+  next->groupCount = old->groupCount;
+  int64_t *records = groupedMigrationRoutes(old, x, d, edges, next->migrantOffsets);
+  int64_t moved = next->migrantOffsets[old->domains] / 2;
+  for (int64_t p = 0; p <= old->domains; ++p) next->migrantOffsets[p] /= 2;
+  if (moved) {
+    next->owner = malloc(old->count * sizeof *next->owner);
+    next->migrantIds = malloc(moved * sizeof *next->migrantIds);
+    if (!next->owner || !next->migrantIds)
+      fail("out of memory numbering grouped migrant rows");
+    memcpy(next->owner, old->owner, old->count * sizeof *next->owner);
+    for (int64_t p = 0; p < old->domains; ++p) {
+      for (int64_t i = next->migrantOffsets[p]; i < next->migrantOffsets[p + 1]; ++i) {
+        int64_t id = records[2 * i], dest = records[2 * i + 1] >> 32;
+        next->migrantIds[i] = id;
+        next->owner[id] = dest;
+        if (observer) observer->migration(observer->context, old->owner[id], dest);
+      }
+    }
+    // Each sender's destination bucket is stable in identity order, the
+    // order used by that destination when receiving field payloads.
+    numberMigrantRows(old, next, moved);
+  } else {
+    borrowNumbering(old, next);
+    next->ownedTuplePlans = old->ownedTuplePlans;
+    if (next->ownedTuplePlans) ++next->ownedTuplePlans->references;
+  }
+  free(records);
+  if (tracing()) traceMigration(old, next);
+  return (int64_t)(intptr_t)next;
+}
+
 int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
     struct Memref3D *positions, double lx, double ly, double lz, double reach, int64_t pairOnly) {
   struct Layout *old = (void *)(intptr_t)oldHandle;
@@ -1820,6 +1911,13 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
     if (tracing()) traceMigration(old,next);
     return (int64_t)(intptr_t)next;
   }
+  int grouped = old->mpi && old->groupCount && old->domains > 1 &&
+                old->domains == mdrtMPISize() && old->domains <= 32 &&
+                old->count <= INT_MAX / old->domains;
+  for (int k = 0; k < 3; ++k)
+    grouped = grouped && edges[k] == old->edges[k] &&
+              isfinite(edges[k]) && reach > 0 && reach < edges[k];
+  if (grouped) return groupedDeviceMigration(old, positions, edges, reach, d);
   if (!eligible) {
     _mlir_ciface_mdrtDistHostRows(positions);
     return migrate(oldHandle,positions,lx,ly,lz,1);
@@ -1959,7 +2057,8 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
 void _mlir_ciface_mdrtDistEpochPositions(struct Memref3D *result,
     int64_t oldHandle, int64_t newHandle, struct Memref3D *source) {
   struct Layout *next=(void *)(intptr_t)newHandle;
-  if (!next->faceMasks && !next->selfFaces && !next->physicalEpoch) {
+  if (!next->faceMasks && !next->selfFaces && !next->physicalEpoch &&
+      !next->groupedDeviceEpoch) {
     _mlir_ciface_mdrtDistCreateField(result,next->domains,next->stride,3);
     _mlir_ciface_mdrtDistMigratedPositions(newHandle,result);
     return;
@@ -2235,15 +2334,8 @@ static int64_t finishHaloMetadata(struct Halo *h, struct GhostList *lists) {
   return (int64_t)(intptr_t)h;
 }
 
-int64_t _mlir_ciface_mdrtDistFinishHalo(int64_t handle, struct Memref3D *x) {
-  struct HaloBuild *build = (struct HaloBuild *)(intptr_t)handle;
-  struct Halo *h = build->halo;
-  struct Layout *l = h->layout;
-  struct GhostList *lists = build->lists;
-  int64_t domains = l->domains;
-  if (build->points != l->migratedPositions) free(build->points);
-  free(build->bins);
-  free(build);
+static void allocateHaloRows(struct Halo *h) {
+  int64_t domains = h->layout->domains;
   for (int64_t d = 0; d < domains; ++d)
     if (h->rows[d] > h->capacity) h->capacity = h->rows[d];
   int64_t cap = h->capacity > 0 ? h->capacity : 1;
@@ -2253,11 +2345,17 @@ int64_t _mlir_ciface_mdrtDistFinishHalo(int64_t handle, struct Memref3D *x) {
   h->ids = malloc(sizeof(int64_t) * domains * cap);
   h->image = malloc(sizeof(int64_t) * 3 * domains * cap);
   if (!h->sourceDomain || !h->sourceRow || !h->ids || !h->image)
-    fail("out of memory");
+    fail("out of memory allocating halo rows");
+}
+
+static int64_t finishHaloRows(struct Halo *h, struct GhostList *lists) {
+  struct Layout *l = h->layout;
+  int64_t domains = l->domains;
+  allocateHaloRows(h);
   for (int64_t d = 0; d < domains; ++d) {
     for (int64_t r = 0; r < h->rows[d]; ++r) {
       struct GhostRow *row = &lists[d].data[r];
-      int64_t g = d*cap+r, j = row->id;
+      int64_t g = d*h->capacity+r, j = row->id;
       h->ids[g] = j;
       h->sourceDomain[g] = l->owner[j];
       h->sourceRow[g] = ownedRow(l,j);
@@ -2268,7 +2366,104 @@ int64_t _mlir_ciface_mdrtDistFinishHalo(int64_t handle, struct Memref3D *x) {
   return finishHaloMetadata(h, lists);
 }
 
+int64_t _mlir_ciface_mdrtDistFinishHalo(int64_t handle, struct Memref3D *x) {
+  struct HaloBuild *build = (struct HaloBuild *)(intptr_t)handle;
+  struct Halo *h = build->halo;
+  struct GhostList *lists = build->lists;
+  if (build->points != h->layout->migratedPositions) free(build->points);
+  free(build->bins);
+  free(build);
+  return finishHaloRows(h, lists);
+}
+
 #ifdef MDIR_ENABLE_NCCL
+static int64_t buildGroupedDeviceHalo(struct Layout *l, struct Memref3D *x,
+                                      double reach, int physicalRows) {
+  enum { BoxWords = 6 * 27 };
+  int64_t d = mdrtMPIDomainBound(l->domains, 0), domains = l->domains;
+  struct Halo *h = calloc(1, sizeof *h);
+  struct GhostList *lists = calloc(domains, sizeof *lists);
+  double *boxes = malloc(2 * domains * BoxWords * sizeof *boxes);
+  int64_t *offsets = malloc((domains + 1) * sizeof *offsets);
+  if (!h || !lists || !boxes || !offsets)
+    fail("out of memory building grouped device halo");
+  h->references = 1;
+  h->layout = l;
+  h->reach = reach;
+  h->physicalRows = physicalRows;
+  h->rows = calloc(domains, sizeof *h->rows);
+  if (!h->rows) fail("out of memory counting grouped halo rows");
+  mdrtDistRetainLayout((int64_t)(intptr_t)l);
+
+  double localBoxes[BoxWords];
+  int rows = l->rows[d];
+  const double *positions = rows ? deviceRows(x, d, rows, 0) : NULL;
+  mdrtNCCLEpochBoxes(positions, rows, l->grid, l->edges, d, physicalRows, localBoxes);
+  double *rankBoxes = boxes + domains * BoxWords;
+  mdrtDistPhase(DistWait);
+  mdrtMPIAllGatherDoubles(localBoxes, rankBoxes, BoxWords);
+  mdrtDistPhase(-DistWait);
+  for (int64_t domain = 0; domain < domains; ++domain)
+    memcpy(boxes + domain * BoxWords,
+           rankBoxes + mdrtMPIOwner(domains, domain) * BoxWords, sizeof localBoxes);
+  int64_t count;
+  int64_t *local = mdrtNCCLEpochRoutes(positions, rows, d, domains, l->grid,
+                                      l->edges, NULL, boxes, reach, physicalRows, &count);
+  int64_t *records = exchangeEpochRoutes(l, d, local, count, offsets);
+  int64_t total = offsets[domains] / 2;
+  for (int64_t p = 0; p < domains; ++p) {
+    const double *region = boxes + p * BoxWords;
+    for (int k = 0; k < 3; ++k) {
+      double lo = INFINITY, hi = -INFINITY;
+      for (int b = 0; b < 27; ++b) {
+        lo = fmin(lo, region[6 * b + k]);
+        hi = fmax(hi, region[6 * b + k + 3]);
+      }
+      lists[p].lo[k] = lo;
+      lists[p].hi[k] = hi;
+    }
+  }
+  free(boxes);
+
+  // Retain the existing host metadata view for tuple and exclusion
+  // consumers. Stream the compact destination buckets into identity and
+  // image order without scanning any positions on the host.
+  size_t identities = l->count ? l->count : 1;
+  int64_t *heads = calloc(identities, sizeof *heads);
+  if (!heads) fail("out of memory indexing grouped halo records");
+  for (int64_t i = 0; i < total; ++i) {
+    int64_t id = records[2 * i];
+    int64_t dest = records[2 * i + 1] >> 32;
+    h->rows[dest] += __builtin_popcount((uint32_t)records[2 * i + 1]);
+    records[2 * i] = heads[id];
+    heads[id] = i + 1;
+  }
+  allocateHaloRows(h);
+  for (int64_t p = 0; p < domains; ++p)
+    offsets[p] = p * h->capacity;
+  for (int64_t id = 0; id < l->count; ++id)
+    for (int64_t link = heads[id]; link; link = records[2 * (link - 1)]) {
+      int64_t route = records[2 * (link - 1) + 1];
+      int64_t dest = route >> 32, owner = l->owner[id], row = ownedRow(l, id);
+      uint32_t mask = (uint32_t)route;
+      while (mask) {
+        int bit = __builtin_ctz(mask);
+        int64_t slot = offsets[dest]++;
+        h->ids[slot] = id;
+        h->sourceDomain[slot] = owner;
+        h->sourceRow[slot] = row;
+        h->image[3 * slot] = bit / 9 - 1;
+        h->image[3 * slot + 1] = bit / 3 % 3 - 1;
+        h->image[3 * slot + 2] = bit % 3 - 1;
+        mask &= mask - 1;
+      }
+    }
+  free(heads);
+  free(records);
+  free(offsets);
+  return finishHaloMetadata(h, lists);
+}
+
 struct FaceDestination {
   int64_t domain, image[3], count;
 };
@@ -2323,6 +2518,10 @@ static void buildPairFacePlan(struct Halo *h, struct FaceDestination *routes,
 
 int64_t _mlir_ciface_mdrtDistDeviceEpochHalo(int64_t layout, struct Memref3D *x, double reach) {
   struct Layout *l=(void *)(intptr_t)layout;
+  if (l->groupedDeviceEpoch) {
+    if (reach != l->faceReach) fail("grouped epoch belongs to a different halo reach");
+    return buildGroupedDeviceHalo(l, x, reach, 0);
+  }
   if (l->physicalEpoch) {
     if (reach!=l->faceReach) fail("local epoch belongs to a different halo reach");
     struct Halo *h=calloc(1,sizeof *h);
@@ -2478,6 +2677,13 @@ int64_t _mlir_ciface_mdrtDistPhysicalHalo(int64_t layout, struct Memref3D *x, do
 }
 
 int64_t _mlir_ciface_mdrtDistDevicePhysicalHalo(int64_t layout, struct Memref3D *x, double reach) {
+#ifdef MDIR_ENABLE_NCCL
+  struct Layout *l = (void *)(intptr_t)layout;
+  if (l->groupedDeviceEpoch) {
+    if (reach != l->faceReach) fail("grouped epoch belongs to a different halo reach");
+    return buildGroupedDeviceHalo(l, x, reach, 1);
+  }
+#endif
   return buildHalo(layout,x,reach,2,1);
 }
 

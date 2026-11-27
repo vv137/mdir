@@ -39,8 +39,12 @@ extern void mdrtDistPhase(int64_t phase);
 static void collectivePhase(int phase) {
   if (size > 1) mdrtDistPhase(phase);
 }
-void mdrtMPIGatherTimes(const double *send, double *recv, int count) {
+void mdrtMPIAllGatherDoubles(const double *send, double *recv, int count) {
   MPI_Allgather(send, count, MPI_DOUBLE, recv, count, MPI_DOUBLE, comm);
+}
+
+void mdrtMPIGatherTimes(const double *send, double *recv, int count) {
+  mdrtMPIAllGatherDoubles(send, recv, count);
 }
 
 int mdrtMPIMax(int value) {

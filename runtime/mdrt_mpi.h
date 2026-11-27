@@ -30,6 +30,7 @@ void mdrtMPIExchange(void *send, int *sendCounts, int *sendOffsets,
 int mdrtMPIAllTrue(int predicate);
 int mdrtMPIActive(void);
 void mdrtMPIGatherTimes(const double *send, double *recv, int count);
+void mdrtMPIAllGatherDoubles(const double *send, double *recv, int count);
 int mdrtMPIMax(int value);
 void mdrtMPIAbort(const char *reason);
 

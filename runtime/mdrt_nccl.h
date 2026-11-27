@@ -30,6 +30,9 @@ void mdrtNCCLHalo(const struct NCCLPlan *p, double *owned, int64_t nOwned,
 double *mdrtNCCLPackedRows(const struct NCCLPlan *plan, double *owned, int64_t rows, int k, int image);
 int64_t *mdrtNCCLFaceRecords(const double *positions, long long rows,
     int domain, const int64_t *grid, const double *length, double reach, const unsigned *previous, int64_t *count);
+void mdrtNCCLEpochBoxes(const double *, int, const int64_t *, const double *, int, int, double *);
+int64_t *mdrtNCCLEpochRoutes(const double *, int, int, int, const int64_t *,
+    const double *, const int *, const double *, double, int, int64_t *);
 void mdrtNCCLWrapRows(const double *source, double *target, long long rows,
                       const double *length);
 void mdrtNCCLWaitForRows(void *compute);

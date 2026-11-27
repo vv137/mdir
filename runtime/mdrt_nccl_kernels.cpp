@@ -3,7 +3,9 @@
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 #include <nvrtc.h>
+#include <algorithm>
 #include <cstdlib>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -55,6 +57,128 @@ extern "C" __global__ void reorder(const double *owned, const double *incoming,
                        : incoming[(-1LL-row)*width+i%width];
 }
 struct Box { double length[3]; int grid[3]; };
+struct HaloBox { double lo[3], hi[3]; };
+
+__device__ void extend(double *target, double value, bool lower) {
+  auto *bits = reinterpret_cast<unsigned long long *>(target);
+  auto old = atomicCAS(bits, 0ULL, 0ULL);
+  while (lower ? value < __longlong_as_double(old) : value > __longlong_as_double(old)) {
+    auto prior = atomicCAS(bits, old, __double_as_longlong(value));
+    if (prior == old) return;
+    old = prior;
+  }
+}
+
+__device__ void routePoint(const double *source, Box cell, double *point) {
+  for (int k = 0; k < 3; ++k) {
+    double value = source[k], length = cell.length[k];
+    point[k] = __dsub_rn(value, __dmul_rn(length, floor(__ddiv_rn(value, length))));
+  }
+}
+
+extern "C" __global__ void epochBoxes(const double *x, int rows, Box cell,
+    const HaloBox *grid, HaloBox *boxes, int physicalRows) {
+  __shared__ HaloBox tile[27];
+  const double infinity = __longlong_as_double(0x7ff0000000000000ULL);
+  int t = threadIdx.x;
+  if (t < 27)
+    for (int k = 0; k < 3; ++k) {
+      tile[t].lo[k] = infinity;
+      tile[t].hi[k] = -infinity;
+    }
+  __syncthreads();
+  int row = blockIdx.x * blockDim.x + t;
+  if (row < rows) {
+    const double *p = x + 3LL * row;
+    double geometry[3];
+    if (physicalRows) {
+      routePoint(p, cell, geometry);
+      p = geometry;
+    }
+    int key = 0;
+    for (int k = 0; k < 3; ++k) {
+      double delta = p[k] - 0.5 * (grid->lo[k] + grid->hi[k]);
+      double half = 0.5 * cell.length[k];
+      key = 3 * key + (delta < -half ? 0 : delta > half ? 2 : 1);
+    }
+    for (int k = 0; k < 3; ++k) {
+      extend(&tile[key].lo[k], p[k], true);
+      extend(&tile[key].hi[k], p[k], false);
+    }
+  }
+  __syncthreads();
+  if (t < 27 && tile[t].lo[0] <= tile[t].hi[0])
+    for (int k = 0; k < 3; ++k) {
+      extend(&boxes[t].lo[k], tile[t].lo[k], true);
+      extend(&boxes[t].hi[k], tile[t].hi[k], false);
+    }
+}
+
+__device__ unsigned haloImages(const double *x, Box cell, const HaloBox *boxes,
+                               double reach, int local) {
+  unsigned mask = 0;
+  double reach2 = reach * reach;
+  for (int b = 0; b < 27; ++b) {
+    const HaloBox &box = boxes[b];
+    if (box.lo[0] > box.hi[0]) continue;
+    int first[3], last[3];
+    for (int k = 0; k < 3; ++k) {
+      first[k] = x[k] - cell.length[k] >= box.lo[k] - reach ? -1
+                 : x[k] >= box.lo[k] - reach ? 0 : 1;
+      last[k] = x[k] + cell.length[k] <= box.hi[k] + reach ? 1
+                : x[k] <= box.hi[k] + reach ? 0 : -1;
+    }
+    for (int a = first[0]; a <= last[0]; ++a)
+      for (int c = first[1]; c <= last[1]; ++c)
+        for (int d = first[2]; d <= last[2]; ++d) {
+          if (local && !a && !c && !d) continue;
+          int shifts[] = {a, c, d};
+          double distance[3];
+          for (int k = 0; k < 3; ++k) {
+            double p = __dadd_rn(x[k], __dmul_rn(shifts[k], cell.length[k]));
+            distance[k] = p < box.lo[k] ? box.lo[k] - p
+                          : p > box.hi[k] ? p - box.hi[k] : 0.0;
+          }
+          double xy = __dadd_rn(__dmul_rn(distance[0], distance[0]),
+                               __dmul_rn(distance[1], distance[1]));
+          if (__dadd_rn(xy, __dmul_rn(distance[2], distance[2])) < reach2)
+            mask |= 1U << ((a + 1) * 9 + (c + 1) * 3 + d + 1);
+        }
+  }
+  return mask;
+}
+
+extern "C" __global__ void epochOwners(const double *x, int rows, Box box,
+    const int *members, int *owners, int *bad) {
+  int row = blockIdx.x * blockDim.x + threadIdx.x;
+  if (row >= rows) return;
+  const int *group = members + 4LL * row;
+  int center = group[0] < 0 ? row : group[0];
+  int owner = 0;
+  for (int k = 2; k >= 0; --k) {
+    double length = box.length[k], origin = x[3LL * center + k], sum = 0;
+    if (!isfinite(x[3LL * row + k] / length)) {
+      atomicExch(bad, 1);
+      return;
+    }
+    int count = 1;
+    for (int atom = 1; atom < 4 && group[atom] >= 0; ++atom) {
+      double delta = x[3LL * group[atom] + k] - origin;
+      double image = floor(__dadd_rn(__ddiv_rn(delta, length), 0.5));
+      sum += __dsub_rn(delta, __dmul_rn(length, image));
+      ++count;
+    }
+    double fraction = __ddiv_rn(origin + __ddiv_rn(sum, count), length);
+    if (!isfinite(fraction)) {
+      atomicExch(bad, 1);
+      return;
+    }
+    int divisions = box.grid[k];
+    int part = (int)floor((fraction - floor(fraction)) * divisions);
+    owner = owner * divisions + max(0, min(divisions - 1, part));
+  }
+  owners[row] = owner;
+}
 __device__ unsigned faceMask(const double lower[3], const double upper[3], double reach) {
   unsigned mask=0;
   // With a cell wider than two reaches only immediate neighbors qualify.
@@ -85,6 +209,66 @@ __device__ int prefix(int count, int *warps) {
   int first=total-count;
   for (int w=0; w<warp; ++w) first+=warps[w];
   return first;
+}
+
+// One radix digit is the destination. The same stable scatter handles
+// migrating rows and the periodic image masks of halo rows.
+extern "C" __global__ void epochRoutes(const double *x, int rows, Box box,
+    const HaloBox *boxes, double reach, const int *owners, int local, int physicalRows,
+    unsigned *masks, int *tiles, const int *offsets, long long *records) {
+  int row = blockIdx.x * blockDim.x + threadIdx.x;
+  int dest = blockIdx.y;
+  long long slot = (long long)dest * rows + row;
+  unsigned mask = 0;
+  if (row < rows) {
+    if (records) mask = masks[slot];
+    else if (owners) mask = dest != local && owners[row] == dest;
+    else if (physicalRows && dest != local) {
+      double point[3];
+      routePoint(x + 3LL * row, box, point);
+      // Any qualifying periodic image selects the one unshifted foreign row.
+      mask = haloImages(point, box, boxes + 27LL * dest, reach, 0) ? 1U << 13 : 0;
+    } else if (!physicalRows) {
+      mask = haloImages(x + 3LL * row, box, boxes + 27LL * dest, reach, dest == local);
+    }
+  }
+  __shared__ int warps[8];
+  int position = prefix(mask != 0, warps);
+  long long tile = (long long)dest * gridDim.x + blockIdx.x;
+  if (!records) {
+    if (row < rows) masks[slot] = mask;
+    if (threadIdx.x == 255) tiles[tile] = position + (mask != 0);
+  } else if (mask) {
+    long long out = offsets[dest] + tiles[tile] + position;
+    records[2 * out] = row;
+    records[2 * out + 1] = ((long long)dest << 32) | mask;
+  }
+}
+
+extern "C" __global__ void epochOffsets(int *tiles, int n, int *counts) {
+  int dest = blockIdx.x;
+  __shared__ int warps[8], chunk;
+  int total = 0;
+  for (int first = 0; first < n; first += 256) {
+    int t = first + threadIdx.x;
+    int *column = tiles + (long long)dest * n;
+    int count = t < n ? column[t] : 0;
+    int offset = prefix(count, warps);
+    if (t < n) column[t] = total + offset;
+    if (threadIdx.x == 255) chunk = offset + count;
+    __syncthreads();
+    total += chunk;
+    __syncthreads();
+  }
+  if (threadIdx.x == 0) counts[dest] = total;
+}
+
+extern "C" __global__ void epochBuckets(const int *counts, int n, int *offsets) {
+  __shared__ int warps[8];
+  int d = threadIdx.x;
+  int count = d < n ? counts[d] : 0;
+  int first = prefix(count, warps);
+  if (d <= n) offsets[d] = first;
 }
 extern "C" __global__ void applyFaces(long long *faces, const long long *records, int n) {
   int i = blockIdx.x*blockDim.x+threadIdx.x;
@@ -358,6 +542,7 @@ void check(CUresult status) {
 }
 
 CUfunction indexPlaces, writeCenters, scheduleTuples, tupleRows, prefixTupleRows;
+CUfunction epochBoxes, epochOwners, epochRoutes, epochOffsets, epochBuckets;
 
 void compile() {
   CUdevice device;
@@ -390,6 +575,11 @@ void compile() {
   check(cuModuleGetFunction(&prefixTupleRows, module, "prefixTupleRows"));
   check(cuModuleGetFunction(&indexPlaces, module, "indexPlaces"));
   check(cuModuleGetFunction(&writeCenters, module, "writeCenters"));
+  check(cuModuleGetFunction(&epochBoxes, module, "epochBoxes"));
+  check(cuModuleGetFunction(&epochOwners, module, "epochOwners"));
+  check(cuModuleGetFunction(&epochRoutes, module, "epochRoutes"));
+  check(cuModuleGetFunction(&epochOffsets, module, "epochOffsets"));
+  check(cuModuleGetFunction(&epochBuckets, module, "epochBuckets"));
   check(cuModuleGetFunction(&pack, module, "pack"));
   check(cuModuleGetFunction(&unpack, module, "unpack"));
   check(cuModuleGetFunction(&expandMigration,module,"expandMigration"));
@@ -480,6 +670,111 @@ extern "C" void mdrtNCCLReorderKernel(const double *owned, const double *incomin
 
 namespace {
 struct Box { double length[3]; int grid[3]; };
+
+Box makeBox(const int64_t *grid, const double *edges) {
+  Box box;
+  for (int k = 0; k < 3; ++k) {
+    box.grid[k] = grid[k];
+    box.length[k] = edges[k];
+  }
+  return box;
+}
+}
+
+extern "C" void mdrtNCCLEpochBoxes(const double *x, int rows, const int64_t *grid,
+    const double *edges, int domain, int physicalRows, double *host) {
+  constexpr int central = 13;
+  const double inf = std::numeric_limits<double>::infinity();
+  Box box = makeBox(grid, edges);
+  for (int b = 0; b < 27; ++b) {
+    std::fill_n(host + 6 * b, 3, inf);
+    std::fill_n(host + 6 * b + 3, 3, -inf);
+  }
+  double bounds[6];
+  for (int k = 0; k < 3; ++k) {
+    int c = domain % box.grid[k];
+    domain /= box.grid[k];
+    bounds[k] = edges[k] * c / box.grid[k];
+    bounds[k + 3] = edges[k] * (c + 1) / box.grid[k];
+  }
+  std::copy_n(bounds, 6, host + 6 * central);
+  if (!rows) return;
+  if (!module) compile();
+  CUdeviceptr storage;
+  constexpr size_t bytes = 27 * 6 * sizeof(double);
+  check(cuMemAlloc(&storage, bytes + sizeof bounds));
+  CUdeviceptr boundsDevice = storage + bytes;
+  check(cuMemcpyHtoD(storage, host, bytes));
+  check(cuMemcpyHtoD(boundsDevice, bounds, sizeof bounds));
+  void *args[] = {&x, &rows, &box, &boundsDevice, &storage, &physicalRows};
+  check(cuLaunchKernel(epochBoxes, (rows + 255LL) / 256, 1, 1, 256, 1, 1,
+                       0, nullptr, args, nullptr));
+  check(cuMemcpyDtoH(host, storage, bytes));
+  check(cuMemFree(storage));
+}
+
+extern "C" int64_t *mdrtNCCLEpochRoutes(const double *x, int rows, int local,
+    int domains, const int64_t *grid, const double *edges, const int *members,
+    const double *boxes, double reach, int physicalRows, int64_t *size) {
+  *size = 0;
+  if (!rows) return nullptr;
+  if (!module) compile();
+  Box box = makeBox(grid, edges);
+  int tilesPerRank = (rows + 255LL) / 256;
+  size_t maskBytes = size_t(rows) * domains * sizeof(unsigned);
+  size_t tileBytes = size_t(tilesPerRank) * domains * sizeof(int);
+  size_t countBytes = size_t(domains) * sizeof(int);
+  size_t auxBytes = members ? (size_t(rows) + 1) * sizeof(int)
+                            : size_t(domains) * 27 * 6 * sizeof(double);
+  // The box storage requires a double-aligned base after the integer columns.
+  size_t listsBytes = maskBytes + tileBytes + 2 * countBytes + sizeof(int);
+  size_t auxOffset = (listsBytes + 7) & ~size_t(7);
+  CUdeviceptr storage;
+  check(cuMemAlloc(&storage, auxOffset + auxBytes));
+  CUdeviceptr masks = storage, tiles = masks + maskBytes;
+  CUdeviceptr counts = tiles + tileBytes, offsets = counts + countBytes;
+  CUdeviceptr deviceOwners = 0, deviceBoxes = 0;
+  if (members) {
+    deviceOwners = storage + auxOffset;
+    CUdeviceptr bad = deviceOwners + size_t(rows) * sizeof(int);
+    check(cuMemsetD32(bad, 0, 1));
+    void *args[] = {&x, &rows, &box, &members, &deviceOwners, &bad};
+    check(cuLaunchKernel(epochOwners, tilesPerRank, 1, 1, 256, 1, 1,
+                         0, nullptr, args, nullptr));
+    int invalid;
+    check(cuMemcpyDtoH(&invalid, bad, sizeof invalid));
+    if (invalid) mdrtMPIAbort("migration requires finite positions and images");
+  } else {
+    deviceBoxes = storage + auxOffset;
+    check(cuMemcpyHtoD(deviceBoxes, boxes, auxBytes));
+  }
+  CUdeviceptr records = 0;
+  void *args[] = {&x, &rows, &box, &deviceBoxes, &reach, &deviceOwners, &local,
+                  &physicalRows, &masks, &tiles, &offsets, &records};
+  check(cuLaunchKernel(epochRoutes, tilesPerRank, domains, 1, 256, 1, 1,
+                       0, nullptr, args, nullptr));
+  void *tileArgs[] = {&tiles, &tilesPerRank, &counts};
+  check(cuLaunchKernel(epochOffsets, domains, 1, 1, 256, 1, 1, 0, nullptr,
+                       tileArgs, nullptr));
+  void *bucketArgs[] = {&counts, &domains, &offsets};
+  check(cuLaunchKernel(epochBuckets, 1, 1, 1, 256, 1, 1, 0, nullptr,
+                       bucketArgs, nullptr));
+  int count;
+  check(cuMemcpyDtoH(&count, offsets + countBytes, sizeof count));
+  int64_t *host = nullptr;
+  if (count) {
+    size_t bytes = 2 * size_t(count) * sizeof(int64_t);
+    host = static_cast<int64_t *>(std::malloc(bytes));
+    if (!host) mdrtMPIAbort("out of memory collecting device epoch routes");
+    check(cuMemAlloc(&records, bytes));
+    check(cuLaunchKernel(epochRoutes, tilesPerRank, domains, 1, 256, 1, 1,
+                         0, nullptr, args, nullptr));
+    check(cuMemcpyDtoH(host, records, bytes));
+    check(cuMemFree(records));
+  }
+  check(cuMemFree(storage));
+  *size = count;
+  return host;
 }
 
 extern "C" void mdrtNCCLUpdateFaceState(int64_t *faces, const int64_t *records,
