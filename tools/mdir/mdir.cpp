@@ -6,6 +6,11 @@
 #include "mdir/Compiler/CompileCache.h"
 #include "mdir/Driver/Control.h"
 
+#ifdef MDIR_ENABLE_MPI
+#include "mdrt_mpi.h"
+#endif
+
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/raw_ostream.h"
@@ -124,6 +129,10 @@ static llvm::cl::opt<std::string> checkpointField(
 
 int main(int argc, char **argv) {
   llvm::InitLLVM init(argc, argv);
+#ifdef MDIR_ENABLE_MPI
+  // Release the transport while the CUDA driver and its context are live.
+  auto finishMPI = llvm::scope_exit([] { mdrtMPIFinish(); });
+#endif
   llvm::cl::ParseCommandLineOptions(
       argc, argv,
       "MDIR: compiles and runs molecular dynamics\n\n"

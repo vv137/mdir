@@ -15,19 +15,23 @@ static MPI_Comm comm = MPI_COMM_NULL;
 static MPI_Datatype wideWord = MPI_DATATYPE_NULL;
 static int initializedHere, rank, size;
 
-static void finish(void) {
+void mdrtMPIFinish(void) {
+  if (comm == MPI_COMM_NULL) return;
   int done;
   MPI_Finalized(&done);
   if (!done) {
 #ifdef MDIR_ENABLE_NCCL
     if (useNCCL) mdrtNCCLFinish();
     free(domainOwner);
+    domainOwner = NULL;
+    useNCCL = 0;
 #endif
     MPI_Type_free(&wideWord);
     MPI_Comm_free(&comm);
     if (initializedHere)
       MPI_Finalize();
   }
+  comm = MPI_COMM_NULL;
 }
 
 int mdrtMPIActive(void) { return comm != MPI_COMM_NULL; }
@@ -84,7 +88,7 @@ static void initialize(void) {
   MPI_Type_commit(&wideWord);
   MPI_Comm_rank(comm, &rank);
   MPI_Comm_size(comm, &size);
-  atexit(finish);
+  atexit(mdrtMPIFinish);
 }
 
 void mdrtMPIStartNCCL(void) {
