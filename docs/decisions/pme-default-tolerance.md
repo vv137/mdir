@@ -50,3 +50,21 @@ $f\,\lvert q_iq_j\rvert[\mathrm{erfc}(\beta r_c)/r_c^2 +
 of the OPC dipeptide (1.845 e²) the new default gives 0.290 kJ/mol/nm at
 9 Å (0.068 before) and 1.16 at 4.5 Å (0.271 before), where `mdir check`
 now warns (the limit is 1 kJ/mol/nm); its advice names $10^{-5}$.
+
+## Energy at constant volume
+
+The larger tail adds to the work of the pairs that cross the cutoff. It
+was not resolved in the drift of the energy at constant energy, unshifted,
+1 ns at 2 fs from the input velocities, four runs each (the runs differ
+through the order of the floating-point atomics), slope of the total
+energy from 20 ps on, in kcal/mol/ns, mean ± standard error:
+
+| Input | $10^{-5}$ | $5\times10^{-5}$ |
+|---|---:|---:|
+| TIP3P 10k | −0.31 ± 0.15 | +0.14 ± 0.31 |
+| JAC | +1.69 ± 0.17 | +1.17 ± 1.39 |
+| Factor IX | +1.83 ± 0.90 | +2.88 ± 1.99 |
+
+The spread between runs is larger at $5\times10^{-5}$; a run at constant
+energy that needs less takes `coulomb_modifier = "POTENTIAL_SHIFT"` or a
+smaller tolerance, as before.
