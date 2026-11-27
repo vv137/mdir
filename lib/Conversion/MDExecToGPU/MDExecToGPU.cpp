@@ -8637,13 +8637,14 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
   if (!function)
     function = dyn_cast<func::FuncOp>(builder.getInsertionBlock()->getParentOp());
   Value slot, identityHalo, owned;
-  bool explicitImages = false;
+  bool explicitImages = false, uniqueOwned = false;
   if (function && !structure.groups) {
     for (auto call : function.getOps<func::CallOp>()) {
       if (call.getCallee() == "mdrtDistDeviceMatrixSlot" || call.getCallee() == "mdrtDistPeriodicMatrixSlot" ||
           call.getCallee() == "mdrtDistUniqueMatrixSlot") {
         slot = call.getResult(0);
-        explicitImages = call.getCallee() != "mdrtDistPeriodicMatrixSlot";
+        uniqueOwned = call.getCallee() == "mdrtDistPeriodicMatrixSlot";
+        explicitImages = !uniqueOwned && !module->hasAttr("md_dist.physical_image_rows");
         if (call.getCallee() == "mdrtDistUniqueMatrixSlot") {
           identityHalo = call.getOperand(0);
           owned = call.getOperand(3);
@@ -8681,7 +8682,7 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
       identities = func::CallOp::create(at,loc,lookup,ValueRange{identityHalo,compute}).getResult(0);
     }
     status = emitUncachedBuild(at, loc, structure, positions, box, reach, cellWidth,
-                               explicitImages, !explicitImages, identities, owned);
+                               explicitImages, uniqueOwned, identities, owned);
     func::CallOp::create(at,loc,save,args);
     scf::YieldOp::create(at,loc);
   },[&](OpBuilder &at, Location) {

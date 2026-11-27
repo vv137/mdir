@@ -1,0 +1,10 @@
+# REQUIRES: cuda, nccl
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/shake.test | sed -e '1d;$d' -e 's|= "vacuum|= "%S/Inputs/ff19sb/vacuum|' -e 's/= 500/= 4/' -e 's/= 100/= 1/g' -e 's/= 28.0/= 8.0/' -e 's/= 29.0/= 10.0/' -e '/^\[dynamics\]/a seed = 314159' > %t/run.toml
+# RUN: printf '\n[execution]\ntarget = "GPU"\nprecision = "MIXED"\n[distribute]\ntransport = "nccl"\ntraversal = "unique"\ndomains = 2\n' >> %t/run.toml
+
+# The migrated halo must import one unshifted row per foreign identity.
+# The explicit-image lowering wraps the owned positions at migration.
+# RUN: cd %t && mdir emit run.toml --stage=lowered | FileCheck %s --implicit-check-not='llvm.call @mdrtDistEpochPositions('
+# CHECK-DAG: llvm.call @mdrtDistPhysicalHalo(
+# CHECK-DAG: llvm.call @mdrtDistDevicePhysicalHalo(

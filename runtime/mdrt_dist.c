@@ -163,6 +163,7 @@ struct Halo {
   int64_t references;
   struct Layout *layout;
   double reach;
+  int physicalRows;
   int64_t *firstGhost, *nextGhost;
   struct DomainMatrix *matrices;
   struct ExclusionMap *exclusionMaps;
@@ -2093,6 +2094,7 @@ static void visitGhosts(struct Halo *h, const double (*points)[3],
     int64_t end = first+GhostBinSize < l->count ? first+GhostBinSize : l->count;
     for (int64_t j = first; j < end; ++j) {
       const double *x = points[j];
+      if (h->physicalRows && l->owner[j] == d) continue;
       for (int64_t a = low[0]; a <= high[0]; ++a) {
         double dx = outsideBox(x[0]+a*l->edges[0],lo[0],hi[0]);
         double dx2 = dx*dx;
@@ -2112,10 +2114,15 @@ static void visitGhosts(struct Halo *h, const double (*points)[3],
               list->data = realloc(list->data,list->capacity*sizeof *list->data);
               if (!list->data) fail("out of memory recording ghost rows");
             }
+            if (h->physicalRows) {
+              list->data[list->size++] = (struct GhostRow){j,{0,0,0}};
+              goto nextParticle;
+            }
             list->data[list->size++] = (struct GhostRow){j,{a,b,z}};
           }
         }
       }
+      nextParticle: ;
     }
   }
 }
@@ -2129,7 +2136,7 @@ struct HaloBuild {
 };
 
 int64_t _mlir_ciface_mdrtDistBeginHalo(int64_t layout, struct Memref3D *x,
-                                       double reach, int64_t midpoint, int64_t migrated) {
+                                       double reach, int64_t geometry, int64_t migrated) {
   struct Halo *h = calloc(1, sizeof *h);
   if (!h)
     fail("out of memory");
@@ -2137,6 +2144,8 @@ int64_t _mlir_ciface_mdrtDistBeginHalo(int64_t layout, struct Memref3D *x,
   h->layout = (struct Layout *)(intptr_t)layout;
   mdrtDistRetainLayout(layout);
   h->reach = reach;
+  h->physicalRows = geometry == 2;
+  int midpoint = geometry == 1;
   completeIds(h->layout);
   if (!migrated) shareRows(h->layout, h->layout->rows, x);
   int64_t domains = h->layout->domains;
@@ -2152,7 +2161,14 @@ int64_t _mlir_ciface_mdrtDistBeginHalo(int64_t layout, struct Memref3D *x,
   for (int64_t j = 0; j < l->count; ++j) {
     struct GhostBin *bin = &bins[j/GhostBinSize];
     for (int c = 0; c < 3; ++c) {
-      if (!migrated) points[j][c] = *at3(x,l->owner[j],ownedRow(l,j),c);
+      if (!migrated) {
+        double coordinate = *at3(x,l->owner[j],ownedRow(l,j),c);
+        double length = l->edges[c];
+        // Route using primary-cell geometry. Packet coordinates keep their
+        // integrator image for mixed-precision forces and projections.
+        if (h->physicalRows) coordinate -= length * floor(coordinate / length);
+        points[j][c] = coordinate;
+      }
       double v = points[j][c];
       if (j%GhostBinSize == 0 || v < bin->lo[c]) bin->lo[c] = v;
       if (j%GhostBinSize == 0 || v > bin->hi[c]) bin->hi[c] = v;
@@ -2440,8 +2456,9 @@ int64_t _mlir_ciface_mdrtDistDeviceEpochHalo(int64_t layout, struct Memref3D *x,
 }
 #endif
 
-static int64_t buildHalo(int64_t layout, struct Memref3D *x, double reach, int midpoint) {
-  int64_t build = _mlir_ciface_mdrtDistBeginHalo(layout,x,reach,midpoint,0);
+static int64_t buildHalo(int64_t layout, struct Memref3D *x, double reach,
+                         int geometry, int migrated) {
+  int64_t build = _mlir_ciface_mdrtDistBeginHalo(layout,x,reach,geometry,migrated);
   const struct Layout *l = (struct Layout *)(intptr_t)layout;
   for (int64_t d = 0; d < l->domains; ++d)
     _mlir_ciface_mdrtDistVisitHalo(build,d,x);
@@ -2449,11 +2466,19 @@ static int64_t buildHalo(int64_t layout, struct Memref3D *x, double reach, int m
 }
 
 int64_t _mlir_ciface_mdrtDistHalo(int64_t layout, struct Memref3D *x, double reach) {
-  return buildHalo(layout,x,reach,0);
+  return buildHalo(layout,x,reach,0,0);
 }
 
 int64_t _mlir_ciface_mdrtDistMidpointHalo(int64_t layout, struct Memref3D *x, double reach) {
-  return buildHalo(layout,x,reach,1);
+  return buildHalo(layout,x,reach,1,0);
+}
+
+int64_t _mlir_ciface_mdrtDistPhysicalHalo(int64_t layout, struct Memref3D *x, double reach) {
+  return buildHalo(layout,x,reach,2,0);
+}
+
+int64_t _mlir_ciface_mdrtDistDevicePhysicalHalo(int64_t layout, struct Memref3D *x, double reach) {
+  return buildHalo(layout,x,reach,2,1);
 }
 
 int64_t mdrtDistHaloCapacity(int64_t handle) {
@@ -3077,7 +3102,8 @@ void _mlir_ciface_mdrtDistTupleIncidence(struct DeviceKinds *out,int64_t handle,
   if (!group || !p->built) {
     double *coordinates=group ? NULL : tupleCoordinates(h,x,d);
     mdrtNCCLBuildTupleRows(topology->members,p->count,p->arity,directory->locations,directory->particles,coordinates,
-        l->grid,l->edges,d,group,topology->starts,topology->entries,p->rows,p->mapped,p->blocks,p->csr);
+        l->grid,l->edges,d,group,!group && h->physicalRows,topology->starts,topology->entries,
+        p->rows,p->mapped,p->blocks,p->csr);
     p->built=1;
   }
   mdrtNCCLWaitForRows(stream);
@@ -3649,10 +3675,10 @@ void _mlir_ciface_mdrtDistEpochImages(int64_t cache, int64_t layout,
 }
 
 int64_t _mlir_ciface_mdrtDistEpochHalo(int64_t layout, struct Memref3D *x,
-                                       double reach, int64_t cache, int64_t midpoint) {
+                                       double reach, int64_t cache, int64_t geometry) {
   struct TrajectoryEpoch *e = (struct TrajectoryEpoch *)(intptr_t)cache;
   if (!e->halo) {
-    e->halo = (struct Halo *)(intptr_t)buildHalo(layout,x,reach,midpoint);
+    e->halo = (struct Halo *)(intptr_t)buildHalo(layout,x,reach,geometry,0);
     e->halo->layout->groupsFrozen = 1;
   }
   int64_t handle = (int64_t)(intptr_t)e->halo;

@@ -37,7 +37,8 @@ void mdrtNCCLImportOnStream(double *, const double *, size_t, void *);
 void mdrtNCCLGatherCoordinates(double *all, const double *owned, int64_t rows, int64_t stride);
 void mdrtNCCLJoin(double *out, const double *owned, size_t n, const double *ghost, size_t g);
 void mdrtNCCLBuildTupleRows(const int *, int, int, const int *, const int *, const double *,
-    const int64_t *, const double *, int, int, const int *, const int *, int, int *, int *, int *);
+    const int64_t *, const double *, int, int, int, const int *, const int *, int,
+    int *, int *, int *);
 int *mdrtNCCLMigrationSpans(const void *, int, int);
 int *mdrtNCCLUploadIndices(const int *rows, int64_t n);
 void mdrtNCCLDownloadRows(const double *source, const int *indices, int64_t rows,

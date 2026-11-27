@@ -947,8 +947,12 @@ public:
       Policy local = policy;
       // Local constraint corrections feed the integrator directly. Keep
       // the geometry, correction and accumulation in its working type.
-      if (function->hasAttr("md_dist.constraint_precision"))
-        local.force = local.kernel = local.integrator;
+      if (function->hasAttr("md_dist.constraint_precision")) {
+        local.force = local.integrator;
+        // Physical representatives use the ordinary mixed projection geometry.
+        if (!module->hasAttr("md_dist.physical_image_rows"))
+          local.kernel = local.integrator;
+      }
       if (failed(Assigner(function, local, kernelPositions, deterministic,
                           stageFieldsF64)
                      .run()))

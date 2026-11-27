@@ -515,6 +515,11 @@ llvm::Expected<Program> mdir::driver::buildProgram(const Control &control,
     return std::move(error);
   if (program.domainTopology)
     program.domainTupleExtent = tupleExtent(program, system);
+  const auto &grid = program.domainGrid;
+  if (program.domainTopology && (system.numConstraints || system.numSettles) &&
+      control.distribution->transport == "nccl" && control.precision == Precision::Mixed &&
+      grid != std::array<int64_t, 3>{1, 1, 1})
+    builder.usePhysicalImageRows();
   if (llvm::Error error = builder.finishIR())
     return std::move(error);
   return std::move(program);

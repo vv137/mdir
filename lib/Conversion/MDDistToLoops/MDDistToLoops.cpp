@@ -215,6 +215,9 @@ void emitPairs(
   Value copyForState(OpBuilder &b, Value buffer);
   bool batchObservables = false;
   bool sharedState() const { return gpuPairs && mpi; }
+  bool physicalImageRows() const {
+    return sharedState() && module->hasAttr("md_dist.physical_image_rows");
+  }
   void releaseField(OpBuilder &b, Value field);
   void hostRows(OpBuilder &b, Value field);
 
@@ -818,7 +821,7 @@ LogicalResult Lowering::lowerDistribute(DistributeOp op) {
                                  br, loc, global, ValueRange{j, index(br, c)}));
                 if (v.getType().isInteger(32))
                   v = arith::SIToFPOp::create(br, loc, br.getF64Type(), v);
-                if (op.getImage()) {
+                if (op.getImage() && !physicalImageRows()) {
                   // v − L floor(v / L)
                   Value u = arith::DivFOp::create(br, loc, v, edges[c]);
                   Value whole = math::FloorOp::create(br, loc, u);
@@ -918,7 +921,8 @@ LogicalResult Lowering::lowerRedistribute(RedistributeOp op) {
   auto move = op.getNewLayout().getDefiningOp<MigrateOp>();
   bool epochPosition = sharedState() && isMigrationPosition(op) && rebuildReach(move);
   if (sharedState() && (!op.getImage() || epochPosition)) {
-    auto migrate = declare(epochPosition ? "mdrtDistEpochPositions" : "mdrtDistRedistributeDevice",
+    bool wrap = epochPosition && !physicalImageRows();
+    auto migrate = declare(wrap ? "mdrtDistEpochPositions" : "mdrtDistRedistributeDevice",
         b.getFunctionType({i64, i64, source.getType()}, {source.getType()}), true);
     Value field = func::CallOp::create(b, loc, migrate,
         ValueRange{old.handle, next.handle, source}).getResult(0);
@@ -982,10 +986,13 @@ LogicalResult Lowering::lowerHalo(HaloOp op) {
         auto n = dyn_cast<NeighborhoodOp>(user);
         return !n || n.getResult().getType().getTraversal() == Traversal::Midpoint;
       });
-  StringRef name = midpoint ? "mdrtDistMidpointHalo" : "mdrtDistHalo";
+  bool physical = physicalImageRows();
+  int64_t geometry = physical ? 2 : midpoint;
+  StringRef name = physical ? "mdrtDistPhysicalHalo"
+                            : midpoint ? "mdrtDistMidpointHalo" : "mdrtDistHalo";
   if (cache) {
     name = "mdrtDistEpochHalo";
-    args.push_back(arith::ConstantIntOp::create(b, loc, midpoint, 64));
+    args.push_back(arith::ConstantIntOp::create(b, loc, geometry, 64));
   }
   Value handle;
   auto migratedField = op.getPositions().getDefiningOp<RedistributeOp>();
@@ -993,11 +1000,11 @@ LogicalResult Lowering::lowerHalo(HaloOp op) {
       isMigrationPosition(migratedField) && rebuildReach(op.getLayout().getDefiningOp<MigrateOp>());
   if (!deviceEpoch) hostRows(b, positions);
   if (deviceEpoch) {
-    auto make = declare("mdrtDistDeviceEpochHalo",
+    auto make = declare(physical ? "mdrtDistDevicePhysicalHalo" : "mdrtDistDeviceEpochHalo",
         b.getFunctionType(ValueRange(args).getTypes(), {i64}), true);
     handle = func::CallOp::create(b, loc, make, args).getResult(0);
   } else if (parallelDomains && !cache && domains > 1) {
-    args.push_back(arith::ConstantIntOp::create(b, loc, midpoint, 64));
+    args.push_back(arith::ConstantIntOp::create(b, loc, geometry, 64));
     auto field = op.getPositions().getDefiningOp<RedistributeOp>();
     bool migrated = mpi && field && isMigrationPosition(field);
     args.push_back(arith::ConstantIntOp::create(b, loc, migrated, 64));
@@ -3133,7 +3140,8 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
                       module->hasAttr("md_dist.driver") && matrixSkin > 0;
   // Explicit halos keep their current image rows and reverse force exchange.
   // Compact unique neighbors as the device builds each owned MATRIX row.
-  bool halfMatrix = cachedMatrix && !periodicOwned && !fixedPoint && domains > 1 &&
+  bool halfMatrix = cachedMatrix && !periodicOwned && !physicalImageRows() &&
+      !fixedPoint && domains > 1 &&
       devicePositions.contains(op.getGhosts()) &&
       op.getResult().getType().getTraversal() == Traversal::Unique;
   if (cachedMatrix) {
@@ -3161,7 +3169,8 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
     auto fn = declare(slot, b.getFunctionType(ValueRange(args).getTypes(), {wide}), false);
     func::CallOp::create(b, loc, fn, args);
   }
-  auto images = periodicOwned ? md_exec::Images::Minimum : md_exec::Images::Explicit;
+  auto images = periodicOwned || physicalImageRows() ? md_exec::Images::Minimum
+                                                     : md_exec::Images::Explicit;
   if (!searchPositions) searchPositions = positions;
   Value cells = md_exec::BuildCellsOp::create(
       b, loc, mdrt::CellsType::get(context, set), searchPositions,
@@ -3178,10 +3187,11 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
   // Match the CPU MATRIX image arithmetic. Gather translations in the
   // same order as the full-precision, imaged search positions.
   Value shifts;
-  if (gpuImageGeometry && !periodicOwned && deviceImageShifts.count(op.getGhosts())) {
+  if (gpuImageGeometry && !physicalImageRows() && !periodicOwned &&
+      deviceImageShifts.count(op.getGhosts())) {
     auto type = md::FieldType::get(context,set,3,b.getF64Type());
     shifts = mdrt::FromBufferOp::create(b,loc,type,deviceImageShifts.lookup(op.getGhosts()));
-  } else if (gpuImageGeometry && !periodicOwned)
+  } else if (gpuImageGeometry && !physicalImageRows() && !periodicOwned)
     shifts = makeField(b, set, 3, b.getF64Type(), d,
         {Value(), imageShifts.lookup(op.getGhosts())}, {nOwned, nGhosts});
   return {positions, structure, nOwned, relation.cell, periodicOwned ? Value() : nOwned, shifts,
@@ -3329,7 +3339,8 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, Value d, FlatSymbolRefAttr
                                               ? md_exec::Conflict::Atomic
                                               : md_exec::Conflict::OwnerOnly),
       exchangeAttr, relation.centers, centerSet, b.getBoolAttr(ghostFree),
-      md_exec::ImagesAttr::get(context, relation.periodicOwned ? md_exec::Images::Minimum : md_exec::Images::Explicit),
+      md_exec::ImagesAttr::get(context, relation.periodicOwned || physicalImageRows()
+                                           ? md_exec::Images::Minimum : md_exec::Images::Explicit),
       /*scatter=*/md_exec::ScatterAttr(),
       /*hostLanes=*/IntegerAttr());
   if (relation.shifts) loop->setAttr("md_exec.image_geometry", b.getUnitAttr());

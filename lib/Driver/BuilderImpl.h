@@ -523,6 +523,10 @@ public:
   }
 
   llvm::Error build();
+  void usePhysicalImageRows() {
+    auto module = termIR.getModule();
+    module->setAttr("md_dist.physical_image_rows", mlir::UnitAttr::get(module.getContext()));
+  }
   llvm::Error finishIR() { return serializeNativeProgram(program, termIR); }
 
   /// The arrays of another build of the same model at other values of its
