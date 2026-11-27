@@ -286,6 +286,16 @@ Value kernels::pairDifference(OpBuilder &b, Location loc, Value center,
   return arith::SubFOp::create(b, loc, raw, image);
 }
 
+// Keep scalar energy sub-totals in f64 for the domain reduction. The term
+// itself may still be evaluated in mixed precision.
+static Value narrowRowSum(Block &kernel, Value contribution) {
+  if (contribution.getType().isF64() &&
+      kernel.getParentOp()->getParentOfType<ModuleOp>()->hasAttr("md_dist.driver"))
+    return {};
+  auto widen = contribution.getDefiningOp<arith::ExtFOp>();
+  return widen && widen->getBlock() == &kernel ? widen.getIn() : Value();
+}
+
 SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
                                            md_exec::PairForOp op,
                                            Value counts, Value index,
@@ -352,17 +362,9 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
   // The contributions of the neighbors of one particle are summed in the
   // order of its list, or, with lanes, in that order within each lane and
   // then over the lanes.
-  // A contribution to a global sum that the kernel widens, as the mixed
-  // mode widens the energy and the virial to f64, is summed over the row
-  // in the type the kernel computed it in and widened once for the row:
-  // a device adds in f64 at a small fraction of the rate of f32.
+  // Eligible mixed-precision observables widen after their row sum.
   auto getNarrow = [&](unsigned i) -> Value {
-    if (i < numOuts)
-      return Value();
-    auto widen = yield->getOperand(i).getDefiningOp<arith::ExtFOp>();
-    if (!widen || widen->getBlock() != &kernel)
-      return Value();
-    return widen.getIn();
+    return i < numOuts ? Value() : narrowRowSum(kernel, yield->getOperand(i));
   };
   SmallVector<Value> sums;
   for (unsigned i = 0; i != numYields; ++i) {
@@ -857,14 +859,8 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
   SmallVector<Value> sums;
   for (unsigned i = 0; i != numOuts; ++i)
     sums.push_back(createZero(builder, loc, yield->getOperand(i * arity).getType()));
-  // A contribution to a global sum that the kernel widens is summed over
-  // the row in the type it was computed in and widened once (as in
-  // emitPairKernel).
   auto getNarrow = [&](unsigned i) -> Value {
-    auto widen = yield->getOperand(i).getDefiningOp<arith::ExtFOp>();
-    if (!widen || widen->getBlock() != &kernel)
-      return Value();
-    return widen.getIn();
+    return narrowRowSum(kernel, yield->getOperand(i));
   };
   for (unsigned i = numOuts * arity; i != numYields; ++i) {
     Value narrow = getNarrow(i);
@@ -1083,13 +1079,8 @@ kernels::emitTuplesOnceWithSums(OpBuilder &builder, md_exec::TupleForOp op,
       cast<VectorType>(kernel.getArgument(0).getType()).getElementType();
   Value boxComputed = convertReal(builder, loc, box, computed);
   Value inverseComputed = convertReal(builder, loc, inverse, computed);
-  // A contribution that the kernel widens is summed in the type it was
-  // computed in (as in emitTupleKernel).
   auto getNarrow = [&](unsigned i) -> Value {
-    auto widen = yield->getOperand(i).getDefiningOp<arith::ExtFOp>();
-    if (!widen || widen->getBlock() != &kernel)
-      return Value();
-    return widen.getIn();
+    return narrowRowSum(kernel, yield->getOperand(i));
   };
   SmallVector<Value> sums;
   for (unsigned i = numOuts * arity; i != numYields; ++i) {
