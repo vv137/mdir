@@ -42,7 +42,7 @@ owned row for both floating-point and checked wide sums.
 Within a Verlet list, identities and exclusions determine the static
 candidate rows. The midpoint test still uses the current coordinates on
 each evaluation, since a midpoint can cross a domain face before the list
-is rebuilt. Selected entries retain their original list order.
+is rebuilt. Deterministic execution retains the original list order.
 
 An epoch remains valid only if the maximum squared displacement stays
 within the existing skin bound. Independent particle checks reduce by
@@ -241,3 +241,10 @@ projection for the same relation and block when the observation reads
 only gathered fields. Each group is evaluated on its owner and the
 domain subtotals are combined in domain order. An observation that
 uses an internal coordinate keeps its own geometry.
+
+In floating-point execution, a constraint correction can be added on
+its group layout when the incoming particle field already has an
+unwrapped view in those owned rows. Consecutive corrections add in
+the original order. Native consumers collect the sum at the point
+where they need it. An imaged position view cannot supply the
+unwrapped operand.

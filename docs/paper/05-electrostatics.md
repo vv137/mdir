@@ -1502,3 +1502,9 @@ Only the remaining neighbors need the current midpoint test. A direct
 comparison with an unpruned selection across sixteen JAC steps checked
 the active pairs at every evaluation, including steps on which the
 prefix was refreshed.
+
+The disjoint constraint projections produce additive corrections on a
+retained group layout. When the other operand of a vector addition
+already has the same owned rows, the floating-point driver adds the two
+vectors there. A chain of corrections therefore transfers its sum back
+to identity order once, after the last correction needed by its consumer.

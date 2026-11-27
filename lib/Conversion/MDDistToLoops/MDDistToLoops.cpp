@@ -3437,6 +3437,61 @@ static void shareOwnedFields(scf::ForOp root) {
   }
 }
 
+// Each constraint projection produces its correction in owned row order.
+// Apply a native vector add there when both operands already have those
+// rows. A chain then collects only the values that leave the layout.
+static void addOwnedCorrections(scf::ForOp root) {
+  SmallVector<md::MapParticlesOp> maps;
+  root.walk([&](md::MapParticlesOp op) { maps.push_back(op); });
+  for (auto op : maps) {
+    auto inputs = op.getGathered();
+    if (inputs.size() != 2 || !op->getAttrs().empty()) continue;
+    auto correction = inputs[1].getDefiningOp<CollectOp>();
+    if (!correction || !correction->getAttrs().empty()) continue;
+    auto kernel = correction.getField().getDefiningOp<TupleKernelOp>();
+    if (!kernel) continue;
+    auto rows = kernel.getRows().getDefiningOp<TupleRowsOp>();
+    if (!rows || !rows.getGroup()) continue;
+    Block &body = op.getKernel().front();
+    auto add = dyn_cast<arith::AddFOp>(body.front());
+    if (!add || body.getOperations().size() != 2 || body.getNumArguments() != 2 ||
+        add.getLhs() != body.getArgument(0) || add.getRhs() != body.getArgument(1) ||
+        body.getTerminator()->getOperand(0) != add.getResult() ||
+        inputs[0].getType() != op.getResult().getType() ||
+        inputs[1].getType() != op.getResult().getType()) continue;
+    Value layout = correction.getLayout(), owned;
+    auto prior = inputs[0].getDefiningOp<CollectOp>();
+    if (prior && prior.getLayout() == layout && prior->getAttrs().empty())
+      owned = prior.getField();
+    if (!owned) {
+      for (Operation *user : inputs[0].getUsers()) {
+        auto field = dyn_cast<DistributeOp>(user);
+        if (field && !field.getImage() && field.getLayout() == layout &&
+            field->getBlock() == op->getBlock() && field->isBeforeInBlock(op)) {
+          owned = field.getResult();
+          break;
+        }
+      }
+    }
+    if (!owned || owned.getType() != correction.getField().getType()) continue;
+    OpBuilder b(op);
+    auto sum = MapParticlesOp::create(b,op.getLoc(),owned.getType(),
+                                      ValueRange{owned,correction.getField()});
+    sum->setAttr("md_dist.integration", b.getUnitAttr());
+    sum.getKernel().takeBody(op.getKernel());
+    Operation *end = sum.getKernel().front().getTerminator();
+    OpBuilder at(end);
+    YieldOp::create(at,end->getLoc(),end->getOperands());
+    end->erase();
+    auto result = CollectOp::create(b,op.getLoc(),op.getResult().getType(),
+                                    sum.getResult(),layout);
+    op.replaceAllUsesWith(result.getResult());
+    op.erase();
+    if (prior && prior != correction && prior.use_empty()) prior.erase();
+    if (correction.use_empty()) correction.erase();
+  }
+}
+
 // The constrained native step carries ordinary particle fields in scf.for.
 // Give its maps, kicks and drifts the contiguous identity interval on this
 // rank. The separate particle-set symbol also gives storage assignment the
@@ -3655,6 +3710,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
     for (auto root : roots) {
       if (root.getNumRegionIterArgs() == 3) retainConstraintLayouts(root);
       shareOwnedFields(root);
+      if (!fixedPoint) addOwnedCorrections(root);
       shardDriverLoop(root);
     }
     collect();
