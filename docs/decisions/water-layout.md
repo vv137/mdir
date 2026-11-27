@@ -32,7 +32,7 @@ RTX 4090, mixed precision, `rigid_units = "ON"` with the groups, `main` at 03506
 
 The writer takes about 3% of the step on every system, small and large. Its test of the reference points and its check of the extents are part of that time: D422 measured them at 0.65 to 0.70 µs a call. Any layout keeps the test and the check, because the theorem of validity needs them at every step.
 
-The unpack shows only in the loop over pairs. There, the partner's members are found once for each entry, and their loads stand before the atomics of its forces, so the table's dependent load lies on that path. Section 5 measures the loop with and without the table.
+The unpack shows only in the loop over pairs. There, the partner's members are found once for each entry, and their loads stand before the atomics of its forces, so the table's dependent load lies on that path. Section 5 measures the loop before and after this decision. Its only change to the loop's code is that the table is gone.
 
 ## 3. The layout
 
@@ -62,24 +62,21 @@ The unpack shows only in the loop over pairs. There, the partner's members are f
 
 ## 5. The kernels after
 
-The same captures for `main` and this decision, with the same controls (RTX 4090, mixed, `ON`). Each figure is µs a call, averaged over every call of the kernel in the capture. The loop over pairs includes its calls that prune and that evaluate the energy.
+Captures of `main` and of this decision, in one job on one RTX 4090, interleaved and then in reverse order (mixed, `ON`, the controls of Section 2). Each figure is µs, averaged over the two rounds. "A call" is the mean over every call of the kernel, its calls that prune and that evaluate the energy included. "A step" counts every kernel of the second half of the capture.
 
-| System | Writer, `main` | Writer, this | Loop, `main` | Loop, this | Loop ratio |
-|---|---:|---:|---:|---:|---:|
-| TIP3P, 9,989 atoms | 3.51 | 2.66 | 32.96 | 31.86 | 0.967 |
-| TIP3P, 19,880 atoms | 3.80 | 3.06 | 49.24 | 47.74 | 0.970 |
-| ubiquitin, OPC | 4.19 | 3.35 | 39.64 | 39.95 | 1.008 |
-| large OPC box | 6.81 | 4.55 | 72.71 | 71.45 | 0.983 |
-| JAC, NVE | 4.06 | 3.50 | 55.55 | 53.77 | 0.968 |
-| JAC, NPT | 4.11 | 3.51 | 49.50 | 47.98 | 0.969 |
-| Factor IX, NVE | 11.25 | 6.89 | 188.93 | 181.91 | 0.963 |
-| Factor IX, NPT | 11.24 | 6.88 | 167.16 | 161.43 | 0.966 |
-| Cellulose, NVE | 45.18 | 29.90 | 985.68 | 984.24 | 0.999 |
-| Cellulose, NPT | 45.41 | 30.05 | 881.12 | 878.45 | 0.997 |
+| System | Writer a call, `main` | Writer, this | Loop a call, `main` | Loop, this | Kernels a step, `main` | Kernels, this |
+|---|---:|---:|---:|---:|---:|---:|
+| TIP3P, 9,989 atoms | 3.53 | 2.60 | 32.99 | 31.15 | 90.9 | 87.9 |
+| ubiquitin, OPC | 4.28 | 3.29 | 40.01 | 39.03 | 125.1 | 123.2 |
+| JAC, NVE | 4.10 | 3.44 | 56.37 | 52.75 | 130.2 | 125.7 |
+| Factor IX, NVE | 11.42 | 6.78 | 192.11 | 178.19 | 338.3 | 319.2 |
+| Cellulose, NVE | 45.84 | 29.44 | 999.91 | 963.11 | 1527.2 | 1474.3 |
 
-- The writer is 14 to 39% faster.
-- The loop is about 3% faster on the TIP3P boxes, JAC, and Factor IX.
-- The loop is unchanged within 0.3% on Cellulose, and 0.8% slower on ubiquitin in OPC.
+- The writer is 16 to 41% faster a call.
+- The loop over pairs is 2.4 to 7.3% faster a call. Its partner's members no longer wait for a load of the table before their atomics.
+- The kernels of a step fall by 1.9 to 53 µs.
+- The device's idle time a step is the same on both trees within 0.3 µs, and so is the number of the build's launches; the branch never launches fewer.
+- So the shorter step comes from the kernels. No refresh is skipped.
 
 **The rate.** The timing protocol, on RTX 4090s at 2 fs, in two jobs on two devices. Each job runs two rounds, the second in reverse order. In each round `main` with `ON`, this decision with `ON`, and `main`'s default program run interleaved. Each run is a wall run with a row every hundredth of its steps, and the rate is the trimmed stationary mean. Under load the SM clocks were 2,685 to 2,790 MHz. Each ratio is the mean over the four job and round pairs, with the range in parentheses.
 
@@ -93,13 +90,43 @@ The same captures for `main` and this decision, with the same controls (RTX 4090
 | Factor IX, NPT | 478.8 | 493.7 | 0.970 (0.966–0.975) | 529.5 |
 | Cellulose, NVE | 113.8 | 118.2 | 0.963 (0.962–0.965) | 147.9 |
 | Cellulose, NPT | 107.7 | 111.0 | 0.970 (0.968–0.972) | 141.7 |
+| ubiquitin, OPC, NVE | 1,274.9 | 1,279.4 | 0.997 (0.994–0.999) | 1,035.7 |
+| large OPC box, NVE | 838.5 | 855.7 | 0.980 (0.975–0.984) | 638.6 |
 
-The step with `ON` is shorter on every system, in every round. That is more than the kernels alone account for, since the host waits for the writer's flags every step (D422, Section 5) and the writer now ends sooner. The default program is the same program on both trees (Section 6), so its rate is given once. `ON` is still slower than the default on JAC NPT, Factor IX, and Cellulose, as D422 found for Cellulose. That is the open question of `AUTO`'s rule, not this decision's.
+The two systems of OPC ran in two jobs of their own, by the same protocol (SM clocks 2,655 to 2,745 MHz under load). The step with `ON` is shorter on every system, in every round; on ubiquitin in OPC by 0.1 to 0.6%. The kernels of Section 5 account for it: on Cellulose they fall by 53 µs a step, and its wall falls by 56. The default program is the same program on both trees (Section 6), so its rate is given once. `ON` is still slower than the default on JAC NPT, Factor IX, and Cellulose, and faster on the TIP3P boxes, JAC NVE, and the systems of OPC, as D422 found for Cellulose. That is the open question of `AUTO`'s rule, not this decision's.
 
 ## 6. Validation
 
-See the pull request for the numbers. The gates:
-- Programs off the route are unchanged: the corpus of D406 (`check.py compare`) on `sm_89`, and the checkpoints.
-- On the route, the same-frame forces and energies against the general route in double precision (`test/Driver/rigid-units-frames-gpu.test`). A case with the site listed before its frame makes the frame atoms places 1 to 3 of a copy. A mutation that ignores the places of the frame atoms fails that case.
-- #795's short trajectories (`test/Driver/segments-trajectories-gpu.test`), the contract of the schedule (`md-alg-segments-contract-gpu.test`), the coverage of the writer (`segments-writer-coverage-gpu.test`) and its checks of the extents (`segments-writer-extents-gpu.test`), the forces of the build (`segments-build-forces-gpu.test`), and the serial definition (`md-alg-segments-serial.test`).
-- 50-step trajectories against `main` on the route, beside two runs of `main`.
+RTX 4090, at this decision's head and `main` at 03506508.
+
+**Off the route.** The corpus of D406 was compared against `main`: `check.py compare --stages lowered --targets cpu,gpu --kinds run,segments --precisions mixed,double --execution neighbor_structure=GROUPS`, with `MDIR_GPU_BINARY=ptx`, on `sm_89`. Of 4,452 cases, 4,444 are identical; 2,526 of those stop with the same error in both. The 8 that differ are the cases of `rigid_units = "ON"`: `rigid-units-reach-gpu.test`'s `shrink.toml` and `rigid-units-route.test`'s `dodecahedron.toml`, each on the GPU in mixed precision, for runs and segments, with and without the GROUPS variant. Every program on the CPU, in double precision, or in the deterministic mode is therefore unchanged, and so is every program under `AUTO` or `OFF`.
+
+**The same frames** (`test/Driver/rigid-units-frames-gpu.test`, with the bounds of D424). The units against the general route in double precision, within 1.5 times the general mixed route's difference, or 1e-5 of the largest force and 1e-6 of the potential. The largest ratio to the bound:
+
+| Case | Ratio |
+|---|---:|
+| D405's mixture, plain cutoffs | 0.458 |
+| the mixture with the site listed first | 0.247 |
+| alanine dipeptide, OPC, PME, NPT | 0.665 |
+| alanine dipeptide, TIP3P, PME | 0.667 |
+| rhombic dodecahedron, plain cutoffs | 0.860 |
+| rhombic dodecahedron, PME | 0.186 |
+
+A mutation that ignores the places of the frame atoms (member $k$ at the first particle plus $k$) takes the case with the site listed first to 6.6e5 times its bound, while the others still pass. It was tried once and reverted.
+
+**#795's short trajectories** (`segments-trajectories-gpu.test`, eight cases of OPC and TIP3P under both integrators, NVE and NPT) pass. Their units' trajectories, printed every 10 steps, are the same from both trees and from run to run.
+
+**The contract and the coverage.** `md-alg-segments-contract-gpu.test`, `segments-writer-coverage-gpu.test`, `segments-writer-extents-gpu.test`, `segments-build-forces-gpu.test`, `segments-build-coverage-gpu.test`, and `md-alg-segments-serial.test` pass. The serial definition reads a copy from its first particle, and its oracle checks that every copy it builds is consecutive.
+
+**The stop and the refusal.** `segments-build-reach-stop-gpu.test` runs a copy with its last two places exchanged, and the setup stops with the message of `mdrtSegmentsStopScattered`. `rigid-units-route.test` checks the reason in `mdir check` on the mixture with an ion inside a water.
+
+**Trajectories of the suite's systems.** 50 steps with `ON` from the same input, the final positions compared. On `main` the route is not reproducible to the bit, since the f32 atomics of its loop add in an order that varies. The largest difference of a coordinate, in nm:
+
+| System | `main` against `main` | this against `main` |
+|---|---:|---:|
+| TIP3P, 9,989 atoms, NVT | 9.2e-7 | 9.4e-7 |
+| ubiquitin, OPC, NVE | 1.48e-6 | 1.46e-6 |
+| JAC, NVE | 2.47e-6 | 1.90e-6 |
+| JAC, NPT | 2.21e-6 | 1.92e-6 |
+
+**The sanitizer.** memcheck, initcheck, and racecheck pass `test/Sanitizer/segments-writer-gpu.test`, `segments-traverse-gpu.test`, and `segments-build-gpu.test`. The job held an RTX 4090 for 74 s.
