@@ -149,7 +149,7 @@ for kind in ("NVE", "NVT"):
             # 3 E holds as long as the run of `mdir run` in double takes
             # kicks of the same kind. Measured at step 80 of NVT: 0.75 of
             # the bound on a V100 and 0.65 on an RTX 4090 for the kinetic
-            # energy, 0.01 on the CPU; the frames 0.18, 0.17, and 0.001.
+            # energy, 0.01 on the CPU; the frames 0.18, 0.17, and below 0.001.
             worst, shifted = 0.0, 0
             for i, (a, b, d) in enumerate(zip(mine, theirs, double_rows)):
                 a, b, d = (np.array([float(x) for x in r.split()])[[0, 1, 4, 5]]
