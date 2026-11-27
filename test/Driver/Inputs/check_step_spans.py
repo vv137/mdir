@@ -91,7 +91,7 @@ def run(name, mode, precision="MIXED", structure="MATRIX", deterministic=True,
     choice = start["resolved_choices"]["step_graph"]
     spans = re.search(r"^MDIR: spans: (\d+) issued as CUDA graphs and (\d+) as recorded, "
                       r"(\d+) graphs made, (\d+) captures refused, (\d+) graphs released, "
-                      r"(\d+) kernel nodes updated", log.stdout, re.M)
+                      r"(\d+) kernel nodes updated, (\d+) updates refused", log.stdout, re.M)
     with h5py.File(directory / "state.h5") as f:
         state = {k: f["particles/all/" + k][()] for k in
                  ("position/value", "velocity/value", "force/value", "box/edges/value")
@@ -111,8 +111,8 @@ def bitwise(a, b, what):
 default = run("default", None)
 assert default["choice"]["requested"] == "SPANS", default["choice"]
 assert default["choice"]["value"] == "SPANS" and default["choice"]["category"] == "rule"
-graphs, recorded, made, refused, released, updated = default["spans"]
-assert refused == 0 and released == 0, default["spans"]
+graphs, recorded, made, refused, released, updated, unchanged = default["spans"]
+assert refused == 0 and released == 0 and unchanged == 0, default["spans"]
 assert graphs > 0 and made > 0, default["spans"]
 # Most of the work of the steps goes out as graphs.
 assert graphs > recorded, default["spans"]

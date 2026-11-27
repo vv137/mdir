@@ -35,6 +35,7 @@ void mdrtDeviceAuditMetadataCopy(uintptr_t destination) {
 }
 static const char *getKernelName(CUfunction function);
 void mdrtSpansFlush(void);
+static void releaseAllSpans(void);
 
 /* A failure of the driver is reported and ends the run: compiled code has no
    way to continue without its device. */
@@ -475,6 +476,10 @@ void mgpuModuleUnload(CUmodule module) {
   if (isPending && (sharedStream || borrowedStreamDepth))
     cuStreamSynchronize(sharedStream);
   isPending = 0;
+  /* The graphs of spans and the layouts of the arguments name the kernels
+     of the program; another program may later have kernels at the same
+     handles. */
+  releaseAllSpans();
   /* The program ends: the copies of its constants made outside an
      activation go with it, since another program may later put its own
      constants at the same addresses of the host. A program that is still
@@ -767,6 +772,9 @@ struct Span {
      arguments and grids of another span of its shape. */
   CUgraphNode *nodes;
   int updatable;
+  /* A graph whose update the driver refused: some of its nodes may hold
+     the new arguments, so it matches no record again. */
+  int dead;
   uint64_t lastUse;
 };
 
@@ -783,7 +791,7 @@ static int numSpans = 0;
 static uint64_t spanSeen[SPAN_SEEN];
 static uint64_t spanClock = 0;
 static struct ParamLayout layouts[LAYOUTS];
-static int64_t spanCounts[7];
+static int64_t spanCounts[8];
 
 static int issueFFT(int fft, int plan, uint64_t in, uint64_t out);
 static void retainFFTPlanHandle(int plan, int delta);
@@ -1004,6 +1012,18 @@ static void releaseSpan(struct Span *s) {
   free(s->bytes);
   free(s->nodes);
   memset(s, 0, sizeof *s);
+}
+
+static void rebuildSpanIndex(void);
+static void releaseAllSpans(void) {
+  for (int i = 0; i != numSpans; ++i)
+    releaseSpan(&spanCache[i]);
+  numSpans = 0;
+  rebuildSpanIndex();
+  memset(spanSeen, 0, sizeof spanSeen);
+  for (int i = 0; i != LAYOUTS; ++i)
+    free(layouts[i].sizes);
+  memset(layouts, 0, sizeof layouts);
 }
 
 /* The shape of the record: its ops without the argument bytes and grids. */
@@ -1290,7 +1310,7 @@ static void flushSpan(void) {
       if (i < 0)
         break;
       struct Span *s = &spanCache[i];
-      if (s->hash == hash && s->numOps == numSpanOps &&
+      if (!s->dead && s->hash == hash && s->numOps == numSpanOps &&
           s->numBytes == numSpanBytes &&
           !memcmp(s->ops, spanOps, numSpanOps * sizeof *spanOps) &&
           !memcmp(s->bytes, spanBytes, numSpanBytes))
@@ -1309,7 +1329,7 @@ static void flushSpan(void) {
         int seen = 0;
         for (int k = 0; k != numVariants; ++k)
           seen |= variants[k] == s;
-        if (!seen && s->shape == shape && s->numOps == numSpanOps &&
+        if (!seen && !s->dead && s->shape == shape && s->numOps == numSpanOps &&
             s->numBytes == numSpanBytes && numVariants != SPAN_VARIANTS &&
             sameShape(s))
           variants[numVariants++] = s;
@@ -1326,8 +1346,9 @@ static void flushSpan(void) {
           /* Some of its nodes may hold the new arguments: it matches no
              record again, and its place goes when the cache fills. */
           oldest->hash = oldest->shape = 0;
-          oldest->numOps = -1;
+          oldest->dead = 1;
           oldest->updatable = 0;
+          ++spanCounts[7];
         }
         if (updated) {
           keepRecord(oldest, hash);
@@ -1394,9 +1415,9 @@ void mdrtSpansSuspend(int32_t suspend) {
 
 /* The counts for the log: graph launches, spans issued as recorded,
    graphs made, captures that failed, kernels and transforms recorded,
-   graphs released, kernel nodes updated. */
-void mdrtSpansCounts(int64_t counts[7]) {
-  for (int i = 0; i != 7; ++i)
+   graphs released, kernel nodes updated, updates refused. */
+void mdrtSpansCounts(int64_t counts[8]) {
+  for (int i = 0; i != 8; ++i)
     counts[i] = spanCounts[i];
 }
 
