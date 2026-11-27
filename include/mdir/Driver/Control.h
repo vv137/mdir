@@ -5,6 +5,8 @@
 #ifndef MDIR_DRIVER_CONTROL_H
 #define MDIR_DRIVER_CONTROL_H
 
+#include "mdir/Runtime/DistributedBuffers.h"
+
 #include "mdir/Driver/Expression.h"
 #include "mdir/Driver/Topology.h"
 #include "mdir/Driver/Trajectory.h"
@@ -236,6 +238,7 @@ struct TowersSetup {
 /// What a control file says. Lengths are in Å, energies in kcal/mol, times
 /// in ps, masses in amu, and temperatures in K.
 struct Control {
+  using DistributedBufferSizes = std::array<uint64_t, MdirDistributedBuffers>;
   struct Distribution {
     std::array<int64_t, 3> grid{1, 1, 1};
     bool gridGiven = false, transportGiven = false, traversalGiven = false;
@@ -243,6 +246,7 @@ struct Control {
     std::string traversal = "directed";
     std::string pairOverlap = "auto";
     std::string transport = "local";
+    std::vector<DistributedBufferSizes> bufferBytes;
     int64_t count() const {
       return domains ? domains : grid[0] * grid[1] * grid[2];
     }

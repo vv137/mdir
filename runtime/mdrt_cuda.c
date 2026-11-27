@@ -9,6 +9,7 @@
 #include "mdrt_dist_stats.h"
 #include "mdir/Runtime/GroupsABI.h"
 #include "mdir/Runtime/CopyAudit.h"
+#include "mdir/Runtime/DistributedBuffers.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -959,6 +960,8 @@ struct Block {
   const char *tag;
   /* An arena reserved for the lifetime of this buffer alone. */
   bool dedicated;
+  bool retained;
+  int buffer;
   /* The bytes of the piece that it occupies from `pointer`: at least
      `size`, and a multiple of POOL_ALIGNMENT unless the piece ends its
      arena. */
@@ -982,6 +985,18 @@ static int numFree = 0, roomFree = 0;
    (mdrtDeviceMemoryCounts). */
 static int64_t numDriverBlocks = 0;
 static uint64_t reservedBytes = 0;
+static uint64_t bufferBytes[MdirDistributedBuffers], bufferPeak[MdirDistributedBuffers];
+static bool measuringBuffers, pinnedBuffers;
+
+static void accountArena(struct Block block) {
+  ++numDriverBlocks;
+  reservedBytes += block.baseSize;
+  if (measuringBuffers || pinnedBuffers) {
+    uint64_t live = (bufferBytes[block.buffer] += block.baseSize);
+    if (live > bufferPeak[block.buffer])
+      bufferPeak[block.buffer] = live;
+  }
+}
 /* Makes room for one more block in `list`, twice as much as it had; 0 if
    the host has no memory for it. */
 static int reserveBlock(struct Block **list, int count, int *room) {
@@ -1236,7 +1251,7 @@ static void checkPoolStream(CUstream stream, const char *what) {
 }
 
 static void *allocateBlock(uint64_t size, CUstream stream, bool isHostShared,
-                           bool dedicated) {
+                           bool dedicated, int buffer) {
   enter();
   CUdeviceptr pointer = 0;
   if (size == 0)
@@ -1261,7 +1276,8 @@ static void *allocateBlock(uint64_t size, CUstream stream, bool isHostShared,
   struct Block block = {.size = size,
                         .owner = currentActivation,
                         .tag = allocationTag,
-                        .dedicated = dedicated};
+                        .dedicated = dedicated,
+                        .buffer = buffer};
   /* First an idle piece that last held a block of exactly this size and
      has not been merged or cut since, the last such in the list: a request
      that recurs at every step takes the piece it freed, as the pool took
@@ -1270,15 +1286,18 @@ static void *allocateBlock(uint64_t size, CUstream stream, bool isHostShared,
      if none does, the idle pieces are merged with their idle neighbors and
      the best fit is sought again. */
   int best = -1;
-  for (int i = numFree; !dedicated && i-- != 0;)
-    if (freeBlocks[i].asked == size) {
+  for (int i = numFree; (!dedicated || pinnedBuffers) && i-- != 0;)
+    if (freeBlocks[i].asked == size &&
+        (!pinnedBuffers || (freeBlocks[i].retained && freeBlocks[i].buffer == buffer))) {
       best = i;
       break;
     }
-  for (int pass = 0; !dedicated && best < 0 && pass != 2 && numFree; ++pass) {
+  for (int pass = 0; (!dedicated || pinnedBuffers) && best < 0 && pass != 2 && numFree; ++pass) {
     if (pass)
       mergeIdle();
     for (int i = numFree; i-- != 0;) {
+      if (pinnedBuffers && (!freeBlocks[i].retained || freeBlocks[i].buffer != buffer))
+        continue;
       uint64_t extent = freeBlocks[i].extent;
       if (extent < size || (best >= 0 && extent >= freeBlocks[best].extent))
         continue;
@@ -1310,15 +1329,21 @@ static void *allocateBlock(uint64_t size, CUstream stream, bool isHostShared,
     block.extent = piece.extent;
     block.base = piece.base;
     block.baseSize = piece.baseSize;
+    block.buffer = piece.buffer;
+    block.retained = piece.retained;
     ++numFromPool;
   } else {
     int64_t before = beginAccount();
     check(allocateDevice(&pointer, size), "cuMemAlloc");
     endAccount(ACCOUNT_BLOCKS, before, (int64_t)size);
-    ++numDriverBlocks;
-    reservedBytes += size;
+    if (pinnedBuffers) {
+      block.retained = true;
+      fprintf(stderr, "mdrt: distributed buffer pin overflow for %s, grew by %llu bytes\n",
+              mdirDistributedBufferName(buffer), (unsigned long long)size);
+    }
     block.pointer = block.base = pointer;
     block.extent = block.baseSize = size;
+    accountArena(block);
   }
   pointer = block.pointer;
   liveBytes += size;
@@ -1329,7 +1354,7 @@ static void *allocateBlock(uint64_t size, CUstream stream, bool isHostShared,
 }
 
 void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
-  return allocateBlock(size, stream, isHostShared, false);
+  return allocateBlock(size, stream, isHostShared, false, MdirDeviceScratch);
 }
 
 void mgpuMemFree(void *pointer, CUstream stream) {
@@ -1361,6 +1386,8 @@ void mgpuMemFree(void *pointer, CUstream stream) {
 static void releaseArena(struct Block arena, int gone, int waited) {
   --numDriverBlocks;
   reservedBytes -= arena.baseSize;
+  if (measuringBuffers || pinnedBuffers)
+    bufferBytes[arena.buffer] -= arena.baseSize;
   if (gone)
     return;
   if (!waited)
@@ -1396,7 +1423,7 @@ static void addIdle(struct Block block, int gone, int replaced, int merge) {
     freeBlocks[i] = freeBlocks[--numFree];
   }
   int whole = block.pointer == block.base && block.extent == block.baseSize;
-  if (whole && poolBytes + block.extent > getPoolBudget()) {
+  if (!block.retained && whole && poolBytes + block.extent > getPoolBudget()) {
     /* Past the budget, an idle arena goes back to the driver. */
     releaseArena(block, gone, replaced);
     return;
@@ -1421,18 +1448,18 @@ static void addIdle(struct Block block, int gone, int replaced, int merge) {
    (mergeIdle), where an arena that the merge finds idle as a whole goes
    back to the driver. */
 static void poolBlock(struct Block block, int gone, int replaced) {
-  if (block.dedicated) {
+  if (block.dedicated && !block.retained) {
     releaseArena(block, gone, replaced);
     return;
   }
-  if (replaced && block.pointer == block.base &&
+  if (!block.retained && replaced && block.pointer == block.base &&
       block.extent == block.baseSize) {
     releaseArena(block, gone, 1);
     return;
   }
   block.asked = block.size;
   addIdle(block, gone, replaced, 0);
-  if (!gone && poolBytes > getPoolBudget())
+  if (!gone && !pinnedBuffers && poolBytes > getPoolBudget())
     mergeIdle();
 }
 
@@ -1878,7 +1905,7 @@ static uint64_t trimIdle(void) {
   uint64_t released = fftPlanBytes;
   for (int i = numFree; i-- != 0;) {
     struct Block piece = freeBlocks[i];
-    if (piece.pointer != piece.base || piece.extent != piece.baseSize)
+    if (piece.retained || piece.pointer != piece.base || piece.extent != piece.baseSize)
       continue;
     released += piece.extent;
     poolBytes -= piece.extent;
@@ -1899,6 +1926,44 @@ uint64_t mdrtDeviceTrim(void) {
     return 0;
   enter();
   return trimIdle();
+}
+
+/* Scope the measurement to one trial (or one production invocation).
+   Existing arenas can survive a JIT run, so include them in the starting
+   reservation and count each base only once. */
+void mdrtDeviceBeginDistributedBuffers(const uint64_t *pin) {
+  if (pin) trimIdle();
+  memset(bufferBytes, 0, sizeof(bufferBytes));
+  for (int list = 0; list < 2; ++list) {
+    const struct Block *blocks = list ? freeBlocks : liveBlocks;
+    int count = list ? numFree : numLive;
+    for (int i = 0; i < count; ++i)
+      if (blocks[i].pointer == blocks[i].base)
+        bufferBytes[blocks[i].buffer] += blocks[i].baseSize;
+  }
+  memcpy(bufferPeak, bufferBytes, sizeof(bufferPeak));
+  measuringBuffers = true;
+  pinnedBuffers = pin != NULL;
+  if (!pin)
+    return;
+  enter();
+  for (int slot = MdirMatrixEntries; slot <= MdirDeviceScratch; ++slot) {
+    if (!pin[slot])
+      continue;
+    struct Block block = {.size = pin[slot], .extent = pin[slot], .baseSize = pin[slot],
+                          .retained = true, .buffer = slot};
+    check(allocateDevice(&block.base, block.size), "preallocate distributed buffer pin");
+    block.pointer = block.base;
+    accountArena(block);
+    addIdle(block, 0, 0, 0);
+  }
+  noteBytes();
+}
+
+void mdrtDeviceReadDistributedBuffers(uint64_t *out) {
+  for (int slot = MdirMatrixEntries; slot <= MdirDeviceScratch; ++slot)
+    out[slot] += bufferPeak[slot];
+  out[MdirPME] = fftPlanBytes;
 }
 
 /* The accounts of the memory of the device (#622), for tests: the blocks
@@ -2339,7 +2404,7 @@ static void allocateMatrix(struct Matrix *matrix) {
   allocationTag = "matrix: rows";
   matrix->data = allocateBlock(
       (uint64_t)(matrix->rows * matrix->width) * sizeof(int32_t), NULL,
-      false, matrix->dedicated);
+      false, matrix->dedicated, matrix->dedicated ? MdirMatrixEntries : MdirDeviceScratch);
   allocationTag = NULL;
 }
 
@@ -2388,8 +2453,8 @@ struct CachedDomainMatrix {
 static void releaseDomainMatrix(void *data) {
   struct CachedDomainMatrix *cache = data;
   mgpuMemFree(cache->matrix.data, NULL);
-  check(cuMemFree(cache->counts), "release domain counts");
-  check(cuMemFree(cache->order), "release domain order");
+  mgpuMemFree((void *)cache->counts, NULL);
+  mgpuMemFree((void *)cache->order, NULL);
   free(cache);
 }
 
@@ -2430,8 +2495,11 @@ void _mlir_ciface_mdrtDeviceSaveDomainMatrix(int64_t slot, int64_t handle,
       break;
     }
   }
-  check(cuMemAlloc(&cache->counts,rows), "allocate cached domain counts");
-  check(cuMemAlloc(&cache->order,rows), "allocate cached domain order");
+  cache->counts = (CUdeviceptr)allocateBlock(rows, NULL, false, true, MdirMatrixRows);
+  cache->order = (CUdeviceptr)allocateBlock(rows, NULL, false, true, MdirMatrixRows);
+  // The halo owns the row metadata alongside the entry block.
+  liveBlocks[numLive - 2].owner = NULL;
+  liveBlocks[numLive - 1].owner = NULL;
   if (counts->size) {
     check(cuMemcpyDtoDAsync(cache->counts,(CUdeviceptr)counts->aligned,rows,sharedStream), "save domain counts");
     check(cuMemcpyDtoDAsync(cache->order,(CUdeviceptr)order->aligned,rows,sharedStream), "save domain order");
@@ -2476,11 +2544,11 @@ struct Edges {
 
 static void allocateEdges(struct Edges *edges) {
   allocationTag = "edges: candidates";
-  edges->candidates = mgpuMemAlloc(
-      (uint64_t)edges->capacity * 4 * sizeof(int32_t), NULL, false);
+  edges->candidates = allocateBlock(
+      (uint64_t)edges->capacity * 4 * sizeof(int32_t), NULL, false, false, MdirImageSlots);
   allocationTag = "edges: slots";
-  edges->slots = mgpuMemAlloc(
-      (uint64_t)edges->capacity * 5 * sizeof(int32_t), NULL, false);
+  edges->slots = allocateBlock(
+      (uint64_t)edges->capacity * 5 * sizeof(int32_t), NULL, false, false, MdirImageSlots);
   allocationTag = NULL;
 }
 
@@ -3057,6 +3125,13 @@ void mdrtDeviceTuplesLeave(void) { currentTuples = NULL; }
 
 static void freeBondedDirectories(struct MdrtTuples *entry, int gone);
 
+static void freeTupleDevice(void *pointer) {
+  if (measuringBuffers)
+    mgpuMemFree(pointer, NULL);
+  else
+    check(cuMemFree((CUdeviceptr)pointer), "cuMemFree");
+}
+
 void mdrtDeviceTuplesClose(void *opaque) {
   struct MdrtTupleStore *store = opaque;
   if (!store)
@@ -3080,21 +3155,21 @@ void mdrtDeviceTuplesClose(void *opaque) {
     free(e->ids);
     free(e->members);
     if (!gone && e->deviceIncidence)
-      check(cuMemFree((CUdeviceptr)e->deviceIncidence), "cuMemFree");
+      freeTupleDevice(e->deviceIncidence);
     if (!gone && e->deviceMembers)
-      check(cuMemFree((CUdeviceptr)e->deviceMembers), "cuMemFree");
+      freeTupleDevice(e->deviceMembers);
     freeBondedDirectories(e, gone);
     if (!gone && e->deviceRenumbered)
-      check(cuMemFree((CUdeviceptr)e->deviceRenumbered), "cuMemFree");
+      freeTupleDevice(e->deviceRenumbered);
     if (!gone && e->ownsSet && e->deviceFile)
-      check(cuMemFree((CUdeviceptr)e->deviceFile), "cuMemFree");
+      freeTupleDevice(e->deviceFile);
     free(e);
   }
   if (!gone) {
     void *own[3] = {store->deviceIds, store->deviceFlag, store->devicePlace};
     for (int k = 0; k != 3; ++k)
       if (own[k])
-        check(cuMemFree((CUdeviceptr)own[k]), "cuMemFree");
+        freeTupleDevice(own[k]);
   }
   free(store->staging);
   free(store->entries);
@@ -3136,6 +3211,11 @@ static void tuplesToHost(void *host, const void *device, size_t bytes) {
 
 /* Memory of the device that the store keeps. */
 static void *tuplesDeviceKept(size_t bytes) {
+  if (measuringBuffers && bytes) {
+    void *pointer = allocateBlock(bytes, NULL, false, true, MdirTupleIncidence);
+    liveBlocks[numLive - 1].owner = NULL;
+    return pointer;
+  }
   CUdeviceptr pointer = 0;
   if (bytes) {
     int64_t before = beginAccount();
@@ -3258,7 +3338,7 @@ static void tuplesIncidence(struct MdrtMemref1 *result,
   size_t bytes = (size_t)elements * sizeof(int32_t);
   if (!e) {
     allocationTag = "tuples: incidence";
-    void *device = mgpuMemAlloc(bytes, NULL, false);
+    void *device = allocateBlock(bytes, NULL, false, false, MdirTupleIncidence);
     allocationTag = NULL;
     tuplesBuildOnDevice(device, given, tuples, arity, particles);
     mdrtTuplesSetMemref1(result, device, elements);
@@ -3268,7 +3348,7 @@ static void tuplesIncidence(struct MdrtMemref1 *result,
     if (!e->deviceIncidence || e->elements != elements) {
       if (e->deviceIncidence) {
         finish();
-        check(cuMemFree((CUdeviceptr)e->deviceIncidence), "cuMemFree");
+        freeTupleDevice(e->deviceIncidence);
       }
       e->deviceIncidence = tuplesDeviceKept(bytes);
     }
@@ -3308,7 +3388,7 @@ static void tuplesMembers(struct MdrtMemref2 *result,
   struct MdrtTuples *e = mdrtTupleStoreFind(currentTuples, given);
   if (!e) {
     allocationTag = "tuples: members";
-    void *device = mgpuMemAlloc(bytes, NULL, false);
+    void *device = allocateBlock(bytes, NULL, false, false, MdirTupleIncidence);
     allocationTag = NULL;
     tuplesToDevice(device, given, bytes);
     mdrtTuplesSetMemref2(result, device, tuples, arity);
@@ -3406,7 +3486,7 @@ void _mlir_ciface_mdrtDeviceTuplesOrderKept(struct MdrtMemref1 *result,
   if (store->deviceIdsCount != n) {
     if (store->deviceIds) {
       finish();
-      check(cuMemFree((CUdeviceptr)store->deviceIds), "cuMemFree");
+      freeTupleDevice(store->deviceIds);
     }
     store->deviceIds = tuplesDeviceKept((size_t)n * sizeof(int32_t));
     store->deviceIdsCount = n;
@@ -3592,7 +3672,7 @@ int64_t _mlir_ciface_mdrtDeviceTuplesTake(struct MdrtMemref2 *members,
   if (ordered && store->devicePlaceCount < particles) {
     if (store->devicePlace) {
       finish();
-      check(cuMemFree((CUdeviceptr)store->devicePlace), "cuMemFree");
+      freeTupleDevice(store->devicePlace);
     }
     store->devicePlace = tuplesDeviceKept((size_t)particles * sizeof(int32_t));
     store->devicePlaceCount = particles;

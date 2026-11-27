@@ -66,6 +66,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <numeric>
 #include <optional>
 #include <unistd.h>
 
@@ -458,6 +459,20 @@ struct StepGraphTrial {
   }
 };
 
+using DistributedBufferSizes = Control::DistributedBufferSizes;
+using DistributedBufferPin = std::vector<DistributedBufferSizes>;
+
+static llvm::json::Array distributedBuffersJSON(const DistributedBufferPin &pin) {
+  llvm::json::Array ranks;
+  for (const auto &sizes : pin) {
+    llvm::json::Object bytes;
+    for (int slot = 0; slot < MdirDistributedBuffers; ++slot)
+      bytes[mdirDistributedBufferName(slot)] = static_cast<int64_t>(sizes[slot]);
+    ranks.emplace_back(std::move(bytes));
+  }
+  return ranks;
+}
+
 struct DistributedTrial {
   StringRef mode, restart;
   int64_t steps;
@@ -467,6 +482,8 @@ struct DistributedTrial {
   int64_t localTimingSteps = 0;
   std::optional<double> localTimingVariation;
   std::optional<std::array<double, 3>> memoryRefusal;
+  DistributedBufferSizes bufferBytes{};
+  uint64_t memoryAvailable = 0;
 };
 
 #ifdef MDIR_ENABLE_MPI
@@ -518,14 +535,19 @@ static double estimateTrialMemory(const Control &control, const System &system,
       sizeof(int32_t) * program.neighborWidth * widthMargin);
 }
 
-static std::optional<std::array<double, 3>>
-checkTrialMemory(double reach, double needed, int ranks, bool writer) {
+static uint64_t trialMemoryAvailable() {
   uint64_t available = mdrtMPITrialMemoryAvailable();
   if (const char *value = std::getenv("MDIR_DIST_AUTO_MEMORY_BYTES")) {
     uint64_t limit;
     if (!StringRef(value).getAsInteger(10, limit))
       available = std::min(available, limit);
   }
+  return available;
+}
+
+static std::optional<std::array<double, 3>>
+checkTrialMemory(double reach, double needed, uint64_t available, int ranks,
+                 bool writer, StringRef kind = "estimated") {
   double local[] = {needed, static_cast<double>(available)};
   std::vector<double> all(2 * ranks);
   mdrtMPIGatherTimes(local, all.data(), 2);
@@ -538,10 +560,11 @@ checkTrialMemory(double reach, double needed, int ranks, bool writer) {
     constexpr double MiB = 1024 * 1024;
     for (int rank = 0; rank < ranks; ++rank)
       llvm::errs() << llvm::formatv(
-          "MDIR: distributed list {0:f3} Ang preflight: rank {1} needs an "
-          "estimated {2:f1} MiB, {3:f1} MiB available ({4})\n",
-          reach, rank, all[2*rank] / MiB, all[2*rank+1] / MiB,
-          fits ? "admitted" : "skipped");
+          "MDIR: distributed list {0:f3} Ang {1}: rank {2} needs {3} "
+          "{4:f1} MiB, {5:f1} MiB available ({6})\n",
+          reach, kind == "estimated" ? "preflight" : "capacity", rank,
+          kind == "estimated" ? "an estimated" : kind,
+          all[2*rank] / MiB, all[2*rank+1] / MiB, fits ? "admitted" : "skipped");
     llvm::errs().flush();
   }
   // No rank starts the trial until the writer has flushed the decision.
@@ -609,7 +632,8 @@ static std::string distributedPinPath(InputPaths inputs, StringRef executable,
   return path.str().str();
 }
 
-static double readDistributedPin(StringRef path, double cutoff, double boxLimit) {
+static double readDistributedPin(StringRef path, double cutoff, double boxLimit,
+                                 DistributedBufferPin &pin) {
   auto file = llvm::MemoryBuffer::getFile(path);
   if (!file) return 0;
   auto parsed = llvm::json::parse((*file)->getBuffer());
@@ -621,10 +645,43 @@ static double readDistributedPin(StringRef path, double cutoff, double boxLimit)
   if (!record || record->getString("key") != llvm::sys::path::stem(path))
     return 0;
   double reach = record->getNumber("pairlist_distance_angstrom").value_or(0);
-  return reach > cutoff && reach < boxLimit ? reach : 0;
+  auto *sizes = record->getArray("buffer_bytes");
+  if (!(reach > cutoff && reach < boxLimit) || !sizes || sizes->size() != pin.size())
+    return 0;
+  for (size_t rank = 0; rank < pin.size(); ++rank) {
+    auto *row = (*sizes)[rank].getAsObject();
+    if (!row) return 0;
+    uint64_t total = 0;
+    for (int slot = 0; slot < MdirDistributedBuffers; ++slot) {
+      auto bytes = row->getInteger(mdirDistributedBufferName(slot));
+      if (!bytes || *bytes < 0 || uint64_t(*bytes) > uint64_t(INT64_MAX) - total)
+        return 0;
+      pin[rank][slot] = *bytes;
+      total += *bytes;
+    }
+    if (pin[rank][MdirPME]) return 0;
+  }
+  return reach;
 }
 
-static void writeDistributedPin(StringRef path, double reach) {
+static DistributedBufferPin gatherDistributedBuffers(const DistributedBufferSizes &local,
+                                                      int ranks) {
+  std::array<double, MdirDistributedBuffers> bytes;
+  std::copy(local.begin(), local.end(), bytes.begin());
+  std::vector<double> all(ranks * MdirDistributedBuffers);
+  mdrtMPIGatherTimes(bytes.data(), all.data(), bytes.size());
+  DistributedBufferPin pin(ranks);
+  for (int rank = 0; rank < ranks; ++rank)
+    std::copy_n(all.begin() + rank * bytes.size(), bytes.size(), pin[rank].begin());
+  return pin;
+}
+
+static uint64_t distributedBufferTotal(const DistributedBufferSizes &sizes) {
+  return std::accumulate(sizes.begin(), sizes.end(), uint64_t(0));
+}
+
+static void writeDistributedPin(StringRef path, double reach,
+                                const DistributedBufferPin &pin) {
   if (llvm::sys::fs::create_directories(llvm::sys::path::parent_path(path)))
     return;
   llvm::SmallString<256> temporary;
@@ -634,7 +691,8 @@ static void writeDistributedPin(StringRef path, double reach) {
     return;
   llvm::raw_fd_ostream out(fd, true);
   out << llvm::json::Value(llvm::json::Object{
-      {"key", llvm::sys::path::stem(path)}, {"pairlist_distance_angstrom", reach}})
+      {"key", llvm::sys::path::stem(path)}, {"pairlist_distance_angstrom", reach},
+      {"buffer_bytes", distributedBuffersJSON(pin)}})
       << '\n';
   out.close();
   bool failed = out.has_error();
@@ -1223,6 +1281,9 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   double distributedSkinSeconds = 0;
   std::string distributedPin;
   bool reusedDistributedPin = false;
+  DistributedBufferPin bufferPin;
+  if (control->distribution)
+    bufferPin = control->distribution->bufferBytes;
   double pairTimes[2] = {};
   bool requestedAutoOverlap = control->distribution && control->distribution->pairOverlap == "auto";
 #ifdef MDIR_ENABLE_MPI
@@ -1272,11 +1333,19 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       auto executable = llvm::sys::fs::getMainExecutable(argv0, (void *)(intptr_t)&anchor);
       distributedPin = distributedPinPath(inputPaths, executable, *control, *system, ranks);
     }
+    DistributedBufferPin cachedPin(ranks);
     double cachedReach = writer && !distributedPin.empty()
         ? readDistributedPin(distributedPin, std::max(control->cutoffDistance, control->prunedDistance),
-                             leastEdge / units::length) : 0;
+                             leastEdge / units::length, cachedPin) : 0;
     mdrtMPIBroadcast(&cachedReach, 1, 0);
     if (cachedReach > 0) {
+      for (auto &row : cachedPin) {
+        std::array<double, MdirDistributedBuffers> bytes;
+        std::copy(row.begin(), row.end(), bytes.begin());
+        mdrtMPIBroadcast(bytes.data(), bytes.size(), 0);
+        std::copy(bytes.begin(), bytes.end(), row.begin());
+      }
+      bufferPin = std::move(cachedPin);
       control->pairlistDistance = cachedReach;
       control->skinSource = "cached";
       control->skinReason = "the measured distributed choice for the exact input, build and layout";
@@ -1296,17 +1365,24 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       if (runControlImpl(controlFile, Emit::Run, argv0, {}, nullptr, &sample))
         return fail(llvm::formatv("could not time the distributed halo reach at {0:f3} Ang",
                                   reach).str());
+      const bool memoryMeasured = !sample.memoryRefusal;
+      if (memoryMeasured)
+        sample.memoryRefusal = checkTrialMemory(
+            reach, distributedBufferTotal(sample.bufferBytes), sample.memoryAvailable,
+            ranks, writer, "measured");
       if (sample.memoryRefusal) {
         const auto [rank, needed, available] = *sample.memoryRefusal;
         constexpr double MiB = 1024 * 1024;
         lines << llvm::formatv("MDIR: distributed list {0:f3} Ang skipped: "
-                               "rank {1:f0} needs an estimated {2:f1} MiB, "
-                               "{3:f1} MiB available\n",
-                               reach, rank, needed / MiB, available / MiB);
+                               "rank {1:f0} needs {2} {3:f1} MiB, "
+                               "{4:f1} MiB available\n",
+                               reach, rank, memoryMeasured ? "a measured" : "an estimated",
+                               needed / MiB, available / MiB);
         skipped.emplace_back(llvm::json::Object{
             {"pairlist_distance_angstrom", reach},
             {"rank", static_cast<int64_t>(rank)},
-            {"estimated_device_bytes", static_cast<int64_t>(needed)},
+            {memoryMeasured ? "measured_device_bytes" : "estimated_device_bytes",
+             static_cast<int64_t>(needed)},
             {"available_device_bytes", static_cast<int64_t>(available)}});
         continue;
       }
@@ -1363,9 +1439,11 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       if (!steps)
         return fail(llvm::formatv("the distributed halo trial at {0:f3} Ang "
                                   "reported no timed steps", reach).str());
+      auto trialBuffers = gatherDistributedBuffers(sample.bufferBytes, ranks);
       distributedSkinTrials.emplace_back(llvm::json::Object{
           {"skin_angstrom", skin}, {"pairlist_distance_angstrom", reach},
           {"milliseconds_per_step", sample.milliseconds}, {"steps", skinSteps},
+          {"buffer_bytes", distributedBuffersJSON(trialBuffers)},
           {"cost_ms_per_step", cost},
           {"timing_variation_ms_per_step", variation ? llvm::json::Value(*variation) : nullptr},
           {"pair_ms_per_step", pairs ? llvm::json::Value(*pairs) : nullptr},
@@ -1392,6 +1470,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
         runnerUp = best;
         best = measured;
         control->pairlistDistance = reach;
+        bufferPin = std::move(trialBuffers);
       } else if (!runnerUp || cost < runnerUp->cost) {
         runnerUp = measured;
       }
@@ -1454,9 +1533,11 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     return control->distribution ? refuse(*control, program.takeError()) : fail(program.takeError());
 #ifdef MDIR_ENABLE_MPI
   if (distributedTrial && distributedTrial->skin) {
+    distributedTrial->memoryAvailable = trialMemoryAvailable();
     distributedTrial->memoryRefusal = checkTrialMemory(
         distributedTrial->reach,
-        estimateTrialMemory(*control, *system, *program, ranks), ranks, writer);
+        estimateTrialMemory(*control, *system, *program, ranks),
+        distributedTrial->memoryAvailable, ranks, writer);
     if (distributedTrial->memoryRefusal)
       return 0;
   }
@@ -2110,6 +2191,14 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     if (resolvedDistributedSkin)
       resolvedChoices["pairlist_distance"] =
           llvm::json::Object(*effective.getObject("skin_search"));
+    if (!bufferPin.empty()) {
+      if (!resolvedDistributedSkin)
+        resolvedChoices["pairlist_distance"] =
+            llvm::json::Object{{"value_angstrom", control->pairlistDistance}, {"source", "given"}};
+      resolvedChoices["distributed_buffers"] = llvm::json::Object{
+          {"source", resolvedDistributedSkin ? control->skinSource : "given"},
+          {"bytes_by_rank", distributedBuffersJSON(bufferPin)}};
+    }
     resolvedChoices["step_graph"] = std::move(graphChoice);
     llvm::json::Object metadata{
         {"build", getManifestBuild()}, {"effective", std::move(effective)},
@@ -2632,6 +2721,24 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       trimDevice();
     }
   });
+#ifdef MDIR_ENABLE_MPI
+  using ReadBufferSizes = void (*)(uint64_t *);
+  ReadBufferSizes readBufferSizes = nullptr;
+  if (onDevice && control->distribution && control->distribution->transport == "nccl") {
+    auto beginBufferSizes = reinterpret_cast<void (*)(const uint64_t *)>(
+        findRuntime("", "mdrtDeviceBeginDistributedBuffers"));
+    readBufferSizes = reinterpret_cast<ReadBufferSizes>(
+        findRuntime("", "mdrtDeviceReadDistributedBuffers"));
+    if (!beginBufferSizes || !readBufferSizes)
+      return fail("distributed execution requires CUDA buffer accounting support");
+    const auto *pin = bufferPin.empty() ? nullptr : &bufferPin[distRank];
+    if (pin && checkTrialMemory(control->pairlistDistance, distributedBufferTotal(*pin),
+                                mdrtMPITrialMemoryAvailable(), ranks, writer, "pinned"))
+      return fail("distributed buffer pin exceeds available device memory");
+    mdrtMPIBeginDistributedBuffers(pin ? pin->data() : nullptr);
+    beginBufferSizes(pin ? pin->data() : nullptr);
+  }
+#endif
   void *tupleStore = nullptr;
   if (void *open = findRuntime("mdrtTuplesOpen", "mdrtDeviceTuplesOpen"))
     tupleStore = reinterpret_cast<void *(*)()>(open)();
@@ -2716,6 +2823,23 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     if (void *close = findRuntime("mdrtTuplesClose", "mdrtDeviceTuplesClose"))
       reinterpret_cast<void (*)(void *)>(close)(tupleStore);
   }
+#ifdef MDIR_ENABLE_MPI
+  if (readBufferSizes) {
+    DistributedBufferSizes sizes{};
+    readBufferSizes(sizes.data());
+    mdrtMPIReadDistributedBuffers(sizes.data());
+    if (distributedTrial) {
+      distributedTrial->bufferBytes = sizes;
+    } else {
+      auto peaks = gatherDistributedBuffers(sizes, ranks);
+      for (int rank = 0; rank < ranks; ++rank)
+        output.log.print("MDIR: distributed buffer peak rank %d: %llu bytes\n", rank,
+                         static_cast<unsigned long long>(distributedBufferTotal(peaks[rank])));
+      output.log.print("MDIR: distributed buffer bytes by rank: %s\n",
+          llvm::formatv("{0}", llvm::json::Value(distributedBuffersJSON(peaks))).str().c_str());
+    }
+  }
+#endif
   if (trial) {
     auto result = compiled.lookup("mdrtStepTrialResult");
     if (!result) return fail(result.takeError());
@@ -2758,7 +2882,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     return fail(std::move(error));
 #ifdef MDIR_ENABLE_MPI
   if (writer && !distributedPin.empty() && control->skinSource == "measured")
-    writeDistributedPin(distributedPin, control->pairlistDistance);
+    writeDistributedPin(distributedPin, control->pairlistDistance, bufferPin);
 #endif
 
 

@@ -3,10 +3,13 @@
 
 #include <mpi.h>
 #include <stdint.h>
+#include "mdir/Runtime/DistributedBuffers.h"
 
 void mdrtNCCLStart(MPI_Comm world);
 void mdrtNCCLFinish(void);
 uint64_t mdrtNCCLTrialMemoryAvailable(void);
+void mdrtNCCLBeginDistributedBuffers(const uint64_t *pin);
+void mdrtNCCLReadDistributedBuffers(uint64_t *out);
 void mdrtNCCLRowsReady(void);
 int mdrtNCCLActive(void);
 struct NCCLPlan;
@@ -52,6 +55,8 @@ void mdrtNCCLMigrateRows(const double *owned, const int *exportRows, const int *
 void mdrtNCCLNarrow(const double *, void *, long long);
 void mdrtNCCLFreePositions(double *positions);
 double *mdrtNCCLAllocate(size_t bytes);
+double *mdrtNCCLAllocateBuffer(size_t bytes, int role);
+int *mdrtNCCLUploadIndexBuffer(const int *rows, int64_t n, int role);
 struct PairIds;
 int64_t *mdrtNCCLPairIds(struct PairIds **head, void *stream, const int64_t *owned,
                          int64_t n, const int64_t *ghost, int64_t g);

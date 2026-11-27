@@ -640,8 +640,10 @@ when the run is at least as long as one trial. An omitted distance
 searches when the run is at least twenty times as long. The measured cost
 is the slowest rank's mean step time in the second half, including
 rebuilds. The log and manifest record the
-trial measurements, the winner, and the margin against available timing
-variation. The force cutoff stays fixed. List distance can change traversal
+trial measurements, the per-rank buffer capacities, the winner, and the margin against available timing
+variation. A numeric reach from `mdir pin` can be paired with its
+`[distribute] buffer_bytes` rank tables to retain the measured device
+arenas across list epochs. The force cutoff stays fixed. List distance can change traversal
 order and rounding. The search precedes automatic selection of pair
 overlap. `mdir pin MANIFEST` prints the chosen distance as a numeric
 `[energy] pairlist_distance`.

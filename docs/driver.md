@@ -1739,6 +1739,19 @@ MATRIX and tuple storage. Rank zero prints and flushes every rank's
 preflight result before trial execution. All ranks skip the distance
 if any rank's estimate exceeds its available device memory. The search
 reports the limiting rank and fails if every eligible distance is skipped.
+The completed trials report per-rank device buffer peaks. When a trial
+has measurements, admission uses their total against the available bytes
+recorded before the trial. The selected capacities accompany the selected
+distance in the manifest's `resolved_choices.distributed_buffers` and in
+`mdir pin` output. Copy `buffer_bytes` into the existing `[distribute]`
+table and apply the numeric distance from the same pin. The array is in
+MPI rank order and contains one table per rank. It records MATRIX entries
+and row metadata, image slots, halo plans and exchange, tuple incidence,
+plans and imports, and scratch. The PME field is zero for the fixed-cell
+distributed real-space path. Each named arena starts at the recorded
+size and remains allocated across list rebuilds. If a request exceeds
+the arena's capacity or its available contiguous range, the runtime
+reports the overflow and retains the added storage.
 Set `MDIR_DIST_PIN_CACHE_DIR` to reuse a completed measured AUTO choice
 on the same inputs, MDIR build and layout. The log and manifest report
 the cache hit. Cold calibration retains the full measurement window.

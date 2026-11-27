@@ -9,6 +9,9 @@
 #include <string>
 #include <vector>
 
+extern "C" void *mdrtNCCLAllocateKernelScratch(size_t bytes);
+extern "C" void mdrtNCCLFreeKernelScratch(void *address);
+
 namespace {
 constexpr char source[] = R"(
 extern "C" __global__ void indexPlaces(const int *order, const int *slots, int *places,
@@ -622,12 +625,12 @@ static size_t faceRecordCapacity;
 
 extern "C" void mdrtNCCLReleaseScratch() {
   if (faceRecordBuffer) {
-    check(cuMemFree(faceRecordBuffer));
+    mdrtNCCLFreeKernelScratch(reinterpret_cast<void *>(faceRecordBuffer));
     faceRecordBuffer = 0;
     faceRecordCapacity = 0;
   }
   if (coverageFlag) {
-    check(cuMemFree(coverageFlag));
+    mdrtNCCLFreeKernelScratch(reinterpret_cast<void *>(coverageFlag));
     coverageFlag = 0;
   }
 }
@@ -636,7 +639,7 @@ extern "C" int mdrtNCCLCoverage(const double *x, const double *ref,
                                 long long rows, double limit) {
   if (!rows) return 0;
   if (!module) compile();
-  if (!coverageFlag) check(cuMemAlloc(&coverageFlag,sizeof(int)));
+  if (!coverageFlag) coverageFlag = reinterpret_cast<CUdeviceptr>(mdrtNCCLAllocateKernelScratch(sizeof(int)));
   check(cuMemsetD32(coverageFlag,0,1));
   void *args[] = {&x,&ref,&rows,&limit,&coverageFlag};
   check(cuLaunchKernel(coverage,(rows+255)/256,1,1,256,1,1,0,nullptr,args,nullptr));
@@ -702,7 +705,7 @@ extern "C" void mdrtNCCLEpochBoxes(const double *x, int rows, const int64_t *gri
   if (!module) compile();
   CUdeviceptr storage;
   constexpr size_t bytes = 27 * 6 * sizeof(double);
-  check(cuMemAlloc(&storage, bytes + sizeof bounds));
+  storage = reinterpret_cast<CUdeviceptr>(mdrtNCCLAllocateKernelScratch(bytes + sizeof bounds));
   CUdeviceptr boundsDevice = storage + bytes;
   check(cuMemcpyHtoD(storage, host, bytes));
   check(cuMemcpyHtoD(boundsDevice, bounds, sizeof bounds));
@@ -710,7 +713,7 @@ extern "C" void mdrtNCCLEpochBoxes(const double *x, int rows, const int64_t *gri
   check(cuLaunchKernel(epochBoxes, (rows + 255LL) / 256, 1, 1, 256, 1, 1,
                        0, nullptr, args, nullptr));
   check(cuMemcpyDtoH(host, storage, bytes));
-  check(cuMemFree(storage));
+  mdrtNCCLFreeKernelScratch(reinterpret_cast<void *>(storage));
 }
 
 extern "C" int64_t *mdrtNCCLEpochRoutes(const double *x, int rows, int local,
@@ -730,7 +733,7 @@ extern "C" int64_t *mdrtNCCLEpochRoutes(const double *x, int rows, int local,
   size_t listsBytes = maskBytes + tileBytes + 2 * countBytes + sizeof(int);
   size_t auxOffset = (listsBytes + 7) & ~size_t(7);
   CUdeviceptr storage;
-  check(cuMemAlloc(&storage, auxOffset + auxBytes));
+  storage = reinterpret_cast<CUdeviceptr>(mdrtNCCLAllocateKernelScratch(auxOffset + auxBytes));
   CUdeviceptr masks = storage, tiles = masks + maskBytes;
   CUdeviceptr counts = tiles + tileBytes, offsets = counts + countBytes;
   CUdeviceptr deviceOwners = 0, deviceBoxes = 0;
@@ -766,13 +769,13 @@ extern "C" int64_t *mdrtNCCLEpochRoutes(const double *x, int rows, int local,
     size_t bytes = 2 * size_t(count) * sizeof(int64_t);
     host = static_cast<int64_t *>(std::malloc(bytes));
     if (!host) mdrtMPIAbort("out of memory collecting device epoch routes");
-    check(cuMemAlloc(&records, bytes));
+    records = reinterpret_cast<CUdeviceptr>(mdrtNCCLAllocateKernelScratch(bytes));
     check(cuLaunchKernel(epochRoutes, tilesPerRank, domains, 1, 256, 1, 1,
                          0, nullptr, args, nullptr));
     check(cuMemcpyDtoH(host, records, bytes));
-    check(cuMemFree(records));
+    mdrtNCCLFreeKernelScratch(reinterpret_cast<void *>(records));
   }
-  check(cuMemFree(storage));
+  mdrtNCCLFreeKernelScratch(reinterpret_cast<void *>(storage));
   *size = count;
   return host;
 }
@@ -821,10 +824,9 @@ extern "C" int64_t *mdrtNCCLFaceRecords(const double *positions, long long rows,
   // The count and its records belong to one synchronous classification.
   // Reserve both together, rounding capacity up to a whole launch tile.
   if ((size_t)rows > faceRecordCapacity) {
-    if (faceRecordBuffer) check(cuMemFree(faceRecordBuffer));
+    if (faceRecordBuffer) mdrtNCCLFreeKernelScratch(reinterpret_cast<void *>(faceRecordBuffer));
     faceRecordCapacity = ((size_t)rows + 255) / 256 * 256;
-    check(cuMemAlloc(&faceRecordBuffer,
-                     (2 * faceRecordCapacity + 1) * sizeof(int64_t)));
+    faceRecordBuffer = reinterpret_cast<CUdeviceptr>(mdrtNCCLAllocateKernelScratch((2 * faceRecordCapacity + 1) * sizeof(int64_t)));
   }
   CUdeviceptr deviceCount = faceRecordBuffer;
   CUdeviceptr records = faceRecordBuffer + sizeof(int64_t);

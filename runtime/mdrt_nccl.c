@@ -26,6 +26,146 @@ static void checkNCCL(ncclResult_t status) {
   if (status != ncclSuccess) mdrtMPIAbort(ncclGetErrorString(status));
 }
 
+/* Track the transport buffers independently of the compiler's CUDA pool.
+   Scopes measure high-water reservations by role. In a pinned scope each
+   role owns an arena and the same stream orders ordinary reuse. A free
+   from a consumer stream completes before that range can be borrowed on
+   another stream. */
+struct TransportArena {
+  struct TransportArena *next;
+  char *base;
+  size_t capacity;
+  int role;
+};
+struct TransportBuffer {
+  void *address;
+  size_t capacity;
+  struct TransportArena *arena;
+  int role;
+};
+static struct TransportArena *transportArenas;
+static struct TransportBuffer *transportBuffers;
+static size_t transportCount, transportRoom;
+static uint64_t transportLive[MdirDistributedBuffers], transportPeak[MdirDistributedBuffers];
+static int measureTransport, pinTransport;
+
+static struct TransportArena *transportArena(int role, size_t bytes) {
+  struct TransportArena *arena = malloc(sizeof(*arena));
+  if (!arena) mdrtMPIAbort("out of memory recording transport arena");
+  checkCuda(cudaMalloc((void **)&arena->base, bytes));
+  arena->capacity = bytes;
+  arena->role = role;
+  arena->next = transportArenas;
+  transportArenas = arena;
+  transportPeak[role] += bytes;
+  return arena;
+}
+
+extern void mdrtNCCLReleaseScratch(void);
+static void transportFree(void *address, cudaStream_t queue, int pooled);
+
+void mdrtNCCLBeginDistributedBuffers(const uint64_t *pin) {
+  if (pin) {
+    checkCuda(cudaDeviceSynchronize());
+    mdrtNCCLReleaseScratch();
+    transportFree(ownedField, stream, 0);
+    transportFree(ghostField, stream, 0);
+    transportFree(outgoing, stream, 0);
+    transportFree(incoming, stream, 0);
+    ownedField = ghostField = outgoing = incoming = NULL;
+    ownedCapacity = ghostCapacity = outCapacity = inCapacity = 0;
+    if (rowPool) checkCuda(cudaMemPoolTrimTo(rowPool, 0));
+  }
+  measureTransport = 1;
+  pinTransport = pin != NULL;
+  memcpy(transportPeak, transportLive, sizeof(transportPeak));
+  if (!pin) return;
+  for (int role = MdirHaloPlans; role <= MdirTransportScratch; ++role) {
+    transportPeak[role] = 0;
+    if (pin[role])
+      transportArena(role, pin[role]);
+  }
+}
+
+void mdrtNCCLReadDistributedBuffers(uint64_t *out) {
+  for (int role = MdirHaloPlans; role <= MdirTransportScratch; ++role)
+    out[role] += transportPeak[role];
+}
+
+static void *transportAllocate(size_t bytes, int role, cudaStream_t queue, int pooled) {
+  // Alignment of CUDA allocations also covers every interior address.
+  size_t aligned = (bytes + 255) & ~(size_t)255;
+  struct TransportBuffer buffer = {.capacity = aligned, .role = role};
+  if (pinTransport) {
+    struct TransportArena *arena;
+    for (arena = transportArenas; arena; arena = arena->next) {
+      if (arena->role != role || arena->capacity < bytes) continue;
+      size_t offset = 0;
+      while (arena->capacity >= aligned && offset <= arena->capacity - aligned) {
+        size_t next = offset;
+        for (size_t i = 0; i < transportCount; ++i) {
+          const struct TransportBuffer *used = &transportBuffers[i];
+          if (used->arena != arena) continue;
+          size_t first = (char *)used->address - arena->base;
+          size_t end = first + used->capacity;
+          if (first < offset + aligned && end > next)
+            next = end;
+        }
+        if (next == offset) {
+          buffer.address = arena->base + offset;
+          buffer.arena = arena;
+          break;
+        }
+        offset = next;
+      }
+      if (buffer.arena) break;
+    }
+    if (!buffer.arena) {
+      fprintf(stderr, "mdrt: distributed buffer pin overflow for %s, grew by %zu bytes\n",
+              mdirDistributedBufferName(role), aligned);
+      buffer.arena = transportArena(role, aligned);
+      buffer.address = buffer.arena->base;
+    }
+  } else if (pooled && rowPool) {
+    checkCuda(cudaMallocFromPoolAsync(&buffer.address, bytes, rowPool, queue));
+  } else {
+    checkCuda(cudaMalloc(&buffer.address, bytes));
+  }
+  if (measureTransport) {
+    if (transportCount == transportRoom) {
+      transportRoom = transportRoom ? 2 * transportRoom : 64;
+      struct TransportBuffer *grown = realloc(transportBuffers, transportRoom * sizeof(*grown));
+      if (!grown) mdrtMPIAbort("out of memory recording transport buffers");
+      transportBuffers = grown;
+    }
+    transportBuffers[transportCount++] = buffer;
+    uint64_t live = (transportLive[role] += aligned);
+    if (!pinTransport && live > transportPeak[role])
+      transportPeak[role] = live;
+  }
+  return buffer.address;
+}
+
+static void transportFree(void *address, cudaStream_t queue, int pooled) {
+  if (!address) return;
+  for (size_t i = transportCount; i-- > 0;) {
+    struct TransportBuffer buffer = transportBuffers[i];
+    if (buffer.address != address) continue;
+    transportLive[buffer.role] -= buffer.capacity;
+    transportBuffers[i] = transportBuffers[--transportCount];
+    if (buffer.arena) {
+      if (buffer.role == MdirHaloPairIds)
+        checkCuda(cudaStreamSynchronize(queue));
+      else if (!pooled && buffer.role != MdirHaloExchange)
+        checkCuda(cudaDeviceSynchronize());
+      return;
+    }
+    break;
+  }
+  if (pooled && rowPool) checkCuda(cudaFreeAsync(address, queue));
+  else checkCuda(cudaFree(address));
+}
+
 void mdrtNCCLStart(MPI_Comm world) {
   if (peers) return;
   MPI_Comm local;
@@ -106,7 +246,7 @@ struct NCCLPlan {
 static void *upload(const void *host, size_t bytes) {
   void *device = NULL;
   if (bytes) {
-    checkCuda(cudaMalloc(&device, bytes));
+    device = transportAllocate(bytes, MdirHaloPlans, 0, 0);
     checkCuda(cudaMemcpy(device, host, bytes, cudaMemcpyHostToDevice));
   }
   return device;
@@ -240,9 +380,9 @@ struct NCCLPlan *mdrtNCCLFacePlan(int local, int count, int64_t ownedRows,
     if (send[d]) columns[nc++] = (struct Column){2,local,p->os[peer],outgoingMasks[d]};
     if (receive[d]) columns[nc++] = (struct Column){3,d,p->offsetRecv[peer],incoming[d]};
   }
-  p->source = (int *)mdrtNCCLAllocate((size_t)p->sendRows*sizeof(int));
-  p->dest = (int *)mdrtNCCLAllocate((size_t)p->recvRows*sizeof(int));
-  p->shifts = mdrtNCCLAllocate(3*(size_t)p->recvRows*sizeof(double));
+  p->source = (int *)mdrtNCCLAllocateBuffer((size_t)p->sendRows*sizeof(int), MdirHaloPlans);
+  p->dest = (int *)mdrtNCCLAllocateBuffer((size_t)p->recvRows*sizeof(int), MdirHaloPlans);
+  p->shifts = mdrtNCCLAllocateBuffer(3*(size_t)p->recvRows*sizeof(double), MdirHaloPlans);
   size_t blockBytes = nc*((count+255LL)/256)*sizeof(int);
   double *blocks = mdrtNCCLAllocate(blockBytes);
   double *rows = mdrtNCCLAllocate(2*(size_t)count*sizeof(int));
@@ -338,9 +478,9 @@ struct NCCLPlan *mdrtNCCLSelfPlan(double *x, int64_t rows, const double *edges,
   free(prefix);
   p->sendRows=p->recvRows=*p->ns=*p->nr=total;
   p->hasPeers[0]=total!=0;
-  p->source=(int *)mdrtNCCLAllocate((size_t)total*sizeof *p->source);
-  p->dest=(int *)mdrtNCCLAllocate((size_t)total*sizeof *p->dest);
-  p->shifts=mdrtNCCLAllocate(3*(size_t)total*sizeof *p->shifts);
+  p->source=(int *)mdrtNCCLAllocateBuffer((size_t)total*sizeof *p->source, MdirHaloPlans);
+  p->dest=(int *)mdrtNCCLAllocateBuffer((size_t)total*sizeof *p->dest, MdirHaloPlans);
+  p->shifts=mdrtNCCLAllocateBuffer(3*(size_t)total*sizeof *p->shifts, MdirHaloPlans);
   mdrtNCCLSelfFaces(x,rows,edges,reach,masks,deviceBlocks,p->source,p->dest,p->shifts);
   mdrtNCCLFreePositions((double *)masks);
   mdrtNCCLFreePositions((double *)deviceBlocks);
@@ -355,16 +495,16 @@ void mdrtNCCLFreePlan(struct NCCLPlan *p) {
     mdrtNCCLFreePositions((double *)p->dest);
     mdrtNCCLFreePositions(p->shifts);
   } else {
-    checkCuda(cudaFree(p->source));
-    checkCuda(cudaFree(p->dest));
-    checkCuda(cudaFree(p->shifts));
+    transportFree(p->source, 0, 0);
+    transportFree(p->dest, 0, 0);
+    transportFree(p->shifts, 0, 0);
   }
   if (p->producerReady) {
     checkCuda(cudaEventDestroy(p->producerReady));
     checkCuda(cudaEventDestroy(p->haloReady));
-    checkCuda(cudaFree(p->centerMasks));
-    checkCuda(cudaFree(p->centerSlots));
-    checkCuda(cudaFree(p->pairPlaces));
+    transportFree(p->centerMasks, 0, 0);
+    transportFree(p->centerSlots, 0, 0);
+    transportFree(p->pairPlaces, 0, 0);
     if (p->interiorPositions) mdrtNCCLFreePositions(p->interiorPositions);
   }
   free(p->exported);
@@ -374,8 +514,8 @@ void mdrtNCCLFreePlan(struct NCCLPlan *p) {
 
 static void reserve(double **buffer, size_t *capacity, size_t bytes) {
   if (bytes <= *capacity) return;
-  checkCuda(cudaFree(*buffer));
-  checkCuda(cudaMalloc((void **)buffer, bytes));
+  transportFree(*buffer, stream, 0);
+  *buffer = transportAllocate(bytes, MdirHaloExchange, stream, 0);
   *capacity = bytes;
 }
 
@@ -534,7 +674,7 @@ double *mdrtNCCLPairPositions(struct NCCLPlan *p, double *full, double *owned,
     return full;
   }
   if (!p->interiorPositions) {
-    p->interiorPositions = mdrtNCCLAllocate((n+p->recvRows)*3*sizeof(double));
+    p->interiorPositions = mdrtNCCLAllocateBuffer((n+p->recvRows)*3*sizeof(double), MdirHaloPlans);
     if (p->recvRows)
       checkCuda(cudaMemsetAsync(p->interiorPositions+n*3, 0,
                                 p->recvRows*3*sizeof(double), 0));
@@ -547,16 +687,15 @@ double *mdrtNCCLPairPositions(struct NCCLPlan *p, double *full, double *owned,
 }
 
 void mdrtNCCLFreePositions(double *positions) {
-  if (rowPool) checkCuda(cudaFreeAsync(positions, 0));
-  else checkCuda(cudaFree(positions));
+  transportFree(positions, 0, 1);
+}
+
+double *mdrtNCCLAllocateBuffer(size_t bytes, int role) {
+  return transportAllocate(bytes ? bytes : sizeof(double), role, 0, 1);
 }
 
 double *mdrtNCCLAllocate(size_t bytes) {
-  double *device;
-  size_t size = bytes ? bytes : sizeof(double);
-  if (rowPool) checkCuda(cudaMallocFromPoolAsync((void **)&device,size,rowPool,0));
-  else checkCuda(cudaMalloc((void **)&device,size));
-  return device;
+  return mdrtNCCLAllocateBuffer(bytes, MdirTransportScratch);
 }
 
 /* The row table is immutable for the lifetime of the halo. Each consumer
@@ -576,10 +715,7 @@ int64_t *mdrtNCCLPairIds(struct PairIds **head, void *stream, const int64_t *own
   p->stream = stream;
   size_t count = (size_t)n + g;
   size_t bytes = (count ? count : 1) * sizeof(*p->rows);
-  if (rowPool)
-    checkCuda(cudaMallocFromPoolAsync((void **)&p->rows, bytes, rowPool, stream));
-  else
-    checkCuda(cudaMalloc((void **)&p->rows, bytes));
+  p->rows = transportAllocate(bytes, MdirHaloPairIds, stream, 1);
   if (n)
     checkCuda(cudaMemcpyAsync(p->rows, owned, n * sizeof(*owned),
                               cudaMemcpyHostToDevice, stream));
@@ -594,8 +730,7 @@ int64_t *mdrtNCCLPairIds(struct PairIds **head, void *stream, const int64_t *own
 void mdrtNCCLReleasePairIds(struct PairIds *p) {
   while (p) {
     struct PairIds *next = p->next;
-    if (rowPool) checkCuda(cudaFreeAsync(p->rows, p->stream));
-    else checkCuda(cudaFree(p->rows));
+    transportFree(p->rows, p->stream, 1);
     free(p);
     p = next;
   }
@@ -656,10 +791,22 @@ int *mdrtNCCLMigrationSpans(const void *host, int spans, int rows) {
   return map;
 }
 
-int *mdrtNCCLUploadIndices(const int *rows, int64_t n) {
-  int *device = (int *)mdrtNCCLAllocate(n*sizeof(int));
+int *mdrtNCCLUploadIndexBuffer(const int *rows, int64_t n, int role) {
+  int *device = (int *)mdrtNCCLAllocateBuffer(n*sizeof(int), role);
   if (n) checkCuda(cudaMemcpy(device,rows,n*sizeof(int),cudaMemcpyHostToDevice));
   return device;
+}
+
+int *mdrtNCCLUploadIndices(const int *rows, int64_t n) {
+  return mdrtNCCLUploadIndexBuffer(rows, n, MdirTransportScratch);
+}
+
+void *mdrtNCCLAllocateKernelScratch(size_t bytes) {
+  return transportAllocate(bytes, MdirTransportScratch, 0, 0);
+}
+
+void mdrtNCCLFreeKernelScratch(void *address) {
+  transportFree(address, 0, 0);
 }
 
 void mdrtNCCLDownloadRows(const double *source, const int *indices, int64_t rows,
@@ -711,16 +858,14 @@ void mdrtNCCLRowsReady(void) {
   checkCuda(cudaStreamSynchronize(0));
 }
 
-extern void mdrtNCCLReleaseScratch(void);
-
 void mdrtNCCLFinish(void) {
   if (!peers) return;
   mdrtNCCLReleaseScratch();
   checkNCCL(ncclCommDestroy(peers));
-  checkCuda(cudaFree(ownedField));
-  checkCuda(cudaFree(ghostField));
-  checkCuda(cudaFree(outgoing));
-  checkCuda(cudaFree(incoming));
+  transportFree(ownedField, stream, 0);
+  transportFree(ghostField, stream, 0);
+  transportFree(outgoing, stream, 0);
+  transportFree(incoming, stream, 0);
   checkCuda(cudaStreamDestroy(stream));
   if (tupleReady) { checkCuda(cudaEventDestroy(tupleReady)); tupleReady=NULL; }
   if (rowPool) {
@@ -728,6 +873,17 @@ void mdrtNCCLFinish(void) {
     checkCuda(cudaMemPoolDestroy(rowPool));
     rowPool = NULL;
   }
+  while (transportArenas) {
+    struct TransportArena *arena = transportArenas;
+    transportArenas = arena->next;
+    checkCuda(cudaFree(arena->base));
+    free(arena);
+  }
+  free(transportBuffers);
+  transportBuffers = NULL;
+  transportCount = transportRoom = 0;
+  measureTransport = pinTransport = 0;
+  memset(transportLive, 0, sizeof(transportLive));
   free(nodes);
   peers = NULL;
 }

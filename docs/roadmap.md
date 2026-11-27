@@ -330,6 +330,6 @@ boxes. Independent tuple observables can share a collective. Pointwise updates o
 A one-domain NCCL request uses the ordinary GPU executor and its
 neighbor selection in NVE and V-rescale NVT.
 Rank-local MATRIX entries return their arenas when retired.
-Distributed AUTO preflights device capacity before each candidate trial.
+Distributed AUTO screens device capacity and exports per-rank buffer pins.
 
 Midpoint GPU pair traversal and reproducible integer GPU sums remain open.

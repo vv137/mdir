@@ -997,3 +997,13 @@ The estimate still screens out the double-precision 13 Å candidate
 on these GPUs. The earlier mixed 13 Å allocation failure reproduced
 in the diagnostic overlay with allocation tracing disabled. The full
 build also completed the mixed 13 Å deck with allocation tracing.
+
+
+### Distributed AUTO buffer pins
+
+Record the measured device-buffer peaks for each admitted reach and each
+rank. Export the winning rank tables with the numeric reach through
+`mdir pin` and the automatic choices in the manifest. Preallocate the
+named arenas when replaying these choices. Retired list storage returns
+to its retained arena and growth beyond the pin is logged. Runs without
+a buffer pin keep demand allocation.

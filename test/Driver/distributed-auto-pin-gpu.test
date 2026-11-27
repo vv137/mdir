@@ -18,3 +18,28 @@
 # MANIFEST: "pairlist_distance_source":"cached"
 # MANIFEST-SAME: "searched":false
 # MANIFEST-SAME: "source":"cached"
+
+# The standalone pin replays the measured rank capacities. The diagnostic
+# reports the reservation after the runs, including any overflow.
+# RUN: cd %t && mdir pin run.jsonl > execution-pin.toml
+# RUN: FileCheck %s --check-prefix=PIN < %t/execution-pin.toml
+# RUN: cd %t && %python -c 'from pathlib import Path; import re; pin=Path("execution-pin.toml").read_text(); deck=Path("run.toml").read_text(); reach=re.search(r"^pairlist_distance = .*",pin,re.M)[0]; Path("replay.toml").write_text(re.sub(r"^pairlist_distance *=.*",reach,deck,flags=re.M)+pin[pin.index("buffer_bytes = "):])'
+# RUN: cd %t && %mpiexec -n 2 mdir run replay.toml > replay.log 2>&1
+# RUN: FileCheck %s --check-prefix=REPLAY < %t/replay.log
+# RUN: cd %t && %python -c 'import json,re; events=[json.loads(x) for x in open("run.jsonl")]; pin=events[0]["resolved_choices"]["distributed_buffers"]["bytes_by_rank"]; peak=json.loads(re.search(r"distributed buffer bytes by rank: (.*)",open("replay.log").read())[1]); assert pin == peak, (pin,peak)'
+# RUN: cd %t && sed -E 's/matrix_entries = [0-9]+/matrix_entries = 1/g' replay.toml > overflow.toml
+# RUN: cd %t && %mpiexec -n 2 mdir run overflow.toml > overflow.log 2>&1
+# RUN: FileCheck %s --check-prefix=OVERFLOW < %t/overflow.log
+
+# PIN: [energy]
+# PIN: pairlist_distance =
+# PIN: [distribute]
+# PIN: buffer_bytes = [
+# PIN-NEXT: {{.*}}matrix_entries =
+# PIN-NEXT: {{.*}}matrix_entries =
+# REPLAY-NOT: distributed buffer pin overflow
+# REPLAY: distributed buffer peak rank 0:
+# REPLAY-NEXT: MDIR: distributed buffer peak rank 1:
+# REPLAY-NOT: distributed buffer pin overflow
+# OVERFLOW: distributed buffer pin overflow for matrix_entries
+# OVERFLOW: distributed buffer peak rank 0:

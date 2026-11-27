@@ -108,6 +108,18 @@ uint64_t mdrtMPITrialMemoryAvailable(void) {
   return 0;
 }
 
+void mdrtMPIBeginDistributedBuffers(const uint64_t *pin) {
+#ifdef MDIR_ENABLE_NCCL
+  if (useNCCL) mdrtNCCLBeginDistributedBuffers(pin);
+#endif
+}
+
+void mdrtMPIReadDistributedBuffers(uint64_t *out) {
+#ifdef MDIR_ENABLE_NCCL
+  if (useNCCL) mdrtNCCLReadDistributedBuffers(out);
+#endif
+}
+
 int mdrtMPIRank(void) { initialize(); return rank; }
 int mdrtMPISize(void) { initialize(); return size; }
 

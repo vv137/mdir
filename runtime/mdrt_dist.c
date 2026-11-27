@@ -2047,7 +2047,7 @@ int64_t _mlir_ciface_mdrtDistDeviceEpoch(int64_t oldHandle,
   if (!masks) fail("out of memory storing previous face classifications");
   for (int64_t r = 0; r < next->rows[d]; ++r)
     masks[r] = next->faceMasks[next->ids[d * next->stride + r]];
-  next->localFaceMasks = (unsigned *)mdrtNCCLAllocate(bytes);
+  next->localFaceMasks = (unsigned *)mdrtNCCLAllocateBuffer(bytes, MdirHaloPlans);
   mdrtNCCLUpload((double *)next->localFaceMasks, (const double *)masks, bytes);
   free(masks);
   if (tracing()) traceMigration(old,next);
@@ -2509,7 +2509,7 @@ static void buildPairFacePlan(struct Halo *h, struct FaceDestination *routes,
       observer->domain(observer->context, d, l->rows[d], h->rows[d], boxes[d].lo, boxes[d].hi);
   }
   if (!l->localFaceMasks)
-    l->localFaceMasks = (unsigned *)mdrtNCCLAllocate(l->rows[local]*sizeof(unsigned));
+    l->localFaceMasks = (unsigned *)mdrtNCCLAllocateBuffer(l->rows[local]*sizeof(unsigned), MdirHaloPlans);
   h->ncclPlan = mdrtNCCLFacePlan(local,l->count,l->rows[local],l->deviceFaces,
       masks,outgoing,counts,receive,l->localFaceMasks,l->grid,l->edges);
   free(masks);
@@ -3114,7 +3114,7 @@ void _mlir_ciface_mdrtDistDeviceExclusions(struct DeviceKinds *out,
       map->incidenceSize = mdrtTuplesSize(pairs, 2, rows);
       int32_t *host = mdrtTuplesAllocate(map->incidenceSize * sizeof(*host));
       mdrtTuplesFill(map->pairs.aligned, pairs, 2, rows, host);
-      map->incidence = mdrtNCCLUploadIndices(host, map->incidenceSize);
+      map->incidence = mdrtNCCLUploadIndexBuffer(host, map->incidenceSize, MdirTuplePlans);
       if (physical) {
         map->table->physicalIncidence = map->incidence;
         map->table->physicalSize = map->incidenceSize;
@@ -3209,9 +3209,9 @@ static void prepareTupleTopology(struct TupleTopology *t, int particles) {
   memcpy(cursor,starts,(size_t)particles*sizeof(*cursor));
   for (int i=0; i<count; ++i) entries[cursor[t->hostMembers[i]]++]=i;
   t->particles = particles;
-  t->members = mdrtNCCLUploadIndices(t->hostMembers,count);
-  t->starts = mdrtNCCLUploadIndices(starts,(int64_t)particles+1);
-  t->entries = mdrtNCCLUploadIndices(entries,count);
+  t->members = mdrtNCCLUploadIndexBuffer(t->hostMembers,count, MdirTuplePlans);
+  t->starts = mdrtNCCLUploadIndexBuffer(starts,(int64_t)particles+1, MdirTuplePlans);
+  t->entries = mdrtNCCLUploadIndexBuffer(entries,count, MdirTuplePlans);
   free(t->hostMembers);
   t->hostMembers = NULL;
   free(starts);
@@ -3237,8 +3237,8 @@ static void buildTupleDomainRows(struct TupleDomainRows *directory,
     if (r>=owned)
       for (int k=0; k<3; ++k) particles[5*r+2+k]=h->image[3*g+k];
   }
-  directory->locations=mdrtNCCLUploadIndices(locations,3*l->count);
-  directory->particles=mdrtNCCLUploadIndices(particles,5*rows);
+  directory->locations=mdrtNCCLUploadIndexBuffer(locations,3*l->count, MdirTuplePlans);
+  directory->particles=mdrtNCCLUploadIndexBuffer(particles,5*rows, MdirTuplePlans);
   free(locations);
   free(particles);
 }
@@ -3259,9 +3259,9 @@ static struct TuplePlan *newTuplePlan(struct Layout *l, struct Halo *h,
   prepareTupleTopology(topology,l->count);
   ++topology->references;
   p->topology = topology;
-  p->mapped=(int *)mdrtNCCLAllocate(memberships*sizeof(int));
-  p->blocks=(int *)mdrtNCCLAllocate(((rows+255)/256)*sizeof(int));
-  p->csr=(int *)mdrtNCCLAllocate(p->extent*sizeof(int));
+  p->mapped=(int *)mdrtNCCLAllocateBuffer(memberships*sizeof(int), MdirTuplePlans);
+  p->blocks=(int *)mdrtNCCLAllocateBuffer(((rows+255)/256)*sizeof(int), MdirTuplePlans);
+  p->csr=(int *)mdrtNCCLAllocateBuffer(p->extent*sizeof(int), MdirTuplePlans);
   return p;
 }
 
@@ -3269,7 +3269,7 @@ static double *tupleCoordinates(struct Halo *h, struct Memref3D *x, int64_t d) {
   struct Layout *l=h->layout;
   if (h->tupleInput.allocated!=x->allocated) {
     if (!h->tupleCoordinates)
-      h->tupleCoordinates=mdrtNCCLAllocate(3*l->stride*l->domains*sizeof(double));
+      h->tupleCoordinates=mdrtNCCLAllocateBuffer(3*l->stride*l->domains*sizeof(double), MdirTuplePlans);
     if (h->tupleInput.allocated) _mlir_ciface_mdrtDistReleaseField(&h->tupleInput);
     h->tupleInput=*x;
     _mlir_ciface_mdrtDistRetainField(x);
@@ -3344,7 +3344,7 @@ void _mlir_ciface_mdrtDistResidentSum(int64_t handle,struct Memref3D *initial,
 static double *joinTupleFields(int64_t d,int64_t n,int64_t g,struct Memref3D *owned,
                                 struct Memref3D *ghost,int width,void *stream) {
   if (owned->sizes[2]!=width || ghost->sizes[2]!=width) fail("invalid tuple field width");
-  double *result=mdrtNCCLAllocate((n+g)*width*sizeof(double));
+  double *result=mdrtNCCLAllocateBuffer((n+g)*width*sizeof(double), MdirTupleImports);
   mdrtNCCLJoin(result,deviceRows(owned,d,n,0),n*width,deviceRows(ghost,d,g,0),g*width);
   mdrtNCCLWaitForRows(stream);
   return result;
@@ -3383,14 +3383,14 @@ void _mlir_ciface_mdrtDistImportTupleForces(struct Memref3D *field,int64_t domai
 void _mlir_ciface_mdrtDistUploadTupleScalars(struct Memref1D *out,struct Memref1D *src) {
   if (src->strides[0]!=1) fail("expected contiguous tuple parameters");
   size_t bytes=src->sizes[0]*sizeof(double);
-  double *data=mdrtNCCLAllocate(bytes);
+  double *data=mdrtNCCLAllocateBuffer(bytes, MdirTupleImports);
   mdrtNCCLUpload(data,src->aligned+src->offset,bytes);
   *out=(struct Memref1D){data,data,0,{src->sizes[0]},{1}};
 }
 void _mlir_ciface_mdrtDistUploadTupleVectors(struct Memref2D *out,struct Memref2D *src) {
   if (src->strides[1]!=1 || src->strides[0]!=src->sizes[1]) fail("expected contiguous tuple parameters");
   size_t bytes=src->sizes[0]*src->sizes[1]*sizeof(double);
-  double *data=mdrtNCCLAllocate(bytes);
+  double *data=mdrtNCCLAllocateBuffer(bytes, MdirTupleImports);
   mdrtNCCLUpload(data,src->aligned+src->offset,bytes);
   *out=(struct Memref2D){data,data,0,{src->sizes[0],src->sizes[1]},{src->sizes[1],1}};
 }
@@ -3502,7 +3502,7 @@ void _mlir_ciface_mdrtDistPairImageShifts(struct Memref2D *out, int64_t handle) 
       for (int c=0; c<3; ++c)
         shifts[3*(n+i)+c] = h->image[3*(d*h->capacity+i)+c]*h->layout->edges[c];
     size_t bytes = 3*(size_t)(n+g)*sizeof(double);
-    h->pairImageShifts = mdrtNCCLAllocate(bytes);
+    h->pairImageShifts = mdrtNCCLAllocateBuffer(bytes, MdirHaloImageSlots);
     mdrtNCCLUpload(h->pairImageShifts,shifts,bytes);
     free(shifts);
   }

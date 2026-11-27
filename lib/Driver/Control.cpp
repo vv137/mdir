@@ -3312,7 +3312,7 @@ Error Reader::read(const toml::table &root) {
     return error;
   if (table) {
     if (Error error = checkKeywords(*table, "distribute",
-                                    {"domains", "transport", "traversal", "placement", "pair_overlap"}))
+                                    {"domains", "transport", "traversal", "placement", "pair_overlap", "buffer_bytes"}))
       return error;
     auto &dist = control.distribution.emplace();
     dist.gridGiven = table->contains("domains");
@@ -3376,6 +3376,29 @@ Error Reader::read(const toml::table &root) {
       if (control.target != Target::CPU)
         return fail(*table, "distributed execution requires a CPU target");
     }
+    if (const auto *node = table->get("buffer_bytes")) {
+      if (dist.transport != "nccl" || control.pairlistDistanceAuto)
+        return fail(*node, "buffer_bytes requires NCCL and a numeric pairlist_distance");
+      const auto *ranks = node->as_array();
+      if (!ranks || ranks->empty())
+        return fail(*node, "buffer_bytes requires an array of rank tables");
+      for (const auto &rank : *ranks) {
+        auto *sizes = rank.as_table();
+        if (!sizes || sizes->size() != MdirDistributedBuffers)
+          return fail(rank, "buffer_bytes requires every distributed buffer size");
+        auto &bytes = dist.bufferBytes.emplace_back();
+        uint64_t total = 0;
+        for (int slot = 0; slot < MdirDistributedBuffers; ++slot) {
+          auto value = (*sizes)[mdirDistributedBufferName(slot)].value<int64_t>();
+          if (!value || *value < 0 || uint64_t(*value) > uint64_t(INT64_MAX) - total)
+            return fail(rank, "buffer_bytes requires nonnegative integer byte counts");
+          bytes[slot] = *value;
+          total += *value;
+        }
+        if (bytes[MdirPME])
+          return fail(rank, "distributed buffer pin requires zero PME bytes");
+      }
+    }
     if (control.pme || control.ljpme)
       return fail(*table, "reciprocal sums require a distributed mesh");
     if (!control.periodic || control.barostat)
@@ -3416,6 +3439,9 @@ llvm::Error mdir::driver::Control::resolveNCCLDistribution(int64_t ranks) {
     dist.domains = ranks;
   if (ranks && dist.count() != ranks)
     return llvm::createStringError("NCCL requires one domain per rank");
+  if (!dist.bufferBytes.empty() &&
+      (dist.count() == 1 || dist.bufferBytes.size() != static_cast<uint64_t>(dist.count())))
+    return llvm::createStringError("buffer_bytes requires one table per NCCL rank in a multi-rank run");
   if (usesOrdinaryGPUExecutor())
     return llvm::Error::success();
   if (deterministic)

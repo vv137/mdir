@@ -14,6 +14,8 @@ void mdrtMPIPlaceDomains(const int64_t grid[3], const double edges[3]);
 int mdrtMPINode(int peer);
 void mdrtMPIStartNCCL(void);
 uint64_t mdrtMPITrialMemoryAvailable(void);
+void mdrtMPIBeginDistributedBuffers(const uint64_t *pin);
+void mdrtMPIReadDistributedBuffers(uint64_t *out);
 void mdrtMPIFinish(void);
 int mdrtMPIRank(void);
 int mdrtMPISize(void);

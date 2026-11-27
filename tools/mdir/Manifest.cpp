@@ -73,6 +73,29 @@ llvm::Expected<std::string> mdir::tool::getExecutionPins(StringRef path) {
       return llvm::createStringError("invalid resolved pair-list distance");
     os << "\n[energy]\npairlist_distance = " << Value(*reach) << '\n';
   }
+  if (auto *buffers = choices->getObject("distributed_buffers")) {
+    auto *ranks = buffers->getArray("bytes_by_rank");
+    if (!ranks || ranks->empty() || !choices->getObject("pairlist_distance"))
+      return llvm::createStringError("incomplete distributed buffer pin");
+    os << "\n[distribute]\nbuffer_bytes = [\n";
+    for (const auto &entry : *ranks) {
+      auto *sizes = entry.getAsObject();
+      if (!sizes || sizes->size() != MdirDistributedBuffers)
+        return llvm::createStringError("incomplete distributed rank buffer sizes");
+      os << "  { ";
+      const char *separator = "";
+      for (int slot = 0; slot < MdirDistributedBuffers; ++slot) {
+        auto name = mdirDistributedBufferName(slot);
+        auto bytes = sizes->getInteger(name);
+        if (!bytes || *bytes < 0)
+          return llvm::createStringError("invalid distributed buffer size");
+        os << separator << name << " = " << *bytes;
+        separator = ", ";
+      }
+      os << " },\n";
+    }
+    os << "]\n";
+  }
   return text;
 }
 
