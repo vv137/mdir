@@ -332,3 +332,5 @@ to measure the effect of overlapping independent rows.
 
 D[distribute-auto-balance] samples real-space force clocks and can resize
 midpoint particle domains at existing Verlet rebuilds in floating-point MPI.
+D[distribute-tuple-cost] uses measured bonded-kernel cost and existing halo
+coverage to route a sample of bonded tuples to a lighter adjacent domain.

@@ -1364,6 +1364,15 @@ structure of MDIR (D82) follows them, see
 [neighbor-tiles.md](neighbor-tiles.md), and the groups of 16 (D89) share
 their aim, see [neighbor-groups.md](neighbor-groups.md).
 
+### Phillips2020
+
+J. C. Phillips, D. J. Hardy, J. D. C. Maia, et al., "Scalable molecular
+dynamics on CPU and GPU architectures with NAMD," *J. Chem. Phys.*
+**153**, 044130 (2020).
+[doi:10.1063/5.0014475](https://doi.org/10.1063/5.0014475)
+
+Used for: measurement-based redistribution of molecular dynamics work.
+
 ### Pall2020
 
 S. Páll, A. Zhmurov, P. Bauer, et al., "Heterogeneous parallelization

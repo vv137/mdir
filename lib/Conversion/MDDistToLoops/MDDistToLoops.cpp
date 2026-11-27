@@ -3847,6 +3847,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
   for (Operation *op : ops) {
     if (grouped.contains(op)) continue;
     int phase = 0;
+    bool tupleWork = false;
     if (statistics) {
       if (isa<SumPairsOp, GatherPairsOp>(op)) phase = DistPairs;
       if (isa<SumParticlesOp, MapParticlesOp, TupleRowsOp, TupleKernelOp>(op)) phase = DistOther;
@@ -3864,6 +3865,8 @@ LogicalResult Lowering::run(func::FuncOp function) {
         if (auto step = op->getParentOfType<scf::ForOp>())
           mark(&step.getBody()->front(), DistStep);
       if (phase) mark(op, phase);
+      tupleWork = mpi && !fixedPoint && phase == DistOther && isa<TupleKernelOp>(op);
+      if (tupleWork) mark(op, DistTupleWork);
     }
     if (matrixPairs && isa<SumPairsOp, GatherPairsOp>(op)) {
       loc = op->getLoc();
@@ -3872,6 +3875,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
     } else if (failed(lower(op))) {
       return failure();
     }
+    if (tupleWork) mark(op, -DistTupleWork);
     if (phase) mark(op, -phase);
   }
   // The casts of the structural conversion: a cast of a state to its tuple

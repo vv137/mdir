@@ -1666,3 +1666,10 @@ policy is automatic. The run log prints the choice and the observed
 mean and peak force time and mean arrival wait. Fixed-point mode uses
 uniform domains. See [D[distribute-auto-balance]](decisions/distribute-auto-balance.md)
 for the sampling window and displacement bounds.
+
+The same rebuild can use measured bonded-kernel cost to assign a sample
+of a heavy domain's tuples to a lighter neighbor. Every explicit member
+image must fit that neighbor's existing buffered halo. Midpoint ownership
+covers the remaining tuples, and constraint projection keeps its original
+schedule. See [D[distribute-tuple-cost]](decisions/distribute-tuple-cost.md)
+and [Phillips2020](references.md#phillips2020).

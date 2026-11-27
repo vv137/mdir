@@ -68,7 +68,7 @@ void mdrtDistMeshBytes(enum DistMeshTraffic kind, int64_t bytes) {
 
 #ifdef MDIR_ENABLE_MPI
 struct BalanceClock {
-  double force, wait, started, waitStarted;
+  double force, wait, started, waitStarted, tuples, tupleStarted;
   int steps, phase;
 };
 static _Thread_local struct BalanceClock *balanceClock;
@@ -79,11 +79,14 @@ static void measureBalance(int64_t phase) {
   if (phase == DistStep) ++b->steps;
   if (phase != DistPairs && phase != -DistPairs &&
       phase != DistOther && phase != -DistOther &&
-      phase != DistWait && phase != -DistWait) return;
+      phase != DistWait && phase != -DistWait &&
+      phase != DistTupleWork && phase != -DistTupleWork) return;
   struct timespec stamp;
   clock_gettime(CLOCK_MONOTONIC, &stamp);
   double now = stamp.tv_sec+1.e-9*stamp.tv_nsec;
-  if (phase == DistWait) b->waitStarted = now;
+  if (phase == DistTupleWork) b->tupleStarted = now;
+  else if (phase == -DistTupleWork) b->tuples += now-b->tupleStarted;
+  else if (phase == DistWait) b->waitStarted = now;
   else if (phase == -DistWait) {
     double elapsed = now-b->waitStarted;
     b->wait += elapsed;
@@ -102,7 +105,7 @@ void mdrtDistPhase(int64_t phase) {
 #ifdef MDIR_ENABLE_MPI
   measureBalance(phase);
 #endif
-  if (observer)
+  if (observer && phase != DistTupleWork && phase != -DistTupleWork)
     observer->phase(observer->context, phase);
 }
 
@@ -130,6 +133,12 @@ struct Layout {
   int64_t grid[3], domains, count, stride;
   double edges[3];
   double *cuts[3];
+#ifdef MDIR_ENABLE_MPI
+  struct TupleDonation {
+    int destination;
+    double fraction;
+  } *donations;
+#endif
   struct ConstraintGroup {
     int32_t atoms[4];
     int size;
@@ -198,6 +207,7 @@ struct Halo {
   struct GatherRow *gatherRows;
 #ifdef MDIR_ENABLE_MPI
   struct TransferPlan plans[2];
+  double tupleMargin;
   struct Exclusions *exclusions;
   uint64_t directoryVersion;
   struct GhostLink *links;
@@ -1307,6 +1317,7 @@ void mdrtDistReleaseLayout(int64_t handle) {
   free(l->initial);
   releaseCollection(l->collection);
   releaseGroupSchedules(l->groupSchedules);
+  free(l->donations);
   free(l->migrationCounts);
   free(l->sendSlots);
   free(l->sourceSlots);
@@ -2028,7 +2039,8 @@ int64_t mdrtDistHaloExclusions(int64_t halo, int64_t handle) {
 }
 
 static int64_t startPartition(struct Memref2D *x, int64_t gx, int64_t gy, int64_t gz,
-                              double lx, double ly, double lz, double *const cuts[3]) {
+                              double lx, double ly, double lz, double *const cuts[3],
+                              const struct TupleDonation *donations) {
   if (mdrtMPISize() == 1)
     return _mlir_ciface_mdrtDistMPIPartition(x,gx,gy,gz,lx,ly,lz);
   struct Layout *l = calloc(1,sizeof *l);
@@ -2040,6 +2052,12 @@ static int64_t startPartition(struct Memref2D *x, int64_t gx, int64_t gy, int64_
   l->grid[0] = gx; l->grid[1] = gy; l->grid[2] = gz;
   l->edges[0] = lx; l->edges[1] = ly; l->edges[2] = lz;
   if (cuts) copyCuts(l,cuts);
+  if (donations) {
+    size_t bytes = l->domains*sizeof *donations;
+    l->donations = malloc(bytes);
+    if (!l->donations) fail("out of memory retaining tuple destinations");
+    memcpy(l->donations,donations,bytes);
+  }
   int64_t first = mdrtMPIIdentityBound(l->count,0), past = mdrtMPIIdentityBound(l->count,1);
   l->initial = calloc(past > first ? past-first : 1,sizeof *l->initial);
   if (!l->initial) fail("out of memory assigning particle owners");
@@ -2059,7 +2077,7 @@ static int64_t startPartition(struct Memref2D *x, int64_t gx, int64_t gy, int64_
 
 int64_t _mlir_ciface_mdrtDistStartPartition(struct Memref2D *x, int64_t gx, int64_t gy,
                                            int64_t gz, double lx, double ly, double lz) {
-  return startPartition(x,gx,gy,gz,lx,ly,lz,NULL);
+  return startPartition(x,gx,gy,gz,lx,ly,lz,NULL,NULL);
 }
 
 /* A solve that only visits disjoint complete groups may keep its
@@ -3128,10 +3146,46 @@ static int64_t imageRow(struct Halo *h, int64_t d, int64_t id, const int64_t ima
   return -1;
 }
 
+struct TupleMember {
+  int64_t id, domain, row, image[3];
+  const double *x;
+};
+
+#ifdef MDIR_ENABLE_MPI
+static int64_t donateTuple(struct Halo *h, int64_t domain, int64_t identity,
+                           const struct TupleMember *members, int64_t arity) {
+  struct Layout *l = h->layout;
+  if (!l->donations || !h->tupleMargin) return domain;
+  struct TupleDonation choice = l->donations[domain];
+  if (!choice.fraction) return domain;
+  /* The topology identity chooses a stable sample across report steps. */
+  uint64_t sample = (uint64_t)identity*UINT64_C(0x9e3779b97f4a7c15);
+  if ((double)(sample >> 32) >= choice.fraction*0x1p32) return domain;
+  int64_t dest = choice.destination;
+  double lo[3], hi[3];
+  domainBox(l,NULL,dest,lo,hi,1);
+  for (int64_t i = 0; i < arity; ++i) {
+    const struct TupleMember *m = members+i;
+    if (m->domain == dest && !m->image[0] && !m->image[1] && !m->image[2]) continue;
+    double distance2 = 0;
+    for (int axis = 0; axis < 3; ++axis) {
+      double edge = l->edges[axis], span = ceil(h->reach/edge);
+      if (m->image[axis] < -span || m->image[axis] > span) return domain;
+      double x = m->x[axis]+m->image[axis]*edge;
+      double outside = outsideBox(x,lo[axis],hi[axis]);
+      distance2 += outside*outside;
+    }
+    if (!(distance2 < h->tupleMargin*h->tupleMargin)) return domain;
+  }
+  return dest;
+}
+#endif
+
 /* Return whether all remote row references fit a neighboring periodic image. */
 static int tupleRows(int64_t handle, struct Memref3D *positions,
                       struct Members *members, struct Memref2I *out, int64_t begin, int64_t end,
-                      int64_t firstTuple, int64_t pastTuple, const struct TupleGeometry *sites) {
+                      int64_t firstTuple, int64_t pastTuple, const struct TupleGeometry *sites,
+                      int64_t identityBase) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
   struct Layout *l = h->layout;
   int64_t count = members->sizes[0], arity = members->sizes[1];
@@ -3140,10 +3194,7 @@ static int tupleRows(int64_t handle, struct Memref3D *positions,
   if (count == 0) return 1;
   int compact = 1;
   int64_t stride = sites ? 1 : positions->strides[2];
-  struct Member {
-    int64_t id, domain, row, image[3];
-    const double *x;
-  } *member = malloc(arity*sizeof *member);
+  struct TupleMember *member = malloc(arity*sizeof *member);
   if (!member) fail("out of memory locating tuple members");
   for (int64_t t = firstTuple; t < pastTuple; ++t) {
     int64_t anchor = l->count, pivot = 0;
@@ -3199,6 +3250,9 @@ static int tupleRows(int64_t handle, struct Memref3D *positions,
           member[a].image[k] -= (int64_t)translation;
       }
     }
+#ifdef MDIR_ENABLE_MPI
+    if (sites) d = donateTuple(h,d,identityBase+t,member,arity);
+#endif
     record[0] = d;
     if (d < begin || d >= end) continue;
     for (int64_t a = 0; a < arity; ++a) {
@@ -3225,7 +3279,7 @@ static int tupleRows(int64_t handle, struct Memref3D *positions,
 void _mlir_ciface_mdrtDistTupleRows(int64_t handle, struct Memref3D *positions,
                                     struct Members *members, struct Memref2I *out) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
-  tupleRows(handle,positions,members,out,0,h->layout->domains,0,members->sizes[0],NULL);
+  tupleRows(handle,positions,members,out,0,h->layout->domains,0,members->sizes[0],NULL,0);
 }
 
 #ifdef MDIR_ENABLE_MPI
@@ -3322,7 +3376,7 @@ int64_t _mlir_ciface_mdrtDistScheduleTuples(int64_t handle, int64_t groups, int6
     #pragma omp parallel for schedule(static) reduction(&:compact) if(count > 256)
     for (int64_t start = 0; start < count; start += 256) {
       int64_t end = start+256 < count ? start+256 : count;
-      compact &= tupleRows(handle,positions,&slice,&records,0,l->domains,start,end,directory ? &geometry : NULL);
+      compact &= tupleRows(handle,positions,&slice,&records,0,l->domains,start,end,directory ? &geometry : NULL,first);
     }
   }
   free(remote);
@@ -3451,7 +3505,7 @@ void _mlir_ciface_mdrtDistParameterOrder(int64_t handle, struct Memref1I *order,
 void _mlir_ciface_mdrtDistTupleRowBlock(int64_t handle, struct Memref3D *positions,
     struct Members *members, struct Memref2I *out, int64_t begin, int64_t end,
     int64_t firstTuple, int64_t pastTuple) {
-  tupleRows(handle,positions,members,out,begin,end,firstTuple,pastTuple,NULL);
+  tupleRows(handle,positions,members,out,begin,end,firstTuple,pastTuple,NULL,0);
 }
 
 void _mlir_ciface_mdrtDistLocalTupleRows(int64_t handle, struct Memref3D *positions,
@@ -3459,7 +3513,7 @@ void _mlir_ciface_mdrtDistLocalTupleRows(int64_t handle, struct Memref3D *positi
   struct Halo *h = (struct Halo *)(intptr_t)handle;
   int64_t domains = h->layout->domains;
   tupleRows(handle,positions,members,out,mdrtMPIDomainBound(domains,0),
-            mdrtMPIDomainBound(domains,1),0,members->sizes[0],NULL);
+            mdrtMPIDomainBound(domains,1),0,members->sizes[0],NULL,0);
 }
 #endif
 
@@ -3988,13 +4042,58 @@ struct TrajectoryEpoch {
 #ifdef MDIR_ENABLE_MPI
   int balance;
   struct BalanceClock clock;
-  double *cuts[3];
+  double *cuts[3], skin;
+  struct TupleDonation *donations;
 #endif
 };
 
 #ifdef MDIR_ENABLE_MPI
 static double boundary(const struct TrajectoryEpoch *e, int axis, int index, int width) {
   return e->cuts[axis] ? e->cuts[axis][index] : (double)index/width;
+}
+
+/* Use measured force-kernel cost to pair heavy and light adjacent
+   domains [Phillips2020]. A recipient accepts work from at most one
+   donor. Use the previous fraction when the same neighbors remain paired. */
+static void balanceTuples(struct TrajectoryEpoch *e, const struct Layout *l,
+                          const double (*times)[3], int ranks) {
+  struct TupleDonation *nextDonations = calloc(ranks,sizeof *nextDonations);
+  unsigned char *paired = calloc(ranks,sizeof *paired);
+  if (!nextDonations || !paired) fail("out of memory balancing tuple work");
+  double mean = 0;
+  for (int r = 0; r < ranks; ++r) mean += times[r][2]/ranks;
+  int changed = 0;
+  for (int r = 0; r < ranks; ++r) {
+    double cost = times[r][2];
+    struct TupleDonation old = e->donations ? e->donations[r] : (struct TupleDonation){0};
+    if (paired[r] || (cost <= 1.05*mean && !old.fraction)) continue;
+    int dest = -1;
+    double best = mean;
+    int stride = 1;
+    for (int axis = 0; axis < 3; ++axis) {
+      int cells = l->grid[axis], cell = (r/stride)%cells;
+      for (int direction = -1; direction <= 1; direction += 2) {
+        if (cell+direction < 0 || cell+direction >= cells) continue;
+        int next = r+direction*stride;
+        if (times[next][2] >= best || paired[next]) continue;
+        best = times[next][2];
+        dest = next;
+      }
+      stride *= cells;
+    }
+    if (dest < 0 || cost <= best) continue;
+    double fraction = 0.25*(cost-best)/cost;
+    if (dest == old.destination) fraction += old.fraction;
+    nextDonations[r] = (struct TupleDonation){dest,fmin(0.25,fraction)};
+    paired[r] = paired[dest] = 1;
+    ++changed;
+  }
+  free(paired);
+  free(e->donations);
+  e->donations = nextDonations;
+  if (mdrtMPIRank() == 0)
+    fprintf(stderr,"MDIR: measured bonded tuple balancing: mean %.6g ms/step, "
+                   "%d donating domains\n",mean*1000,changed);
 }
 
 /* Shift the most imbalanced set of planes at an existing list rebuild
@@ -4004,9 +4103,10 @@ static double boundary(const struct TrajectoryEpoch *e, int axis, int index, int
 static void balanceEpoch(struct TrajectoryEpoch *e, const struct Layout *l) {
   if (balanceClock != &e->clock || e->clock.steps < 16) return;
   int ranks = mdrtMPISize();
-  double (*times)[2] = malloc(ranks*sizeof *times);
+  double (*times)[3] = malloc(ranks*sizeof *times);
   if (!times) fail("out of memory collecting force times");
-  double local[] = {fmax(e->clock.force,0)/e->clock.steps, e->clock.wait/e->clock.steps};
+  double local[] = {fmax(e->clock.force,0)/e->clock.steps, e->clock.wait/e->clock.steps,
+                    e->clock.tuples/e->clock.steps};
   mdrtMPIGatherMetrics(local,times,sizeof local);
   e->clock = (struct BalanceClock){0};
   double total = 0, peak = 0, wait = 0;
@@ -4064,6 +4164,7 @@ static void balanceEpoch(struct TrajectoryEpoch *e, const struct Layout *l) {
     e->cuts[bestAxis] = cuts;
   }
   free(best);
+  balanceTuples(e,l,times,ranks);
   free(times);
 }
 #endif
@@ -4088,6 +4189,7 @@ void mdrtDistEpochDestroy(int64_t cache) {
 #ifdef MDIR_ENABLE_MPI
   if (balanceClock == &e->clock) balanceClock = NULL;
   for (int axis = 0; axis < 3; ++axis) free(e->cuts[axis]);
+  free(e->donations);
 #endif
   if (e->halo) mdrtDistReleaseHalo((int64_t)(intptr_t)e->halo);
   free(e->ownedReference);
@@ -4107,6 +4209,7 @@ int64_t _mlir_ciface_mdrtDistEpochPartition(struct Memref2D *x, int64_t gx,
   if (e->balance && observer && gx*gy*gz == mdrtMPISize() && balanceClock != &e->clock) {
     e->clock = (struct BalanceClock){0};
     balanceClock = &e->clock;
+    e->skin = skin;
   }
 #endif
   if (e->halo) {
@@ -4147,7 +4250,7 @@ int64_t _mlir_ciface_mdrtDistEpochPartition(struct Memref2D *x, int64_t gx,
     for (int c = 0; c < 3; ++c)
       e->reference[3*(j-first)+c] = *at2(x,j,c);
 #ifdef MDIR_ENABLE_MPI
-  if (mpi) return startPartition(x,gx,gy,gz,lx,ly,lz,e->cuts);
+  if (mpi) return startPartition(x,gx,gy,gz,lx,ly,lz,e->cuts,e->donations);
 #endif
   return _mlir_ciface_mdrtDistPartition(x,gx,gy,gz,lx,ly,lz);
 }
@@ -4206,6 +4309,15 @@ int64_t _mlir_ciface_mdrtDistEpochHalo(int64_t layout, struct Memref3D *x,
 #endif
     e->halo = (struct Halo *)(intptr_t)buildHalo(layout,x,reach,midpoint);
     e->halo->layout->groupsFrozen = 1;
+#ifdef MDIR_ENABLE_MPI
+    if ((midpoint & 3) == 3 && l->donations) {
+      /* The halo was built at the reference positions. Current unwrapped
+         coordinates can drift by half the skin in this epoch. Leave
+         another half skin for the coordinate and distance roundoff. */
+      double edge = fmax(l->edges[0],fmax(l->edges[1],l->edges[2]));
+      e->halo->tupleMargin = fmax(0,reach-e->skin-64*DBL_EPSILON*(edge+reach));
+    }
+#endif
   }
   int64_t handle = (int64_t)(intptr_t)e->halo;
   mdrtDistRetainHalo(handle);

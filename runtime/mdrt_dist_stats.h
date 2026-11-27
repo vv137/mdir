@@ -5,7 +5,7 @@
 // The compiled step and its host runtime share these event codes.
 enum DistPhase { DistPairs = 1, DistOther, DistCopy, DistSum, DistReduce,
                  DistMigration, DistWait, DistList, DistPack, DistIntra, DistInter,
-                 DistIntegrate, DistOutput, DistState, DistHaloBuild, DistSpread, DistOverlap, DistFFT, DistTranspose, DistSolve, DistGather, DistPhaseCount, DistStep };
+                 DistIntegrate, DistOutput, DistState, DistHaloBuild, DistSpread, DistOverlap, DistFFT, DistTranspose, DistSolve, DistGather, DistPhaseCount, DistStep, DistTupleWork };
 /* The quantities of the fixed-point words of the deterministic mode
    (D447); a range error names its quantity. */
 enum DistQuantity {

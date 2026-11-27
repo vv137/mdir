@@ -925,3 +925,10 @@ membership intervals use those same planes, so resizing does not
 change the set of physical interactions. Fixed-point trajectories keep
 uniform planes for reproducible ownership and accumulation.
 D[distribute-auto-balance].
+
+Bonded tuples use measured kernel cost to choose an alternate covered
+domain [Phillips2020]. Transfer requires all member images in the
+recipient's existing halo with room for the Verlet displacement bound.
+The tuple keeps its original member and image order. The transpose
+returns its force contributions to the physical owners.
+D[distribute-tuple-cost].

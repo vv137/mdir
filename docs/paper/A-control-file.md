@@ -604,8 +604,9 @@ manifest, and the checkpoints record; the checkpoint's fingerprint records
 the traversal, the transport, and the grid, whose change is a note
 (D447).
 Floating-point MPI with one midpoint domain per rank may resize
-domains automatically (D[distribute-auto-balance]). The run log
-reports each choice.
+domains automatically (D[distribute-auto-balance]). Covered bonded tuples may
+also move to a lighter adjacent domain (D[distribute-tuple-cost]). The run log
+reports both choices.
 D[mpi-transport] adds `transport = "mpi"` in MPI-enabled builds.
 The grid must have at least as many domains as ranks. The launcher sets
 the rank count. Rank zero owns the output files.
