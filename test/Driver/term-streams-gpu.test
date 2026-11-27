@@ -20,38 +20,57 @@
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' | sed 's|INPUTS|%S/Inputs/dipeptide|' > %t/template.toml
 #
 # 1. Deterministic, the two schedules of one program.
-# RUN: for p in mixed double; do mkdir -p %t/$p-one %t/$p-two; sed -e "s/PRECISION/$p/" -e 's/STREAMS/SINGLE/' -e 's/DETERMINISTIC/true/' %t/template.toml > %t/$p-one/run.toml; cp %t/$p-one/run.toml %t/$p-two/; done
+# RUN: mkdir -p %t/mixed-one %t/mixed-two %t/double-one %t/double-two
+# RUN: sed -e 's/PRECISION/mixed/' -e 's/STREAMS/SINGLE/' -e 's/DETERMINISTIC/true/' %t/template.toml > %t/mixed-one/run.toml
+# RUN: sed -e 's/PRECISION/double/' -e 's/STREAMS/SINGLE/' -e 's/DETERMINISTIC/true/' %t/template.toml > %t/double-one/run.toml
+# RUN: cp %t/mixed-one/run.toml %t/mixed-two/ && cp %t/double-one/run.toml %t/double-two/
 # RUN: cd %t/mixed-one && mdir emit run.toml --stage=pipeline | sed 's/md-exec-accumulate-destinations,/md-exec-accumulate-destinations{separate-tuples=true},/' > pipeline
 # RUN: sed 's/md-exec-assign-streams,/md-exec-assign-streams{reciprocal=true tuples=true},/' %t/mixed-one/pipeline > %t/mixed-two/pipeline
 # RUN: cd %t/double-one && mdir emit run.toml --stage=pipeline | sed 's/md-exec-accumulate-destinations,/md-exec-accumulate-destinations{separate-tuples=true},/' > pipeline
 # RUN: sed 's/md-exec-assign-streams,/md-exec-assign-streams{reciprocal=true tuples=true},/' %t/double-one/pipeline > %t/double-two/pipeline
 # RUN: grep -c 'tuples=true' %t/mixed-two/pipeline %t/double-two/pipeline | FileCheck %s --check-prefix=PIPELINES
-# RUN: for d in mixed-one mixed-two double-one double-two; do (cd %t/$d && MDIR_PIPELINE="$(cat pipeline)" mdir run run.toml > log 2>&1) || exit 1; done
+# RUN: cd %t/mixed-one && sh -c 'MDIR_PIPELINE="$(cat pipeline)" mdir run run.toml' > log 2>&1
+# RUN: cd %t/mixed-two && sh -c 'MDIR_PIPELINE="$(cat pipeline)" mdir run run.toml' > log 2>&1
+# RUN: cd %t/double-one && sh -c 'MDIR_PIPELINE="$(cat pipeline)" mdir run run.toml' > log 2>&1
+# RUN: cd %t/double-two && sh -c 'MDIR_PIPELINE="$(cat pipeline)" mdir run run.toml' > log 2>&1
 # RUN: cd %t/mixed-two && env MDIR_PRINT_AFTER=convert-md-exec-to-gpu sh -c 'MDIR_PIPELINE="$(cat pipeline)" mdir emit run.toml --stage=lowered' 2> gpu.mlir > /dev/null
 # RUN: awk '/call @mdrtSide2Begin\(/{open=1; tuples=0} /call @mdrtSide2End\(/{if (open && tuples) ended=1; open=0} open && /gpu.launch .*module\(@mdir_run_tuple_for_/{tuples=1} /call @mdrtSideJoin\(/{ended=0} ended && /gpu.launch .*module\(@mdir_run_pair_for_/{found=1} END{exit !found}' %t/mixed-two/gpu.mlir
-# RUN: for p in mixed double; do mdir checkpoint %t/$p-one/state.h5 %t/$p-two/state.h5; done | FileCheck %s --check-prefix=SAME
-# RUN: for p in mixed double; do %h5md_python -c "import h5py,sys; a,b=(h5py.File(p)['particles/all/force/value'][()] for p in sys.argv[1:]); assert a.size and a.tobytes() == b.tobytes(); print('forces equal')" %t/$p-one/state.h5 %t/$p-two/state.h5; done | FileCheck %s --check-prefix=FORCES
-# RUN: for p in mixed double; do %h5md_python %S/Inputs/compare_h5_contents.py %t/$p-one/run.h5md %t/$p-two/run.h5md || exit 1; done
+# RUN: mdir checkpoint %t/mixed-one/state.h5 %t/mixed-two/state.h5 | FileCheck %s --check-prefix=SAME
+# RUN: mdir checkpoint %t/double-one/state.h5 %t/double-two/state.h5 | FileCheck %s --check-prefix=SAME
+# RUN: %h5md_python -c "import h5py,sys; a,b=(h5py.File(p)['particles/all/force/value'][()] for p in sys.argv[1:]); assert a.size and a.tobytes() == b.tobytes(); print('forces equal')" %t/mixed-one/state.h5 %t/mixed-two/state.h5 | FileCheck %s --check-prefix=FORCES
+# RUN: %h5md_python -c "import h5py,sys; a,b=(h5py.File(p)['particles/all/force/value'][()] for p in sys.argv[1:]); assert a.size and a.tobytes() == b.tobytes(); print('forces equal')" %t/double-one/state.h5 %t/double-two/state.h5 | FileCheck %s --check-prefix=FORCES
+# RUN: %h5md_python %S/Inputs/compare_h5_contents.py %t/mixed-one/run.h5md %t/mixed-two/run.h5md
+# RUN: %h5md_python %S/Inputs/compare_h5_contents.py %t/double-one/run.h5md %t/double-two/run.h5md
 #
 # 2. TERMS against SINGLE, one step, outside the deterministic mode.
-# RUN: for p in mixed double; do for s in SINGLE TERMS; do mkdir -p %t/$p-$s && sed -e "s/PRECISION/$p/" -e "s/STREAMS/$s/" -e 's/DETERMINISTIC/false/' -e 's/^steps = 20/steps = 1/' -e 's/^energy_interval = 5/energy_interval = 1/' -e 's/^trajectory_interval = 5/trajectory_interval = 1/' -e 's/^checkpoint_interval = 20/checkpoint_interval = 1/' %t/template.toml > %t/$p-$s/run.toml && (cd %t/$p-$s && mdir run run.toml > log 2>&1 && mdir checkpoint state.h5 --print=forces > forces) || exit 1; done; done
+# RUN: sed -e 's/DETERMINISTIC/false/' -e 's/^steps = 20/steps = 1/' -e 's/^energy_interval = 5/energy_interval = 1/' -e 's/^trajectory_interval = 5/trajectory_interval = 1/' -e 's/^checkpoint_interval = 20/checkpoint_interval = 1/' %t/template.toml > %t/one-step.toml
+# RUN: mkdir -p %t/mixed-SINGLE %t/mixed-TERMS %t/double-SINGLE %t/double-TERMS
+# RUN: sed -e 's/PRECISION/mixed/' -e 's/STREAMS/SINGLE/' %t/one-step.toml > %t/mixed-SINGLE/run.toml
+# RUN: sed -e 's/PRECISION/mixed/' -e 's/STREAMS/TERMS/' %t/one-step.toml > %t/mixed-TERMS/run.toml
+# RUN: sed -e 's/PRECISION/double/' -e 's/STREAMS/SINGLE/' %t/one-step.toml > %t/double-SINGLE/run.toml
+# RUN: sed -e 's/PRECISION/double/' -e 's/STREAMS/TERMS/' %t/one-step.toml > %t/double-TERMS/run.toml
+# RUN: cd %t/mixed-SINGLE && mdir run run.toml > log 2>&1 && mdir checkpoint state.h5 --print=forces > forces
+# RUN: cd %t/mixed-TERMS && mdir run run.toml > log 2>&1 && mdir checkpoint state.h5 --print=forces > forces
+# RUN: cd %t/double-SINGLE && mdir run run.toml > log 2>&1 && mdir checkpoint state.h5 --print=forces > forces
+# RUN: cd %t/double-TERMS && mdir run run.toml > log 2>&1 && mdir checkpoint state.h5 --print=forces > forces
 # RUN: grep -h 'term_streams' %t/mixed-TERMS/log %t/mixed-SINGLE/log | FileCheck %s --check-prefix=LOG
 # RUN: %python %S/Inputs/compare_forces_rms.py %t/mixed-TERMS/forces %t/mixed-SINGLE/forces 1e-5 mixed | FileCheck %s --check-prefix=MIXED
 # RUN: %python %S/Inputs/compare_forces_rms.py %t/double-TERMS/forces %t/double-SINGLE/forces 1e-12 double | FileCheck %s --check-prefix=DOUBLE
 #
 # 3. TERMS in the deterministic mode: the tuples stay with the pairs.
-# RUN: mkdir -p %t/det-TERMS && sed -e 's/PRECISION/mixed/' -e 's/STREAMS/TERMS/' -e 's/DETERMINISTIC/true/' %t/template.toml > %t/det-TERMS/run.toml
+# RUN: mkdir -p %t/det-TERMS %t/det-SINGLE
+# RUN: sed -e 's/PRECISION/mixed/' -e 's/STREAMS/TERMS/' -e 's/DETERMINISTIC/true/' %t/template.toml > %t/det-TERMS/run.toml
+# RUN: sed -e 's/PRECISION/mixed/' -e 's/STREAMS/SINGLE/' -e 's/DETERMINISTIC/true/' %t/template.toml > %t/det-SINGLE/run.toml
 # RUN: cd %t/det-TERMS && mdir emit run.toml --stage=pipeline | tr ',' '\n' | grep -E 'accumulate-destinations|assign-streams' | FileCheck %s --check-prefix=DETPIPE
-# RUN: cd %t/det-TERMS && mdir run run.toml > log 2>&1 && grep 'term_streams' log | FileCheck %s --check-prefix=DETLOG
-# RUN: mkdir -p %t/det-SINGLE && sed -e 's/PRECISION/mixed/' -e 's/STREAMS/SINGLE/' -e 's/DETERMINISTIC/true/' %t/template.toml > %t/det-SINGLE/run.toml && cd %t/det-SINGLE && mdir run run.toml > log 2>&1
-# RUN: mdir checkpoint %t/det-SINGLE/state.h5 %t/det-TERMS/state.h5 | FileCheck %s --check-prefix=SAME1
+# RUN: cd %t/det-TERMS && mdir run run.toml > log 2>&1
+# RUN: grep 'term_streams' %t/det-TERMS/log | FileCheck %s --check-prefix=DETLOG
+# RUN: cd %t/det-SINGLE && mdir run run.toml > log 2>&1
+# RUN: mdir checkpoint %t/det-SINGLE/state.h5 %t/det-TERMS/state.h5 | FileCheck %s --check-prefix=SAME
 # RUN: rm -rf %t
 #
 # PIPELINES: mixed-two/pipeline:1
 # PIPELINES: double-two/pipeline:1
 # SAME: the states are identical
-# SAME: the states are identical
-# FORCES: forces equal
 # FORCES: forces equal
 # LOG: MDIR: term_streams {"category":"rule","changes_rounding":true,"inputs":{"deterministic":false,"target":"GPU"},"reason":"as requested","requested":"TERMS","value":"TERMS"}
 # LOG: MDIR: term_streams {"category":"rule","changes_rounding":false,"inputs":{"deterministic":false,"target":"GPU"},"reason":"as requested","requested":"SINGLE","value":"SINGLE"}
@@ -60,7 +79,6 @@
 # DETPIPE: md-exec-accumulate-destinations{{$}}
 # DETPIPE: md-exec-assign-streams{reciprocal=true}{{$}}
 # DETLOG: MDIR: term_streams {"category":"rule","changes_rounding":false,"inputs":{"deterministic":true,"target":"GPU"},"reason":"the deterministic mode keeps the tuples with the pairs","requested":"TERMS","value":"RECIPROCAL"}
-# SAME1: the states are identical
 
 #--- run.toml
 [input]

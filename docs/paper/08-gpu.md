@@ -457,6 +457,20 @@ or a pair list before the join (D429). It is off by default: once the kernels of
 cheap, sharing the device with the loop over pairs, the longest part of a
 step, lengthened the step.
 
+**A third stream for the tuples** (D[concurrent-terms]). The loops over
+tuples (bonded terms, 1–4 pairs, exclusion corrections) depend only on the
+positions and meet the direct and reciprocal forces at the kick. They can
+run beside the pairs only if they write other memory, so with
+`term_streams = "TERMS"` they accumulate into a destination of their own
+and the kick adds $F_\mathrm{pairs} + F_\mathrm{tuples}$. This changes the
+order of the sum of the forces, so the deterministic mode keeps one
+destination. The marked loops run on a third stream. The argument of D87
+holds with several side ops in one window: ops on one side stream are
+ordered by it, and every op of another stream between a side op and the
+join must be independent of it, which the lowering checks again. The forks
+and the join are events on the streams, so a captured step graph (D439)
+contains the three chains as branches.
+
 The opt-in resident FFT strategy (D360, #580) retains
 intermediate packed scalar values in owned device storage. It explicitly
 packs external complex values; native complex views remain future work

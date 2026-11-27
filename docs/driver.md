@@ -431,6 +431,21 @@ the latest invocation’s resolved `[execution]` keys as TOML, including
 the TOWERS shape when present and the step timings in a comment. Python's segmented simulations
 currently resolve AUTO to LAUNCH. See D439.
 
+The `[execution] term_streams` key chooses the device streams of the
+force terms (D[concurrent-terms]). `"SINGLE"`, the default, issues every
+term on one stream. `"RECIPROCAL"` runs the reciprocal sums of PME on a
+second stream beside the direct sum (D87, D429). `"TERMS"` also runs the
+loops over tuples (bonded terms, 1–4 pairs, exclusion corrections) on a
+third stream, with a force destination of their own that the kick adds to
+that of the pairs. That changes the rounding of the sum of the forces, so
+in the deterministic mode `"TERMS"` resolves to `"RECIPROCAL"`, and on the
+CPU target every value resolves to `"SINGLE"`. The setup log line
+`MDIR: term_streams` and the manifest's `resolved_choices.term_streams`
+give the request, the value, the reason, the inputs and
+`changes_rounding`; `mdir pin MANIFEST` writes the key. Python takes
+`Execution.term_streams`. The streams are forked and joined by events, so a
+step graph (`step_graph`) captures them as parallel branches.
+
 For periodic TOWERS preflight, `[execution] towers_shape` accepts an
 inline table such as `{threads = 512, blocks_per_sm = 2, panel = 352,
 stripe = 384, records = 1536, split = 1, cell_height = "HALF"}` on one
