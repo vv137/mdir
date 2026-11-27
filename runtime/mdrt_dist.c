@@ -57,7 +57,16 @@ static double *at3(struct Memref3D *m, int64_t d, int64_t r, int64_t c) {
 
 static _Thread_local struct DistObserver *observer;
 
-void mdrtDistObserve(struct DistObserver *value) { observer = value; }
+#ifdef MDIR_ENABLE_MPI
+static void resetBalance(void);
+#endif
+
+void mdrtDistObserve(struct DistObserver *value) {
+#ifdef MDIR_ENABLE_MPI
+  resetBalance();
+#endif
+  observer = value;
+}
 
 int mdrtDistObserving(void) { return observer != NULL; }
 
@@ -4041,21 +4050,36 @@ struct TrajectoryEpoch {
   double *reference, *ownedReference;
 #ifdef MDIR_ENABLE_MPI
   int balance;
-  struct BalanceClock clock;
-  double *cuts[3], skin;
-  struct TupleDonation *donations;
+  uint64_t balanceGeneration;
+  double skin;
 #endif
 };
 
 #ifdef MDIR_ENABLE_MPI
-static double boundary(const struct TrajectoryEpoch *e, int axis, int index, int width) {
+/* Plain and reporting paths may have separate live Verlet caches. All
+   paths measure one trajectory and adopt the same boundary generation. */
+static _Thread_local struct BalanceState {
+  struct BalanceClock clock;
+  uint64_t generation;
+  double *cuts[3];
+  struct TupleDonation *donations;
+} balanceState;
+
+static void resetBalance(void) {
+  balanceClock = NULL;
+  for (int axis = 0; axis < 3; ++axis) free(balanceState.cuts[axis]);
+  free(balanceState.donations);
+  balanceState = (struct BalanceState){0};
+}
+
+static double boundary(const struct BalanceState *e, int axis, int index, int width) {
   return e->cuts[axis] ? e->cuts[axis][index] : (double)index/width;
 }
 
 /* Use measured force-kernel cost to pair heavy and light adjacent
    domains [Phillips2020]. A recipient accepts work from at most one
    donor. Use the previous fraction when the same neighbors remain paired. */
-static void balanceTuples(struct TrajectoryEpoch *e, const struct Layout *l,
+static int balanceTuples(struct BalanceState *e, const struct Layout *l,
                           const double (*times)[3], int ranks) {
   struct TupleDonation *nextDonations = calloc(ranks,sizeof *nextDonations);
   unsigned char *paired = calloc(ranks,sizeof *paired);
@@ -4089,19 +4113,27 @@ static void balanceTuples(struct TrajectoryEpoch *e, const struct Layout *l,
     ++changed;
   }
   free(paired);
+  int reshuffled = 0;
+  for (int r = 0; r < ranks; ++r) {
+    struct TupleDonation old = e->donations ? e->donations[r] : (struct TupleDonation){0};
+    reshuffled |= old.fraction != nextDonations[r].fraction ||
+                  (old.fraction && old.destination != nextDonations[r].destination);
+  }
   free(e->donations);
+  if (!changed) { free(nextDonations); nextDonations = NULL; }
   e->donations = nextDonations;
   if (mdrtMPIRank() == 0)
     fprintf(stderr,"MDIR: measured bonded tuple balancing: mean %.6g ms/step, "
                    "%d donating domains\n",mean*1000,changed);
+  return reshuffled;
 }
 
 /* Shift the most imbalanced set of planes at an existing list rebuild
    [Hess2008]. Estimate each slab's force density from the rank clocks.
    The limited displacement keeps neighboring faces ordered and bounds
    changes to halo volume even when the timing sample is noisy. */
-static void balanceEpoch(struct TrajectoryEpoch *e, const struct Layout *l) {
-  if (balanceClock != &e->clock || e->clock.steps < 16) return;
+static void balanceEpoch(struct BalanceState *e, const struct Layout *l) {
+  if (e->clock.steps < 16) return;
   int ranks = mdrtMPISize();
   double (*times)[3] = malloc(ranks*sizeof *times);
   if (!times) fail("out of memory collecting force times");
@@ -4164,7 +4196,8 @@ static void balanceEpoch(struct TrajectoryEpoch *e, const struct Layout *l) {
     e->cuts[bestAxis] = cuts;
   }
   free(best);
-  balanceTuples(e,l,times,ranks);
+  int reshuffled = balanceTuples(e,l,times,ranks);
+  if (bestAxis >= 0 || reshuffled) ++e->generation;
   free(times);
 }
 #endif
@@ -4186,11 +4219,6 @@ int64_t mdrtDistBalancedEpochCreate(void) {
 
 void mdrtDistEpochDestroy(int64_t cache) {
   struct TrajectoryEpoch *e = (struct TrajectoryEpoch *)(intptr_t)cache;
-#ifdef MDIR_ENABLE_MPI
-  if (balanceClock == &e->clock) balanceClock = NULL;
-  for (int axis = 0; axis < 3; ++axis) free(e->cuts[axis]);
-  free(e->donations);
-#endif
   if (e->halo) mdrtDistReleaseHalo((int64_t)(intptr_t)e->halo);
   free(e->ownedReference);
   free(e->reference);
@@ -4206,9 +4234,10 @@ int64_t _mlir_ciface_mdrtDistEpochPartition(struct Memref2D *x, int64_t gx,
   int64_t first = 0, past = n;
 #ifdef MDIR_ENABLE_MPI
   if (mpi) { first = mdrtMPIIdentityBound(n,0); past = mdrtMPIIdentityBound(n,1); }
-  if (e->balance && observer && gx*gy*gz == mdrtMPISize() && balanceClock != &e->clock) {
-    e->clock = (struct BalanceClock){0};
-    balanceClock = &e->clock;
+  struct BalanceState *balance = NULL;
+  if (e->balance && observer && gx*gy*gz == mdrtMPISize()) {
+    balance = &balanceState;
+    balanceClock = &balance->clock;
     e->skin = skin;
   }
 #endif
@@ -4232,13 +4261,18 @@ int64_t _mlir_ciface_mdrtDistEpochPartition(struct Memref2D *x, int64_t gx,
 #ifdef MDIR_ENABLE_MPI
     if (mpi && mdrtMPISize() > 1) valid = mdrtMPIAllTrue(valid);
 #endif
-    if (valid) {
+#ifdef MDIR_ENABLE_MPI
+    int current = !balance || e->balanceGeneration == balance->generation;
+#else
+    int current = 1;
+#endif
+    if (valid && current) {
       mdrtDistRetainLayout((int64_t)(intptr_t)l);
       return (int64_t)(intptr_t)l;
     }
 #ifdef MDIR_ENABLE_MPI
-    if (l->edges[0] == lx && l->edges[1] == ly && l->edges[2] == lz)
-      balanceEpoch(e,l);
+    if (balance && current && l->edges[0] == lx && l->edges[1] == ly && l->edges[2] == lz)
+      balanceEpoch(balance,l);
 #endif
     mdrtDistReleaseHalo((int64_t)(intptr_t)e->halo);
     e->halo = NULL;
@@ -4250,7 +4284,11 @@ int64_t _mlir_ciface_mdrtDistEpochPartition(struct Memref2D *x, int64_t gx,
     for (int c = 0; c < 3; ++c)
       e->reference[3*(j-first)+c] = *at2(x,j,c);
 #ifdef MDIR_ENABLE_MPI
-  if (mpi) return startPartition(x,gx,gy,gz,lx,ly,lz,e->cuts,e->donations);
+  if (balance) {
+    e->balanceGeneration = balance->generation;
+    return startPartition(x,gx,gy,gz,lx,ly,lz,balance->cuts,balance->donations);
+  }
+  if (mpi) return startPartition(x,gx,gy,gz,lx,ly,lz,NULL,NULL);
 #endif
   return _mlir_ciface_mdrtDistPartition(x,gx,gy,gz,lx,ly,lz);
 }

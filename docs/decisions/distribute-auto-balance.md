@@ -15,6 +15,8 @@ takes one quarter of the estimated displacement, limited to five percent
 of the original slab width per update and twenty percent from the initial
 position. This follows the measured domain resizing of [Hess2008].
 
+The plain and reporting paths share the measured load and cut generation.
+A retained layout adopts a new generation before its next use.
 The new layout rebuilds particle ownership, halo coverage and midpoint
 ranges together. The reciprocal mesh retains its own layout and
 communicates charge and potential through geometric intersections. The

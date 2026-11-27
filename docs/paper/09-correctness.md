@@ -919,7 +919,8 @@ destination belongs to the same rank.
 In floating-point MPI CPU runs with one midpoint domain per rank,
 nonuniform Cartesian slabs approximate equal measured real-space force
 work [Hess2008]. The driver changes the planes at an existing Verlet
-rebuild. Each pair still has exactly one primary-cell midpoint, which
+rebuild. Plain and reporting paths share the measurement and the
+new cuts. Each pair still has exactly one primary-cell midpoint, which
 belongs to exactly one half-open domain. The halo and the midpoint
 membership intervals use those same planes, so resizing does not
 change the set of physical interactions. Fixed-point trajectories keep
