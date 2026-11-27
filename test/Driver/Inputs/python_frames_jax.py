@@ -741,21 +741,50 @@ def run_precisions():
                                             in_axes=(None, 0, 0)))(params, jx, jc)
         results[label] = (np.asarray(e), np.asarray(gx).astype(np.float64), np.asarray(gc_),
                           np.concatenate([np.asarray(gp[n]) for n in params], axis=1))
+        if label == "double":
+            # The energy in double precision at the inputs that mixed
+            # precision takes: the positions and the cell rounded to f32
+            # (D443).
+            narrowed = jax.jit(jax.vmap(f, in_axes=(None, 0, 0)))(
+                params, jnp.asarray(frames.astype(np.float32).astype(np.float64)),
+                jnp.asarray(cells.astype(np.float32).astype(np.float64)))
     energy, by_x, by_cell, by_theta = results["double"]
+    narrowed = np.asarray(narrowed)
 
     def of_largest(a, b):
         axes = tuple(range(1, a.ndim))
         return float(np.max(np.max(np.abs(a - b), axis=axes) / np.max(np.abs(b), axis=axes)))
 
+    # The energy in mixed precision against double (#992). Mixed precision
+    # takes the positions and the cell in f32: that rounding alone moves
+    # the energy by the sum of g . dx over the coordinates, |dx| up to half
+    # an ulp of each, a sum of random sign of 1e-3 kJ/mol here (3.6e-3 for
+    # one of the frames), on every device alike. It is computed exactly,
+    # as the double energy at the rounded inputs, and the bound is on the
+    # rest, the arithmetic in f32: 1e-6 of the magnitude of the energy,
+    # eight f32 epsilons (docs/validation.md, Tolerances; |E| stands for the
+    # sum of the magnitudes of the terms, which the evaluator does not give,
+    # and is the smaller of the two, so the bound is the stricter). That
+    # rest is of one sign over the frames and depends on the device and the
+    # program: measured 1.5e-3 to 2.6e-3 kJ/mol on an RTX 4090, -2.3e-3 to
+    # -3.4e-3 on a V100, below 4.5e-4 on the CPU, and -4.3e-3 to -5.9e-3 on
+    # the RTX 4090 with pme_tolerance 1e-10; a bound of 5e-3 on the whole
+    # difference had held on the RTX 4090 only where the two shares had
+    # opposite signs.
+    scale = 1e-6 * np.abs(energy)
     for label in ("mixed, deterministic", "mixed"):
         e, gx, gc_, gp = results[label]
-        found = (float(np.max(np.abs(e - energy))), of_largest(gx, by_x), of_largest(gc_, by_cell),
+        rest = np.abs(e - narrowed)
+        found = (float(np.max(rest / scale)), of_largest(gx, by_x), of_largest(gc_, by_cell),
                  of_largest(gp, by_theta))
-        print(f"{mode}: {label} against double, 5 frames: the energy {found[0]:.1e} kJ/mol "
-              f"(tolerance 5e-3); the gradient in the positions {found[1]:.1e} and in the edges "
+        print(f"{mode}: {label} against double, 5 frames: the energy at the inputs rounded to "
+              f"f32 {np.max(rest):.1e} kJ/mol, {found[0]:.2f} of 1e-6 |E| ({np.min(scale):.1e}); "
+              f"against double at the given inputs {np.max(np.abs(e - energy)):.1e}, of which "
+              f"the rounding of the inputs {np.max(np.abs(narrowed - energy)):.1e}; "
+              f"the gradient in the positions {found[1]:.1e} and in the edges "
               f"{found[2]:.1e} of the largest entry of the frame (tolerance 1e-4); in params "
               f"{found[3]:.1e} of the largest entry (tolerance 1e-6)")
-        assert found[0] <= 5e-3 and found[1] <= 1e-4 and found[2] <= 1e-4 and found[3] <= 1e-6, found
+        assert found[0] <= 1.0 and found[1] <= 1e-4 and found[2] <= 1e-4 and found[3] <= 1e-6, found
 
 
 def run_sanitize():

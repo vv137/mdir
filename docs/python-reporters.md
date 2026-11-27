@@ -141,13 +141,27 @@ intervals:
 | | Double, CPU | Double, GPU | Mixed, CPU | Mixed, GPU |
 |---|---|---|---|---|
 | NVE, energy file and DCD/XTC | byte for byte | byte for byte | byte for byte | byte for byte |
-| NVT (V-rescale every 10 steps), energy file and DCD/XTC | byte for byte | byte for byte | within 3 E | within 3 E |
+| NVT (V-rescale every 10 steps), energy file and DCD/XTC | byte for byte | byte for byte | byte for byte | byte for byte |
 
-In NVT and mixed precision the rows agree within 3.3e-4 (CPU) and 1.4e-4
-(GPU) of each value and the DCD frames within 1.2e-3 Å (CPU) and 4.5e-4 Å
-(GPU), where 3 E, three times the difference of `mdir run` in mixed and in
-double, is 1.8e-2 Å: the program of segments and that of `mdir run` round
-differently in single precision (loops of another shape; #105). With SHAKE and
+Both sides remove the motion of the center of mass with the thermostat,
+the default of D248 in the model and in the control file. Before #992 the
+test turned it off on the Python side alone (`com_period = 0`, the default
+of before D248). The two NVT runs then differed from the first step by the
+velocity of the center of mass (2.6e-6 nm/ps, the same for every particle
+to 4e-15), below the digits of the rows in double precision. In mixed
+precision that shift moved the rounding of single precision, the
+trajectories parted, and under the plain cutoff of the Coulomb energy a
+pair of charges inside the cutoff in one run and beyond it in the other
+moved the potential by $332.06\,q_iq_j/r_c$: 7.218 kcal/mol at step 60 on
+a V100, for two hydrogens of TIP3P. A bound from the rounding (3 E, three
+times the difference of `mdir run` in mixed and in double) had covered
+this on other devices only where `mdir run` in mixed and in double were
+apart by such steps too. With the same settings on both sides, the files
+are equal to the byte in mixed precision on the CPU, an RTX 4090, and a
+V100, and the test requires it; with `com_period = 0` on the Python side
+it fails at step 20 of NVT in mixed precision.
+
+With SHAKE and
 SETTLE, where the rows take the optimal temperature from the half steps
 (D203), the rows equal those of `mdir run` in double precision, with
 energies every 10 steps and frames every 50, and with energies every 20
