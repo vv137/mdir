@@ -2396,16 +2396,17 @@ static int runControlImpl(StringRef controlFile, Emit emit,
 
   // What the spans issued (D[step-no-host-wait]).
   if (void *read = onDevice ? findRuntime("", "mdrtSpansCounts") : nullptr) {
-    int64_t counts[6] = {0, 0, 0, 0, 0, 0};
+    int64_t counts[7] = {0, 0, 0, 0, 0, 0, 0};
     reinterpret_cast<void (*)(int64_t *)>(read)(counts);
     if (counts[0] + counts[1] > 0)
       output.log.print(
           "MDIR: spans: %lld issued as CUDA graphs and %lld as recorded, "
-          "%lld graphs made, %lld captures refused, %lld graphs released; "
-          "%lld kernels and transforms recorded\n",
+          "%lld graphs made, %lld captures refused, %lld graphs released, "
+          "%lld kernel nodes updated; %lld kernels and transforms recorded\n",
           static_cast<long long>(counts[0]), static_cast<long long>(counts[1]),
           static_cast<long long>(counts[2]), static_cast<long long>(counts[3]),
-          static_cast<long long>(counts[5]), static_cast<long long>(counts[4]));
+          static_cast<long long>(counts[5]), static_cast<long long>(counts[6]),
+          static_cast<long long>(counts[4]));
   }
 
   // The runtime has counted the builds of the neighbor structures.

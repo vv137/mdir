@@ -400,6 +400,7 @@ The runtime library for devices reads these variables of the environment:
 |---|---|
 | `MDRT_DEVICE` | The device to run on, among those that `CUDA_VISIBLE_DEVICES` leaves. The default is 0. |
 | `MDRT_PROFILE` | If set, the library reports the number and the time of its calls when the program ends. |
+| `MDRT_SPANS` | `0` or `1` turns the recorded spans of D[step-no-host-wait] off or on, whatever `[execution] step_graph` says. |
 | `MDRT_WAIT` | If set, the host waits after every launch and checks it, so that a failure names the kernel that failed. With `MDRT_PROFILE`, the report has the time of each kernel. |
 | `MDRT_TRACE` | If set, the library prints each module that it loads, the kernels of each module, and each launch with its grid. |
 

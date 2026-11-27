@@ -34,6 +34,7 @@ void mdrtDeviceAuditMetadataCopy(uintptr_t destination) {
   if (copyAudit) copyMetadataDestination = destination;
 }
 static const char *getKernelName(CUfunction function);
+void mdrtSpansFlush(void);
 
 /* A failure of the driver is reported and ends the run: compiled code has no
    way to continue without its device. */
@@ -749,17 +750,26 @@ struct ParamLayout {
 };
 
 struct Span {
-  uint64_t hash;
+  /* The hash of the ops and argument bytes the graph holds now, and of its
+     shape: the ops without their argument bytes and grids, which an
+     update of the graph's kernel nodes can change. */
+  uint64_t hash, shape;
   int numOps;
   struct SpanOp *ops;
   uint32_t numBytes;
   unsigned char *bytes;
+  CUgraph graph;
   CUgraphExec exec;
+  /* The kernel node of each op of the graph, NULL for the others; whether
+     the kernels could all be found in order, so that the graph can take the
+     arguments and grids of another span of its shape. */
+  CUgraphNode *nodes;
+  int updatable;
   uint64_t lastUse;
-  int64_t launches;
 };
 
-enum { SPAN_CACHE = 256, SPAN_SEEN = 4096, LAYOUTS = 4096 };
+enum { SPAN_CACHE = 1024, SPAN_INDEX = 4096, SPAN_SEEN = 16384, SPAN_VARIANTS = 4,
+       LAYOUTS = 4096 };
 static int spansOn = 0;
 static int spansSuspended = 0;
 static struct SpanOp *spanOps = NULL;
@@ -771,7 +781,7 @@ static int numSpans = 0;
 static uint64_t spanSeen[SPAN_SEEN];
 static uint64_t spanClock = 0;
 static struct ParamLayout layouts[LAYOUTS];
-static int64_t spanCounts[6];
+static int64_t spanCounts[7];
 
 static int issueFFT(int fft, int plan, uint64_t in, uint64_t out);
 static void retainFFTPlanHandle(int plan, int delta);
@@ -889,9 +899,19 @@ static int recordLaunch(CUfunction function, intptr_t gridX, intptr_t gridY,
   return 1;
 }
 
+/* A hash of 8-byte words (the arguments are mostly pointers and sizes):
+   the record of a step is some kilobytes, which a hash of single bytes took
+   tens of microseconds to read. */
 static uint64_t hashBytes(uint64_t h, const void *data, size_t size) {
   const unsigned char *p = data;
-  for (size_t i = 0; i != size; ++i)
+  size_t i = 0;
+  for (; i + 8 <= size; i += 8) {
+    uint64_t w;
+    memcpy(&w, p + i, 8);
+    h = (h ^ w) * 0x9E3779B97F4A7C15ull;
+    h ^= h >> 29;
+  }
+  for (; i != size; ++i)
     h = (h ^ p[i]) * 0x100000001B3ull;
   return h;
 }
@@ -976,100 +996,347 @@ static void releaseSpan(struct Span *s) {
       retainFFTPlanHandle(s->ops[i].plan, -1);
   if (s->exec)
     cuGraphExecDestroy(s->exec);
+  if (s->graph)
+    cuGraphDestroy(s->graph);
   free(s->ops);
   free(s->bytes);
+  free(s->nodes);
   memset(s, 0, sizeof *s);
 }
 
-/* Makes the graph of the record by capturing its ops; NULL if the capture
+/* The shape of the record: its ops without the argument bytes and grids. */
+static uint64_t hashShape(void) {
+  uint64_t h = 0x84222325CBF29CE4ull;
+  for (int i = 0; i != numSpanOps; ++i) {
+    struct SpanOp op = spanOps[i];
+    memset(op.grid, 0, sizeof op.grid);
+    h = hashBytes(h, &op, sizeof op);
+  }
+  return h;
+}
+
+/* The kernel nodes of a captured graph in the order of the record's
+   kernels: the graph of one stream is a chain, whose kernels are those of
+   the record and those of cuFFT, which have other functions. */
+static int mapNodes(CUgraph graph, const struct SpanOp *ops, int numOps,
+                    CUgraphNode *nodes) {
+  memset(nodes, 0, numOps * sizeof *nodes);
+  size_t count = 1;
+  CUgraphNode node = NULL;
+  if (cuGraphGetRootNodes(graph, &node, &count) != CUDA_SUCCESS || count != 1)
+    return 0;
+  int next = 0;
+  while (node) {
+    CUgraphNodeType type;
+    if (cuGraphNodeGetType(node, &type) != CUDA_SUCCESS)
+      return 0;
+    if (type == CU_GRAPH_NODE_TYPE_KERNEL) {
+      CUDA_KERNEL_NODE_PARAMS params;
+      if (cuGraphKernelNodeGetParams(node, &params) != CUDA_SUCCESS)
+        return 0;
+      int k = next;
+      while (k != numOps && ops[k].kind != SPAN_KERNEL)
+        ++k;
+      if (k != numOps && params.func == ops[k].function) {
+        nodes[k] = node;
+        next = k + 1;
+      }
+    }
+    size_t dependents = 0;
+    if (cuGraphNodeGetDependentNodes(node, NULL, NULL, &dependents) != CUDA_SUCCESS ||
+        dependents > 1)
+      return 0;
+    CUgraphNode following = NULL;
+    if (dependents == 1 &&
+        cuGraphNodeGetDependentNodes(node, &following, NULL, &dependents) !=
+            CUDA_SUCCESS)
+      return 0;
+    node = dependents ? following : NULL;
+  }
+  for (int k = 0; k != numOps; ++k)
+    if (ops[k].kind == SPAN_KERNEL && !nodes[k])
+      return 0;
+  return 1;
+}
+
+/* Makes the graph of the record by capturing its ops; 0 if the capture
    fails, and the ops are then issued as they are. */
-static CUgraphExec captureSpan(void) {
+static int captureSpan(struct Span *s) {
   CUgraph graph = NULL;
   CUgraphExec exec = NULL;
   if (cuStreamBeginCapture(sharedStream, CU_STREAM_CAPTURE_MODE_THREAD_LOCAL) !=
       CUDA_SUCCESS)
-    return NULL;
+    return 0;
   CUresult issued = issueOps(spanOps, numSpanOps, spanBytes, 1);
   CUresult ended = cuStreamEndCapture(sharedStream, &graph);
-  if (issued == CUDA_SUCCESS && ended == CUDA_SUCCESS && graph &&
-      cuGraphInstantiate(&exec, graph, 0) != CUDA_SUCCESS)
-    exec = NULL;
-  if (graph)
-    cuGraphDestroy(graph);
-  if (issued != CUDA_SUCCESS || ended != CUDA_SUCCESS)
-    return NULL;
-  return exec;
+  if (issued != CUDA_SUCCESS || ended != CUDA_SUCCESS || !graph ||
+      cuGraphInstantiate(&exec, graph, 0) != CUDA_SUCCESS) {
+    if (graph)
+      cuGraphDestroy(graph);
+    return 0;
+  }
+  s->graph = graph;
+  s->exec = exec;
+  s->nodes = malloc(numSpanOps * sizeof *s->nodes);
+  s->updatable = mapNodes(graph, spanOps, numSpanOps, s->nodes);
+  return 1;
+}
+
+/* Gives graph `s` the arguments and grids of the record, whose shape is
+   its own; 0 if the driver refuses an update. */
+static int updateSpan(struct Span *s) {
+  void *args[1024];
+  for (int i = 0; i != numSpanOps; ++i) {
+    const struct SpanOp *op = &spanOps[i], *was = &s->ops[i];
+    if (op->kind != SPAN_KERNEL)
+      continue;
+    if (!memcmp(op->grid, was->grid, sizeof op->grid) &&
+        !memcmp(spanBytes + op->offset, s->bytes + was->offset, op->bytes))
+      continue;
+    struct ParamLayout *layout = getLayout(op->function);
+    if (layout->count > 1024)
+      return 0;
+    const unsigned char *at = spanBytes + op->offset;
+    for (uint32_t k = 0; k != layout->count; ++k) {
+      args[k] = (void *)at;
+      at += (layout->sizes[k] + 7u) & ~7u;
+    }
+    CUDA_KERNEL_NODE_PARAMS params;
+    memset(&params, 0, sizeof params);
+    params.func = op->function;
+    params.gridDimX = op->grid[0];
+    params.gridDimY = op->grid[1];
+    params.gridDimZ = op->grid[2];
+    params.blockDimX = op->block[0];
+    params.blockDimY = op->block[1];
+    params.blockDimZ = op->block[2];
+    params.sharedMemBytes = op->shared;
+    params.kernelParams = args;
+    if (cuGraphExecKernelNodeSetParams(s->exec, s->nodes[i], &params) !=
+        CUDA_SUCCESS)
+      return 0;
+    ++spanCounts[6];
+  }
+  return 1;
+}
+
+static void keepRecord(struct Span *s, uint64_t hash) {
+  s->hash = hash;
+  free(s->ops);
+  free(s->bytes);
+  s->numOps = numSpanOps;
+  s->ops = malloc(numSpanOps * sizeof *spanOps);
+  memcpy(s->ops, spanOps, numSpanOps * sizeof *spanOps);
+  s->numBytes = numSpanBytes;
+  s->bytes = malloc(numSpanBytes ? numSpanBytes : 1);
+  memcpy(s->bytes, spanBytes, numSpanBytes);
+}
+
+/* The caches by hash and by shape: open addressing, entries + 1; an entry
+   whose span holds another hash now is passed over, and the tables are
+   made again when they fill. */
+static int spanIndex[SPAN_INDEX], shapeIndex[SPAN_INDEX];
+static int spanIndexUsed = 0;
+static void insertIndex(int *table, uint64_t hash, int i) {
+  for (int probe = 0;; ++probe)
+    if (!table[(hash + probe) % SPAN_INDEX]) {
+      table[(hash + probe) % SPAN_INDEX] = i + 1;
+      return;
+    }
+}
+static void rebuildSpanIndex(void) {
+  memset(spanIndex, 0, sizeof spanIndex);
+  memset(shapeIndex, 0, sizeof shapeIndex);
+  spanIndexUsed = 0;
+  for (int i = 0; i != numSpans; ++i) {
+    insertIndex(spanIndex, spanCache[i].hash, i);
+    insertIndex(shapeIndex, spanCache[i].shape, i);
+    ++spanIndexUsed;
+  }
+}
+static void indexSpan(int i) {
+  if (++spanIndexUsed > SPAN_INDEX / 2) {
+    rebuildSpanIndex();
+    return;
+  }
+  insertIndex(spanIndex, spanCache[i].hash, i);
+  insertIndex(shapeIndex, spanCache[i].shape, i);
+}
+
+/* A place in the cache, the graph used least recently giving its own
+   once the device has run what was issued from it. */
+static struct Span *takeSpan(void) {
+  if (numSpans == SPAN_CACHE) {
+    int oldest = 0;
+    for (int i = 1; i != numSpans; ++i)
+      if (spanCache[i].lastUse < spanCache[oldest].lastUse)
+        oldest = i;
+    check(cuStreamSynchronize(sharedStream), "cuStreamSynchronize");
+    releaseSpan(&spanCache[oldest]);
+    spanCache[oldest] = spanCache[--numSpans];
+    memset(&spanCache[numSpans], 0, sizeof spanCache[numSpans]);
+    rebuildSpanIndex();
+    ++spanCounts[5];
+  }
+  return &spanCache[numSpans++];
+}
+
+/* MDRT_SPANS_DEBUG=1: the hash and length of each span, and, for each
+   sequence of kernels with the same functions and grids, the argument
+   words that differ from its previous recording, with the kernel's name,
+   on stderr: what keeps a span from repeating. */
+static void debugSpan(void) {
+  static int on = -1;
+  if (on < 0)
+    on = getenv("MDRT_SPANS_DEBUG") != NULL;
+  if (!on)
+    return;
+  uint64_t full = hashBytes(hashBytes(0xCBF29CE484222325ull, spanOps,
+                                      numSpanOps * sizeof *spanOps),
+                            spanBytes, numSpanBytes);
+  fprintf(stderr, "mdrt: span-hash %016llx %d\n", (unsigned long long)full,
+          numSpanOps);
+  enum { SHAPES = 512 };
+  static struct {
+    uint64_t hash;
+    int numOps;
+    struct SpanOp *ops;
+    unsigned char *bytes;
+    uint32_t numBytes;
+  } last[SHAPES];
+  uint64_t h = 0xCBF29CE484222325ull;
+  for (int i = 0; i != numSpanOps; ++i) {
+    h = hashBytes(h, &spanOps[i].kind, sizeof spanOps[i].kind);
+    h = hashBytes(h, &spanOps[i].function, sizeof spanOps[i].function);
+    h = hashBytes(h, spanOps[i].grid, sizeof spanOps[i].grid);
+  }
+  int slot = (int)(h % SHAPES);
+  if (last[slot].hash == h && last[slot].numOps == numSpanOps &&
+      last[slot].numBytes == numSpanBytes)
+    for (int i = 0; i != numSpanOps; ++i) {
+      const struct SpanOp *a = &last[slot].ops[i], *b = &spanOps[i];
+      if (b->kind != SPAN_KERNEL) {
+        if (memcmp(a, b, sizeof *a))
+          fprintf(stderr, "mdrt: span %016llx op %d (kind %d) differs\n",
+                  (unsigned long long)h, i, b->kind);
+        continue;
+      }
+      for (uint32_t w = 0; w + 8 <= b->bytes; w += 8) {
+        uint64_t x, y;
+        memcpy(&x, last[slot].bytes + a->offset + w, 8);
+        memcpy(&y, spanBytes + b->offset + w, 8);
+        if (x != y)
+          fprintf(stderr,
+                  "mdrt: span %016llx op %d %s word %u: %016llx -> %016llx\n",
+                  (unsigned long long)h, i, getKernelName(b->function), w / 8,
+                  (unsigned long long)x, (unsigned long long)y);
+      }
+    }
+  free(last[slot].ops);
+  free(last[slot].bytes);
+  last[slot].hash = h;
+  last[slot].numOps = numSpanOps;
+  last[slot].numBytes = numSpanBytes;
+  last[slot].ops = malloc(numSpanOps * sizeof *spanOps);
+  memcpy(last[slot].ops, spanOps, numSpanOps * sizeof *spanOps);
+  last[slot].bytes = malloc(numSpanBytes ? numSpanBytes : 1);
+  memcpy(last[slot].bytes, spanBytes, numSpanBytes);
 }
 
 static void flushSpan(void) {
   if (!numSpanOps)
     return;
+  debugSpan();
   int kernels = 0;
   for (int i = 0; i != numSpanOps; ++i)
     kernels += spanOps[i].kind == SPAN_KERNEL || spanOps[i].kind == SPAN_FFT;
-  uint64_t hash = 0xCBF29CE484222325ull;
-  hash = hashBytes(hash, spanOps, numSpanOps * sizeof *spanOps);
-  hash = hashBytes(hash, spanBytes, numSpanBytes);
   struct Span *found = NULL;
-  if (kernels >= 2)
-    for (int i = 0; i != numSpans; ++i) {
+  if (kernels >= 2) {
+    uint64_t hash = hashBytes(
+        hashBytes(0xCBF29CE484222325ull, spanOps,
+                  numSpanOps * sizeof *spanOps),
+        spanBytes, numSpanBytes);
+    uint64_t shape = hashShape();
+    /* The same span: its graph as it is. */
+    for (int probe = 0; probe != SPAN_INDEX && !found; ++probe) {
+      int i = spanIndex[(hash + probe) % SPAN_INDEX] - 1;
+      if (i < 0)
+        break;
       struct Span *s = &spanCache[i];
       if (s->hash == hash && s->numOps == numSpanOps &&
           s->numBytes == numSpanBytes &&
           !memcmp(s->ops, spanOps, numSpanOps * sizeof *spanOps) &&
-          !memcmp(s->bytes, spanBytes, numSpanBytes)) {
+          !memcmp(s->bytes, spanBytes, numSpanBytes))
         found = s;
-        break;
-      }
     }
-  if (!found && kernels >= 2) {
-    uint64_t *seen = &spanSeen[hash % SPAN_SEEN];
-    if (*seen == hash) {
-      /* The second recording: make the graph. */
-      if (numSpans == SPAN_CACHE) {
-        /* The graph used least recently gives its place, once the device
-           has run what was issued from it. */
-        int oldest = 0;
-        for (int i = 1; i != numSpans; ++i)
-          if (spanCache[i].lastUse < spanCache[oldest].lastUse)
-            oldest = i;
-        check(cuStreamSynchronize(sharedStream), "cuStreamSynchronize");
-        releaseSpan(&spanCache[oldest]);
-        spanCache[oldest] = spanCache[--numSpans];
-        ++spanCounts[5];
+    if (!found) {
+      /* The graphs of its shape: a new one while there are fewer than
+         SPAN_VARIANTS, then the one used least recently, updated. */
+      struct Span *variants[SPAN_VARIANTS];
+      int numVariants = 0;
+      for (int probe = 0; probe != SPAN_INDEX; ++probe) {
+        int i = shapeIndex[(shape + probe) % SPAN_INDEX] - 1;
+        if (i < 0)
+          break;
+        struct Span *s = &spanCache[i];
+        int seen = 0;
+        for (int k = 0; k != numVariants; ++k)
+          seen |= variants[k] == s;
+        if (!seen && s->shape == shape && s->numOps == numSpanOps &&
+            s->numBytes == numSpanBytes && numVariants != SPAN_VARIANTS)
+          variants[numVariants++] = s;
       }
-      CUgraphExec exec = captureSpan();
-      if (exec) {
-        found = &spanCache[numSpans++];
-        found->hash = hash;
-        found->numOps = numSpanOps;
-        found->ops = malloc(numSpanOps * sizeof *spanOps);
-        memcpy(found->ops, spanOps, numSpanOps * sizeof *spanOps);
-        found->numBytes = numSpanBytes;
-        found->bytes = malloc(numSpanBytes ? numSpanBytes : 1);
-        memcpy(found->bytes, spanBytes, numSpanBytes);
-        found->exec = exec;
-        found->launches = 0;
-        for (int i = 0; i != numSpanOps; ++i)
-          if (spanOps[i].kind == SPAN_FFT)
-            retainFFTPlanHandle(spanOps[i].plan, +1);
-        ++spanCounts[2];
+      uint64_t *seen = &spanSeen[shape % SPAN_SEEN];
+      if (numVariants == SPAN_VARIANTS || (numVariants && *seen != shape)) {
+        struct Span *oldest = NULL;
+        for (int k = 0; k != numVariants; ++k)
+          if (variants[k]->updatable &&
+              (!oldest || variants[k]->lastUse < oldest->lastUse))
+            oldest = variants[k];
+        int updated = oldest && updateSpan(oldest);
+        if (oldest && !updated) {
+          /* Some of its nodes may hold the new arguments: it matches no
+             record again, and its place goes when the cache fills. */
+          oldest->hash = oldest->shape = 0;
+          oldest->numOps = -1;
+          oldest->updatable = 0;
+        }
+        if (updated) {
+          keepRecord(oldest, hash);
+          insertIndex(spanIndex, hash, (int)(oldest - spanCache));
+          if (++spanIndexUsed > SPAN_INDEX / 2)
+            rebuildSpanIndex();
+          found = oldest;
+        }
+        *seen = shape;
+      } else if (*seen == shape) {
+        /* The shape was recorded before: make a graph. */
+        struct Span *s = takeSpan();
+        if (captureSpan(s)) {
+          s->shape = shape;
+          keepRecord(s, hash);
+          for (int i = 0; i != numSpanOps; ++i)
+            if (spanOps[i].kind == SPAN_FFT)
+              retainFFTPlanHandle(spanOps[i].plan, +1);
+          indexSpan((int)(s - spanCache));
+          found = s;
+          ++spanCounts[2];
+        } else {
+          --numSpans;
+          ++spanCounts[3];
+        }
+        *seen = 0;
       } else {
-        ++spanCounts[3];
+        *seen = shape;
       }
-      *seen = 0;
-    } else {
-      *seen = hash;
     }
   }
   if (found) {
     found->lastUse = ++spanClock;
-    ++found->launches;
     check(cuGraphLaunch(found->exec, sharedStream), "cuGraphLaunch");
     ++spanCounts[0];
   } else {
-    check(issueOps(spanOps, numSpanOps, spanBytes, 0),
-          "a recorded launch");
+    check(issueOps(spanOps, numSpanOps, spanBytes, 0), "a recorded launch");
     ++spanCounts[1];
   }
   spanCounts[4] += kernels;
@@ -1097,11 +1364,11 @@ void mdrtSpansSuspend(int32_t suspend) {
   spansSuspended += suspend ? 1 : -1;
 }
 
-/* The counts for the log: graph launches, sequences issued as recorded,
+/* The counts for the log: graph launches, spans issued as recorded,
    graphs made, captures that failed, kernels and transforms recorded,
-   graphs evicted. */
-void mdrtSpansCounts(int64_t counts[6]) {
-  for (int i = 0; i != 6; ++i)
+   graphs released, kernel nodes updated. */
+void mdrtSpansCounts(int64_t counts[7]) {
+  for (int i = 0; i != 7; ++i)
     counts[i] = spanCounts[i];
 }
 

@@ -488,6 +488,26 @@ the sample standard deviation of the paired savings.
 In the six-input prototype measurement, graph submission changed throughput by
 −1.26% to +4.01%. The control file can pin either path.
 
+**Recorded spans (D[step-no-host-wait]).** Outside the TOWERS chunks the
+host still decides between steps: it reads the flags of the tests, the
+sizes of a build and the kinetic energy of a coupling step. The runtime
+therefore groups the work between two such reads. A *span* is the sequence
+of launches, transforms, sets and flag events that the host issues between
+two host boundaries, where a boundary is any call that waits for the
+device, copies to or from the host, or issues work on another stream. The
+runtime records a span with the bytes of its arguments and issues it at
+the next boundary; a span whose ops and argument bytes equal those of a
+graph it holds is issued as that graph, and a span of a known shape (the
+same ops, other arguments or grids) updates the kernel nodes of a graph of
+that shape. The argument for equal results: every boundary first issues
+what was recorded, so each wait of the host and each other stream still
+follows the same work; the ops of a span run on the one stream in the
+order recorded; and a kernel takes its arguments by value, so the recorded
+bytes are those its launch would have passed. In the deterministic mode the
+checkpoint and every row of the log are therefore bitwise those of
+launches one by one, which the tests check in mixed and double precision.
+PENDING: measurements.
+
 ## 8.4 Where the time of a step goes
 
 *Table 8.2. Cellulose NVE (408,609 atoms, 2 fs), mixed precision, dual
