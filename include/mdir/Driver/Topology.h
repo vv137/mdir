@@ -122,6 +122,35 @@ struct Topology {
   std::vector<unsigned> types;
   std::vector<std::string> typeNames;
 
+  /// Where the atomic number of a particle comes from, for the diagnosis of
+  /// `mdir check` (#469, D[gromacs-hmr-elements]); no run reads it.
+  enum class ElementSource : unsigned char {
+    /// The file gives it: Amber's ATOMIC_NUMBER, the at.num column of
+    /// GROMACS's [ atomtypes ], the element of CHARMM's MASS.
+    File,
+    /// Inferred from the name and the mass (Amber without ATOMIC_NUMBER).
+    Name,
+    /// Inferred from the mass alone.
+    Mass,
+    /// None: GROMACS without the at.num column. Only whether the particle
+    /// is a hydrogen is inferred, from a mass below 1.2 amu.
+    None,
+  };
+  /// The force-field atom types of the particles, which the diagnosis of
+  /// the elements names: Amber's AMBER_ATOM_TYPE, the types of GROMACS's
+  /// [ atoms ], the types of CHARMM's MASS. `atomTypeLabels` is the name
+  /// whose letters are compared with the element (the bonded type of
+  /// GROMACS, which differs from the type in OPLS-AA). Empty where a reader
+  /// gives none; no run reads them, and a reordering of the particles does
+  /// not follow them.
+  struct ElementOrigins {
+    std::vector<ElementSource> sources;
+    std::vector<unsigned> atomTypes;
+    std::vector<std::string> atomTypeNames;
+    std::vector<std::string> atomTypeLabels;
+  };
+  ElementOrigins elementOrigins;
+
   /// The residues: their names, and the particle that each begins with.
   std::vector<std::string> residueNames;
   std::vector<unsigned> residueStarts;

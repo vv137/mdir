@@ -24,7 +24,8 @@
 # AMBER: electrostatics: PME
 # AMBER-NEXT: PME grid: automatic, max spacing 1.2 Ang, order 4
 # AMBER-NEXT: PME beta: automatic, tolerance 1e-05
-# AMBER: constraints: {{[0-9]+}} distances; hydrogen bonds yes, rigid water yes
+# AMBER: constraints: 3671 distances; hydrogen bonds yes, rigid water yes
+# AMBER-NEXT: constrained: 17 bonds of hydrogen in 9 groups, 1218 rigid waters
 # AMBER-NEXT: target: gpu, mixed precision
 # AMBER: log: stdout and {{.*}}run.log (text), every 5000 steps, 101 rows
 # AMBER-NEXT: energy: {{.*}}run.energy (columns), every 5000 steps, 101 rows

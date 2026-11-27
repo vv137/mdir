@@ -785,7 +785,7 @@ llvm::Expected<Topology> Assigner::build() {
   size_t count = structure.atoms.size();
 
   // Particles, residues, and the types of Lennard-Jones that they use.
-  std::map<std::string, unsigned> typeIndex;
+  std::map<std::string, unsigned> typeIndex, elementTypeIndex;
   std::string lastResidue;
   for (auto [i, atom] : llvm::enumerate(structure.atoms)) {
     topology.atomNames.push_back(atom.name);
@@ -795,6 +795,17 @@ llvm::Expected<Topology> Assigner::build() {
     topology.atomicNumbers.push_back(element != parameters.elements.end()
                                          ? element->second
                                          : numberFromMass(atom.mass));
+    // Where it comes from, for `mdir check` (#469).
+    topology.elementOrigins.sources.push_back(
+        element != parameters.elements.end() ? Topology::ElementSource::File
+                                             : Topology::ElementSource::Mass);
+    auto [atomType, newType] = elementTypeIndex.insert(
+        {atom.type, topology.elementOrigins.atomTypeNames.size()});
+    if (newType) {
+      topology.elementOrigins.atomTypeNames.push_back(atom.type);
+      topology.elementOrigins.atomTypeLabels.push_back(atom.type);
+    }
+    topology.elementOrigins.atomTypes.push_back(atomType->second);
     std::string residue = atom.segment + ":" + atom.residue;
     if (i == 0 || residue != lastResidue) {
       topology.residueNames.push_back(atom.residueName);

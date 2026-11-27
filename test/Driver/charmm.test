@@ -37,6 +37,9 @@
 # CHECK:      MDIR:   total                        -15.115133
 
 # CHECK-TOPOLOGY: particles:          9
+# Without an element in MASS, from the masses (#469).
+# CHECK-TOPOLOGY: elements: H 1, C 5, O 1, Na 1, Cl 1
+# CHECK-TOPOLOGY-NEXT: element sources: 0 from the file, 9 from a fallback (0 from the name and the mass, 9 from the mass, 0 none in the file)
 # CHECK-TOPOLOGY: Urey-Bradley terms: 3
 # CHECK-TOPOLOGY: dihedrals:          8, 0 improper
 # CHECK-TOPOLOGY: harmonic impropers: 1

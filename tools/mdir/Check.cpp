@@ -2,6 +2,7 @@
 // without compiling anything.
 
 #include "Commands.h"
+#include "Elements.h"
 #include "TowersShape.h"
 #include "mdir/Compiler/Skins.h"
 #include "Manifest.h"
@@ -24,6 +25,7 @@
 #include <cstdio>
 #include <limits>
 #include <numeric>
+#include <optional>
 #include <vector>
 
 using namespace mdir::driver;
@@ -168,7 +170,8 @@ static llvm::json::Object makeRigidGroupsJSON(const Topology &topology) {
 }
 
 /// What a topology describes.
-static void describeTopology(const Control &control, const System &system) {
+static void describeTopology(const Control &control, const System &system,
+                             const mdir::tool::ElementReport &elements) {
   const Topology &topology = *system.topology;
   size_t count = topology.getNumParticles();
   double totalMass = 0.0, totalCharge = 0.0;
@@ -193,6 +196,11 @@ static void describeTopology(const Control &control, const System &system) {
   std::printf("particles:          %zu\n", count);
   std::printf("residues:           %zu\n", topology.residueNames.size());
   std::printf("types:              %zu\n", topology.getNumTypes());
+  // The elements and where they come from (#469, D[gromacs-hmr-elements]).
+  std::printf("elements:           %s\n",
+              mdir::tool::describeElementCounts(elements).c_str());
+  std::printf("element sources:    %s\n",
+              mdir::tool::describeElementSources(elements).c_str());
   std::printf("bonds:              %zu, %zu with hydrogen\n",
               topology.bonds.size(), hydrogenBonds);
   std::printf("angles:             %zu\n", topology.angles.size());
@@ -594,7 +602,8 @@ static void checkCutoffJump(const Control &control, const System &system,
 }
 
 static void describeRun(const Control &control, const System &system,
-                        const Preflight &report) {
+                        const Preflight &report,
+                        const mdir::tool::ElementReport *elements) {
   std::printf("ensemble:           %s\n", getEnsemble(control));
   if (control.minimize) {
     std::printf("minimizer:          STEEPEST_DESCENT, %lld steps\n",
@@ -660,6 +669,10 @@ static void describeRun(const Control &control, const System &system,
               "rigid water %s\n",
               system.numConstraints, control.rigidBonds ? "yes" : "no",
               control.fastWater ? "yes" : "no");
+  // By kind (#469, D[gromacs-hmr-elements]).
+  if (elements)
+    std::printf("constrained:        %s\n",
+                mdir::tool::describeConstraintKinds(*elements).c_str());
   std::printf("target:             %s, %s precision\n",
               control.target == Target::GPU ? "gpu" : "cpu",
               getName(control.precision));
@@ -721,7 +734,8 @@ static void describeRun(const Control &control, const System &system,
 }
 
 static llvm::json::Object makeJSON(const Control &control, const System &system,
-                                  const Preflight &report) {
+                                  const Preflight &report,
+                                  const mdir::tool::ElementReport *elements) {
   std::string skinKeyReason;
   std::optional<std::string> skinKey;
   if (mdir::compiler::canSearchSkins(control, skinKeyReason))
@@ -776,7 +790,10 @@ static llvm::json::Object makeJSON(const Control &control, const System &system,
                                            topology.charges.end(), 0.0)},
         {"virtual_sites", topology.virtualSites.size()},
         {"rigid_waters", topology.settles.size()},
-        {"rigid_groups", makeRigidGroupsJSON(topology)}};
+        {"rigid_groups", makeRigidGroupsJSON(topology)},
+        // The elements and where they come from (#469,
+        // D[gromacs-hmr-elements]).
+        {"elements", mdir::tool::makeElementsJSON(*elements)}};
   } else {
     particles["pair_terms"] = control.pairs.size();
   }
@@ -803,7 +820,17 @@ static llvm::json::Object makeJSON(const Control &control, const System &system,
       {"constraints", Object{{"distances", system.numConstraints},
                               {"hydrogen_bonds", control.rigidBonds},
                               {"rigid_water", control.fastWater},
-                              {"analytic_bonds", control.analyticBonds}}},
+                              {"analytic_bonds", control.analyticBonds},
+                              // By kind (#469, D[gromacs-hmr-elements]).
+                              {"constrained_hydrogen_bonds",
+                               elements ? Value(elements->hydrogenBonds)
+                                        : Value(nullptr)},
+                              {"hydrogen_bond_groups",
+                               elements ? Value(elements->hydrogenGroups)
+                                        : Value(nullptr)},
+                              {"rigid_waters",
+                               elements ? Value(elements->rigidWaters)
+                                        : Value(nullptr)}}},
       {"target", control.target == Target::GPU ? "gpu" : "cpu"},
       {"precision", getName(control.precision)},
       {"threads", control.threads},
@@ -916,10 +943,20 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
   for (const auto &[code, message] : system->warnings)
     report.warnings.push_back({code, message});
   checkCutoffJump(*control, *system, report.warnings);
+  // The elements, and where other evidence disagrees with them (#469,
+  // D[gromacs-hmr-elements]): warnings only; the run is unchanged.
+  std::optional<mdir::tool::ElementReport> elements;
+  if (system->topology) {
+    elements = mdir::tool::diagnoseElements(*control, *system->topology);
+    for (const auto &[code, message] : elements->warnings)
+      report.warnings.push_back({code, message});
+  }
+  const mdir::tool::ElementReport *elementReport =
+      elements ? &*elements : nullptr;
   for (const auto &[code, message] : control->rigidUnitsRoute.warnings)
     report.warnings.push_back({code, message});
   if (json) {
-    auto object = makeJSON(*control, *system, report);
+    auto object = makeJSON(*control, *system, report, elementReport);
     (*object.getObject("run"))["step_graph"] = std::move(graphChoice);
     if (towers)
       (*object.getObject("run")->getObject("neighbors"))["towers_shape"] =
@@ -933,10 +970,10 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
       llvm::outs() << "TOWERS launch shape "
                    << llvm::formatv("{0}", llvm::json::Value(std::move(*towers))) << "\n";
     if (system->topology)
-      describeTopology(*control, *system);
+      describeTopology(*control, *system, *elements);
     else
       describeParticles(*control, *system);
-    describeRun(*control, *system, report);
+    describeRun(*control, *system, report, elementReport);
   }
   return 0;
 }

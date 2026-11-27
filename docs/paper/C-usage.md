@@ -188,6 +188,8 @@ topology:           dipeptide.prmtop
 particles:          1168
 residues:           385
 types:              9
+elements:           H 776, C 6, N 2, O 384
+element sources:    1168 from the file, 0 from a fallback (0 from the name and the mass, 0 from the mass, 0 none in the file)
 bonds:              9, 0 with hydrogen
 angles:             36
 dihedrals:          67, 4 improper
@@ -756,8 +758,12 @@ Warnings name what a run will do that its author may not intend, and
 the run goes on: a parameter that its expression does not use, an
 expression that uses none of its coordinates and so adds no force, a
 selection that selects no particle, a step longer than 1 fs with the
-bonds of hydrogen free, and the waters of an Amber or CHARMM topology
-left flexible because `[constraints]` says nothing (D153, D158).
+bonds of hydrogen free, the waters of an Amber or CHARMM topology
+left flexible because `[constraints]` says nothing (D153, D158), and an
+element of the topology that other evidence contradicts: the mass of a
+heavy atom with its hydrogens, a light particle of one bond that is not
+taken for a hydrogen, or the name of its type (#469,
+D[gromacs-hmr-elements]).
 `mdir check --json` lists them under their codes.
 
 `mdir emit FILE` prints the program that the driver builds,
