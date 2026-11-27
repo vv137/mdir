@@ -97,6 +97,13 @@ void mdrtMPIStartNCCL(void) {
 #endif
 }
 
+uint64_t mdrtMPITrialMemoryAvailable(void) {
+#ifdef MDIR_ENABLE_NCCL
+  if (useNCCL) return mdrtNCCLTrialMemoryAvailable();
+#endif
+  return 0;
+}
+
 int mdrtMPIRank(void) { initialize(); return rank; }
 int mdrtMPISize(void) { initialize(); return size; }
 

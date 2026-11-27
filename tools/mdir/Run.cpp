@@ -465,7 +465,79 @@ struct DistributedTrial {
   std::optional<DistributedSkinTiming> skin;
   int64_t localTimingSteps = 0;
   std::optional<double> localTimingVariation;
+  std::optional<std::array<double, 3>> memoryRefusal;
 };
+
+#ifdef MDIR_ENABLE_MPI
+// Estimate the live matrices and temporary row storage before the trial
+// creates device arrays. Use the local domain's occupancy, including
+// every image in its expanded box. Widen the box by half a skin to
+// allow for movement before coverage expires.
+static double estimateTrialMemory(const Control &control, const System &system,
+                                  const Program &program, int ranks) {
+  constexpr double MiB = 1024 * 1024;
+  double rows = system.getNumParticles();
+  if (!program.localUniquePairs) {
+    const auto &grid = program.domainGrid;
+    mdrtMPIPlaceDomains(grid.data(), system.box);
+    int64_t domain = mdrtMPIDomainBound(ranks, 0);
+    const double reach = control.getDistributionReach() * units::length +
+                         program.domainTupleExtent + 0.5 * program.skin;
+    double low[3], high[3];
+    for (int k = 0; k < 3; ++k) {
+      const double width = system.box[k] / grid[k];
+      const int64_t cell = domain % grid[k];
+      domain /= grid[k];
+      low[k] = (cell * width - reach) / system.box[k];
+      high[k] = ((cell + 1) * width + reach) / system.box[k];
+    }
+    const bool physicalRows = ranks > 1 && program.domainTopology &&
+        (system.numConstraints || system.numSettles) &&
+        control.precision == Precision::Mixed;
+    rows = 0;
+    for (size_t i = 0, count = system.getNumParticles(); i < count; ++i) {
+      double images = 1;
+      for (int k = 0; k < 3; ++k) {
+        double x = system.positions[3*i+k] / system.box[k];
+        x -= std::floor(x);
+        const double copies = std::floor(high[k] - x) -
+                              std::ceil(low[k] - x) + 1;
+        images *= physicalRows ? std::min(1.0, copies) : copies;
+      }
+      rows += images;
+    }
+  }
+  // Neighbor capacity already includes initial width padding. Allow for
+  // growth and overlapping lists at force and output boundaries, then
+  // account for tuple incidence, integration buffers, halo and JIT.
+  const double widthMargin = program.localUniquePairs ? 1.25 : 4.5;
+  const double bytesPerRow = program.domainTopology && !program.localUniquePairs
+                                ? 7168.0 : 1024.0;
+  return 256 * MiB + rows * (bytesPerRow +
+                           sizeof(int32_t) * program.neighborWidth * widthMargin);
+}
+
+static std::optional<std::array<double, 3>>
+checkTrialMemory(double needed, int ranks) {
+  uint64_t available = mdrtMPITrialMemoryAvailable();
+  if (const char *value = std::getenv("MDIR_DIST_AUTO_MEMORY_BYTES")) {
+    uint64_t limit;
+    if (!StringRef(value).getAsInteger(10, limit))
+      available = std::min(available, limit);
+  }
+  if (mdrtMPIAllTrue(needed <= available))
+    return std::nullopt;
+  double local[] = {needed, static_cast<double>(available)};
+  std::vector<double> all(2 * ranks);
+  mdrtMPIGatherTimes(local, all.data(), 2);
+  int worst = 0;
+  for (int rank = 1; rank < ranks; ++rank)
+    if (all[2*rank] - all[2*rank+1] > all[2*worst] - all[2*worst+1])
+      worst = rank;
+  return std::array<double, 3>{static_cast<double>(worst), all[2*worst],
+                               all[2*worst+1]};
+}
+#endif
 
 static int runControlImpl(StringRef controlFile, Emit emit,
                            const char *argv0, const RunOptions &options, StepGraphTrial *trial,
@@ -1075,6 +1147,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     llvm::raw_string_ostream lines(skinLines);
     double reference = original - control->cutoffDistance;
     SmallVector<double> skins{reference};
+    llvm::json::Array skipped;
     if (control->hasTopology()) {
       for (double skin : {2.0, 3.0, 4.0, 5.0})
         if (std::abs(skin - reference) >= 1e-9)
@@ -1096,6 +1169,20 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       if (runControlImpl(controlFile, Emit::Run, argv0, {}, nullptr, &sample))
         return fail(llvm::formatv("could not time the distributed halo reach at {0:f3} Ang",
                                   reach).str());
+      if (sample.memoryRefusal) {
+        const auto [rank, needed, available] = *sample.memoryRefusal;
+        constexpr double MiB = 1024 * 1024;
+        lines << llvm::formatv("MDIR: distributed list {0:f3} Ang skipped: "
+                               "rank {1:f0} needs an estimated {2:f1} MiB, "
+                               "{3:f1} MiB available\n",
+                               reach, rank, needed / MiB, available / MiB);
+        skipped.emplace_back(llvm::json::Object{
+            {"pairlist_distance_angstrom", reach},
+            {"rank", static_cast<int64_t>(rank)},
+            {"estimated_device_bytes", static_cast<int64_t>(needed)},
+            {"available_device_bytes", static_cast<int64_t>(available)}});
+        continue;
+      }
       mdrtMPIBroadcast(&sample.milliseconds, 1, 0);
       const auto &[covered, rebuilt, other, firstCount, firstSeconds] = *sample.skin;
       enum Column {
@@ -1182,6 +1269,16 @@ static int runControlImpl(StringRef controlFile, Emit emit,
         runnerUp = measured;
       }
     }
+    if (!best) {
+      if (writer) {
+        lines.flush();
+        llvm::errs() << skinLines
+                     << "mdir: no distributed AUTO pair-list distance fits device memory\n";
+      }
+      return 1;
+    }
+    if (!skipped.empty())
+      distributedSkinSelection["skipped_for_memory"] = std::move(skipped);
     control->skinSource = "measured";
     control->skinReason = "the lowest measured distributed step cost including rebuilds";
     lines << llvm::formatv("MDIR: selected distributed pair list distance {0:f3} Ang",
@@ -1225,6 +1322,14 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   auto program = buildProgram(*control, *system);
   if (!program)
     return control->distribution ? refuse(*control, program.takeError()) : fail(program.takeError());
+#ifdef MDIR_ENABLE_MPI
+  if (distributedTrial && distributedTrial->skin) {
+    distributedTrial->memoryRefusal = checkTrialMemory(
+        estimateTrialMemory(*control, *system, *program, ranks), ranks);
+    if (distributedTrial->memoryRefusal)
+      return 0;
+  }
+#endif
   if (emit == Emit::Module) {
     llvm::outs() << printModuleForReading(*program);
     // The profile map is of the lowered program (D398).

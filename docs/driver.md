@@ -1732,6 +1732,11 @@ Rank-local GPU MATRIX entries have their own device allocations. When a
 halo retires, its entry allocation returns to the driver. Smaller
 runtime allocations can reuse the general device pool.
 
+Before a distributed AUTO reach trial, each rank estimates its device
+memory requirement at the initial geometry. All ranks skip the distance
+if any rank's estimate exceeds its available device memory. The search
+reports the limiting rank and fails if every eligible distance is skipped.
+
 The setup log and the manifest start event give the requested domain count,
 factor grids and their scores in inverse nm, the source of each choice, and
 the real-space cutoff and skin in Ang. The first halo adds a

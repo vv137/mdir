@@ -13,6 +13,7 @@ int mdrtMPIOwner(int64_t domains, int64_t domain);
 void mdrtMPIPlaceDomains(const int64_t grid[3], const double edges[3]);
 int mdrtMPINode(int peer);
 void mdrtMPIStartNCCL(void);
+uint64_t mdrtMPITrialMemoryAvailable(void);
 int mdrtMPIRank(void);
 int mdrtMPISize(void);
 void mdrtMPIRowsToRoot(double *values, int64_t count, int owner);

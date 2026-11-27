@@ -78,6 +78,17 @@ int mdrtNCCLNode(int rank) { return nodes[rank]; }
 
 int mdrtNCCLActive(void) { return peers != NULL; }
 
+uint64_t mdrtNCCLTrialMemoryAvailable(void) {
+  size_t freeBytes, totalBytes;
+  // Submitted frees on the compute and transport streams must complete
+  // before the next trial's budget is read.
+  if (cudaDeviceSynchronize() != cudaSuccess ||
+      (rowPool && cudaMemPoolTrimTo(rowPool, 0) != cudaSuccess) ||
+      cudaMemGetInfo(&freeBytes, &totalBytes) != cudaSuccess)
+    return 0;
+  return freeBytes;
+}
+
 struct NCCLPlan {
   int *counts, *ns, *nr, *os, *offsetRecv;
   int *source, *dest;

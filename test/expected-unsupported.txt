@@ -22,6 +22,7 @@ without volta: Driver/volta-target-gpu.test
 without cuda-toolkit: *
 without mpi: *
 without nccl: Driver/distribute-nccl-gpu.test
+without nccl: Driver/distributed-auto-memory-gpu.test
 without nccl: Driver/distributed-local-vrescale-gpu.test
 without nccl: Driver/distributed-physical-images-gpu.test
 without nccl: Driver/distributed-vrescale-gpu.test

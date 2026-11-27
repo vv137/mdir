@@ -6,6 +6,7 @@
 
 void mdrtNCCLStart(MPI_Comm world);
 void mdrtNCCLFinish(void);
+uint64_t mdrtNCCLTrialMemoryAvailable(void);
 void mdrtNCCLRowsReady(void);
 int mdrtNCCLActive(void);
 struct NCCLPlan;
