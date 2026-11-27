@@ -1,4 +1,4 @@
 # REQUIRES: mpi, hdf5, h5py
 # RUN: rm -rf %t %t.charged
-# RUN: %h5md_python %S/Inputs/distributed_restart.py %t %S/../../examples/argon %mpiexec
-# RUN: %h5md_python %S/Inputs/distributed_restart.py %t.charged %S/charged.toml %mpiexec
+# RUN: %h5md_python %S/Inputs/distributed_restart.py %t %S/../../examples/argon mdir %mpiexec
+# RUN: %h5md_python %S/Inputs/distributed_restart.py %t.charged %S/charged.toml mdir %mpiexec
