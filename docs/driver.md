@@ -391,6 +391,16 @@ HDF5 was built but does not test checkpoints, PME, constraints, or the
 stability of a user's system; use `mdir check FILE` and the test suite for
 those concerns.
 
+Under `neighbor_structure = "AUTO"`, `mdir run` decides on TOWERS before
+anything is built (D[best-defaults]): the rule of the traversal table
+(`resolveAutoTowers`, `tools/mdir/TowersShape.cpp`) for the input and the
+visible device, then the TOWERS preflight with the derived launch, or a
+trial's cached winner; a refusal at either step leaves the structure of
+D261 (`resolveNeighborStructure`). The line `MDIR: AUTO traversal: TOWERS
+taken: ...`, `not taken: ...` or `refused at preflight: ...` records it,
+and the start event's `resolved_choices.neighbor_structure` holds the
+value, the reasons, the table lookup and its basis.
+
 The `[execution] step_graph` key controls submission of the ordinary steps
 between coupling and output boundaries. The default, `"LAUNCH"`, submits
 each step's kernels from the host. `"GRAPH"` uses CUDA graph replay for
@@ -549,6 +559,7 @@ The whole log of `mdir run examples/argon/argon.toml` on the CPU, as of
 ```text
 MDIR 0.1.0, commit <12 hexadecimal digits>
 MDIR: 864 particles, 2000 steps of 0.005 ps
+MDIR: AUTO traversal: TOWERS not taken: the target is the CPU
 MDIR: neighbor structure: the matrix with the reach 9.5 Å (AUTO: the target is the CPU)
 MDIR: compiled in 0.70 s
 INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE         VIRIAL       PRESSURE

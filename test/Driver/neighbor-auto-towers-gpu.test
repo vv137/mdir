@@ -3,15 +3,17 @@
 # argon on a lattice of 8,000 atoms takes TOWERS with the derived launch,
 # without the timed trial, and its energies are those of TOWERS given with
 # the trial's launch: at a fixed cell height every launch gives the same
-# words (D428); its own compile cache keeps it from a trial that the
-# explicit run stores. Elsewhere it takes the structure of D261, the matrix, and
-# its energies are those of MATRIX given. 1,728 atoms stay on the matrix
-# on every device. An input that the rule admits but the TOWERS preflight
-# refuses (4,913 atoms with a cutoff of 22 Å in a cell of 64.6 Å: fewer
-# than three cells across) falls back to the matrix and says why, in `mdir
-# check` and in the run alike, and so does the continuation of a
-# checkpoint that a list structure wrote. The manifest records the choice and its
-# table lookup, and satisfies the schema.
+# words (D428). Run on its own compile cache, it does not see the trial
+# that the explicit run stores in another; run again on that cache, it
+# takes the trial's cached winner, with the same energies. Elsewhere it
+# takes the structure of D261, the matrix, and its energies are those of
+# MATRIX given. 1,728 atoms stay on the matrix on every device. An input
+# that the rule admits but the TOWERS preflight refuses (4,913 atoms with
+# a cutoff of 22 Å in a cell of 64.6 Å: fewer than three cells across)
+# falls back to the matrix and says why, in `mdir check` and in the run
+# alike, and so does the continuation of a checkpoint that a list
+# structure wrote. The manifest records the choice and its table lookup,
+# and satisfies the schema.
 #
 # REQUIRES: cuda, towers-mma
 #
@@ -25,7 +27,9 @@
 # RUN: sed -e 's|big.pdb|small.pdb|' -e 's|76.0|45.6|g' -e '/^manifest/d' %t/auto.toml > %t/small.toml
 # RUN: sed -e 's|big.pdb|narrow.pdb|' -e 's|76.0|64.6|g' -e 's|^cutoff = 9.0|cutoff = 22.0|' -e '/^manifest/d' %t/auto.toml > %t/narrow.toml
 # RUN: cd %t && env MDIR_COMPILE_CACHE_DIR=%t/cache-auto mdir run auto.toml > auto.out
-# RUN: cd %t && mdir run towers.toml > towers.out
+# RUN: cd %t && env MDIR_COMPILE_CACHE_DIR=%t/cache-towers mdir run towers.toml > towers.out
+# RUN: sed -e '/^manifest/d' %t/auto.toml > %t/cached.toml
+# RUN: cd %t && env MDIR_COMPILE_CACHE_DIR=%t/cache-towers mdir run cached.toml > cached.out
 # RUN: cd %t && mdir run matrix.toml > matrix.out
 # RUN: cd %t && mdir run small.toml | FileCheck %s --check-prefix=SMALL
 # RUN: cd %t && mdir run narrow.toml | FileCheck %s --check-prefix=NARROW
@@ -46,6 +50,8 @@
 # RUN: test -s %t/auto.log
 # RUN: cd %t && sh -c 'if grep -q "neighbor structure: TOWERS" auto.out; then diff auto.log towers.log; else diff auto.log matrix.log; fi'
 # RUN: cd %t && sh -c 'if grep -q "neighbor structure: TOWERS" auto.out; then grep -q "\"selection\":\"derived (AUTO structure, no cached trial)\"" auto.out && grep -q "\"selection\":\"setup trial\"" towers.out; fi'
+# RUN: grep 'INFO: ' %t/cached.out > %t/cached.log
+# RUN: cd %t && sh -c 'if grep -q "neighbor structure: TOWERS" auto.out; then grep -q "\"selection\":\"grid cache\"" cached.out && diff cached.log towers.log; else diff cached.log matrix.log; fi'
 #
 # RUN: %python -c "import json; c = json.loads(open('%t/auto.jsonl').readline())['resolved_choices']['neighbor_structure']; print(c['category'], c['requested'], c['value'], '|', c['towers'], '|', c['towers_rule']['device_architecture'], c['towers_rule']['basis']['decision'])" | FileCheck %s --check-prefix=MANIFEST
 # RUN: %python %S/Inputs/manifest_schema.py %S/../../docs/run-manifest.schema.json %t/auto.jsonl | FileCheck %s --check-prefix=SCHEMA
