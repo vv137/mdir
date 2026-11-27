@@ -1752,6 +1752,11 @@ distributed real-space path. Each named arena starts at the recorded
 size and remains allocated across list rebuilds. If a request exceeds
 the arena's capacity or its available contiguous range, the runtime
 reports the overflow and retains the added storage.
+Distributed host transfers use reusable page-locked staging. Halo
+fallback transfers use the transport stream. Energy, coupling, and
+observer transfers wait on the stream that produced the data when the
+host needs it immediately. Frame observers can keep using their separate
+copy stream and staging ring.
 Set `MDIR_DIST_PIN_CACHE_DIR` to reuse a completed measured AUTO choice
 on the same inputs, MDIR build and layout. The log and manifest report
 the cache hit. Cold calibration retains the full measurement window.

@@ -1007,3 +1007,8 @@ rank. Export the winning rank tables with the numeric reach through
 named arenas when replaying these choices. Retired list storage returns
 to its retained arena and growth beyond the pin is logged. Runs without
 a buffer pin keep demand allocation.
+
+Distributed halo fallback, observer, energy, and coupling transfers use
+page-locked DMA staging. Enqueue copies on the stream that orders their
+producer and consumer. Host consumers that need values immediately wait
+for that stream before accessing the staging buffer.

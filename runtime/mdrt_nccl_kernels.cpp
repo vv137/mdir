@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+extern "C" void mdrtNCCLWriteHostBuffer(CUdeviceptr device, const void *host, size_t bytes);
+extern "C" void mdrtNCCLReadHostBuffer(void *host, CUdeviceptr device, size_t bytes);
 extern "C" void *mdrtNCCLAllocateKernelScratch(size_t bytes);
 extern "C" void mdrtNCCLFreeKernelScratch(void *address);
 
@@ -644,7 +646,7 @@ extern "C" int mdrtNCCLCoverage(const double *x, const double *ref,
   void *args[] = {&x,&ref,&rows,&limit,&coverageFlag};
   check(cuLaunchKernel(coverage,(rows+255)/256,1,1,256,1,1,0,nullptr,args,nullptr));
   int value;
-  check(cuMemcpyDtoH(&value,coverageFlag,sizeof(value)));
+  mdrtNCCLReadHostBuffer(&value,coverageFlag,sizeof(value));
   return value;
 }
 
@@ -707,12 +709,12 @@ extern "C" void mdrtNCCLEpochBoxes(const double *x, int rows, const int64_t *gri
   constexpr size_t bytes = 27 * 6 * sizeof(double);
   storage = reinterpret_cast<CUdeviceptr>(mdrtNCCLAllocateKernelScratch(bytes + sizeof bounds));
   CUdeviceptr boundsDevice = storage + bytes;
-  check(cuMemcpyHtoD(storage, host, bytes));
-  check(cuMemcpyHtoD(boundsDevice, bounds, sizeof bounds));
+  mdrtNCCLWriteHostBuffer(storage, host, bytes);
+  mdrtNCCLWriteHostBuffer(boundsDevice, bounds, sizeof bounds);
   void *args[] = {&x, &rows, &box, &boundsDevice, &storage, &physicalRows};
   check(cuLaunchKernel(epochBoxes, (rows + 255LL) / 256, 1, 1, 256, 1, 1,
                        0, nullptr, args, nullptr));
-  check(cuMemcpyDtoH(host, storage, bytes));
+  mdrtNCCLReadHostBuffer(host, storage, bytes);
   mdrtNCCLFreeKernelScratch(reinterpret_cast<void *>(storage));
 }
 
@@ -745,11 +747,11 @@ extern "C" int64_t *mdrtNCCLEpochRoutes(const double *x, int rows, int local,
     check(cuLaunchKernel(epochOwners, tilesPerRank, 1, 1, 256, 1, 1,
                          0, nullptr, args, nullptr));
     int invalid;
-    check(cuMemcpyDtoH(&invalid, bad, sizeof invalid));
+    mdrtNCCLReadHostBuffer(&invalid, bad, sizeof invalid);
     if (invalid) mdrtMPIAbort("migration requires finite positions and images");
   } else {
     deviceBoxes = storage + auxOffset;
-    check(cuMemcpyHtoD(deviceBoxes, boxes, auxBytes));
+    mdrtNCCLWriteHostBuffer(deviceBoxes, boxes, auxBytes);
   }
   CUdeviceptr records = 0;
   void *args[] = {&x, &rows, &box, &deviceBoxes, &reach, &deviceOwners, &local,
@@ -763,7 +765,7 @@ extern "C" int64_t *mdrtNCCLEpochRoutes(const double *x, int rows, int local,
   check(cuLaunchKernel(epochBuckets, 1, 1, 1, 256, 1, 1, 0, nullptr,
                        bucketArgs, nullptr));
   int count;
-  check(cuMemcpyDtoH(&count, offsets + countBytes, sizeof count));
+  mdrtNCCLReadHostBuffer(&count, offsets + countBytes, sizeof count);
   int64_t *host = nullptr;
   if (count) {
     size_t bytes = 2 * size_t(count) * sizeof(int64_t);
@@ -772,7 +774,7 @@ extern "C" int64_t *mdrtNCCLEpochRoutes(const double *x, int rows, int local,
     records = reinterpret_cast<CUdeviceptr>(mdrtNCCLAllocateKernelScratch(bytes));
     check(cuLaunchKernel(epochRoutes, tilesPerRank, domains, 1, 256, 1, 1,
                          0, nullptr, args, nullptr));
-    check(cuMemcpyDtoH(host, records, bytes));
+    mdrtNCCLReadHostBuffer(host, records, bytes);
     mdrtNCCLFreeKernelScratch(reinterpret_cast<void *>(records));
   }
   mdrtNCCLFreeKernelScratch(reinterpret_cast<void *>(storage));
@@ -834,11 +836,11 @@ extern "C" int64_t *mdrtNCCLFaceRecords(const double *positions, long long rows,
   void *args[]={&positions,&rows,&box,&domain,&reach,&previous,&deviceCount,&records};
   check(cuLaunchKernel(faceRecords,(rows+255)/256,1,1,256,1,1,0,nullptr,args,nullptr));
   int count;
-  check(cuMemcpyDtoH(&count,deviceCount,sizeof count));
+  mdrtNCCLReadHostBuffer(&count,deviceCount,sizeof count);
   size_t bytes=2*(size_t)count*sizeof(int64_t);
   auto *host=static_cast<int64_t *>(std::malloc(bytes ? bytes : sizeof(int64_t)));
   if (!host) mdrtMPIAbort("out of memory collecting face records");
-  if (bytes) check(cuMemcpyDtoH(host,records,bytes));
+  if (bytes) mdrtNCCLReadHostBuffer(host,records,bytes);
   *size=count;
   return host;
 }

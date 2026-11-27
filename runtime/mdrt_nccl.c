@@ -22,6 +22,47 @@ static void checkCuda(cudaError_t status) {
   if (status != cudaSuccess) mdrtMPIAbort(cudaGetErrorString(status));
 }
 
+static void checkDriver(CUresult status) {
+  if (status != CUDA_SUCCESS) {
+    const char *reason = NULL;
+    cuGetErrorName(status, &reason);
+    mdrtMPIAbort(reason ? reason : "CUDA transfer failed");
+  }
+}
+
+static void *hostTransfer;
+static size_t hostTransferCapacity;
+
+static void *hostStaging(size_t bytes) {
+  if (bytes <= hostTransferCapacity) return hostTransfer;
+  if (hostTransfer) checkDriver(cuMemFreeHost(hostTransfer));
+  checkDriver(cuMemHostAlloc(&hostTransfer, bytes, 0));
+  hostTransferCapacity = bytes;
+  return hostTransfer;
+}
+
+/* Callers read the result or retire their source immediately. The wait
+   covers only the stream holding the copy and its producer. */
+static void uploadHost(void *device, const void *host, size_t bytes, CUstream queue) {
+  if (!bytes) return;
+  void *staging = hostStaging(bytes);
+  memcpy(staging, host, bytes);
+  checkDriver(cuMemcpyHtoDAsync((CUdeviceptr)device, staging, bytes, queue));
+  checkDriver(cuStreamSynchronize(queue));
+}
+
+void mdrtNCCLWriteHostBuffer(CUdeviceptr device, const void *host, size_t bytes) {
+  uploadHost((void *)device, host, bytes, NULL);
+}
+
+void mdrtNCCLReadHostBuffer(void *host, CUdeviceptr device, size_t bytes) {
+  if (!bytes) return;
+  void *staging = hostStaging(bytes);
+  checkDriver(cuMemcpyDtoHAsync(staging, device, bytes, NULL));
+  checkDriver(cuStreamSynchronize(NULL));
+  memcpy(host, staging, bytes);
+}
+
 static void checkNCCL(ncclResult_t status) {
   if (status != ncclSuccess) mdrtMPIAbort(ncclGetErrorString(status));
 }
@@ -247,7 +288,7 @@ static void *upload(const void *host, size_t bytes) {
   void *device = NULL;
   if (bytes) {
     device = transportAllocate(bytes, MdirHaloPlans, 0, 0);
-    checkCuda(cudaMemcpy(device, host, bytes, cudaMemcpyHostToDevice));
+    mdrtNCCLWriteHostBuffer((CUdeviceptr)device, host, bytes);
   }
   return device;
 }
@@ -466,7 +507,7 @@ struct NCCLPlan *mdrtNCCLSelfPlan(double *x, int64_t rows, const double *edges,
   unsigned *masks=(unsigned *)mdrtNCCLAllocate(rows*sizeof *masks);
   int *deviceBlocks=(int *)mdrtNCCLAllocate(blocks*sizeof *deviceBlocks);
   mdrtNCCLSelfFaces(x,rows,edges,reach,masks,deviceBlocks,NULL,NULL,NULL);
-  if (blocks) checkCuda(cudaMemcpy(prefix,deviceBlocks,blocks*sizeof *prefix,cudaMemcpyDeviceToHost));
+  mdrtNCCLReadHostBuffer(prefix, (CUdeviceptr)deviceBlocks, blocks * sizeof *prefix);
   int total=0;
   for (int64_t b=0; b<blocks; ++b) {
     int count=prefix[b];
@@ -474,7 +515,7 @@ struct NCCLPlan *mdrtNCCLSelfPlan(double *x, int64_t rows, const double *edges,
     prefix[b]=total;
     total+=count;
   }
-  if (blocks) checkCuda(cudaMemcpy(deviceBlocks,prefix,blocks*sizeof *prefix,cudaMemcpyHostToDevice));
+  mdrtNCCLWriteHostBuffer((CUdeviceptr)deviceBlocks, prefix, blocks * sizeof *prefix);
   free(prefix);
   p->sendRows=p->recvRows=*p->ns=*p->nr=total;
   p->hasPeers[0]=total!=0;
@@ -544,9 +585,24 @@ static void exchange(const struct NCCLPlan *p, double *owned, int64_t nOwned,
   int recv = reverse ? p->sendRows : p->recvRows;
   reserve(&outgoing, &outCapacity, send*row);
   reserve(&incoming, &inCapacity, recv*row);
-  if (!resident && nOwned) checkCuda(cudaMemcpyAsync(ownedDevice, owned, nOwned*row, packed ? cudaMemcpyDeviceToDevice : cudaMemcpyHostToDevice, stream));
-  if (!resident && reverse && p->recvRows)
-    checkCuda(cudaMemcpyAsync(ghostDevice, ghosts, p->recvRows*row, cudaMemcpyHostToDevice, stream));
+  char *staged = NULL;
+  const size_t ownedBytes = nOwned * row, ghostBytes = p->recvRows * row;
+  if (!packed && !resident) {
+    if (asynchronous) mdrtMPIAbort("host-staged halo requires host completion");
+    staged = hostStaging(ownedBytes + ghostBytes);
+    if (ownedBytes) {
+      memcpy(staged, owned, ownedBytes);
+      checkDriver(cuMemcpyHtoDAsync((CUdeviceptr)ownedDevice, staged,
+                                    ownedBytes, stream));
+    }
+    if (reverse && ghostBytes) {
+      memcpy(staged + ownedBytes, ghosts, ghostBytes);
+      checkDriver(cuMemcpyHtoDAsync((CUdeviceptr)ghostDevice, staged + ownedBytes,
+                                    ghostBytes, stream));
+    }
+  } else if (packed && !resident && ownedBytes) {
+    checkCuda(cudaMemcpyAsync(ownedDevice, owned, ownedBytes, cudaMemcpyDeviceToDevice, stream));
+  }
   mdrtNCCLRows(1, reverse ? ghostDevice : ownedDevice, reverse ? p->dest : p->source,
                outgoing, (long long)send*k, k, NULL, reverse, stream);
   // Packing, peer transfers, and unpacking are ordered on this stream.
@@ -594,10 +650,12 @@ static void exchange(const struct NCCLPlan *p, double *owned, int64_t nOwned,
   double *result = reverse ? ownedDevice : ghostDevice;
   mdrtNCCLRows(0, incoming, reverse ? p->source : p->dest, result,
                (long long)recv*k, k, image ? p->shifts : NULL, reverse, stream);
-  size_t bytes = (reverse ? nOwned : p->recvRows)*row;
-  if (!packed && !resident && bytes) checkCuda(cudaMemcpyAsync(reverse ? owned : ghosts, result, bytes,
-                                       cudaMemcpyDeviceToHost, stream));
+  size_t bytes = reverse ? ownedBytes : ghostBytes;
+  if (staged && bytes)
+    checkDriver(cuMemcpyDtoHAsync(staged, (CUdeviceptr)result, bytes, stream));
   if (!asynchronous) checkCuda(cudaStreamSynchronize(stream));
+  if (staged && bytes)
+    memcpy(reverse ? owned : ghosts, staged, bytes);
 }
 
 void mdrtNCCLResidentHalo(const struct NCCLPlan *plan,double *owned,int64_t rows,
@@ -716,12 +774,13 @@ int64_t *mdrtNCCLPairIds(struct PairIds **head, void *stream, const int64_t *own
   size_t count = (size_t)n + g;
   size_t bytes = (count ? count : 1) * sizeof(*p->rows);
   p->rows = transportAllocate(bytes, MdirHaloPairIds, stream, 1);
-  if (n)
-    checkCuda(cudaMemcpyAsync(p->rows, owned, n * sizeof(*owned),
-                              cudaMemcpyHostToDevice, stream));
-  if (g)
-    checkCuda(cudaMemcpyAsync(p->rows + n, ghost, g * sizeof(*ghost),
-                              cudaMemcpyHostToDevice, stream));
+  if (n || g) {
+    int64_t *staging = hostStaging(bytes);
+    if (n) memcpy(staging, owned, n * sizeof(*owned));
+    if (g) memcpy(staging + n, ghost, g * sizeof(*ghost));
+    checkDriver(cuMemcpyHtoDAsync((CUdeviceptr)p->rows, staging, bytes, stream));
+    checkCuda(cudaStreamSynchronize(stream));
+  }
   p->next = *head;
   *head = p;
   return p->rows;
@@ -737,17 +796,17 @@ void mdrtNCCLReleasePairIds(struct PairIds *p) {
 }
 
 void mdrtNCCLUpload(double *device, const double *host, size_t bytes) {
-  if (bytes) checkCuda(cudaMemcpy(device, host, bytes, cudaMemcpyHostToDevice));
+  mdrtNCCLWriteHostBuffer((CUdeviceptr)device, host, bytes);
 }
 
 void mdrtNCCLDownload(double *host, const double *device, size_t bytes) {
-  if (bytes) checkCuda(cudaMemcpy(host, device, bytes, cudaMemcpyDeviceToHost));
+  mdrtNCCLReadHostBuffer(host, (CUdeviceptr)device, bytes);
 }
 
 void mdrtNCCLImport(double *dest, const double *device, size_t bytes) {
   // The ordinary pair runtime owns the producer stream and temporary.
   checkCuda(cudaDeviceSynchronize());
-  if (bytes) checkCuda(cudaMemcpy(dest, device, bytes, cudaMemcpyDeviceToDevice));
+  if (bytes) checkCuda(cudaMemcpyAsync(dest, device, bytes, cudaMemcpyDeviceToDevice, 0));
   checkCuda(cudaStreamSynchronize(0));
 }
 
@@ -793,7 +852,7 @@ int *mdrtNCCLMigrationSpans(const void *host, int spans, int rows) {
 
 int *mdrtNCCLUploadIndexBuffer(const int *rows, int64_t n, int role) {
   int *device = (int *)mdrtNCCLAllocateBuffer(n*sizeof(int), role);
-  if (n) checkCuda(cudaMemcpy(device,rows,n*sizeof(int),cudaMemcpyHostToDevice));
+  mdrtNCCLWriteHostBuffer((CUdeviceptr)device, rows, n * sizeof(int));
   return device;
 }
 
@@ -879,6 +938,9 @@ void mdrtNCCLFinish(void) {
     checkCuda(cudaFree(arena->base));
     free(arena);
   }
+  if (hostTransfer) checkDriver(cuMemFreeHost(hostTransfer));
+  hostTransfer = NULL;
+  hostTransferCapacity = 0;
   free(transportBuffers);
   transportBuffers = NULL;
   transportCount = transportRoom = 0;

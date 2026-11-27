@@ -762,9 +762,8 @@ void _mlir_ciface_mdrtFlagMemory(struct Buffer1 *result, int64_t place) {
 int64_t mdrtFlagStart(void *device) {
   mgpuStreamCreate();
   if (!flagSlots) {
-    check(cuMemAllocHost((void **)&flagSlots,
-                         FLAG_SLOTS * sizeof(*flagSlots)),
-          "cuMemAllocHost");
+    check(cuMemHostAlloc((void **)&flagSlots, FLAG_SLOTS * sizeof(*flagSlots), 0),
+          "cuMemHostAlloc");
     for (int i = 0; i != FLAG_SLOTS; ++i)
       check(cuEventCreate(&flagEvents[i], CU_EVENT_DISABLE_TIMING),
             "cuEventCreate");
@@ -1554,6 +1553,66 @@ static void auditGenericCopy(void *destination, const void *source, uint64_t siz
   if (fromDevice && !toDevice) copyAudit->downloads += size;
 }
 
+/* The distributed CPU callbacks consume their rows before returning. A
+   reusable DMA buffer stages them on the producing or consuming stream. */
+static void *distributedHostStaging;
+static size_t distributedHostCapacity;
+
+static void *distributedStaging(size_t size) {
+  if (distributedHostCapacity < size) {
+    if (distributedHostStaging)
+      check(cuMemFreeHost(distributedHostStaging), "cuMemFreeHost");
+    check(cuMemHostAlloc(&distributedHostStaging, size, 0), "cuMemHostAlloc");
+    distributedHostCapacity = size;
+  }
+  return distributedHostStaging;
+}
+
+static void distributedUpload(void *device, const void *host, size_t size, CUstream stream) {
+  void *staging = distributedStaging(size);
+  memcpy(staging, host, size);
+  check(cuMemcpyHtoDAsync((CUdeviceptr)device, staging, size, stream),
+        "cuMemcpyHtoDAsync");
+  check(cuStreamSynchronize(stream), "cuStreamSynchronize");
+}
+
+static void distributedDownload(void *host, const void *device, size_t size, CUstream stream) {
+  void *staging = distributedStaging(size);
+  check(cuMemcpyDtoHAsync(staging, (CUdeviceptr)device, size, stream),
+        "cuMemcpyDtoHAsync");
+  check(cuStreamSynchronize(stream), "cuStreamSynchronize");
+  memcpy(host, staging, size);
+}
+
+static bool distributedDeviceAddress(const void *address) {
+  if (isOnDevice(address))
+    return true;
+  unsigned type;
+  CUresult result = cuPointerGetAttribute(&type, CU_POINTER_ATTRIBUTE_MEMORY_TYPE,
+                                          (CUdeviceptr)address);
+  if (result == CUDA_ERROR_INVALID_VALUE)
+    return false;
+  check(result, "cuPointerGetAttribute");
+  return type == CU_MEMORYTYPE_DEVICE || type == CU_MEMORYTYPE_UNIFIED;
+}
+
+static bool distributedHostCopy(void *destination, const void *source,
+                                size_t size, CUstream stream) {
+  if (!measuringBuffers)
+    return false;
+  bool toDevice = distributedDeviceAddress(destination);
+  bool fromDevice = distributedDeviceAddress(source);
+  if (toDevice && fromDevice)
+    return false;
+  if (toDevice)
+    distributedUpload(destination, source, size, stream);
+  else if (fromDevice)
+    distributedDownload(destination, source, size, stream);
+  else
+    memmove(destination, source, size);
+  return true;
+}
+
 /* Copies between the host and the device, in either direction: the driver
    tells them apart by the address. */
 void mgpuMemcpy(void *destination, void *source, size_t size,
@@ -1562,6 +1621,10 @@ void mgpuMemcpy(void *destination, void *source, size_t size,
     return;
   auditGenericCopy(destination, source, size);
   double start = begin();
+  if (distributedHostCopy(destination, source, size, stream)) {
+    end(COPY, start);
+    return;
+  }
   check(cuMemcpyAsync((CUdeviceptr)destination, (CUdeviceptr)source, size,
                       stream),
         "cuMemcpyAsync");
@@ -1599,6 +1662,10 @@ void mdrtCudaMemcpyScoped(uintptr_t destination, uintptr_t source,
   auditGenericCopy((void *)destination, (const void *)source, size);
   CUstream stream = mgpuStreamCreate();
   double start = begin();
+  if (distributedHostCopy((void *)destination, (const void *)source, size, stream)) {
+    end(COPY, start);
+    return;
+  }
   check(cuMemcpyAsync((CUdeviceptr)destination, (CUdeviceptr)source,
                       (size_t)size, stream),
         "cuMemcpyAsync");
@@ -2246,9 +2313,12 @@ void mdrtSegmentsDump(int64_t handle, int64_t places, int64_t records,
     if (!length)
       continue;
     int32_t *host = malloc((size_t)length * sizeof(int32_t));
-    check(cuMemcpyDtoH(host, (CUdeviceptr)groups->data[parts[k].slot],
-                       (size_t)length * sizeof(int32_t)),
-          "cuMemcpyDtoH");
+    size_t bytes = (size_t)length * sizeof(int32_t);
+    const void *device = groups->data[parts[k].slot];
+    if (measuringBuffers)
+      distributedDownload(host, device, bytes, mgpuStreamCreate());
+    else
+      check(cuMemcpyDtoH(host, (CUdeviceptr)device, bytes), "cuMemcpyDtoH");
     fwrite(host, sizeof(int32_t), (size_t)length, file);
     free(host);
   }
@@ -2732,6 +2802,10 @@ void mdrtDeviceCopyToHost(void *destination, const void *source,
     return;
   if (copyAudit) copyAudit->metadataDownloads += size;
   mgpuStreamCreate();
+  if (measuringBuffers) {
+    distributedDownload(destination, source, size, sharedStream);
+    return;
+  }
   check(cuMemcpyDtoHAsync(destination, (CUdeviceptr)source, size,
                           sharedStream),
         "cuMemcpyDtoHAsync");
@@ -3189,6 +3263,11 @@ static void tuplesToDevice(void *device, const void *host, size_t bytes) {
   if (copyAudit) copyAudit->metadataUploads += bytes;
   mgpuStreamCreate();
   double start = begin();
+  if (measuringBuffers) {
+    distributedUpload(device, host, bytes, sharedStream);
+    end(COPY, start);
+    return;
+  }
   check(cuMemcpyHtoDAsync((CUdeviceptr)device, host, bytes, sharedStream),
         "cuMemcpyHtoDAsync");
   isPending = 1;
@@ -3202,6 +3281,11 @@ static void tuplesToHost(void *host, const void *device, size_t bytes) {
   if (copyAudit) copyAudit->metadataDownloads += bytes;
   mgpuStreamCreate();
   double start = begin();
+  if (measuringBuffers) {
+    distributedDownload(host, device, bytes, sharedStream);
+    end(COPY, start);
+    return;
+  }
   check(cuMemcpyDtoHAsync(host, (CUdeviceptr)device, bytes, sharedStream),
         "cuMemcpyDtoHAsync");
   isPending = 1;
@@ -3877,12 +3961,14 @@ int64_t mdrtDeviceConstant(int64_t host, int64_t bytes) {
   check(allocateDevice(&device, (size_t)bytes), "cuMemAlloc");
   endAccount(ACCOUNT_CONSTANTS, before, bytes);
   if (copyAudit) copyAudit->metadataUploads += bytes;
-  check(cuMemcpyHtoD(device, (const void *)(intptr_t)host, (size_t)bytes),
-        "cuMemcpyHtoD");
-  /* From pageable memory the copy may still be under way when it returns,
-     and the stream of the kernels does not wait for the null stream: the
-     products that read the constant would race with its copy. */
-  check(cuCtxSynchronize(), "cuCtxSynchronize");
+  if (measuringBuffers) {
+    distributedUpload((void *)device, (const void *)(intptr_t)host, bytes, mgpuStreamCreate());
+  } else {
+    check(cuMemcpyHtoD(device, (const void *)(intptr_t)host, (size_t)bytes),
+          "cuMemcpyHtoD");
+    /* The kernel stream does not wait for the pageable copy on the null stream. */
+    check(cuCtxSynchronize(), "cuCtxSynchronize");
+  }
   struct DeviceConstant *entry = &deviceConstants[numDeviceConstants++];
   entry->owner = owner;
   entry->host = host;
