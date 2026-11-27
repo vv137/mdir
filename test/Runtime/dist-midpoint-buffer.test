@@ -1,0 +1,1 @@
+# RUN: %python %S/Inputs/dist_midpoint_buffer.py %mdrt

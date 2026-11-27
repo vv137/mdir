@@ -144,12 +144,14 @@ On each geometry evaluation the peer returns one site per requested identity.
 Workers expand the results into disjoint member slots and resolve the received
 midpoint records into disjoint tuple rows. Parameter and force order are preserved.
 
-In a floating midpoint pair loop, selection reads the current packed
-explicit-image positions and discards Verlet-shell neighbors beyond the
-physical cutoff plus a roundoff guard. It repeats this test at every
-evaluation, including iterations that reuse a neighbor list. The pair
-kernel applies its own precision-specific cutoff to the retained rows.
-Deterministic execution keeps the original lane membership and sums.
+In a floating midpoint pair loop, neighbors whose midpoint ownership is
+stable over the Verlet bounds form a prefix of each row. The prefix uses
+a smaller Verlet skin, one quarter of the list skin. A position check
+refreshes it before either endpoint can move more than half that smaller
+skin. Neighbors with ambiguous midpoint ownership are tested each
+evaluation. The force kernel applies its physical cutoff to every
+retained pair. Both radial tests include the binary32 roundoff guard.
+Deterministic execution preserves the original row and lane order.
 
 Inside an MPI native integration loop, the particle state uses a separate
 particle set for the rank's contiguous interval of identities. Kicks, drifts,

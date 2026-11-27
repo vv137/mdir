@@ -1493,3 +1493,12 @@ ordered list of member rows. Evaluating these observations there removes
 six replicated tuple sums and three complete vector-field assemblies
 per Cellulose observation. The three assembled fields occupied 29.42 MB
 per recipient before accounting for its locally owned interval.
+
+In a Cellulose snapshot, 73% of the candidate neighbors had a provably
+stable midpoint owner. The floating pair loop places these neighbors
+first in each row. It retains that prefix with a short Verlet skin and
+checks the explicit particle-image displacements before reusing it.
+Only the remaining neighbors need the current midpoint test. A direct
+comparison with an unpruned selection across sixteen JAC steps checked
+the active pairs at every evaluation, including steps on which the
+prefix was refreshed.

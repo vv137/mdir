@@ -133,6 +133,9 @@ struct DomainMatrix {
   int32_t *candidateCounts;
   uint64_t exclusionVersion;
   int candidatesValid, midpointList;
+  int buffered;
+  struct BufferedRow { int32_t stable, selected; } *bufferedRows;
+  double *pruneReference;
 };
 
 struct TransferRow { int64_t domain, ghost, offset; int peer; int64_t source,row; };
@@ -649,6 +652,34 @@ static int classifyMidpoint(const struct MidpointBounds *i, const struct Midpoin
   return stable;
 }
 
+static inline double distanceToRow(const double center[3], struct Memref2D *x, int64_t row) {
+  double r2 = 0.0;
+  for (int c = 0; c < 3; ++c) {
+    double dx = center[c] - *at2(x,row,c);
+    r2 += dx*dx;
+  }
+  return r2;
+}
+
+/* An omitted stable-owner neighbor cannot enter the physical cutoff while
+   each explicit position has moved by at most half the inner skin. */
+static int refreshPruneReference(struct DomainMatrix *m, struct Memref2D *x,
+                                 double skin, int rebuild) {
+  double limit = 0.25*skin*skin;
+  if (!rebuild) {
+    #pragma omp parallel for schedule(static) reduction(|:rebuild) if(m->rows > 512)
+    for (int64_t i = 0; i < m->rows; ++i)
+      rebuild |= !(distanceToRow(m->pruneReference+3*i,x,i) <= limit);
+  }
+  if (rebuild) {
+    #pragma omp parallel for schedule(static) if(m->rows > 512)
+    for (int64_t i = 0; i < m->rows; ++i)
+      for (int c = 0; c < 3; ++c)
+        m->pruneReference[3*i+c] = *at2(x,i,c);
+  }
+  return rebuild;
+}
+
 int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
     int64_t exclusions, int64_t rule, struct Memref3D *owned, struct Memref3D *ghost,
     struct Memref2D *packed, int64_t prune) {
@@ -681,7 +712,20 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
   const struct Exclusions *e = (const struct Exclusions *)(intptr_t)exclusions;
   uint64_t version = e ? e->version : 0;
   int64_t cell[3] = {d%l->grid[0], (d/l->grid[0])%l->grid[1], d/(l->grid[0]*l->grid[1])};
-  int rebuild = !m->candidatesValid || m->candidateRule != rule || version != m->exclusionVersion;
+  double cutoff2 = m->cutoff*m->cutoff;
+  double outer2 = cutoff2*(1.0 + 16.0*FLT_EPSILON);
+  prune = prune && cutoff2 > FLT_MIN && outer2 < FLT_MAX;
+  double innerSkin = 0.25*m->skin;
+  double radius = m->cutoff + innerSkin;
+  double buffered2 = radius*radius*(1.0 + 32.0*FLT_EPSILON);
+  int buffered = rule == 2 && prune && innerSkin > 0 && isfinite(buffered2);
+  int rebuild = !m->candidatesValid || m->candidateRule != rule ||
+                version != m->exclusionVersion || buffered != m->buffered;
+  if (buffered && !m->bufferedRows) {
+    m->bufferedRows = calloc(m->centers ? m->centers : 1,sizeof *m->bufferedRows);
+    m->pruneReference = calloc(m->rows ? m->rows : 1,3*sizeof *m->pruneReference);
+    if (!m->bufferedRows || !m->pruneReference) fail("out of memory buffering midpoint neighbors");
+  }
   struct MidpointRange common[3][3];
   if (rule == 2) {
     for (int c = 0; c < 3; ++c)
@@ -722,7 +766,9 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
       size_t hi = e && rule ? firstKey(e,prefix+(UINT64_C(1)<<32)) : 0;
       struct MidpointRange ranges[3];
       if (rule == 2) rowRanges(l,cell,common,m->bounds[i].image,ranges);
-      int32_t count = 0;
+      int32_t count = 0, uncertain = 0;
+      int32_t *candidateRow = (int32_t *)candidates.aligned+i*candidates.strides[0];
+      int32_t *scratch = (int32_t *)dst.aligned+i*dst.strides[0];
       for (int32_t k = 0; k < m->counts[i]; ++k) {
         int32_t j = ((int32_t *)src.aligned)[i*src.strides[0]+k];
         int64_t idj = j<n ? domainIds(l,d)[j] : h->ids[(d-h->idBase)*h->capacity+j-n];
@@ -738,14 +784,23 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
         if (rule == 2) {
           int membership = classifyMidpoint(&m->bounds[i],&m->bounds[j],ranges);
           if (membership < 0) continue;
-          if (membership > 0) j = ~j;
+          if (buffered && !membership) {
+            scratch[uncertain++] = j;
+            continue;
+          }
+          if (membership > 0 && !buffered) j = ~j;
         }
-        ((int32_t *)candidates.aligned)[i*candidates.strides[0]+count++] = j;
+        candidateRow[count++] = j;
       }
-      counts[i] = count;
+      if (buffered) {
+        m->bufferedRows[i].stable = count;
+        memcpy(candidateRow+count,scratch,uncertain*sizeof *scratch);
+      }
+      counts[i] = count+uncertain;
     }
     m->exclusionVersion = version;
     m->candidateRule = rule;
+    m->buffered = buffered;
     m->candidatesValid = 1;
   }
   if (rule != 2) return 1;
@@ -753,11 +808,29 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
   /* The packed coordinates are the same explicit images the pair kernel
      reads. Leave a guard shell for rounding the displacement, products,
      and sum to binary32. The kernel still applies its own cutoff. */
-  double cutoff2 = m->cutoff*m->cutoff;
-  double outer2 = cutoff2*(1.0 + 16.0*FLT_EPSILON);
-  prune = prune && cutoff2 > FLT_MIN && outer2 < FLT_MAX;
+  int refresh = buffered && refreshPruneReference(m,packed,innerSkin,rebuild);
   #pragma omp parallel for schedule(static,8) if(m->centers > 256)
   for (int64_t i = 0; i < m->centers; ++i) {
+    int32_t *selected = (int32_t *)dst.aligned+i*dst.strides[0];
+    const int32_t *neighbors = (int32_t *)candidates.aligned+i*candidates.strides[0];
+    double center[3];
+    for (int c = 0; c < 3; ++c) center[c] = *at2(packed,i,c);
+    int32_t begin = 0, count = 0;
+    if (buffered) {
+      begin = m->bufferedRows[i].stable;
+      if (refresh) {
+        for (int32_t k = 0; k < begin; ++k)
+          if (!(distanceToRow(center,packed,neighbors[k]) > buffered2))
+            selected[count++] = neighbors[k];
+        m->bufferedRows[i].selected = count;
+      } else {
+        count = m->bufferedRows[i].selected;
+      }
+      if (begin == counts[i]) {
+        m->selectedCounts[i] = count;
+        continue;
+      }
+    }
     int64_t image[3] = {0,0,0};
     double xi[3], a[3];
     for (int c = 0; c < 3; ++c) {
@@ -767,22 +840,14 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
     }
     struct MidpointRange ranges[3];
     rowRanges(l,cell,common,image,ranges);
-    double center[3];
-    for (int c = 0; c < 3; ++c) center[c] = *at2(packed,i,c);
-    int32_t count = 0;
-    for (int32_t k = 0; k < counts[i]; ++k) {
-      int32_t j = ((int32_t *)candidates.aligned)[i*candidates.strides[0]+k];
+    for (int32_t k = begin; k < counts[i]; ++k) {
+      int32_t j = neighbors[k];
       if (prune) {
         int32_t neighbor = j < 0 ? ~j : j;
-        double r2 = 0.0;
-        for (int c = 0; c < 3; ++c) {
-          double dx = center[c] - *at2(packed,neighbor,c);
-          r2 += dx*dx;
-        }
-        if (r2 > outer2) continue;
+        if (distanceToRow(center,packed,neighbor) > outer2) continue;
       }
       if (j < 0) {
-        ((int32_t *)dst.aligned)[i*dst.strides[0]+count++] = ~j;
+        selected[count++] = ~j;
         continue;
       }
       int keep = 1;
@@ -796,7 +861,7 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
           break;
         }
       }
-      if (keep) ((int32_t *)dst.aligned)[i*dst.strides[0]+count++] = j;
+      if (keep) selected[count++] = j;
     }
     m->selectedCounts[i] = count;
   }
@@ -3706,6 +3771,8 @@ void mdrtDistReleaseHalo(int64_t handle) {
     free(m->reference);
     free(m->shifts);
     free(m->bounds);
+    free(m->bufferedRows);
+    free(m->pruneReference);
     free(m);
   }
   free(h->rows);
