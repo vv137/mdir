@@ -34,7 +34,7 @@ split keeps cuFFT with the reason `no qualified timing for this prolate
 target or split`, and a tilted cell keeps it with the reason `unqualified
 triclinic mesh`. The prolate window was not timed. It is left out of AUTO
 rather than timed now, and the override still runs it. Adding the
-automatic grids of the B-spline window (D[prolate-bspline-grid]) to the
+automatic grids of the B-spline window (#993) to the
 list is #1003.
 
 The tests compare the axis plan with a binary64 mesh oracle on a cube
