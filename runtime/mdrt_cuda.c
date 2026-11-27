@@ -2953,7 +2953,7 @@ void _mlir_ciface_mdrtGroupsBuffer(struct Buffer1 *result, int64_t handle,
    dump-segments, D419): writes the list of `handle`, of
    `places` places and `records` records, after `builds` builds of it and
    `prunes` prunings of every list, to dump_<n>.bin in the directory
-   that MDRT_SPANS_DUMP names, n counting the dumps from 0. The file holds
+   that MDRT_SEGMENTS_DUMP names, n counting the dumps from 0. The file holds
    six i64 (n, places, records, segments, the builds and the prunings so
    far), then for each buffer of SEGMENT_ORDER, SHIFTS, RECORD_ENTRIES,
    RECORD_MASKS, RECORD_GROUPS, RECORD_COUNTS, SEGMENT_OFFSETS,
@@ -2962,7 +2962,7 @@ void _mlir_ciface_mdrtGroupsBuffer(struct Buffer1 *result, int64_t handle,
    i32 (0 where the list has not allocated it) and its values. */
 void mdrtSegmentsDump(int64_t handle, int64_t places, int64_t records,
                       int64_t builds, int64_t prunes) {
-  const char *dir = getenv("MDRT_SPANS_DUMP");
+  const char *dir = getenv("MDRT_SEGMENTS_DUMP");
   if (!dir)
     return;
   static int64_t serial = 0;
