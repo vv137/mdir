@@ -119,14 +119,12 @@ strings /lib64/libstdc++.so.6 | grep '^GLIBCXX_' | sort -uV | tail -1           
 ldd <prefix>/bin/mdir | grep libstdc++
 ```
 
-Then either load the same compiler module in every job that runs MDIR,
-or give the binaries an RPATH to the compiler's library when they are
-configured:
-
-```sh
-GCC_LIB=$(dirname "$(g++ -print-file-name=libstdc++.so.6)")
-cmake ... "-DCMAKE_INSTALL_RPATH=$GCC_LIB" -DCMAKE_BUILD_RPATH="$GCC_LIB"
-```
+The remedy is to load the same compiler module in every job that runs
+MDIR, or in the module file of MDIR (Section 9.1), so that the compiler's
+`lib64` is on `LD_LIBRARY_PATH`. Linking that directory into the
+binaries instead (`-Wl,-rpath,<dir>` in `CMAKE_EXE_LINKER_FLAGS` and
+`CMAKE_SHARED_LINKER_FLAGS`) has not been tested; check the installed
+result with `readelf -d <prefix>/bin/mdir | grep -i path` and `ldd`.
 
 ## 3. The binary tarball
 
@@ -228,9 +226,13 @@ the build tree of MDIR nor that of LLVM
 | HDF5 | the RPATH of the build: keep the HDF5 install where it was, or on `LD_LIBRARY_PATH` |
 | `libcuda.so.1` | the NVIDIA driver |
 | libdevice, `ptxas` | the toolkit that `CUDA_ROOT`, `CUDA_HOME`, or `CUDA_PATH` names, the first that is set, else the toolkit of the build |
-| cuFFT, cuBLAS | the toolkit of the build, through the RPATH, else the loader's search path |
+| cuFFT, cuBLAS | under `CUDA_ROOT` or the toolkit of the build ([building.md](building.md#5-installing-a-build)) |
 | libstdc++ | the system, unless the compiler was newer (Section 2.4) |
 | The Python package | `MDIR_PYTHON_INSTALL_DIR` (by default `lib/pythonX.Y/site-packages/mdir`, D228); put its parent on `PYTHONPATH` |
+
+`-DMDIR_BUNDLE_LIBRARIES=ON` (off by default) installs HDF5, cuFFT, and
+libdevice into the tree as well, as the release tarball does, so that the
+tree no longer depends on where they were at the build.
 
 On a cluster, install into a prefix that every compute node mounts, and
 give users a module file that sets `PATH`, `PYTHONPATH` where the Python
@@ -348,7 +350,7 @@ kernels are compiled for the device that the run finds.
 
 | Symptom | Cause | Remedy |
 |---|---|---|
-| `GLIBCXX_3.4.<n>' not found` or `CXXABI_1.3.<n>' not found` at load | Built with a GCC newer than the system's libstdc++ | Load the compiler module at run time, or set an RPATH (Section 2.4) |
+| `GLIBCXX_3.4.<n>' not found` or `CXXABI_1.3.<n>' not found` at load | Built with a GCC newer than the system's libstdc++ | Load the compiler module at run time (Section 2.4) |
 | `mdrt: the NVIDIA driver supports CUDA <x.y>; this build of MDIR, with CUDA <a.b>, needs ...` | The driver is older than the toolkit's major version | Update the driver, or build with a toolkit it supports (Section 2.3) |
 | `mdrt: the NVIDIA driver supports CUDA <x.y>, which cannot compile kernels of PTX ISA <a.b>` | Kernels kept as PTX on an old driver | Update the driver, or let `ptxas` compile cubins ([debugging.md](debugging.md#checking-the-installation)) |
 | `ptxas fatal : Value 'sm_70' is not defined for option 'gpu-name'`; cuFFT fails to make a plan on a V100 | A CUDA 13 toolkit on Volta | Build and run with a 12.x toolkit (Section 2.2) |
