@@ -685,7 +685,8 @@ private:
   LogicalResult emitUncachedBuild(OpBuilder &builder, Location loc,
                                   const Neighbors &structure, Value positions,
                                   Value box, double reach, double cellWidth,
-                                  bool explicitImages = false, bool uniqueOwned = false);
+                                  bool explicitImages = false, bool uniqueOwned = false,
+                                  Value identities = {}, Value owned = {});
   /// Stops the run, through the runtime, if `notNumbers` positions, as a
   /// build counted them, are not numbers (D107).
   void emitStopNotNumbers(OpBuilder &builder, Location loc, Value notNumbers);
@@ -3973,7 +3974,8 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
     func::CallOp mask, slot, stream;
     for (auto call : function.getOps<func::CallOp>()) {
       if (call.getCallee() == "mdrtDistCenterMask") mask = call;
-      if (call.getCallee() == "mdrtDistDeviceMatrixSlot") slot = call;
+      if (call.getCallee() == "mdrtDistDeviceMatrixSlot" ||
+          call.getCallee() == "mdrtDistUniqueMatrixSlot") slot = call;
       if (call.getCallee() == "mdrtDeviceExternalStream") stream = call;
     }
     if (mask && slot && stream && mask.getResult(0) == op.getCenterSet()) {
@@ -5589,7 +5591,9 @@ LogicalResult Lowering::addMatrixBuild(Type real) {
 
   OwningOpRef<ModuleOp> definitions = ModuleOp::create(module.getLoc());
   kernels::emitMatrixBuild(*definitions, module.lookupSymbol("mdrtDistDeviceMatrixSlot") != nullptr,
-                           module.lookupSymbol("mdrtDistPeriodicMatrixSlot") != nullptr || module->hasAttr("md_dist.local_unique"));
+                           module.lookupSymbol("mdrtDistPeriodicMatrixSlot") != nullptr ||
+                               module->hasAttr("md_dist.local_unique"),
+                           module.lookupSymbol("mdrtDistUniqueMatrixSlot") != nullptr);
   if (failed(instantiateTemplates(*definitions, real)))
     return failure();
   for (Operation &op : llvm::make_early_inc_range(*definitions)) {
@@ -6599,7 +6603,7 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
     Type wide = builder.getI64Type();
     auto function = op->getParentOfType<func::FuncOp>();
     bool haloOwnsEntries = llvm::any_of(function.getOps<func::CallOp>(), [](func::CallOp call) {
-      return call.getCallee() == "mdrtDistDeviceMatrixSlot" || call.getCallee() == "mdrtDistPeriodicMatrixSlot";
+      return call.getCallee() == "mdrtDistDeviceMatrixSlot" || call.getCallee() == "mdrtDistPeriodicMatrixSlot" || call.getCallee() == "mdrtDistUniqueMatrixSlot";
     });
     structure.handle =
         func::CallOp::create(
@@ -8632,17 +8636,26 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
   auto function = builder.getInsertionBlock()->getParentOp()->getParentOfType<func::FuncOp>();
   if (!function)
     function = dyn_cast<func::FuncOp>(builder.getInsertionBlock()->getParentOp());
-  Value slot;
+  Value slot, identityHalo, owned;
   bool explicitImages = false;
   if (function && !structure.groups) {
     for (auto call : function.getOps<func::CallOp>()) {
-      if (call.getCallee() == "mdrtDistDeviceMatrixSlot" || call.getCallee() == "mdrtDistPeriodicMatrixSlot") {
+      if (call.getCallee() == "mdrtDistDeviceMatrixSlot" || call.getCallee() == "mdrtDistPeriodicMatrixSlot" ||
+          call.getCallee() == "mdrtDistUniqueMatrixSlot") {
         slot = call.getResult(0);
-        explicitImages = call.getCallee() == "mdrtDistDeviceMatrixSlot";
+        explicitImages = call.getCallee() != "mdrtDistPeriodicMatrixSlot";
+        if (call.getCallee() == "mdrtDistUniqueMatrixSlot") {
+          identityHalo = call.getOperand(0);
+          owned = call.getOperand(3);
+        } else {
+          identityHalo = owned = {};
+        }
       }
     }
   }
-  if (!slot) return emitUncachedBuild(builder,loc,structure,positions,box,reach,cellWidth,false,module->hasAttr("md_dist.local_unique"));
+  if (!slot)
+    return emitUncachedBuild(builder, loc, structure, positions, box, reach, cellWidth,
+                             false, module->hasAttr("md_dist.local_unique"));
   SmallVector<Value> args{slot,structure.handle,structure.counts,structure.order};
   Type wide = builder.getI64Type();
   auto declare = [&](StringRef name, TypeRange outputs) {
@@ -8657,7 +8670,18 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                                        arith::ConstantIntOp::create(builder,loc,0,64));
   LogicalResult status = success();
   scf::IfOp::create(builder,loc,missing,[&](OpBuilder &at, Location) {
-    status = emitUncachedBuild(at,loc,structure,positions,box,reach,cellWidth,explicitImages,!explicitImages);
+    Value identities;
+    if (identityHalo) {
+      auto ids = getDeviceType({ShapedType::kDynamic}, wide);
+      auto ptr = LLVM::LLVMPointerType::get(at.getContext());
+      auto stream = getOrDeclare("mdrtDeviceExternalStream", at.getFunctionType({}, {ptr}));
+      auto compute = func::CallOp::create(at,loc,stream,ValueRange{}).getResult(0);
+      auto lookup = getOrDeclare("mdrtDistPairIdentities", at.getFunctionType({wide,ptr}, {ids}));
+      lookup->setAttr("llvm.emit_c_interface", at.getUnitAttr());
+      identities = func::CallOp::create(at,loc,lookup,ValueRange{identityHalo,compute}).getResult(0);
+    }
+    status = emitUncachedBuild(at, loc, structure, positions, box, reach, cellWidth,
+                               explicitImages, !explicitImages, identities, owned);
     func::CallOp::create(at,loc,save,args);
     scf::YieldOp::create(at,loc);
   },[&](OpBuilder &at, Location) {
@@ -8669,7 +8693,7 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
 
 LogicalResult Lowering::emitUncachedBuild(OpBuilder &builder, Location loc,
     const Neighbors &structure, Value positions, Value box, double reach, double cellWidth,
-    bool explicitImages, bool uniqueOwned) {
+    bool explicitImages, bool uniqueOwned, Value identities, Value owned) {
   if (structure.groups) {
     if (failed(emitGroupsBuild(builder, loc, structure, positions, box,
                                reach)))
@@ -8714,11 +8738,17 @@ LogicalResult Lowering::emitUncachedBuild(OpBuilder &builder, Location loc,
                                     ValueRange{createIndex(builder, loc, 0)});
     excluded = noExcluded;
   }
+  StringRef suffix;
+  if (identities)
+    suffix = tilted ? "_triclinic_explicit_unique" : "_explicit_unique";
+  else if (tilted)
+    suffix = "_triclinic";
+  else if (explicitImages)
+    suffix = "_explicit";
+  else if (uniqueOwned)
+    suffix = "_unique";
   auto build = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
-      module,
-      getInstanceName(std::string(buildNeighborsName) +
-                          (tilted ? "_triclinic" : explicitImages ? "_explicit" : uniqueOwned ? "_unique" : ""),
-                      real)));
+      module, getInstanceName((Twine(buildNeighborsName) + suffix).str(), real)));
   // Build; if a row was too narrow to hold the neighbors of a particle,
   // the runtime makes the rows wider, and the build is made again.
   Type wide = builder.getI64Type();
@@ -8732,6 +8762,10 @@ LogicalResult Lowering::emitUncachedBuild(OpBuilder &builder, Location loc,
       operands.push_back(widthsValue);
     operands.append({reachValue, widthValue, excluded, structure.counts,
                      entries, structure.order});
+    if (identities) {
+      operands.push_back(identities);
+      operands.push_back(arith::IndexCastOp::create(at, loc, at.getIndexType(), owned));
+    }
     auto built = func::CallOp::create(at, loc, build, operands);
     Value largest = built.getResult(0);
     emitStopNotNumbers(

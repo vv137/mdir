@@ -548,6 +548,48 @@ double *mdrtNCCLAllocate(size_t bytes) {
   return device;
 }
 
+/* The row table is immutable for the lifetime of the halo. Each consumer
+   stream owns its copy, including the allocation and final free. */
+struct PairIds {
+  struct PairIds *next;
+  cudaStream_t stream;
+  int64_t *rows;
+};
+int64_t *mdrtNCCLPairIds(struct PairIds **head, void *stream, const int64_t *owned,
+                         int64_t n, const int64_t *ghost, int64_t g) {
+  struct PairIds *p = *head;
+  for (; p; p = p->next)
+    if (p->stream == stream) return p->rows;
+  p = calloc(1, sizeof(*p));
+  if (!p) abort();
+  p->stream = stream;
+  size_t count = (size_t)n + g;
+  size_t bytes = (count ? count : 1) * sizeof(*p->rows);
+  if (rowPool)
+    checkCuda(cudaMallocFromPoolAsync((void **)&p->rows, bytes, rowPool, stream));
+  else
+    checkCuda(cudaMalloc((void **)&p->rows, bytes));
+  if (n)
+    checkCuda(cudaMemcpyAsync(p->rows, owned, n * sizeof(*owned),
+                              cudaMemcpyHostToDevice, stream));
+  if (g)
+    checkCuda(cudaMemcpyAsync(p->rows + n, ghost, g * sizeof(*ghost),
+                              cudaMemcpyHostToDevice, stream));
+  p->next = *head;
+  *head = p;
+  return p->rows;
+}
+
+void mdrtNCCLReleasePairIds(struct PairIds *p) {
+  while (p) {
+    struct PairIds *next = p->next;
+    if (rowPool) checkCuda(cudaFreeAsync(p->rows, p->stream));
+    else checkCuda(cudaFree(p->rows));
+    free(p);
+    p = next;
+  }
+}
+
 void mdrtNCCLUpload(double *device, const double *host, size_t bytes) {
   if (bytes) checkCuda(cudaMemcpy(device, host, bytes, cudaMemcpyHostToDevice));
 }

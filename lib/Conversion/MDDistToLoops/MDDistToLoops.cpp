@@ -3125,6 +3125,11 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
   }
   bool cachedMatrix = sharedState() && op.getHalo().getDefiningOp<UnpackOp>() &&
                       module->hasAttr("md_dist.driver") && matrixSkin > 0;
+  // Explicit halos keep their current image rows and reverse force exchange.
+  // Compact unique neighbors as the device builds each owned MATRIX row.
+  bool halfMatrix = cachedMatrix && !periodicOwned && !fixedPoint && domains > 1 &&
+      devicePositions.contains(op.getGhosts()) &&
+      op.getResult().getType().getTraversal() == Traversal::Unique;
   if (cachedMatrix) {
     // Within this Verlet epoch each row moves at most half the halo
     // margin from its reference. Between two evaluations the separation
@@ -3141,9 +3146,14 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
     Type wide = b.getI64Type();
     Value exclusions = excludedPairs.lookup(op.getResult());
     if (!exclusions) exclusions = arith::ConstantIntOp::create(b,loc,0,64);
-    auto fn = declare(periodicOwned ? "mdrtDistPeriodicMatrixSlot" : "mdrtDistDeviceMatrixSlot",
-                      b.getFunctionType({wide, b.getF64Type(), wide}, {wide}), false);
-    func::CallOp::create(b,loc,fn,ValueRange{halo.handle,real(b,cutoff),exclusions});
+    SmallVector<Value> args{halo.handle, real(b, cutoff), exclusions};
+    StringRef slot = periodicOwned ? "mdrtDistPeriodicMatrixSlot" : "mdrtDistDeviceMatrixSlot";
+    if (halfMatrix) {
+      slot = "mdrtDistUniqueMatrixSlot";
+      args.push_back(arith::IndexCastOp::create(b, loc, wide, nOwned));
+    }
+    auto fn = declare(slot, b.getFunctionType(ValueRange(args).getTypes(), {wide}), false);
+    func::CallOp::create(b, loc, fn, args);
   }
   auto images = periodicOwned ? md_exec::Images::Minimum : md_exec::Images::Explicit;
   if (!searchPositions) searchPositions = positions;
@@ -3169,7 +3179,7 @@ DomainRelation Lowering::buildLocalRelation(OpBuilder &b, NeighborhoodOp op,
     shifts = makeField(b, set, 3, b.getF64Type(), d,
         {Value(), imageShifts.lookup(op.getGhosts())}, {nOwned, nGhosts});
   return {positions, structure, nOwned, relation.cell, periodicOwned ? Value() : nOwned, shifts,
-          periodicOwned, periodicOwned && cachedMatrix};
+          periodicOwned, halfMatrix || (periodicOwned && cachedMatrix)};
 }
 
 void Lowering::addPairKernel(md_exec::PairForOp loop, Operation *op,

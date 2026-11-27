@@ -6,7 +6,7 @@
 
 namespace mdir::kernels {
 void emitMatrixBuild(mlir::ModuleOp module, bool explicitImages = false,
-                     bool uniqueOwned = false);
+                     bool uniqueOwned = false, bool uniqueImages = false);
 }
 
 #endif

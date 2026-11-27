@@ -47,6 +47,10 @@ void mdrtNCCLMigrateRows(const double *owned, const int *exportRows, const int *
 void mdrtNCCLNarrow(const double *, void *, long long);
 void mdrtNCCLFreePositions(double *positions);
 double *mdrtNCCLAllocate(size_t bytes);
+struct PairIds;
+int64_t *mdrtNCCLPairIds(struct PairIds **head, void *stream, const int64_t *owned,
+                         int64_t n, const int64_t *ghost, int64_t g);
+void mdrtNCCLReleasePairIds(struct PairIds *ids);
 void mdrtNCCLUpload(double *device, const double *host, size_t bytes);
 void mdrtNCCLDownload(double *host, const double *device, size_t bytes);
 void mdrtNCCLImport(double *dest, const double *device, size_t bytes);

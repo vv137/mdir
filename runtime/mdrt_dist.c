@@ -173,10 +173,12 @@ struct Halo {
   struct TuplePlan *tuplePlans;
   struct TupleDomainRows tupleDomainRows;
   double *tupleCoordinates, *pairImageShifts;
+  struct PairIds *pairIdentities;
   struct Memref3D tupleInput;
   struct NCCLPlan *ncclPlan;
   struct DistDeviceMatrix deviceMatrix;
   double deviceCutoff;
+  int uniqueDeviceMatrix;
   struct ScalarHaloField *scalarFields;
 #endif
   int64_t capacity; /* the most ghosts of one domain */
@@ -239,6 +241,7 @@ struct ExclusionMap {
   int64_t incidenceSize;
   struct DistDeviceMatrix matrix;
   double cutoff;
+  int uniqueMatrix;
 #endif
 };
 
@@ -2739,29 +2742,40 @@ static struct TransferPlan *transferPlan(struct Halo *h, int transpose) {
 }
 
 #ifdef MDIR_ENABLE_NCCL
-static int64_t deviceMatrixSlot(int64_t halo, double cutoff, int64_t exclusions, int ownedOnly) {
+static int64_t deviceMatrixSlot(int64_t halo, double cutoff, int64_t exclusions,
+                                int ownedOnly, int unique) {
   struct Halo *h = (struct Halo *)(intptr_t)halo;
   if (exclusions) {
     struct Exclusions *table = (struct Exclusions *)(intptr_t)exclusions;
     int64_t d = mdrtMPIDomainBound(h->layout->domains,0);
     for (struct ExclusionMap *map = h->exclusionMaps; map; map = map->next) {
       if (map->table != table || map->domain != d || map->ownedOnly != ownedOnly) continue;
-      if (map->cutoff && map->cutoff != cutoff) return 0;
+      if (map->cutoff && (map->cutoff != cutoff || map->uniqueMatrix != unique)) return 0;
       map->cutoff = cutoff;
+      map->uniqueMatrix = unique;
       return (int64_t)(intptr_t)&map->matrix;
     }
     return 0;
   }
-  if (h->deviceCutoff && h->deviceCutoff != cutoff) return 0;
+  if (h->deviceCutoff && (h->deviceCutoff != cutoff || h->uniqueDeviceMatrix != unique)) return 0;
   h->deviceCutoff = cutoff;
+  h->uniqueDeviceMatrix = unique;
   return (int64_t)(intptr_t)&h->deviceMatrix;
 }
 
 int64_t mdrtDistDeviceMatrixSlot(int64_t halo, double cutoff, int64_t exclusions) {
-  return deviceMatrixSlot(halo, cutoff, exclusions, 0);
+  return deviceMatrixSlot(halo, cutoff, exclusions, 0, 0);
 }
 int64_t mdrtDistPeriodicMatrixSlot(int64_t halo, double cutoff, int64_t exclusions) {
-  return deviceMatrixSlot(halo, cutoff, exclusions, 1);
+  return deviceMatrixSlot(halo, cutoff, exclusions, 1, 1);
+}
+
+int64_t mdrtDistUniqueMatrixSlot(int64_t halo, double cutoff, int64_t exclusions,
+                                int64_t owned) {
+  struct Halo *h = (void *)(intptr_t)halo;
+  if (owned != h->layout->rows[mdrtMPIDomainBound(h->layout->domains, 0)])
+    fail("inconsistent owned row count for device half MATRIX");
+  return deviceMatrixSlot(halo, cutoff, exclusions, 0, 1);
 }
 
 static struct NCCLPlan *devicePlan(struct Halo *h) {
@@ -3206,6 +3220,22 @@ void _mlir_ciface_mdrtDistWriteCenters(struct Memref3D *out, int64_t d,
   mdrtNCCLWriteCenters(deviceRows(out,d,n,1),forces->aligned,mask->aligned,n,stream);
 }
 
+/* Unique pair traversal compares global identities. Both the row order
+   and the identity of each periodic copy are fixed for this halo. */
+void _mlir_ciface_mdrtDistPairIdentities(struct Memref1I *out, int64_t handle, void *stream) {
+  struct Halo *h = (void *)(intptr_t)handle;
+  struct Layout *l = h->layout;
+  int64_t d = mdrtMPIDomainBound(l->domains, 0);
+  int64_t owned = l->rows[d], ghosts = h->rows[d];
+  if ((owned && !l->ids) || (ghosts && !h->ids))
+    fail("missing row identities for device half MATRIX");
+  const int64_t *ownedIds = owned ? l->ids + d * l->stride : NULL;
+  const int64_t *ghostIds = ghosts ? h->ids + d * h->capacity : NULL;
+  int64_t *ids = mdrtNCCLPairIds(&h->pairIdentities, stream, ownedIds, owned,
+                                 ghostIds, ghosts);
+  *out = (struct Memref1I){ids, ids, 0, {owned + ghosts}, {1}};
+}
+
 /* Bonded kernels need unshifted ghosts, while the explicit pair list
    needs the periodic translations. Use the same completed halo transfer. */
 void _mlir_ciface_mdrtDistPairImageShifts(struct Memref2D *out, int64_t handle) {
@@ -3477,6 +3507,7 @@ void mdrtDistReleaseHalo(int64_t handle) {
   if (h->tupleInput.allocated) _mlir_ciface_mdrtDistReleaseField(&h->tupleInput);
   if (h->tupleCoordinates) mdrtNCCLFreePositions(h->tupleCoordinates);
   if (h->pairImageShifts) mdrtNCCLFreePositions(h->pairImageShifts);
+  mdrtNCCLReleasePairIds(h->pairIdentities);
   while (h->scalarFields) {
     struct ScalarHaloField *s = h->scalarFields;
     h->scalarFields = s->next;

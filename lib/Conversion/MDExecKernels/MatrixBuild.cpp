@@ -32,10 +32,11 @@ public:
   void emitBuildNeighborsMatrixTriclinic();
   void emitSpatialOrder();
   void emitSearch(StringRef symbol, bool triclinic, bool testAllImages,
-                  bool useExplicitImages = false, bool useUniqueOwned = false);
+                  bool useExplicitImages = false, bool useUniqueOwned = false, bool byIdentity = false);
 
 private:
   bool tilted, allImages, explicitImages, uniqueOwned;
+  Value identities, owned;
   // Common arguments and SSA values captured by the build's launches.
   Value x, box, widths, reach, cellWidth, excluded, counts, entries, order;
   Value lx, ly, lz, ilx, ily, ilz, tbx, tcx, tcy;
@@ -594,6 +595,7 @@ void MatrixBuild::emitSearchRows() {
   Value firstZ32 = indexCast(i32, firstZ);
   Value rowWidth32 = indexCast(i32, rowWidth);
   {
+    Value owned32 = owned ? indexCast(i32, owned) : Value();
     auto launch =
         gpu::LaunchOp::create(b, loc, gridWarps, c1, c1, threads, c1, c1);
     OpBuilder::InsertionGuard scope(b);
@@ -621,7 +623,14 @@ void MatrixBuild::emitSearchRows() {
       Value i = indexCast(index, particle32);
       Value zeroPlaced = ci(0);
       Value placed = cmpi(CmpIPredicate::sge, particle32, zeroPlaced);
+      if (owned32) {
+        placed = andi(placed, cmpi(CmpIPredicate::slt, particle32, owned32));
+        Value ghost = cmpi(CmpIPredicate::eq, placed, cb(false));
+        Value leader = cmpi(CmpIPredicate::eq, lane32, zero32);
+        ifThen(andi(ghost, leader), [&] { store(zero32, counts, {p}); });
+      }
       ifThen(placed, [&] {
+        Value centerId = identities ? load(identities, {i}) : Value();
         Value xi = load(sorted, {p, zeroIndex});
         Value yi = load(sorted, {p, firstIndex});
         Value zi = load(sorted, {p, secondIndex});
@@ -735,6 +744,10 @@ void MatrixBuild::emitSearchRows() {
                           Value other = uniqueOwned
                               ? cmpi(CmpIPredicate::slt, particle32, load(order, {qc}))
                               : cmpi(CmpIPredicate::ne, p32, q32);
+                          if (identities) {
+                            Value partner = indexCast(index, load(order, {qc}));
+                            other = cmpi(CmpIPredicate::slt, centerId, load(identities, {partner}));
+                          }
                           Value nearOther = andi(nearby, other);
                           Value neighbor = andi(nearOther, inRun);
                           Value ballot =
@@ -943,7 +956,7 @@ Value MatrixBuild::emitCandidateWithinReach(Value xi, Value yi, Value zi,
 
 void MatrixBuild::emitSearch(StringRef symbol, bool triclinic,
                              bool testAllImages, bool useExplicitImages,
-                             bool useUniqueOwned) {
+                             bool useUniqueOwned, bool byIdentity) {
   uniqueOwned = useUniqueOwned;
   explicitImages = useExplicitImages;
   tilted = triclinic;
@@ -952,6 +965,11 @@ void MatrixBuild::emitSearch(StringRef symbol, bool triclinic,
   if (tilted)
     inputs.push_back(boxType);
   inputs.append({f64, f64, buffer, buffer, rowType, buffer});
+  if (byIdentity) {
+    inputs.push_back(MemRefType::get({ShapedType::kDynamic}, i64,
+        MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1)));
+    inputs.push_back(index);
+  }
   function(symbol, b.getFunctionType(inputs, {index, index}),
            [&](ValueRange arguments) {
              unsigned arg = 0;
@@ -965,6 +983,8 @@ void MatrixBuild::emitSearch(StringRef symbol, bool triclinic,
              counts = arguments[arg++];
              entries = arguments[arg++];
              order = arguments[arg++];
+             identities = byIdentity ? arguments[arg++] : Value();
+             owned = byIdentity ? arguments[arg++] : Value();
              emitSearchGeometry();
              emitClearCellCounts();
              emitParticleBins();
@@ -1234,7 +1254,7 @@ void MatrixBuild::emitSpatialOrder() {
 
 } // namespace
 
-void kernels::emitMatrixBuild(ModuleOp module, bool explicitImages, bool uniqueOwned) {
+void kernels::emitMatrixBuild(ModuleOp module, bool explicitImages, bool uniqueOwned, bool uniqueImages) {
   OpBuilder builder = OpBuilder::atBlockEnd(module.getBody());
   MatrixBuild matrix(builder, module.getLoc());
   matrix.emitCellCount();
@@ -1246,6 +1266,12 @@ void kernels::emitMatrixBuild(ModuleOp module, bool explicitImages, bool uniqueO
   matrix.emitSearch("mdrt_gpu_build_neighbors_matrix", false, false);
   if (uniqueOwned)
     matrix.emitSearch("mdrt_gpu_build_neighbors_matrix_unique", false, false, false, true);
+  if (uniqueImages) {
+    matrix.emitSearch("mdrt_gpu_build_neighbors_matrix_explicit_unique", false,
+                      false, true, false, true);
+    matrix.emitSearch("mdrt_gpu_build_neighbors_matrix_triclinic_explicit_unique",
+                      true, false, true, false, true);
+  }
   if (explicitImages)
     matrix.emitSearch("mdrt_gpu_build_neighbors_matrix_explicit", false, false, true);
   matrix.emitSearch("mdrt_gpu_build_neighbors_matrix_triclinic_pass", true,
