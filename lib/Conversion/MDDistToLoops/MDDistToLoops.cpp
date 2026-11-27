@@ -1460,7 +1460,7 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
             }
           } else {
             for (int64_t a = 0; a < arity; ++a) {
-              Value word = quantize(k, map.lookupOrDefault(yielded[a]), 40);
+              Value word = quantize(k, map.lookupOrDefault(yielded[a]), pairForce);
               if (contributions) {
                 storeValue(k, word, contributions, pos, index(k, a));
               } else {
@@ -2343,7 +2343,7 @@ void Lowering::lowerCollectedSum(md::SumParticlesOp op) {
       total = vector::FromElementsOp::create(b,loc,vec,parts);
     } else total = scalar(total);
   }
-  op.replaceAllUsesWith(decodeObservable(b,total,32));
+  op.replaceAllUsesWith(decodeObservable(b, total, format));
   op.erase();
 }
 
@@ -2375,14 +2375,14 @@ LogicalResult Lowering::lowerMapParticles(MapParticlesOp op) {
       } else {
         Value term = loadValue(br, storage[field].buffer, d, r, type);
         if (combine) {
-          term = quantize(br, term, 40);
+          term = quantize(br, term, pairForce);
           sum = sum ? add(br, sum, term) : term;
         } else
           arguments.push_back(term);
       }
     }
     if (raw) storeValue(br, sum, raw, d, r);
-    Value value = combine ? finish(br, sum, 40)
+    Value value = combine ? finish(br, sum, pairForce)
                           : inlineKernel(br, op.getKernel().front(), arguments);
     storeValue(br, value, result, d, r);
   };
@@ -3474,6 +3474,11 @@ void Lowering::shardDriverLoop(scf::ForOp root) {
 }
 
 LogicalResult Lowering::run(func::FuncOp function) {
+  // The words of the deterministic mode are those of the reference
+  // executor; the executor through md_exec sums in binary64 only.
+  if (fixedPoint && throughExec)
+    return function.emitError(
+        "deterministic fixed-point sums require the reference executor");
   SmallVector<Operation *> ops;
   auto collect = [&] {
     ops.clear();

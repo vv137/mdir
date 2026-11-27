@@ -605,7 +605,7 @@ static void spectrum(const int n[3], const double box[3], struct PmeBox b,
             term[1 + 3 * a + d] = power * ((a == d ? g : 0) + dg * m[a] * m[d]);
         for (int k = 0; k < 10; ++k) {
           if (fixed)
-            planeWords[plane][k] += mdrtDistWord(term[k], 0x1p32);
+            planeWords[plane][k] += mdrtDistWord(term[k], 0x1p32, DistPairEnergy);
           else
             planeSums[plane][k] += term[k];
         }

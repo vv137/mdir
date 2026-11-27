@@ -3508,7 +3508,7 @@ static void convertHaloWords(struct Halo *h, struct Memref3W *owned, struct Memr
   for (int64_t d = first; d < past; ++d)
     for (int64_t r = 0; r < h->layout->stride; ++r)
       if (r < h->layout->rows[d]) for (int64_t c = 0; c < components; ++c)
-        *at3(out, d, r, c) = (double)mdrtDistNarrowWord(*wordAt(owned, d, r, c)) * 0x1p-40;
+        *at3(out, d, r, c) = (double)mdrtDistNarrowWord(*wordAt(owned, d, r, c), DistPairForce) * 0x1p-40;
 }
 
 void _mlir_ciface_mdrtDistHaloSumWords(int64_t handle, struct Memref3W *owned,
