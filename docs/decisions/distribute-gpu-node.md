@@ -984,3 +984,16 @@ The ordinary path selects the neighbor structure and accumulation
 mode. It can also run in deterministic mode. The grid must still
 match the rank count. Runs on multiple ranks retain their domain
 traversal and exchange.
+
+### Device memory preflight on the full build
+
+Each rank estimates device demand from the initial geometry and includes
+headroom for concurrent MATRIX and tuple storage. On two 32 GiB V100
+GPUs, the full build completed STMV numeric runs at 12 and 13 Å in
+double precision and at 13 Å in mixed precision. The largest sampled
+per-rank usages were 16,718, 20,692, and 16,820 MiB, respectively,
+against initial estimates of 28,295.9, 33,696.3, and 24,975.7 MiB.
+The estimate still screens out the double-precision 13 Å candidate
+on these GPUs. The earlier mixed 13 Å allocation failure reproduced
+in the diagnostic overlay with allocation tracing disabled. The full
+build also completed the mixed 13 Å deck with allocation tracing.

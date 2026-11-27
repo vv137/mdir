@@ -515,7 +515,7 @@ static double estimateTrialMemory(const Control &control, const System &system,
   const double bytesPerRow = program.domainTopology && !program.localUniquePairs
                                 ? 7168.0 : 1024.0;
   return 256 * MiB + rows * (bytesPerRow +
-                           sizeof(int32_t) * program.neighborWidth * widthMargin);
+      sizeof(int32_t) * program.neighborWidth * widthMargin);
 }
 
 static std::optional<std::array<double, 3>>

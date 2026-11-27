@@ -633,11 +633,13 @@ A numeric `[energy] pairlist_distance` fixes the list distance. For eligible
 multi-domain NCCL dynamics, `"AUTO"` measures candidate distances on the allocated
 layout with displacement-triggered rebuilds. Each candidate uses at least
 204 steps from the same starting state. The halves end on coupling and
-energy-report boundaries, with the production energy interval capped at
-one half. An explicit request searches when the run is at least as long as
-one trial. An omitted distance searches when the run is at least twenty
-times as long. The measured cost is the slowest rank's mean step time
-in the second half, including rebuilds. The log and manifest record the
+energy-report boundaries. The memory preflight skips a candidate if
+any rank's estimated requirement exceeds its budget. The production
+energy interval is capped at one half. An explicit request searches
+when the run is at least as long as one trial. An omitted distance
+searches when the run is at least twenty times as long. The measured cost
+is the slowest rank's mean step time in the second half, including
+rebuilds. The log and manifest record the
 trial measurements, the winner, and the margin against available timing
 variation. The force cutoff stays fixed. List distance can change traversal
 order and rounding. The search precedes automatic selection of pair

@@ -1734,7 +1734,9 @@ halo retires, its entry allocation returns to the driver. Smaller
 runtime allocations can reuse the general device pool.
 
 Before a distributed AUTO reach trial, each rank estimates its device
-memory requirement at the initial geometry. All ranks skip the distance
+memory requirement at the initial geometry, with room for concurrent
+MATRIX and tuple storage. Rank zero prints and flushes every rank's
+preflight result before trial execution. All ranks skip the distance
 if any rank's estimate exceeds its available device memory. The search
 reports the limiting rank and fails if every eligible distance is skipped.
 Set `MDIR_DIST_PIN_CACHE_DIR` to reuse a completed measured AUTO choice
