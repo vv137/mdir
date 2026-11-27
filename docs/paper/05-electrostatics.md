@@ -1097,15 +1097,31 @@ Its deconvolution corrects the spline assignment while the radial factor
 retains the cosine transform of the constrained density. For either window the
 five-pass FFT applies this same diagonal product in the X pass
 (D[prolate-axis-fft]). At fixed fractional sites a cell strain changes
-the inverse volume and wave vector. Write $m=\lvert\mathbf m\rvert$
-and evaluate $\hat\chi$ at $2\pi r_c m$. Differentiating
-$\hat\chi/m^2$ with respect to $\log m$ gives
-$(d\hat\chi/d\log m-2\hat\chi)/m^2$. The anisotropic virial therefore
-uses $2\hat\chi-d\hat\chi/d\log m$ with the window correction and
-the original charge power. Accumulating this expression directly also
-covers zeros of the spectrum. Force-only steps need only the scaled
-coefficient for the inverse transform. On meshes outside the axis plan,
-cuFFT uses the same product in a separate kernel.
+the inverse volume and the wave vector $\mathbf m$, and nothing else: the
+charge power and the window deconvolution, a product over the axes of the
+squared transform of the window at the integer index $k_a/K_a$, do not
+depend on the cell and have no strain derivative. Write
+$m=\lvert\mathbf m\rvert$, evaluate $\hat\chi$ at $2\pi r_c m$, and let
+$E_\mathbf m$ be the mode energy with its Hermitian weight, so that
+$E_\mathbf m/\hat\chi$ (the charge power, $1/V$, $1/m^2$ and the
+deconvolution) contains no $\hat\chi$. With $\partial V/\partial\varepsilon_{ab}
+= V\delta_{ab}$, $\partial m^2/\partial\varepsilon_{ab} = -2m_am_b$ and
+$\mathsf W = -\partial E/\partial\varepsilon$,
+
+$$
+W_{ab} = \sum_{\mathbf m\neq 0}\Big[E_\mathbf m\delta_{ab}
+- \frac{E_\mathbf m}{\hat\chi}\Big(2\hat\chi - \frac{d\hat\chi}{d\log m}\Big)\frac{m_am_b}{m^2}\Big],
+\qquad
+\mathrm{tr}\,\mathsf W = \sum_{\mathbf m\neq0}\Big[E_\mathbf m
++ \frac{E_\mathbf m}{\hat\chi}\,\frac{d\hat\chi}{d\log m}\Big].
+$$
+
+With $\hat\chi = e^{-\pi^2m^2/\beta^2}$, $d\hat\chi/d\log m =
+-2\pi^2m^2\hat\chi/\beta^2$ and this is the Gaussian tensor of Section 5.2.
+The X pass accumulates $E_\mathbf m$ and the second term from the charge
+power directly, so zeros of the spectrum need no division. Force-only steps
+need only the scaled coefficient for the inverse transform. On meshes
+outside the axis plan, cuFFT uses the same product in a separate kernel.
 
 The u-series gives a different smooth decomposition using Gaussians
 [[Predescu2020]](references.md#predescu2020).
