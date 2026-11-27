@@ -16,6 +16,30 @@ class Box(c.Structure):
 lib = c.CDLL(sys.argv[1])
 lib.mdrtPmePencils.argtypes = [c.c_int] * 8
 lib.mdrtPmePencils.restype = c.c_void_p
+physical = tuple(map(int, sys.argv[5:]))
+if physical:
+    lib.mdrtPmeSpatialPencils.argtypes = [c.c_int] * 8 + [c.c_int64] * 3
+    lib.mdrtPmeSpatialPencils.restype = c.c_void_p
+    lib.mdrtPmeRealBoxAt.argtypes = [c.c_void_p, c.c_int]
+    lib.mdrtPmeRealBoxAt.restype = Box
+
+
+def pencils(shape, px, py, mpi, mixed):
+    args = (*shape, px, py, 4, mpi, mixed)
+    if not physical:
+        return lib.mdrtPmePencils(*args)
+    mesh = lib.mdrtPmeSpatialPencils(*args, *physical)
+    # This fixture places the two x domains on consecutive ranks.
+    assert (px, py, physical) == (2, 2, (2, 1, 2))
+    nx, ny, nz = shape
+    for rank in range(4):
+        box = lib.mdrtPmeRealBoxAt(mesh, rank)
+        x, y = rank % 2, rank // 2
+        assert list(box.lo) == [nx * x // 2, ny * y // 2, 0]
+        assert list(box.hi) == [nx * (x + 1) // 2, ny * (y + 1) // 2, nz]
+    return mesh
+
+
 for func in (lib.mdrtPmeRealBox, lib.mdrtPmeSpectrumBox):
     func.argtypes = [c.c_void_p]
     func.restype = Box
@@ -40,7 +64,7 @@ def mixed_inverse(shape, px, py, mpi):
     packed = (c.c_float * (2 * nx * ny * half))(
         *(math.sin(i * 0.31) for i in range(2 * nx * ny * half)))
     ref = (c.c_float * (nx * ny * nz))()
-    mesh = lib.mdrtPmePencils(*shape, px, py, 4, mpi, 1)
+    mesh = pencils(shape, px, py, mpi, 1)
     modes = lib.mdrtPmeSpectrumBox(mesh).points()
     pairs = [packed[2*((x*ny + y)*half + z) + k]
              for x, y, z in modes for k in range(2)]
@@ -60,7 +84,7 @@ px, py, mpi = map(int, sys.argv[2:5])
 nx, ny = 9, 13
 for nz in (11, 12):
     shape = (nx, ny, nz)
-    mesh = lib.mdrtPmePencils(*shape, px, py, 4, mpi, 0)
+    mesh = pencils(shape, px, py, mpi, 0)
     rows = list(lib.mdrtPmeRealBox(mesh).points())
     modes = list(lib.mdrtPmeSpectrumBox(mesh).points())
     charges = {(8, 12, 7): -0.7, (0, 1, 0): 1.1, (4, 3, 1): 0.25}

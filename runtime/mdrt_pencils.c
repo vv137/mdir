@@ -16,6 +16,7 @@ extern void mdrtDistPhase(int64_t);
 #include <string.h>
 
 struct PmePencils {
+  int gx, gy; /* Physical grid when each local tile is a union of pencils. */
   int n[3], px, py, rank, peers, mixed;
   rfft_plan rz;
   cfft_plan cy, cx;
@@ -92,6 +93,15 @@ static struct PmeBox bounds(const struct PmePencils *p, int axis, int rank) {
     return b;
   memcpy(b.hi, p->n, sizeof b.hi);
   b.hi[2] = p->n[2] / 2 + 1;
+  /* Physical rank order is x-fastest. Subdivide each physical x/y tile
+     among its z ranks using the same permutation for every FFT axis. */
+  if (p->gx) {
+    int z = rank / (p->gx * p->gy);
+    int tilesX = p->px / p->gx, tilesY = p->py / p->gy;
+    int x = (rank % p->gx) * tilesX + z % tilesX;
+    int y = ((rank / p->gx) % p->gy) * tilesY + z / tilesX;
+    rank = x * p->py + y;
+  }
   cut(&b, axis == 0 ? 1 : 0, p->px, rank / p->py);
   cut(&b, axis == 2 ? 1 : 2, p->py, rank % p->py);
   return b;
@@ -204,8 +214,9 @@ static void transpose(struct PmePencils *p, int from, int to, double *src,
 #endif
 }
 
-struct PmePencils *mdrtPmePencils(int nx, int ny, int nz, int px, int py,
-                                  int order, int mpi, int mixed) {
+struct PmePencils *mdrtPmeSpatialPencils(int nx, int ny, int nz, int px, int py,
+                                         int order, int mpi, int mixed,
+                                         int64_t gx, int64_t gy, int64_t gz) {
   struct PmePencils *p = allocate(1, sizeof *p);
   p->peers = 1;
   p->mixed = mixed;
@@ -229,6 +240,11 @@ struct PmePencils *mdrtPmePencils(int nx, int ny, int nz, int px, int py,
   p->n[2] = nz;
   p->px = px;
   p->py = py;
+  if (gx > 0 && gy > 0 && gz > 0 && px % gx == 0 && py % gy == 0 &&
+      px * py == p->peers && (px / gx) * (py / gy) == gz) {
+    p->gx = gx;
+    p->gy = gy;
+  }
   int largest = 0;
   for (int a = 0; a < 3; ++a) {
     int points = volume(bounds(p, a, p->rank));
@@ -243,6 +259,11 @@ struct PmePencils *mdrtPmePencils(int nx, int ny, int nz, int px, int py,
   p->schedule = allocate(p->peers, 4 * sizeof(int));
   acquirePlans(p);
   return p;
+}
+
+struct PmePencils *mdrtPmePencils(int nx, int ny, int nz, int px, int py,
+                                  int order, int mpi, int mixed) {
+  return mdrtPmeSpatialPencils(nx, ny, nz, px, py, order, mpi, mixed, 0, 0, 0);
 }
 
 /* pocketfft performs a line in binary64. Ordinary CPU PME rounds on storing

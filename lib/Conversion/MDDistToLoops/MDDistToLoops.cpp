@@ -980,7 +980,10 @@ LogicalResult Lowering::lowerMesh(MeshOp op) {
   for (int64_t n : {int64_t(op.getOrder()), meshX, meshY, int64_t(mpi), int64_t(fixedPoint), int64_t(meshMixed)})
     args.push_back(index(b,n));
   args.push_back(index(b, parallelDomains));
-  auto solve = declare("mdrtDistPME",
+  if (mpi)
+    for (int64_t n : decomposition.getGrid())
+      args.push_back(index(b, n));
+  auto solve = declare(mpi ? "mdrtDistSpatialPME" : "mdrtDistPME",
       b.getFunctionType(ValueRange(args).getTypes(), {}), true);
   for (unsigned i : {0u, 3u, 4u, 5u})
     solve.setArgAttr(i, "mdrt.read_only", b.getUnitAttr());

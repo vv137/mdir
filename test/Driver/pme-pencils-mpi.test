@@ -2,3 +2,4 @@
 # RUN: %mpiexec -n 2 %python %S/Inputs/pme_pencils.py %mdrt 1 2 1
 # RUN: %mpiexec -n 2 %python %S/Inputs/pme_pencils.py %mdrt 2 1 1
 # RUN: %mpiexec -n 2 %python %S/Inputs/pme_pencils.py %mdrt 1 1 1
+# RUN: %mpiexec -n 4 %python %S/Inputs/pme_pencils.py %mdrt 2 2 1 2 1 2

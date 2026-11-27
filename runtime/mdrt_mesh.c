@@ -641,14 +641,14 @@ static void spectrum(const int n[3], const double box[3], struct PmeBox b,
   free(planeWords);
   free(planeSums);
 }
-void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
+void _mlir_ciface_mdrtDistSpatialPME(struct Rows *rows, int64_t first, int64_t past,
                               struct Field *x, struct Field *q, struct Table *t,
                               struct Field *f, struct Results *result,
                               double lx, double ly, double lz, double beta,
                               double coulomb, int64_t nx, int64_t ny,
                               int64_t nz, int64_t order, int64_t px, int64_t py,
                               int64_t mpi, int64_t fixed, int64_t mixed,
-                              int64_t threaded) {
+                              int64_t threaded, int64_t gx, int64_t gy, int64_t gz) {
   if (nx < 1 || ny < 1 || nz < 1 || nx > INT_MAX || ny > INT_MAX ||
       nz > INT_MAX || nx * ny > INT64_MAX / nz || order < 3 || order > 8)
     fail("unsupported PME mesh size or assignment order");
@@ -662,7 +662,7 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
   }
 #endif
   struct PmePencils *mesh =
-      mdrtPmePencils(nx, ny, nz, px, py, order, mpi, mixed);
+      mdrtPmeSpatialPencils(nx, ny, nz, px, py, order, mpi, mixed, gx, gy, gz);
   struct PmeBox realBox = mdrtPmeRealBox(mesh),
                 modes = mdrtPmeSpectrumBox(mesh);
   mdrtDistPhase(DistSpread);
@@ -822,4 +822,16 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
   free(e.domains);
   free(e.counts);
   mdrtPmeFreePencils(mesh);
+}
+
+void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
+                              struct Field *x, struct Field *q, struct Table *t,
+                              struct Field *f, struct Results *result,
+                              double lx, double ly, double lz, double beta,
+                              double coulomb, int64_t nx, int64_t ny,
+                              int64_t nz, int64_t order, int64_t px, int64_t py,
+                              int64_t mpi, int64_t fixed, int64_t mixed,
+                              int64_t threaded) {
+  _mlir_ciface_mdrtDistSpatialPME(rows, first, past, x, q, t, f, result, lx, ly, lz,
+      beta, coulomb, nx, ny, nz, order, px, py, mpi, fixed, mixed, threaded, 0, 0, 0);
 }

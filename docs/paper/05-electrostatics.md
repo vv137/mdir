@@ -1561,3 +1561,14 @@ then require communication to repartition their fields. In a Cellulose
 trace the remote native-to-owned traffic fell from 47.14 to 8.57 MB per
 step and owned-to-native traffic from 26.78 to 8.57 MB per step. The
 pair traversal and PME keep their spatial ownership.
+
+A real pencil spans the z dimension. When pencils tile the x/y face of
+each particle domain exactly, ranks at successive z positions can own
+pencils in that face. The Cellulose single-node decomposition then keeps
+the full mesh interior on its particle owner, up from one quarter. For
+STMV two particle domains share the same face and the local fraction
+rises from one quarter to one half. Stencil halos still cross faces.
+In paired mixed-precision runs the off-rank mesh overlap payload per
+step fell from 60.52 to 10.90 MB for Cellulose and from 166.77 to
+118.83 MB for STMV. Mean PME time per rank fell from 18.53 to 16.06 ms
+and from 50.09 to 46.02 ms, respectively.

@@ -300,3 +300,9 @@ member when each rank has one domain. Ungrouped atoms keep their native
 owner. A physical halo, migration or other spatial use requires spatial
 ownership. The original identity carries every solved field back to its
 caller, including members crossing an identity interval boundary.
+
+When each rank owns one spatial domain and the real PME pencil grid
+subdivides the physical x and y grid, assign each column of physical z
+ranks the real pencils inside its x/y tile. Apply the same rank
+permutation to all three FFT layouts. Partly occupied or incompatible
+pencil grids keep their original assignment.
