@@ -750,6 +750,8 @@ mdir::tool::resolveAutoTowers(const Control &control, const System &system) {
     return no("the deterministic mode");
   if (!control.periodic)
     return no("the cell is not periodic");
+  if (system.tilt[0] != 0.0 || system.tilt[1] != 0.0 || system.tilt[2] != 0.0)
+    return no("a triclinic cell, not measured with TOWERS");
   if (control.minimize)
     return no("a minimization");
   if (control.frames || control.segments)

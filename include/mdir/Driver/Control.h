@@ -234,6 +234,13 @@ struct TowersSetup {
 
 /// What a control file says. Lengths are in Å, energies in kcal/mol, times
 /// in ps, masses in amu, and temperatures in K.
+/// The default `[pme] tolerance` of the Gaussian kernel, erfc(β r_c): at
+/// the default grid (1.2 Å) it gave 0.62 to 0.68 of the force error of
+/// 10⁻⁵ on six systems at the same cost (D[best-defaults], #927). The
+/// prolate kernel's tolerance is ψ₀ᶜ(1) and keeps its default (D266).
+constexpr double kGaussianPMETolerance = 5.0e-5;
+constexpr double kProlatePMETolerance = 1.0e-5;
+
 struct Control {
   // [input]
   std::string pdbFile;
@@ -620,7 +627,7 @@ struct Control {
   /// is shifted to 0 at the cutoff.
   bool pme = false;
   double pmeAlpha = 0.0;
-  double pmeAlphaTolerance = 1.0e-5;
+  double pmeAlphaTolerance = kGaussianPMETolerance;
   int64_t pmeGrid[3] = {0, 0, 0};
   double pmeMaxSpacing = 1.2;
   int64_t pmeOrder = 4;

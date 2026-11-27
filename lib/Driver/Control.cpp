@@ -2460,6 +2460,9 @@ Error Reader::readPME(const toml::table &table) {
   // The prolate kernel takes 6 points by default, and the spacing of the
   // grid from its bandwidth.
   if (prolate) {
+    // The prolate tolerance is ψ₀ᶜ(1), not erfc(β r_c): its own default
+    // (D266), which D[best-defaults] does not change.
+    control.pmeAlphaTolerance = kProlatePMETolerance;
     if (Error error = readCount(table, "continuity", control.pmeContinuity, 0))
       return error;
     if (Error error = readCount(table, "basis_terms", control.pmeBasisTerms, 0))
@@ -3860,9 +3863,10 @@ coulomb_modifier  = "POTENTIAL_SHIFT"  # NONE, POTENTIAL_SHIFT: the direct
 # kernel      = "GAUSSIAN"      # GAUSSIAN, PROLATE (ESP; fewer grid
                                 # points, slower on one GPU at the usual
                                 # force errors)
-# tolerance   = 1.0e-5          # erfc(β r_c), which gives β; PROLATE:
-                                # ψ(1), which gives c (force error ~1e-5,
-                                # where the Gaussian default gives ~1e-3)
+# tolerance   = 5.0e-5          # erfc(β r_c), which gives β (force
+                                # error 5e-4 to 9e-4); PROLATE: ψ(1),
+                                # which gives c (1e-5 by default, force
+                                # error ~1e-5)
 # beta        = 0.35            # β (1/Å), instead (GAUSSIAN)
 # bandwidth   = 14.47           # c, instead (PROLATE)
 # window_bandwidth = 15.2       # c1 of the window (PROLATE; from ε/2)

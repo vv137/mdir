@@ -598,12 +598,13 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   }
   // Back to the rule of D261 where the TOWERS preflight refuses an input
   // that AUTO took for it.
-  auto fallBackFromTowers = [&](std::string why) {
+  auto fallBackFromTowers = [&](std::string why,
+                                StringRef stage = "refused at preflight: ") {
     control->neighborStructure = listRule.structure;
     control->pairlistDistance = listRule.pairlist;
     control->prunedDistance = listRule.pruned;
     control->neighborStructureReason = listRule.reason;
-    control->towersAutoReason = "refused at preflight: " + why;
+    control->towersAutoReason = (stage + why).str();
     traversalChoice["towers_refusal"] = std::move(why);
     autoTowers = false;
   };
@@ -791,6 +792,18 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   }
   StringRef previousTowersHeight =
       isRestart ? StringRef(checkpoint->towersCellHeight) : StringRef();
+  // A checkpoint that a list structure wrote is continued on that rule:
+  // the run keeps its stored forces and barostat state, as before
+  // (D[best-defaults]).
+  if (autoTowers && isRestart && previousTowersHeight.empty()) {
+    fallBackFromTowers("the checkpoint was written by a list structure",
+                       "not taken: ");
+    graphRefusal = control->stepGraphRefusal(system->numConstraints);
+    if (options.segments)
+      graphRefusal = "GRAPH does not support segmented execution";
+    if (control->stepGraph == "GRAPH" && !graphRefusal.empty())
+      return fail("step_graph: " + graphRefusal);
+  }
   bool usesTowers = control->neighborStructure == NeighborStructure::Towers;
   llvm::json::Object resolvedChoices;
   llvm::json::Value towersShapeReport = nullptr;

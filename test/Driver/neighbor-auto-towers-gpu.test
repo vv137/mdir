@@ -3,7 +3,8 @@
 # argon on a lattice of 8,000 atoms takes TOWERS with the derived launch,
 # without the timed trial, and its energies are those of TOWERS given with
 # the trial's launch: at a fixed cell height every launch gives the same
-# words (D428). Elsewhere it takes the structure of D261, the matrix, and
+# words (D428); its own compile cache keeps it from a trial that the
+# explicit run stores. Elsewhere it takes the structure of D261, the matrix, and
 # its energies are those of MATRIX given. 1,728 atoms stay on the matrix
 # on every device. An input that the rule admits but the TOWERS preflight
 # refuses (3,375 atoms with a cutoff of 20 Å in a cell of 57 Å: fewer than
@@ -22,7 +23,7 @@
 # RUN: sed -e 's|^precision = "MIXED"|precision = "MIXED"\nneighbor_structure = "MATRIX"|' -e '/^manifest/d' %t/auto.toml > %t/matrix.toml
 # RUN: sed -e 's|big.pdb|small.pdb|' -e 's|76.0|45.6|g' -e '/^manifest/d' %t/auto.toml > %t/small.toml
 # RUN: sed -e 's|big.pdb|narrow.pdb|' -e 's|76.0|57.0|g' -e 's|^cutoff = 9.0|cutoff = 20.0|' -e '/^manifest/d' %t/auto.toml > %t/narrow.toml
-# RUN: cd %t && mdir run auto.toml > auto.out
+# RUN: cd %t && env MDIR_COMPILE_CACHE_DIR=%t/cache-auto mdir run auto.toml > auto.out
 # RUN: cd %t && mdir run towers.toml > towers.out
 # RUN: cd %t && mdir run matrix.toml > matrix.out
 # RUN: cd %t && mdir run small.toml | FileCheck %s --check-prefix=SMALL
@@ -42,14 +43,14 @@
 # RUN: %python %S/Inputs/manifest_schema.py %S/../../docs/run-manifest.schema.json %t/auto.jsonl | FileCheck %s --check-prefix=SCHEMA
 
 # AUTO: MDIR: AUTO traversal: TOWERS {{taken: 8000 particles, at least [0-9]+ on sm_89|not taken: TOWERS was not measured as the choice of AUTO on sm_[0-9]+}}
-# AUTO: MDIR: neighbor structure: {{TOWERS \(AUTO: 8000 particles, at least [0-9]+ on sm_89 \(D\[best-defaults\]\)\)|the matrix with the reach 10.5 Ang \(AUTO: 8000 particles, fewer than [0-9]+\)}}
+# AUTO: MDIR: neighbor structure: {{TOWERS \(AUTO: 8000 particles, at least [0-9]+ on sm_89 .*|the matrix with the reach 10.5 Ang \(AUTO: 8000 particles, fewer than [0-9]+\)}}
 # SMALL: MDIR: AUTO traversal: TOWERS not taken: {{1728 particles, fewer than [0-9]+ on sm_89|TOWERS was not measured as the choice of AUTO on sm_[0-9]+}}
 # SMALL: MDIR: neighbor structure: the matrix
 # NARROW: MDIR: AUTO traversal: TOWERS {{refused at preflight: towers_shape: cell height is unsupported for this box and cutoff|not taken: TOWERS was not measured as the choice of AUTO on sm_[0-9]+}}
 # NARROW: MDIR: neighbor structure: the matrix with the reach 21.5 Ang (AUTO: 3375 particles, fewer than {{[0-9]+}})
 # NARROWCHECK: neighbors: matrix, reach 21.5 Ang (AUTO: 3375 particles, fewer than {{[0-9]+}})
 # NARROWCHECK-NEXT: AUTO traversal: TOWERS {{refused at preflight: towers_shape: cell height is unsupported for this box and cutoff|not taken: TOWERS was not measured as the choice of AUTO on sm_[0-9]+}}
-# MANIFEST: rule AUTO {{towers|matrix}} | {{taken|not taken}}: {{.*}} | sm_{{[0-9]+}} {{D\[best-defaults\]|D261}}
+# MANIFEST: rule AUTO {{towers|matrix}} | {{taken|not taken}}: {{.*}} | sm_{{[0-9]+}} {{D.best-defaults.|D261}}
 # SCHEMA: valid
 
 #--- run.toml

@@ -979,6 +979,7 @@ PYBIND11_MODULE(_core, m) {
     }
     system->value.pmeOrderGiven = system->given.count("pme_order") != 0;
     system->value.pmeSpacingGiven = system->given.count("pme_spacing") != 0;
+    system->value.pmeToleranceGiven = system->given.count("pme_tolerance") != 0;
     auto prepared = unwrap(model::prepare(system->value, state->value, integrator->value,
                                           ensemble->value, execution->value, schedule->value));
     // The reaches that are `mdir.Auto` (D281): the defaults or the
