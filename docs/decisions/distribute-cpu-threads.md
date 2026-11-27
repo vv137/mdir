@@ -216,3 +216,8 @@ Each reported native particle sum gathers one value per rank for each
 observable component in a single collective. The fold still visits
 ranks in communicator order, including the checked wide-word addition
 for a deterministic observable.
+
+The driver distributes an immutable field without a periodic image once
+per field and layout within a block. When both operands are invariant
+over an enclosing step loop, their owned rows are available before
+that loop. Distributions of evolving fields still follow their inputs.

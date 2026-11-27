@@ -3408,6 +3408,35 @@ static void retainConstraintLayouts(scf::ForOp root) {
   }
 }
 
+// A non-image distribution depends only on the immutable native field
+// and the current layout. Constraint projections often request the same
+// masses on a layout retained for the whole driver loop.
+static void shareOwnedFields(scf::ForOp root) {
+  SmallVector<DistributeOp> fields;
+  root.walk([&](DistributeOp op) {
+    if (!op.getImage() && op->getAttrs().empty()) fields.push_back(op);
+  });
+  using Key = std::tuple<Block *,Value,Value,Type>;
+  llvm::DenseMap<Key,DistributeOp> available;
+  for (auto op : fields) {
+    Operation *at = op;
+    while (auto loop = dyn_cast<scf::ForOp>(at->getParentOp())) {
+      if (!loop.isDefinedOutsideOfLoop(op.getField()) ||
+          !loop.isDefinedOutsideOfLoop(op.getLayout())) break;
+      at = loop;
+      if (loop == root) break;
+    }
+    Key key{at->getBlock(),op.getField(),op.getLayout(),op.getResult().getType()};
+    if (auto prior = available.lookup(key)) {
+      op.getResult().replaceAllUsesWith(prior.getResult());
+      op.erase();
+    } else {
+      if (at != op.getOperation()) op->moveBefore(at);
+      available[key] = op;
+    }
+  }
+}
+
 // The constrained native step carries ordinary particle fields in scf.for.
 // Give its maps, kicks and drifts the contiguous identity interval on this
 // rank. The separate particle-set symbol also gives storage assignment the
@@ -3625,6 +3654,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
     });
     for (auto root : roots) {
       if (root.getNumRegionIterArgs() == 3) retainConstraintLayouts(root);
+      shareOwnedFields(root);
       shardDriverLoop(root);
     }
     collect();

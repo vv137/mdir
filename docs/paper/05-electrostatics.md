@@ -1459,3 +1459,8 @@ A scalar component of a sharded particle observable previously required
 one broadcast per rank. An all-gather delivers the same rank-ordered
 sequence in one collective. Its floating and checked integer folds keep
 the original addition order on every rank.
+
+Successive constraint projections can use the same owned mass field on
+a retained layout. Its native-to-spatial permutation takes place outside
+the step loop when the field and layout are invariant. Within a step,
+equal field and layout operands also share the resulting owned rows.
