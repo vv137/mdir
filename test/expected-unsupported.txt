@@ -54,6 +54,7 @@ without compute-sanitizer: Sanitizer/segments-writer-gpu.test
 without compute-sanitizer: Sanitizer/squared-distance-switch-gpu.test
 without compute-sanitizer: Sanitizer/stage-body-scalars-gpu.test
 without compute-sanitizer: Sanitizer/target-gpu.test
+without compute-sanitizer: Sanitizer/term-streams-gpu.test
 without compute-sanitizer: Sanitizer/triclinic-gpu.test
 without compute-sanitizer: Sanitizer/tuple-block-sums-gpu.test
 
