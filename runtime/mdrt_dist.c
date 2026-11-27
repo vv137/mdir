@@ -709,6 +709,15 @@ static inline double distanceToRow(const double center[3], struct Memref2D *x, i
   return r2;
 }
 
+static inline int withinMidpointRange(double xi, double xj, double a, double b,
+                                      struct MidpointRange range) {
+  /* The face bounds match the rounded division of the reference midpoint.
+     Evaluate that midpoint with the original subtraction order. */
+  double dx = (xi-xj)-(b-a);
+  double midpoint = xi-0.5*dx;
+  return midpoint >= range.lower && midpoint < range.upper;
+}
+
 /* An omitted stable-owner neighbor cannot enter the physical cutoff while
    each explicit position has moved by at most half the inner skin. */
 static int refreshPruneReference(struct DomainMatrix *m, struct Memref2D *x,
@@ -866,6 +875,14 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
      reads. Leave a guard shell for rounding the displacement, products,
      and sum to binary32. The kernel still applies its own cutoff. */
   int refresh = buffered && refreshPruneReference(m,packed,innerSkin,rebuild);
+  const int64_t *images = m->rows > n ? h->image+3*(d-h->idBase)*h->capacity : NULL;
+  const double *ownedRows = n ? at3(owned,d,0,0) : NULL;
+  const double *ghostRows = images ? at3(ghost,d,0,0) : NULL;
+  const int64_t ownedRowStride = n ? owned->strides[1] : 0;
+  const int64_t ghostRowStride = images ? ghost->strides[1] : 0;
+  const int64_t ownedStride = n ? owned->strides[2] : 0;
+  const int64_t ghostStride = images ? ghost->strides[2] : 0;
+  const int64_t primaryImage[3] = {0,0,0};
   #pragma omp parallel for schedule(static,8) if(m->centers > 256)
   for (int64_t i = 0; i < m->centers; ++i) {
     int32_t *selected = (int32_t *)dst.aligned+i*dst.strides[0];
@@ -888,11 +905,13 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
         continue;
       }
     }
-    int64_t image[3] = {0,0,0};
+    const int64_t *image = i<n ? primaryImage : images+3*(i-n);
+    const double *position = i<n ? ownedRows+i*ownedRowStride :
+        ghostRows+(i-n)*ghostRowStride;
+    int64_t stride = i<n ? ownedStride : ghostStride;
     double xi[3], a[3];
     for (int c = 0; c < 3; ++c) {
-      if (i >= n) image[c] = h->image[3*((d-h->idBase)*h->capacity+i-n)+c];
-      xi[c] = i<n ? *at3(owned,d,i,c) : *at3(ghost,d,i-n,c);
+      xi[c] = position[c*stride];
       a[c] = image[c]*l->edges[c];
     }
     struct MidpointRange ranges[3];
@@ -907,18 +926,21 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
         selected[count++] = ~j;
         continue;
       }
-      int keep = 1;
-      for (int c = 0; c < 3; ++c) {
-        double xj = j<n ? *at3(owned,d,j,c) : *at3(ghost,d,j-n,c);
-        double b = j<n ? 0.0 : h->image[3*((d-h->idBase)*h->capacity+j-n)+c]*l->edges[c];
-        double dx = (xi[c]-xj)-(b-a[c]);
-        double midpoint = xi[c]-0.5*dx;
-        if (!(midpoint >= ranges[c].lower && midpoint < ranges[c].upper)) {
-          keep = 0;
-          break;
-        }
+      if (j < n) {
+        const double *xj = ownedRows+j*ownedRowStride;
+        if (withinMidpointRange(xi[0],xj[0],a[0],0.0,ranges[0]) &&
+            withinMidpointRange(xi[1],xj[ownedStride],a[1],0.0,ranges[1]) &&
+            withinMidpointRange(xi[2],xj[2*ownedStride],a[2],0.0,ranges[2]))
+          selected[count++] = j;
+      } else {
+        int64_t g = j-n;
+        const double *xj = ghostRows+g*ghostRowStride;
+        const int64_t *translation = images+3*g;
+        if (withinMidpointRange(xi[0],xj[0],a[0],translation[0]*l->edges[0],ranges[0]) &&
+            withinMidpointRange(xi[1],xj[ghostStride],a[1],translation[1]*l->edges[1],ranges[1]) &&
+            withinMidpointRange(xi[2],xj[2*ghostStride],a[2],translation[2]*l->edges[2],ranges[2]))
+          selected[count++] = j;
       }
-      if (keep) selected[count++] = j;
     }
     m->selectedCounts[i] = count;
   }
@@ -3401,8 +3423,19 @@ int64_t _mlir_ciface_mdrtDistScheduleTuples(int64_t handle, int64_t groups, int6
   int *counts = calloc(5*(size_t)peers,sizeof *counts);
   if (!counts) fail("out of memory counting local tuples");
   int *ns = counts, *nr = ns+peers, *os = nr+peers, *or = os+peers, *cursor = or+peers;
-  for (int64_t i = 0; i < count; ++i)
-    ++ns[mdrtMPIOwner(l->domains,rows[i*recordWidth])];
+  /* Resolve the rank once per domain when many tuples share the domains.
+     Reuse it for both counting and stable packet packing. */
+  int *domainPeers = NULL;
+  if (l->domains < count) {
+    domainPeers = malloc(l->domains*sizeof *domainPeers);
+    if (!domainPeers) fail("out of memory looking up tuple destinations");
+    for (int64_t d = 0; d < l->domains; ++d)
+      domainPeers[d] = mdrtMPIOwner(l->domains,d);
+  }
+  for (int64_t i = 0; i < count; ++i) {
+    int64_t d = rows[i*recordWidth];
+    ++ns[domainPeers ? domainPeers[d] : mdrtMPIOwner(l->domains,d)];
+  }
   /* Communicate the format decision with the counts. Complement zero
      counts too, so every rank sees a request for full-width images. */
   if (!compact)
@@ -3428,10 +3461,10 @@ int64_t _mlir_ciface_mdrtDistScheduleTuples(int64_t handle, int64_t groups, int6
   int64_t *in = malloc((receives ? (size_t)receives : 1)*packetWidth*sizeof *in);
   if (!out || !in) fail("out of memory routing tuple rows");
   for (int64_t i = 0; i < count; ++i) {
-    int dest = mdrtMPIOwner(l->domains,rows[i*recordWidth]);
+    const int64_t *src = rows+i*recordWidth;
+    int dest = domainPeers ? domainPeers[src[0]] : mdrtMPIOwner(l->domains,src[0]);
     int64_t *record = out+packetWidth*cursor[dest]++;
     record[0] = first+i;
-    const int64_t *src = rows+i*recordWidth;
     if (compact) {
       record[1] = src[0];
       for (int64_t a = 0; a < width-1; ++a) {
@@ -3443,6 +3476,7 @@ int64_t _mlir_ciface_mdrtDistScheduleTuples(int64_t handle, int64_t groups, int6
       memcpy(record+1,src,recordWidth*sizeof *rows);
     }
   }
+  free(domainPeers);
   mdrtMPIExchangeRecords(out,ns,os,in,nr,or,packetWidth*sizeof *in);
   free(counts);
   free(rows);

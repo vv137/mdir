@@ -145,13 +145,17 @@ is invariant. Remote identities are sorted and requested once per peer.
 On each geometry evaluation the peer returns one site per requested identity.
 Workers read the requested sites through their planned slots and resolve
 the received midpoint records into disjoint tuple rows. Parameter and force order are preserved.
+When a rank has more tuples than domains, it resolves each domain's
+destination rank once and reuses the mapping to count and pack records.
 
 In a floating midpoint pair loop, neighbors whose midpoint ownership is
 stable over the Verlet bounds form a prefix of each row. The prefix uses
 a smaller Verlet skin, one quarter of the list skin. A position check
 refreshes it before either endpoint can move more than half that smaller
 skin. Neighbors with ambiguous midpoint ownership are tested each
-evaluation. The force kernel applies its physical cutoff to every
+evaluation. The filter selects the owned row or explicit image once
+for a candidate and checks the three axes in their original order.
+The force kernel applies its physical cutoff to every
 retained pair. Both radial tests include the binary32 roundoff guard.
 Deterministic execution preserves the original row and lane order.
 
