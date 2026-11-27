@@ -1448,12 +1448,25 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       (grid[0] == grid[1] && grid[1] == grid[2] &&
        (grid[0] == 40 || grid[0] == 64)) ||
       (grid[0] == 144 && grid[1] == 84 && grid[2] == 80);
+  bool measuredCuFFT = false;
+  if (op.getProlate()) {
+    // D[prolate-axis-fft]. At setup the driver has already checked the
+    // target and density. Qualify the assignment and grid together: only
+    // the four-point B-spline window was timed; the prolate window keeps
+    // cuFFT under AUTO.
+    bool cubic = op.getSplineAssignment() && op.getOrder() == 4;
+    measuredMesh = cubic && (grid == ArrayRef<int64_t>({30, 30, 30}) ||
+                             grid == ArrayRef<int64_t>({48, 48, 48}) ||
+                             grid == ArrayRef<int64_t>({105, 60, 60}));
+    measuredCuFFT = cubic && grid == ArrayRef<int64_t>({189, 90, 90});
+  }
   bool requestAxis = axisFFT == "on" || (axisFFT == "auto" && measuredMesh);
   bool pitched =
-      requestAxis && onDevice && gridType.isF32() &&
+      requestAxis && onDevice && (gridType.isF32() || op.getProlate()) &&
       cast<MemRefType>(positions.getType()).getElementType().isF64() &&
-      op.getOrder() == 4 && !fixedOrder && !op.getPotential() && !op.getP3m() &&
-      !op.getProlate() && !op.getDispersion() && kernels::supportsAxisFFT(grid);
+      (op.getOrder() == 4 || op.getProlate()) && !fixedOrder &&
+      !op.getPotential() && !op.getP3m() && !op.getDispersion() &&
+      kernels::supportsAxisFFT(grid);
   if (pitched)
     half = grid[0] * grid[1] * kernels::axisFFTPitch(grid[2]);
   SmallVector<Value> scratch = {allocate(IntegerType::get(context, 64), points),
@@ -1558,9 +1571,11 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       op.getPotentialAttr(), op.getProlateAttr(), op.getSplineAssignmentAttr(),
       op.getP3mAttr(),
       op.getGatherAllAttr(), onDevice ? op.getScatterAttr() : ScatterAttr());
-  if (axisFFT != "off" && onDevice)
+  if (onDevice && (op.getProlate() || axisFFT != "off"))
     created->setAttr("md_exec.fft_requested",
                      scope.builder.getStringAttr(axisFFT));
+  if (axisFFT == "auto" && measuredCuFFT)
+    created->setAttr("md_exec.fft_measured_cufft", scope.builder.getUnitAttr());
   if (pitched)
     created->setAttr("md_exec.fft_pitch", scope.builder.getI64IntegerAttr(
                                               kernels::axisFFTPitch(grid[2])));
@@ -2721,8 +2736,10 @@ public:
           << "expected the memory 'host' or 'device', got '" << memory << "'";
       return signalPassFailure();
     }
-    if (axisFFT != "on" && axisFFT != "off" && axisFFT != "auto") {
-      getOperation().emitError("expected pme-axis-fft to be auto, on, or off");
+    if (axisFFT != "on" && axisFFT != "off" && axisFFT != "auto" &&
+        axisFFT != "auto-cufft") {
+      getOperation().emitError(
+          "expected pme-axis-fft to be auto, auto-cufft, on, or off");
       return signalPassFailure();
     }
     if (tables != "f64" && tables != "f32") {

@@ -5834,125 +5834,6 @@ static Value getBins(md_exec::ReciprocalOp op) {
   return bins;
 }
 
-/// The reciprocal sum of the prolate kernel on a device (D266):
-/// the coefficients of the table into the type of the grid, the places, the
-/// spreading (into bricks, or in fixed point where the spreading is
-/// `fixed_order` (D301) and in f64), the transforms, the
-/// factors of the edges and the product with
-/// the influence function, and the gathering or the potential. With
-/// `listed`, the spreading takes the listed particles alone, and so does
-/// the gathering unless `gather_all` (D262); the places are those of every
-/// particle.
-static LogicalResult lowerProlate(
-    md_exec::ReciprocalOp op, Value listed, OpBuilder &builder,
-    llvm::function_ref<func::FuncOp(StringRef)> instance,
-    llvm::function_ref<func::FuncOp(StringRef, FunctionType)> declare,
-    bool fixedPoint) {
-  Location loc = op.getLoc();
-  ArrayRef<int64_t> grid = op.getGrid();
-  auto index = [&](int64_t v) {
-    return arith::ConstantIndexOp::create(builder, loc, v).getResult();
-  };
-  Value k1 = index(grid[0]), k2 = index(grid[1]), k3 = index(grid[2]);
-  Value beta = arith::ConstantOp::create(builder, loc,
-                                         builder.getF64FloatAttr(0.0));
-  Value coulomb = arith::ConstantOp::create(
-      builder, loc,
-      builder.getF64FloatAttr(op.getCoulomb().convertToDouble()));
-  Value box = op.getCellMutable().get();
-  Value positions = op.getPositions(), charges = op.getCharges();
-  Value fixed = op.getScratch()[0], real = op.getScratch()[1],
-        complex = op.getScratch()[2], rows = op.getScratch()[3];
-  if (op.getScratch().size() <= 5)
-    return op->emitOpError()
-           << "expected buffers for the places and the tables";
-  Value places = op.getScratch()[4], tables = op.getScratch()[5];
-  Value bricks = getBricks(op);
-  func::CallOp::create(builder, loc,
-                       instance("mdrt_gpu_pme_prolate_coefficients"),
-                       ValueRange{op.getModuli(), tables, k1, k2, k3});
-  func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_prolate_places"),
-                       ValueRange{positions, box, places, k1, k2, k3});
-  // The list follows the charges in the kernels that take it.
-  auto withList = [&](ValueRange values) {
-    SmallVector<Value> operands(values);
-    if (listed)
-      operands.insert(operands.begin() + 1, listed);
-    return operands;
-  };
-  std::string spreadTag = listed ? "_listed" : "";
-  // Into tiles (D282): the bins of the PME emitter from the places,
-  // then the window into the tiles.
-  if (int64_t tiles = getTileEdge(op)) {
-    std::string edge = std::to_string(tiles);
-    Value bins = getBins(op);
-    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_bin" + edge + spreadTag),
-                         withList({charges, places, bins, real, k1, k2, k3}));
-    func::CallOp::create(
-        builder, loc, instance("mdrt_gpu_pme_prolate_spread_tiles" + edge),
-        ValueRange{charges, places, tables, bins, real, k1, k2, k3});
-  } else if (fixedPoint || !bricks) {
-    func::CallOp::create(
-        builder, loc,
-        instance("mdrt_gpu_pme_prolate_spread_fixed" + spreadTag),
-        withList({charges, places, tables, fixed, k1, k2, k3}));
-    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_real"),
-                         ValueRange{fixed, real});
-  } else {
-    func::CallOp::create(
-        builder, loc,
-        instance("mdrt_gpu_pme_prolate_spread_bricks" + spreadTag),
-        withList({charges, places, tables, bricks, real, k1, k2, k3}));
-  }
-  Type wide = builder.getI64Type();
-  SmallVector<Value> sizes;
-  for (int64_t points : grid)
-    sizes.push_back(arith::ConstantOp::create(
-        builder, loc, wide, builder.getI64IntegerAttr(points)));
-  Type buffer = real.getType();
-  FunctionType transform =
-      builder.getFunctionType({buffer, buffer, wide, wide, wide}, {});
-  bool narrow = cast<MemRefType>(buffer).getElementType().isF32();
-  func::FuncOp forward = declare(
-      narrow ? "mdrtCudaFFTForward3DF32" : "mdrtCudaFFTForward3D", transform);
-  func::FuncOp backward = declare(
-      narrow ? "mdrtCudaFFTBackward3DF32" : "mdrtCudaFFTBackward3D",
-      transform);
-  for (func::FuncOp function : {forward, backward})
-    function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
-  func::CallOp::create(builder, loc, forward,
-                       ValueRange{real, complex, sizes[0], sizes[1], sizes[2]});
-  func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_prolate_tables"),
-                       ValueRange{op.getModuli(), tables, box, beta, coulomb,
-                                  k1, k2, k3});
-  func::CallOp convolve;
-  if (op.getEnergy().use_empty() && op.getVirial().use_empty())
-    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_prolate_scale"),
-                         ValueRange{complex, tables, box, beta, coulomb, k1,
-                                    k2, k3});
-  else
-    convolve = func::CallOp::create(
-        builder, loc, instance("mdrt_gpu_pme_prolate_convolve"),
-        ValueRange{complex, tables, rows, box, beta, coulomb, k1, k2, k3});
-  func::CallOp::create(builder, loc, backward,
-                       ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});
-  // With `gather_all`, every particle is gathered, as without a list
-  // (D262).
-  if (op.getGatherAll())
-    listed = Value();
-  func::CallOp::create(
-      builder, loc,
-      instance(op.getPotential() ? "mdrt_gpu_pme_prolate_potential"
-               : listed          ? "mdrt_gpu_pme_prolate_gather_listed"
-                                 : "mdrt_gpu_pme_prolate_gather"),
-      withList({charges, places, tables, real, box, k1, k2, k3, op.getOut()}));
-  if (convolve) {
-    op.getEnergy().replaceAllUsesWith(convolve.getResult(0));
-    op.getVirial().replaceAllUsesWith(convolve.getResult(1));
-  }
-  return success();
-}
-
 LogicalResult Lowering::lowerLinearTransform(md_exec::LinearTransformOp op) {
   if (!isDeviceType(op.getInput().getType()) ||
       !isDeviceType(op.getOut().getType()))
@@ -5992,7 +5873,8 @@ static void recordFFTPlan(ModuleOp module, md_exec::ReciprocalOp op,
     fields.set(key, b.getStringAttr(value));
   };
   text("category", "rule");
-  text("requested", requested.getValue());
+  text("requested",
+       requested.getValue() == "auto-cufft" ? "auto" : requested.getValue());
   text("backend", generated ? "axis" : "cufft");
   text("reason", reason);
   text("evaluation", op.getEnergy().use_empty() && op.getVirial().use_empty()
@@ -6000,8 +5882,13 @@ static void recordFFTPlan(ModuleOp module, md_exec::ReciprocalOp op,
                          : "observed");
   fields.set("grid", b.getDenseI64ArrayAttr(op.getGrid()));
   if (generated) {
-    text("twiddles", "f64-rounded butterfly constants, f32 SFU cross phases");
-    text("influence", isTriclinic(op.getCellMutable().get())
+    text("twiddles",
+         cast<MemRefType>(op.getScratch()[1].getType()).getElementType().isF64()
+             ? "f64 butterfly constants and cross phases"
+             : "f64-rounded butterfly constants, f32 SFU cross phases");
+    text("influence", op.getProlate()
+                          ? "prolate radial spectrum and window deconvolution"
+                      : isTriclinic(op.getCellMutable().get())
                           ? "axis tables and triclinic Gaussian"
                           : "prepared axis tables");
     generated.walk([&](gpu::LaunchOp launch) {
@@ -6070,6 +5957,8 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // the tiles.
   auto instance = [&](StringRef name) {
     bool own = tilted && name != "mdrt_gpu_pme_real" &&
+               name != "mdrt_gpu_pme_prolate_coefficients" &&
+               !name.starts_with("mdrt_gpu_pme_prolate_spread") &&
                name != "mdrt_gpu_pme_spread_bricks" &&
                name != "mdrt_gpu_pme_spread_bricks_listed" &&
                !name.starts_with("mdrt_gpu_pme_bin") &&
@@ -6125,40 +6014,12 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                                    static_cast<bool>(listed), tiles)))
       return failure();
   }
-  if (op.getProlate() && !op.getSplineAssignment()) {
-    recordFFTPlan(module, op, "prolate window");
-    // A triclinic cell takes its own places, gathering, and influence;
-    // the coefficients and the spreading do not depend on the cell.
-    auto prolateInstance = [&](StringRef name) {
-      bool own = tilted && name != "mdrt_gpu_pme_real" &&
-                 name != "mdrt_gpu_pme_prolate_coefficients" &&
-                 !name.starts_with("mdrt_gpu_pme_prolate_spread") &&
-                 !name.starts_with("mdrt_gpu_pme_bin");
-      std::string full = own ? (name + "_triclinic").str() : name.str();
-      return cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
-          module,
-          getPMEInstanceName(full, position, charge, force, op.getOrder())));
-    };
-    if (failed(lowerProlate(
-            op, listed, builder, prolateInstance,
-            [&](StringRef name, FunctionType type) {
-              return getOrDeclare(name, type);
-            },
-            fixedPoint)))
-      return failure();
-    if (side) {
-      auto end = func::CallOp::create(
-          builder, loc,
-          getOrDeclare("mdrtSideEnd", builder.getFunctionType({}, {})),
-          ValueRange());
-      for (Operation *issued = begin->getNextNode(); issued != end;
-           issued = issued->getNextNode())
-        if (allocates(issued))
-          return op->emitOpError()
-                 << "allocates or frees memory on a second stream";
-    }
-    return success();
-  }
+  bool radial = op.getProlate();
+  bool prolateWindow = radial && !op.getSplineAssignment();
+  if (op.getScratch().size() <= 5)
+    return op->emitOpError()
+           << "expected a buffer for the factors of the influence function";
+  Value tables = op.getScratch()[5];
   // The charges in fixed point where the spreading is `fixed_order` (the
   // deterministic mode), then converted;
   // by default with floating-point atomics, straight to the grid (D84).
@@ -6168,7 +6029,43 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // gathering of order 4 as well), the binning of the particles or of the
   // entries of the list, and the tiles.
   std::string edge = std::to_string(tiles);
-  if (tiles) {
+  if (prolateWindow) {
+    func::CallOp::create(builder, loc,
+                         instance("mdrt_gpu_pme_prolate_coefficients"),
+                         ValueRange{op.getModuli(), tables, k1, k2, k3});
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_prolate_places"),
+                         ValueRange{positions, box, weights, k1, k2, k3});
+    // The list follows the charges in the kernels that take it.
+    auto withList = [&](ValueRange values) {
+      SmallVector<Value> operands(values);
+      if (listed)
+        operands.insert(operands.begin() + 1, listed);
+      return operands;
+    };
+    std::string spreadTag = listed ? "_listed" : "";
+    // Into tiles (D282): the bins of the PME emitter from the weights,
+    // then the window into the tiles.
+    if (tiles) {
+      func::CallOp::create(
+          builder, loc, instance("mdrt_gpu_pme_bin" + edge + spreadTag),
+          withList({charges, weights, bins, real, k1, k2, k3}));
+      func::CallOp::create(
+          builder, loc, instance("mdrt_gpu_pme_prolate_spread_tiles" + edge),
+          ValueRange{charges, weights, tables, bins, real, k1, k2, k3});
+    } else if (fixedPoint || !bricks) {
+      func::CallOp::create(
+          builder, loc,
+          instance("mdrt_gpu_pme_prolate_spread_fixed" + spreadTag),
+          withList({charges, weights, tables, fixed, k1, k2, k3}));
+      func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_real"),
+                           ValueRange{fixed, real});
+    } else {
+      func::CallOp::create(
+          builder, loc,
+          instance("mdrt_gpu_pme_prolate_spread_bricks" + spreadTag),
+          withList({charges, weights, tables, bricks, real, k1, k2, k3}));
+    }
+  } else if (tiles) {
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_weights"),
                          ValueRange{positions, box, weights, k1, k2, k3});
     SmallVector<Value> binned = {charges};
@@ -6225,26 +6122,29 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // Without its energy and virial, a step only scales the transform, and
   // the host need not wait for the sums of the rows.
   // The factors of the influence function along the edges first (D104).
-  if (op.getScratch().size() <= 5)
-    return op->emitOpError()
-           << "expected a buffer for the factors of the influence function";
-  Value tables = op.getScratch()[5];
   // The sum of the dispersion multiplies by an influence function of its
   // own (D162); it spreads and gathers as the Coulomb sum does.
   std::string kind = op.getDispersion() ? "_dispersion" : "";
   // Influence "P3M" (D304) takes tables and a product with the
   // virial of its own; its tables give `scale` eq. 2.28 as they are.
   std::string tabled = op.getP3m() ? "_p3m" : kind;
-  bool radial = op.getSplineAssignment();
+  std::string tableKernel = prolateWindow ? "mdrt_gpu_pme_prolate_tables"
+                            : radial      ? "mdrt_gpu_pme_radial_spline_tables"
+                                          : "mdrt_gpu_pme_tables" + tabled;
   func::CallOp convolve;
   auto pitch = op->getAttrOfType<IntegerAttr>("md_exec.fft_pitch");
   bool forceOnly = op.getEnergy().use_empty() && op.getVirial().use_empty();
   StringRef fallback;
-  if (radial)
-    fallback = "prolate radial influence";
-  else if (!narrowGrid || !position.isF64())
+  auto request = op->getAttrOfType<StringAttr>("md_exec.fft_requested");
+  if (radial && !supportsAxisFFT(grid))
+    fallback = "unsupported axis length";
+  else if (radial && request && request.getValue() == "off")
+    fallback = "cuFFT requested";
+  else if (radial && request && request.getValue() == "auto-cufft")
+    fallback = "no qualified timing for this prolate target or split";
+  else if ((!narrowGrid && !radial) || !position.isF64())
     fallback = "requires mixed precision";
-  else if (op.getOrder() != 4)
+  else if (!radial && op.getOrder() != 4)
     fallback = "unqualified spline order";
   else if (op.getDispersion() || op.getP3m())
     fallback = "requires Gaussian influence";
@@ -6258,17 +6158,23 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     fallback = "fixed-order evaluation";
   else if (!supportsAxisFFT(grid))
     fallback = "unsupported axis length";
+  else if (op->hasAttr("md_exec.fft_measured_cufft"))
+    fallback = "axis did not win both whole-step timings";
   else if (!pitch || pitch.getInt() != axisFFTPitch(grid[2]))
-    fallback = "no pitched plan for this mesh";
+    fallback = radial && request && request.getValue() == "auto"
+                   ? "no qualified prolate axis timing for this mesh"
+                   : "no pitched plan for this mesh";
   else if (!forceOnly && (grid[2] / 2 + 8) / 8 > grid[0])
     fallback = "insufficient block partial storage";
   if (fallback.empty()) {
     func::CallOp::create(
-        builder, loc, instance("mdrt_gpu_pme_tables" + tabled),
+        builder, loc, instance(tableKernel),
         ValueRange{op.getModuli(), tables, box, beta, coulomb, k1, k2, k3});
     std::string name = "mdrt_gpu_pme_axis_fft_" + std::to_string(grid[0]) +
                        "x" + std::to_string(grid[1]) + "x" +
                        std::to_string(grid[2]);
+    if (radial)
+      name += narrowGrid ? "_prolate" : "_prolate_f64";
     if (tilted)
       name += "_triclinic";
     if (!forceOnly)
@@ -6278,13 +6184,17 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
       OpBuilder stages(module.getContext());
       DevicePME emitter(stages, module, position, charge, force, op.getOrder(),
                         32);
-      fn = emitter.emitAxisFFT(name, grid, pitch.getInt(), !forceOnly, tilted);
+      fn = emitter.emitAxisFFT(name, grid, pitch.getInt(), !forceOnly, tilted,
+                               radial);
     }
-    recordFFTPlan(module, op, "supported mixed-radix mesh", fn);
+    StringRef reason = radial && request && request.getValue() == "auto"
+                           ? "prolate axis faster in both timing orders"
+                           : "supported mixed-radix mesh";
+    recordFFTPlan(module, op, reason, fn);
     SmallVector<Value> args{real, complex, tables};
     if (!forceOnly)
       args.push_back(rows);
-    if (!forceOnly || tilted)
+    if (!radial && (!forceOnly || tilted))
       args.push_back(beta);
     if (tilted)
       args.push_back(box);
@@ -6312,10 +6222,9 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
       function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
     func::CallOp::create(builder, loc, forward,
                          ValueRange{real, complex, sizes[0], sizes[1], sizes[2]});
-    func::CallOp::create(builder, loc, instance(radial ? "mdrt_gpu_pme_radial_spline_tables"
-                                         : "mdrt_gpu_pme_tables" + tabled),
-                         ValueRange{op.getModuli(), tables, box, beta, coulomb,
-                                    k1, k2, k3});
+    func::CallOp::create(
+        builder, loc, instance(tableKernel),
+        ValueRange{op.getModuli(), tables, box, beta, coulomb, k1, k2, k3});
     bool fuse = false;
 #ifdef MDIR_PME_CALLBACK
     // The callback indexes three table rows per axis with unsigned offsets.
@@ -6368,7 +6277,18 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // their neighbors in a warp (D262).
   if (op.getGatherAll())
     listed = Value();
-  if (listed && usesWeights)
+  if (prolateWindow) {
+    SmallVector<Value> operands{charges};
+    if (listed)
+      operands.push_back(listed);
+    operands.append({weights, tables, real, box, k1, k2, k3, forces});
+    func::CallOp::create(
+        builder, loc,
+        instance(op.getPotential() ? "mdrt_gpu_pme_prolate_potential"
+                 : listed          ? "mdrt_gpu_pme_prolate_gather_listed"
+                                   : "mdrt_gpu_pme_prolate_gather"),
+        operands);
+  } else if (listed && usesWeights)
     func::CallOp::create(builder, loc,
                          instance("mdrt_gpu_pme_gather_weights_listed"),
                          ValueRange{positions, charges, listed, real, box,

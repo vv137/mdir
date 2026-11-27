@@ -1094,12 +1094,34 @@ potential. Differentiation then preserves the cutoff zeros. Other basis
 sizes use the Chebyshev recurrence. The reciprocal calculation uses the cosine transform
 of this density. The default assignment for positive continuity is a four-point B-spline.
 Its deconvolution corrects the spline assignment while the radial factor
-retains the cosine transform of the constrained density. On the GPU,
-cuFFT transforms the charge grid and the radial product is applied before
-the inverse transform. The Gaussian product in the inverse-load callback
-(D433) and in the five-pass axis transform (D435) would change the
-reciprocal force for this split. Both prolate windows therefore use the
-separate radial product, including under automatic FFT selection.
+retains the cosine transform of the constrained density. For either window the
+five-pass FFT applies this same diagonal product in the X pass
+(D[prolate-axis-fft]). At fixed fractional sites a cell strain changes
+the inverse volume and the wave vector $\mathbf m$, and nothing else: the
+charge power and the window deconvolution, a product over the axes of the
+squared transform of the window at the integer index $k_a/K_a$, do not
+depend on the cell and have no strain derivative. Write
+$m=\lvert\mathbf m\rvert$, evaluate $\hat\chi$ at $2\pi r_c m$, and let
+$E_\mathbf m$ be the mode energy with its Hermitian weight, so that
+$E_\mathbf m/\hat\chi$ (the charge power, $1/V$, $1/m^2$ and the
+deconvolution) contains no $\hat\chi$. With $\partial V/\partial\varepsilon_{ab}
+= V\delta_{ab}$, $\partial m^2/\partial\varepsilon_{ab} = -2m_am_b$ and
+$\mathsf W = -\partial E/\partial\varepsilon$,
+
+$$
+W_{ab} = \sum_{\mathbf m\neq 0}\Big[E_\mathbf m\delta_{ab}
+- \frac{E_\mathbf m}{\hat\chi}\Big(2\hat\chi - \frac{d\hat\chi}{d\log m}\Big)\frac{m_am_b}{m^2}\Big],
+\qquad
+\mathrm{tr}\,\mathsf W = \sum_{\mathbf m\neq0}\Big[E_\mathbf m
++ \frac{E_\mathbf m}{\hat\chi}\,\frac{d\hat\chi}{d\log m}\Big].
+$$
+
+With $\hat\chi = e^{-\pi^2m^2/\beta^2}$, $d\hat\chi/d\log m =
+-2\pi^2m^2\hat\chi/\beta^2$ and this is the Gaussian tensor of Section 5.2.
+The X pass accumulates $E_\mathbf m$ and the second term from the charge
+power directly, so zeros of the spectrum need no division. Force-only steps
+need only the scaled coefficient for the inverse transform. On meshes
+outside the axis plan, cuFFT uses the same product in a separate kernel.
 
 **The grid of the B-spline window (D444).** The
 estimate $E_A$ of the prolate window covers neither this window nor the

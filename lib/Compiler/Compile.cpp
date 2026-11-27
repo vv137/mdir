@@ -430,7 +430,16 @@ std::string mdir::compiler::getPipeline(const Control &control,
         control.neighborStructure == NeighborStructure::Towers && program.pme &&
         !control.deterministic;
     os << "md-exec-assign-storage{memory=device";
-    if (fftChoice == "on" || (fftChoice == "auto" && measuredTarget))
+    // D[prolate-axis-fft] qualifies the radial spectrum and assignment
+    // together. The storage pass checks the mesh of each evaluation. Only
+    // this split was timed; the prolate window keeps cuFFT under AUTO.
+    bool measuredProlate = control.pmeContinuity == 2 &&
+                           control.pmeBasisTerms == 8 &&
+                           control.pmeWindow == "BSPLINE";
+    if (program.pmeProlate && fftChoice == "auto" &&
+        !(measuredTarget && measuredProlate))
+      os << " pme-axis-fft=auto-cufft";
+    else if (fftChoice == "on" || (fftChoice == "auto" && measuredTarget))
       os << " pme-axis-fft=" << fftChoice;
     os << (control.precision == Precision::Double ? "" : " tables=f32")
        << "},md-exec-assign-streams,"

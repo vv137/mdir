@@ -6,6 +6,7 @@
 #include "mdir/Conversion/ReductionEmitter.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include <cmath>
 
@@ -22,8 +23,10 @@ public:
   Axis(OpBuilder &b, Location loc, ArrayRef<int64_t> grid, int pitch,
        Value real, Value spectrum, int axis, bool inverse)
       : KernelCode(b, loc), grid(grid), pitch(pitch), real(real),
-        spectrum(spectrum), axis(axis), inverse(inverse),
-        n(axis == 2 ? grid[2] / 2 : grid[axis]), f(*factorAxis(n)) {}
+        spectrum(spectrum),
+        scalar(cast<MemRefType>(real.getType()).getElementType()), axis(axis),
+        inverse(inverse), n(axis == 2 ? grid[2] / 2 : grid[axis]),
+        f(*factorAxis(n)) {}
 
   int emit(FFTPointwise pointwise, int count, FFTPartial partial,
            bool preservesEndPlaneSymmetry) {
@@ -32,14 +35,16 @@ public:
     int lines = 8;
     const int exchange = f.first * (f.second + (f.second % 2 == 0));
     const int sharedPerLine = exchange + (z && !inverse ? n : 0);
-    while (lines * sharedPerLine * 8 > (count ? 47 : 48) * 1024)
+    const int complexBytes = 2 * (scalar.getIntOrFloatBitWidth() / 8);
+    while (lines * sharedPerLine * complexBytes >
+           (count ? 47 : 48) * 1024)
       lines /= 2;
     const int tiles = (h + lines - 1) / lines;
     int blocks = z ? (grid[0] * grid[1] + lines - 1) / lines
                    : (axis == 0 ? grid[1] : grid[0]) * tiles;
     auto space = gpu::AddressSpaceAttr::get(b.getContext(),
                                             gpu::AddressSpace::Workgroup);
-    Type shared = MemRefType::get({2 * lines * sharedPerLine}, b.getF32Type(),
+    Type shared = MemRefType::get({2 * lines * sharedPerLine}, scalar,
                                   MemRefLayoutAttrInterface(), space);
     SmallVector<Type> sharedTypes{shared};
     int digits = f.second;
@@ -196,13 +201,14 @@ private:
   ArrayRef<int64_t> grid;
   int pitch;
   Value real, spectrum;
+  Type scalar;
   int axis;
   bool inverse;
   int n;
   AxisFactors f;
   Value idx(int v) { return arith::ConstantIndexOp::create(b, loc, v); }
   Value constant(double v) {
-    return arith::ConstantOp::create(b, loc, b.getF32FloatAttr(v));
+    return arith::ConstantOp::create(b, loc, b.getFloatAttr(scalar, v));
   }
   Value less(Value x, int y) {
     return cmpi(arith::CmpIPredicate::ult, x, idx(y));
@@ -218,8 +224,9 @@ private:
   C read(Value mem, Value i) {
     Value at = muli(i, idx(2));
     if (mem == real || mem == spectrum) {
-      Value pair = vector::LoadOp::create(b, loc, VectorType::get({2}, b.getF32Type()),
-                                           mem, ValueRange{at}, false, llvm::Align(8));
+      Value pair =
+          vector::LoadOp::create(b, loc, VectorType::get({2}, scalar), mem,
+                                 ValueRange{at}, false, llvm::Align(8));
       return {extract(pair, 0), extract(pair, 1)};
     }
     return {load(mem, {at}), load(mem, {addi(at, idx(1))})};
@@ -228,7 +235,7 @@ private:
     Value at = muli(i, idx(2));
     if (mem == real || mem == spectrum) {
       Value pair = vector::FromElementsOp::create(
-          b, loc, VectorType::get({2}, b.getF32Type()), ValueRange{v.re, v.im});
+          b, loc, VectorType::get({2}, scalar), ValueRange{v.re, v.im});
       vector::StoreOp::create(b, loc, pair, mem, ValueRange{at}, false, llvm::Align(8));
       return;
     }
@@ -246,8 +253,11 @@ private:
             addf(mulf(a.re, c.im), mulf(a.im, c.re))};
   }
   C phase(Value k, int length, bool backward) {
-    Value angle = mulf(sitofp(b.getF32Type(), indexCast(b.getI32Type(), k)),
+    Value angle = mulf(sitofp(scalar, indexCast(b.getI32Type(), k)),
                        constant((backward ? tau : -tau) / length));
+    if (scalar.isF64())
+      return {math::CosOp::create(b, loc, angle),
+              math::SinOp::create(b, loc, angle)};
     return {NVVM::CosOp::create(b, loc, angle),
             NVVM::SinOp::create(b, loc, angle)};
   }

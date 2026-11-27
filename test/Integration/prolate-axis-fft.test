@@ -1,0 +1,40 @@
+# REQUIRES: python-api
+# RUN: rm -f %t
+# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --grid 188 90 90 | sed -E '/md_exec.reciprocal/s/(coulomb\([^)]+\))/\1 prolate spline_assignment/' > %t
+# RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=on" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --implicit-check-not=fft_stage
+# RUN: sed 's/grid(\[188, 90, 90\])/grid([189, 90, 90])/' %t | mdir-opt --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=MEASURED
+# MEASURED: backend = "cufft"
+# MEASURED-SAME: reason = "axis did not win both whole-step timings"
+# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --grid 30 30 30 | sed -E '/md_exec.reciprocal/s/(coulomb\([^)]+\))/\1 prolate spline_assignment/' > %t
+# RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=AUTO
+# RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=off" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=OFF
+# AUTO: backend = "axis"
+# AUTO-SAME: reason = "prolate axis faster in both timing orders"
+# AUTO: call @mdrt_gpu_pme_axis_fft_30x30x30_prolate_observed
+# The other reasons of the automatic choice: a target or split without timings (the
+# driver passes auto-cufft, test/Driver/prolate-axis-fft-auto-gpu.test), a
+# mesh without timings, the prolate window (order 6, not timed) on a
+# listed mesh, and a tilted cell on a listed mesh.
+# RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto-cufft" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=SPLIT --implicit-check-not=fft_stage
+# SPLIT: backend = "cufft"
+# SPLIT-SAME: reason = "no qualified timing for this prolate target or split"
+# RUN: sed -E '/md_exec.reciprocal/s/order\(4\)/order(6)/; s/ spline_assignment//' %t | mdir-opt --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=WINDOW --implicit-check-not=fft_stage
+# WINDOW: backend = "cufft"
+# WINDOW-SAME: reason = "no qualified prolate axis timing for this mesh"
+# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --grid 40 40 40 | sed -E '/md_exec.reciprocal/s/(coulomb\([^)]+\))/\1 prolate spline_assignment/' | mdir-opt --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=MESH --implicit-check-not=fft_stage
+# MESH: backend = "cufft"
+# MESH-SAME: reason = "no qualified prolate axis timing for this mesh"
+# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --tilted --grid 30 30 30 | sed -E '/md_exec.reciprocal/s/(coulomb\([^)]+\))/\1 prolate spline_assignment/' | mdir-opt --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=TILTED --implicit-check-not=fft_stage
+# TILTED: backend = "cufft"
+# TILTED-SAME: reason = "unqualified triclinic mesh"
+# RUN: not mdir-opt %t --md-exec-assign-storage="memory=device pme-axis-fft=bogus" 2>&1 | FileCheck %s --check-prefix=BAD
+# BAD: expected pme-axis-fft to be auto, auto-cufft, on, or off
+# OFF: backend = "cufft"
+# OFF-SAME: reason = "cuFFT requested"
+# OFF-SAME: requested = "off"
+# CHECK: backend = "cufft"
+# CHECK-SAME: reason = "unsupported axis length"
+# CHECK: call @mdrtCudaFFTForward3DF32
+# CHECK: call @mdrt_gpu_pme_radial_spline_tables_
+# CHECK: call @mdrt_gpu_pme_prolate_convolve_
+# CHECK: call @mdrtCudaFFTBackward3DF32

@@ -1384,7 +1384,24 @@ zero and `"BSPLINE"` otherwise. The prolate window takes orders 5–8
 order 4. On the GPU, positive continuity with this window uses the Gaussian
 order-4 charge assignment and force gathering kernels. The radial influence
 uses the cosine transform of the constrained density and the inverse squared
-B-spline transform on each axis. The split bandwidth comes from `bandwidth` or the usual
+B-spline transform on each axis. D[prolate-axis-fft] uses the same tables between the forward and inverse X
+transforms for either assignment window. The double mesh uses binary64
+butterflies and cross phases. On observed steps the X pass accumulates the
+energy and six independent virials before scaling the coefficient. The
+setup log and manifest record the backend and reason. AUTO uses the axis
+plan only for mixed TOWERS on `sm_89` with `continuity = 2`,
+`basis_terms = 8` and `window = "BSPLINE"` (four points), on the
+orthorhombic meshes where it was faster in both timing orders: 30³, 48³
+and 105 × 60 × 60. It keeps cuFFT on 189 × 90 × 90, where the axis plan
+was slower, and on every other mesh, split, precision or target, each
+with its reason. The prolate window (`window = "PROLATE"`, of any order)
+was not timed: AUTO keeps cuFFT for it, and
+`MDIR_PME_AXIS_FFT=on` selects the axis plan for it. A tilted cell keeps
+cuFFT under AUTO (`unqualified triclinic mesh`); the override runs the
+triclinic axis plan, which the tests compare with cuFFT. The automatic
+grids of the B-spline window are not in the list yet (#1003). The
+override also permits measuring unqualified meshes and double precision.
+Unsupported lengths such as 188 (prime factor 47) keep cuFFT. The split bandwidth comes from `bandwidth` or the usual
 `tolerance` rule. The initial automatic grid spacing is $\pi r_c/c$.
 The aliasing refinement of eq. 10 applies to the original density with the
 prolate window; the B-spline window has a refinement of its own
