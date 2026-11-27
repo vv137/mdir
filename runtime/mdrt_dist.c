@@ -179,7 +179,6 @@ struct DomainMatrix {
   double cutoff, skin, box[3];
   double *reference, *shifts;
   struct MidpointBounds *bounds;
-  struct MidpointSite { double position[3], shift[3]; } *midpointSites;
   int32_t *counts, *selectedCounts;
   int valid;
   int64_t candidateRule, candidates;
@@ -784,31 +783,27 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
         common[c][image+1] = midpointCutRange(l->edges[c],image,l->grid[c],cell[c],l->cuts[c]);
     if (!m->bounds) {
       m->bounds = calloc(m->rows ? m->rows : 1, sizeof *m->bounds);
-      m->midpointSites = calloc(m->rows ? m->rows : 1, sizeof *m->midpointSites);
-      if (!m->bounds || !m->midpointSites)
-        fail("out of memory bounding midpoint candidates");
+      if (!m->bounds) fail("out of memory bounding midpoint candidates");
       rebuild = 1;
     }
-    /* The ambiguous-neighbor scan reads these unshifted positions many
-       times. Populate them while checking the bounds, once per row. */
-    #pragma omp parallel for reduction(|:rebuild) schedule(static) if(m->rows > 512)
-    for (int64_t i = 0; i < m->rows; ++i)
-      for (int c = 0; c < 3; ++c) {
-        double x = i<n ? *at3(owned,d,i,c) : *at3(ghost,d,i-n,c);
-        m->midpointSites[i].position[c] = x;
-        rebuild |= !(x >= m->bounds[i].low[c] && x <= m->bounds[i].high[c]);
-      }
+    if (!rebuild) {
+      #pragma omp parallel for reduction(|:rebuild) schedule(static) if(m->rows > 512)
+      for (int64_t i = 0; i < m->rows; ++i)
+        for (int c = 0; c < 3; ++c) {
+          double x = i<n ? *at3(owned,d,i,c) : *at3(ghost,d,i-n,c);
+          rebuild |= !(x >= m->bounds[i].low[c] && x <= m->bounds[i].high[c]);
+        }
+    }
     if (rebuild) {
       #pragma omp parallel for schedule(static) reduction(max:coordinateBound) if(m->rows > 512)
       for (int64_t i = 0; i < m->rows; ++i)
         for (int c = 0; c < 3; ++c) {
-          double x = m->midpointSites[i].position[c];
+          double x = i<n ? *at3(owned,d,i,c) : *at3(ghost,d,i-n,c);
           m->bounds[i].low[c] = x - 0.5*m->skin;
           m->bounds[i].high[c] = x + 0.5*m->skin;
           int64_t image = i<n ? 0 : h->image[3*((d-h->idBase)*h->capacity+i-n)+c];
           m->bounds[i].image[c] = image;
           m->bounds[i].shift[c] = image*l->edges[c];
-          m->midpointSites[i].shift[c] = m->bounds[i].shift[c];
           coordinateBound = fmax(coordinateBound, fabs(m->bounds[i].low[c]));
           coordinateBound = fmax(coordinateBound, fabs(m->bounds[i].high[c]));
           coordinateBound = fmax(coordinateBound, fabs(m->bounds[i].shift[c]));
@@ -893,9 +888,15 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
         continue;
       }
     }
-    const struct MidpointSite *centerSite = m->midpointSites+i;
+    int64_t image[3] = {0,0,0};
+    double xi[3], a[3];
+    for (int c = 0; c < 3; ++c) {
+      if (i >= n) image[c] = h->image[3*((d-h->idBase)*h->capacity+i-n)+c];
+      xi[c] = i<n ? *at3(owned,d,i,c) : *at3(ghost,d,i-n,c);
+      a[c] = image[c]*l->edges[c];
+    }
     struct MidpointRange ranges[3];
-    rowRanges(l,cell,common,m->bounds[i].image,ranges);
+    rowRanges(l,cell,common,image,ranges);
     for (int32_t k = begin; k < counts[i]; ++k) {
       int32_t j = neighbors[k];
       if (prune) {
@@ -907,12 +908,11 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
         continue;
       }
       int keep = 1;
-      const struct MidpointSite *neighborSite = m->midpointSites+j;
       for (int c = 0; c < 3; ++c) {
-        double xi = centerSite->position[c];
-        double dx = (xi-neighborSite->position[c])-
-                    (neighborSite->shift[c]-centerSite->shift[c]);
-        double midpoint = xi-0.5*dx;
+        double xj = j<n ? *at3(owned,d,j,c) : *at3(ghost,d,j-n,c);
+        double b = j<n ? 0.0 : h->image[3*((d-h->idBase)*h->capacity+j-n)+c]*l->edges[c];
+        double dx = (xi[c]-xj)-(b-a[c]);
+        double midpoint = xi[c]-0.5*dx;
         if (!(midpoint >= ranges[c].lower && midpoint < ranges[c].upper)) {
           keep = 0;
           break;
@@ -4014,7 +4014,6 @@ void mdrtDistReleaseHalo(int64_t handle) {
     free(m->reference);
     free(m->shifts);
     free(m->bounds);
-    free(m->midpointSites);
     free(m->bufferedRows);
     free(m->pruneReference);
     free(m);
