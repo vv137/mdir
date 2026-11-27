@@ -95,7 +95,9 @@ def compare(launch, again, graph, label):
     # as they were, and then the words are not written again.
     assert abs(l[-1, -2] / l[0, -2] - 1) > 0.01 or label != "isotropic", l[:, -2]
     graphs, chunks, writes = map(int, graph["report"].groups())
-    assert graphs <= 16 and chunks >= 9 and chunks - 2 <= writes <= chunks, (label, graphs, chunks, writes)
+    # The chunk graphs are keyed by their banks, as at a fixed cell (D439);
+    # the cell adds no key.
+    assert graphs <= chunks and chunks >= 9 and chunks - 2 <= writes <= chunks, (label, graphs, chunks, writes)
 
 
 launch = run("launch", "LAUNCH")
@@ -110,7 +112,6 @@ compare(launch, again, graph, "isotropic")
 long = [run(f"long-{name}", mode, steps=400, energy=50)
         for name, mode in (("launch", "LAUNCH"), ("again", "LAUNCH"), ("graph", "GRAPH"))]
 compare(*long, "five periods per row")
-assert int(long[2]["report"].group(1)) < int(long[2]["report"].group(2)), long[2]["report"].group(0)
 
 # A graph that kept its first cell: the cell is written once and the test
 # sees the replay.

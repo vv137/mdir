@@ -79,7 +79,25 @@ The chunk graphs are keyed by their banks and buffers (D439). The barostat does 
 - **Refusals.** No barostat case remains refused. `test/Driver/step-graph.test` (`check_step_graph_scope.py`) checks that `mdir check` keeps GRAPH, and leaves AUTO to its trial, in the three couplings.
 - **The suite's inputs** (one-off, not in the suite): JAC, Factor IX and TIP3P 10k NPT with the launch shapes of the timing below cover tower heights FULL and HALF, split 2 and two blocks per SM. In 100 steps with a row at every scaling, GRAPH stayed within the LAUNCH spread in every row (filled at the final head).
 
-## 6. What remains
+## 6. Throughput
+
+RTX 4090, 2 fs, mixed precision, TOWERS with the launch shape of each input pinned (the shape setup chose for it on an RTX 4090), the suite's NPT settings: V-rescale and C-rescale every 25 steps, energy rows every 1,000 steps (Factor IX 500). JAC and TIP3P 10k ran 100,000 steps, Factor IX 50,000. Arms: main (cdd2dbeda) with its default `SPANS`, and the branch with `LAUNCH`, `SPANS` and `GRAPH`. Two jobs ran on two cards in opposite orders, each with an untimed warm run per arm, then pass 1 in its order and pass 2 in reverse. The rate is the 10%-trimmed mean of the row intervals after the stationary cut of D417 (`MDIR_CHECKPOINT_TIMES=1`); every run was stationary from the first interval. The median SM clocks under load were 2,730–2,752 MHz in the first job and 2,655–2,670 MHz in the second, at most 68 °C, and no run throttled. The force error is the relative RMS force at the input configuration against the double reference of D[best-defaults] (TOWERS, LAUNCH, these settings; GRAPH evaluates the same kernels).
+
+| Input | Force error | main SPANS | LAUNCH | SPANS | GRAPH | GRAPH / LAUNCH | GRAPH / SPANS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| JAC (23,558) | 1.31e-3 | 1405.7 / 1360.8 | 1299.7 / 1264.5 | 1401.7 / 1361.8 | 1312.4 / 1272.8 | +1.0% / +0.7% | −6.4% / −6.5% |
+| Factor IX (90,906) | 1.43e-3 | 593.1 / 574.1 | 572.5 / 556.5 | 592.7 / 574.8 | 576.2 / 559.2 | +0.7% / +0.5% | −2.8% / −2.7% |
+| TIP3P 10k (9,989) | 7.32e-4 | 1866.3 / 1813.8 | 1705.9 / 1659.0 | 1868.5 / 1816.3 | 1706.7 / 1663.9 | +0.0% / +0.3% | −8.7% / −8.4% |
+
+ns/day, first job / second job, each the mean of its two passes.
+
+1. [measured] GRAPH under a barostat runs at the rate of LAUNCH, 0.0% to 1.0% faster, and 2.7% to 8.7% slower than SPANS, the default. D448 measured the same order in NVT (SPANS 7 to 9% ahead of GRAPH on TOWERS).
+2. [measured] The branch's SPANS runs at the rate of main's SPANS, within 0.3%: the change does not touch the default path.
+3. [measured] The setup trial of AUTO on JAC NPT measured ordinary chunks of 116.2 µs per step with GRAPH against 119.7 with LAUNCH (paired gains +4.5, +2.6, +3.6 and +3.3 µs) and selected GRAPH.
+4. [hypothesis] The whole run loses the chunk's saving at the chunk's edges: GRAPH waits for the stream after each chunk to read its progress, and again to check the step before the thermostat (Section 3.1), while SPANS keeps the device busy across those points. D448 (Section 5, item 4) gives the same account for NVT. The traces here do not separate it from the guards of the chunk.
+5. [measured] A first version cloned the arithmetic of the cell into every kernel instead of filling slots on the host. Each thread then divided in f64, and the same trial measured 125.3 µs per GRAPH step against 119.7 with LAUNCH.
+
+## 7. What remains
 
 - The coupling step stays a host boundary (Section 3.1). A coupling step on the device would compute the V-rescale factor, the strain, the scaled cell and the bath there and write the mirror. It would read back to the host only at outputs. That is a decision of its own; the counter-based draws of both factors are already functions of the step.
 - The TOWERS virial of the step before a scaling is copied to the host apart from the step's reduction (the 24 B copy of Section 3.1).
