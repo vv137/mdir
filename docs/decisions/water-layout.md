@@ -114,7 +114,7 @@ RTX 4090, at this decision's head and `main` at 03506508.
 
 A mutation that ignores the places of the frame atoms (member $k$ at the first particle plus $k$) takes the case with the site listed first to 6.6e5 times its bound, while the others still pass. It was tried once and reverted.
 
-**#795's short trajectories** (`segments-trajectories-gpu.test`, eight cases of OPC and TIP3P under both integrators, NVE and NPT) pass. Their units' trajectories, printed every 10 steps, are the same from both trees and from run to run.
+**#795's short trajectories** (`segments-trajectories-gpu.test`, eight cases of OPC and TIP3P under both integrators, NVE and NPT) pass. On these three waters the units' route is reproducible to the bit. In four of the cases (OPC under velocity Verlet NVE and leapfrog NPT, TIP3P under velocity Verlet NPT and leapfrog NVE), the units' positions and velocities at every tenth step of 100 are the same to the bit from `main`'s tree and from this decision's, and from run to run. Only the place of the data changed, and #794 asked for this gate.
 
 **The contract and the coverage.** `md-alg-segments-contract-gpu.test`, `segments-writer-coverage-gpu.test`, `segments-writer-extents-gpu.test`, `segments-build-forces-gpu.test`, `segments-build-coverage-gpu.test`, and `md-alg-segments-serial.test` pass. The serial definition reads a copy from its first particle, and its oracle checks that every copy it builds is consecutive.
 
