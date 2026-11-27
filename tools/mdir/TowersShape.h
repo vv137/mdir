@@ -7,7 +7,7 @@ namespace mdir::tool {
 /// Resolve the choice available before a timing trial. AUTO as the value
 /// means an eligible input still needs the paired measurements.
 /// Records in `choice` whether spans are recorded, with the overrides of
-/// the environment (D[step-no-host-wait]).
+/// the environment (D448).
 void addSpansChoice(llvm::json::Object &choice, bool onDevice, bool trial);
 llvm::json::Object initialStepGraphChoice(llvm::StringRef request,
                                          llvm::StringRef refusal, size_t particles,

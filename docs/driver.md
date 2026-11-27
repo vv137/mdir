@@ -397,7 +397,7 @@ and flag events between two host boundaries (a wait of a flag, a copy, a
 change of stream, a growth of a structure) and issues them together at the
 boundary; a span whose kernels, grids and argument bytes repeat an earlier
 one is issued as the CUDA graph made at its second recording
-(D[step-no-host-wait]). The results are bitwise those of `"LAUNCH"`, which
+(D448). The results are bitwise those of `"LAUNCH"`, which
 submits each kernel as it comes. On the CPU target the default resolves to
 `"LAUNCH"` (category `rule`), and a given `"SPANS"` is refused. The log ends
 with the counts of the spans. `MDRT_SPANS=0` turns them off for a

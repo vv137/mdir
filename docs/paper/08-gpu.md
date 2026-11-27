@@ -488,7 +488,7 @@ the sample standard deviation of the paired savings.
 In the six-input prototype measurement, graph submission changed throughput by
 −1.26% to +4.01%. The control file can pin either path.
 
-**Recorded spans (D[step-no-host-wait]).** Outside the TOWERS chunks the
+**Recorded spans (D448).** Outside the TOWERS chunks the
 host still decides between steps: it reads the flags of the tests, the
 sizes of a build and the kinetic energy of a coupling step. The runtime
 therefore groups the work between two such reads. A *span* is the sequence
@@ -510,7 +510,7 @@ On an RTX 4090 at 2 fs the spans raised the rate of TIP3P boxes of 10,000
 and 20,000 particles by 10 to 11% and 7 to 8% (MATRIX), of JAC by 8% in
 NVE and 5 to 6% in NPT, of Factor IX by 3%, and of Cellulose by under 1%;
 with TOWERS, by 10 to 14%, more than the chunk graphs of D439 gave
-(D[step-no-host-wait], Section 5). An IF node in the graph, which would let
+(D448, Section 5). An IF node in the graph, which would let
 the device decide the rebuild, costs 2.5 µs a step when it is not taken, a
 fifth of what the graphs save at these sizes. The waits for the sizes of a
 build and for the kinetic energy of a coupling step remain on the host.

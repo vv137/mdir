@@ -1,6 +1,6 @@
 """Compare runs whose work between host boundaries is recorded and replayed
 as CUDA graphs (step_graph = "SPANS") with runs that launch each kernel
-(D[step-no-host-wait])."""
+(D448)."""
 import json
 from pathlib import Path
 import re

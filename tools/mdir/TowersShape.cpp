@@ -713,7 +713,7 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
 }
 
 void mdir::tool::addSpansChoice(Object &choice, bool onDevice, bool trial) {
-  // Whether the runtime records spans (D[step-no-host-wait]): the value,
+  // Whether the runtime records spans (D448): the value,
   // unless MDRT_SPANS says otherwise or a variable that observes each
   // launch turns them off. The record says which.
   auto value = choice.getString("value");
@@ -739,7 +739,7 @@ llvm::json::Object mdir::tool::initialStepGraphChoice(llvm::StringRef request,
   Object choice{{"requested", request.str()}, {"value", request.str()},
                 {"category", "setup trial"}, {"reason", "fixed choice"}};
   // SPANS, the default, records the work between host boundaries and
-  // replays a sequence that repeats as a CUDA graph (D[step-no-host-wait]).
+  // replays a sequence that repeats as a CUDA graph (D448).
   // Without the key it is a rule of the target; a given SPANS that the
   // target refuses is an error of the caller.
   if (request == "SPANS" && !given) {

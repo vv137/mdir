@@ -445,7 +445,7 @@ struct Control {
   /// tested between builds and may miss pairs within the cutoff (D88).
   int64_t rebuildPeriod = 0;
   /// `[execution] step_graph`: LAUNCH, SPANS, GRAPH or AUTO (D439,
-  /// D[step-no-host-wait]). The default is SPANS.
+  /// D448). The default is SPANS.
   std::string stepGraph = "SPANS";
   /// Whether the control file gave `step_graph`.
   bool stepGraphGiven = false;

@@ -713,7 +713,7 @@ void mdrtRestoreStream(void *previous) {
 void mgpuStreamDestroy(CUstream stream) { (void)stream; }
 
 /*===----------------------------------------------------------------------===
-  Recorded spans (D[step-no-host-wait])
+  Recorded spans (D448)
   ===----------------------------------------------------------------------===
 
   With spans on (mdrtSpansEnable), the work that the host issues on

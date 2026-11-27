@@ -196,7 +196,7 @@ Python simulation had the neighbor matrix alone, and the rates of
 
 | Python | Control file | Values |
 |---|---|---|
-| `Execution.step_graph` | `[execution] step_graph` | `"LAUNCH"` (default), `"GRAPH"`, or `"AUTO"`; `"SPANS"`, the default of `mdir run`, is refused (D[step-no-host-wait]). Segmented simulations resolve AUTO to LAUNCH and refuse GRAPH. `Program.plan` records the resolved value and the reason for AUTO. |
+| `Execution.step_graph` | `[execution] step_graph` | `"LAUNCH"` (default), `"GRAPH"`, or `"AUTO"`; `"SPANS"`, the default of `mdir run`, is refused (D448). Segmented simulations resolve AUTO to LAUNCH and refuse GRAPH. `Program.plan` records the resolved value and the reason for AUTO. |
 | `Execution.neighbor_structure` | `[execution] neighbor_structure` | `mdir.NeighborStructure.Auto` (the default, D261), `mdir.NeighborStructure.Matrix`, `mdir.NeighborStructure.Groups` |
 | `System.pruned_distance` | `[energy] pruned_distance` | a length in nm or a unit quantity (D200), between `System.cutoff` and `System.pairlist_distance`; `0`, the default, keeps one list, and under `Auto` is the key not given: groups that `Auto` takes have the inner reach of the control file; or `mdir.Auto`, as `"AUTO"` (D281) |
 | `System.pairlist_distance` | `[energy] pairlist_distance` | a length in nm or a unit quantity; `None`, the default, follows the cutoff; or `mdir.Auto`, as `"AUTO"` of the control file (D281): the reaches that an earlier `mdir run` of the same key cached, else the defaults. A Python simulation measures no candidates |

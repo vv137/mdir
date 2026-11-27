@@ -28,7 +28,7 @@ else:
     raise AssertionError("CPU execution accepted GRAPH")
 
 # SPANS records the work of `mdir run` between host boundaries
-# (D[step-no-host-wait]); a simulation of the Python interface refuses it.
+# (D448); a simulation of the Python interface refuses it.
 execution.step_graph = "SPANS"
 try:
     mdir.compile(*args)

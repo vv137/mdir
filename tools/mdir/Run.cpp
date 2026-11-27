@@ -2271,7 +2271,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     };
   }
   // The work between host boundaries is recorded and a sequence that
-  // repeats is replayed as a CUDA graph (D[step-no-host-wait]).
+  // repeats is replayed as a CUDA graph (D448).
   // The choice, with the overrides of the environment, is spansOn.
   bool spans = onDevice && spansOn;
   using SpansEnable = void (*)(int32_t);
@@ -2395,7 +2395,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
                  "pairs from the rows\n",
                  static_cast<long long>(over));
 
-  // What the spans issued (D[step-no-host-wait]).
+  // What the spans issued (D448).
   if (void *read = onDevice ? findRuntime("", "mdrtSpansCounts") : nullptr) {
     int64_t counts[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
     reinterpret_cast<void (*)(int64_t *)>(read)(counts);
