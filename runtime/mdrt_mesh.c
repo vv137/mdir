@@ -13,8 +13,8 @@
 #include <string.h>
 
 extern void mdrtDistPhase(int64_t);
-extern int64_t mdrtDistWord(double, double);
-extern int64_t mdrtDistNarrowWord(__int128);
+extern int64_t mdrtDistWord(double, double, int64_t);
+extern int64_t mdrtDistNarrowWord(__int128, int64_t);
 struct Rows {
   int64_t *base, *data, offset, size, stride;
 };
@@ -551,7 +551,7 @@ static void spectrum(const int n[3], const double box[3], struct PmeBox b,
             term[1 + 3 * a + d] = power * ((a == d ? g : 0) + dg * m[a] * m[d]);
         for (int k = 0; k < 10; ++k) {
           if (fixed)
-            words[k] += mdrtDistWord(term[k], 0x1p32);
+            words[k] += mdrtDistWord(term[k], 0x1p32, DistPairEnergy);
           else
             sums[k] += term[k];
         }
@@ -672,7 +672,7 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
 #endif
   for (int k = 0; k < 10; ++k)
     result->data[result->offset + k * result->s] =
-        fixed ? mdrtDistNarrowWord(words[k]) * 0x1p-32 : sums[k];
+        fixed ? mdrtDistNarrowWord(words[k], DistPairEnergy) * 0x1p-32 : sums[k];
   mdrtDistPhase(-DistSolve);
   mdrtDistPhase(DistFFT);
   mdrtPmeBackward(mesh, fft, real);
@@ -708,7 +708,7 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
       for (int a = 0; a < 3; ++a) {
         double v = precision((-p->q * (n[a] / box[a])) * grad[a], mixed);
         field(f, d, r)[a * f->s[2]] =
-            fixed ? mdrtDistWord(v, 0x1p40) * 0x1p-40 : v;
+            fixed ? mdrtDistWord(v, 0x1p40, DistPairForce) * 0x1p-40 : v;
       }
     }
     free(domains[d].atoms);
