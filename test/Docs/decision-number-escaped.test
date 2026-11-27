@@ -1,0 +1,6 @@
+# The escaped forms of a decision label in tests (#1010): assign rewrites a
+# label written for a regular expression or a FileCheck pattern in a .py
+# and a .test, and check refuses one left after its number, naming the file
+# and the line.
+# RUN: %python %S/Inputs/decision-number-escaped.py %S/../.. | FileCheck %s
+# CHECK: decision labels in escaped forms: ok

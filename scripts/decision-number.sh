@@ -12,6 +12,14 @@
 # to docs/decisions/Dnnn.md, dates it, rewrites every tracked file, and
 # writes the table of docs/decisions.md (scripts/decisions-table.py); it
 # leaves the change for the merger to commit.
+#
+# A label is also found in the escaped forms that tests and documents write
+# (#1010): a backslash run before either bracket (D\[x\] in a regular
+# expression or a Markdown link, D\\[x\\] in a string that is not raw), the
+# bracket expressions D[[]x[]], and FileCheck's D{{\[}}x{{\]}} and
+# D{{[[]}}x{{[]]}}. `assign` rewrites each to Dnnn, then refuses, naming
+# file and line, anything still left that writes the label between
+# brackets; `check` refuses these forms as it refuses D[x].
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
@@ -21,7 +29,14 @@ reserved=()
 
 decisions=docs/decisions.md
 directory=docs/decisions
-label_pattern='(^|[^A-Za-z0-9_])D\[[a-z0-9-]+\]'
+# Before the D: the start of a line, a character not of a word, or an
+# escape such as \b or \n.
+boundary='(^|[^A-Za-z0-9_]|\\[A-Za-z])'
+open='(\\*\[|\[\[\]|\{\{(\\*\[|\[\[\])\}\})'
+close='(\\*\]|\[\]\]|\{\{(\\*\]|\[\]\])\}\})'
+label_pattern="${boundary}D${open}[a-z0-9-]+${close}"
+# Groups: 1 the boundary, 2 and 3 the opening bracket, 4 the label.
+label_of="s/^${boundary}D${open}([a-z0-9-]+)${close}\$/\\4/"
 
 next_number() {
   local highest
@@ -43,20 +58,20 @@ check() {
   elif [[ -n "$files" ]]; then
     # A merged decision waits for its number; its label needs a file.
     labels=$(git grep -hoE "$label_pattern" -- . ':!scripts/decision-number.sh' |
-      grep -oE 'D\[[a-z0-9-]+\]' | sort -u)
-    for label in $labels; do
-      name=${label#D[}
-      name=${name%]}
+      sed -E "$label_of" | sort -u)
+    for name in $labels; do
       if [[ -f "$directory/$name.md" ]]; then
-        echo "waiting for a number: $label"
+        echo "waiting for a number: D[$name]"
       else
-        rowless+=("$label")
+        rowless+=("$name")
       fi
     done
     if (( ${#rowless[@]} )); then
+      # A label numbered already, or never given a file, in any of its forms.
       echo "decision labels without a file in $directory/:" >&2
-      for label in "${rowless[@]}"; do
-        git grep -nF "$label" -- . ':!scripts/decision-number.sh' >&2
+      for name in "${rowless[@]}"; do
+        git grep -nE "${boundary}D${open}${name}${close}" -- . \
+          ':!scripts/decision-number.sh' >&2
       done
       status=1
     fi
@@ -85,10 +100,18 @@ case "${1:-}" in
     python3 scripts/decision-number-anchors.py assign "$label" "$number"
     git mv "$directory/$label.md" "$directory/D$number.md"
     sed -i "s/^Recorded at its merge\.$/Recorded $(date -u +%F)./" "$directory/D$number.md"
-    files=$(git grep -lE "(^|[^A-Za-z0-9_])D\\[$label\\]" -- . ':!scripts/decision-number.sh')
+    files=$(git grep -lE "${boundary}D${open}${label}${close}" -- . ':!scripts/decision-number.sh')
     # shellcheck disable=SC2086
-    sed -i -E "s/(^|[^A-Za-z0-9_])D\\[$label\\]/\\1D$number/g" $files
+    sed -i -E "s/${boundary}D${open}${label}${close}/\\1D$number/g" $files
     python3 scripts/decisions-table.py write
+    # Any form not rewritten above: D, up to eight brackets, backslashes, or
+    # braces, the label, and one of them again.
+    if git grep -nE "D[][\\{}]{1,8}${label}[][\\{}]" -- . \
+        ':!scripts/decision-number.sh' >&2; then
+      echo "D[$label] is left above in a form that assign does not rewrite:" \
+        "write it as D$number before committing" >&2
+      exit 1
+    fi
     echo "D[$label] -> D$number in:"
     echo "$files" | sed 's/^/  /'
     ;;
