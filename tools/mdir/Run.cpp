@@ -519,15 +519,13 @@ static double estimateTrialMemory(const Control &control, const System &system,
 }
 
 static std::optional<std::array<double, 3>>
-checkTrialMemory(double needed, int ranks) {
+checkTrialMemory(double reach, double needed, int ranks, bool writer) {
   uint64_t available = mdrtMPITrialMemoryAvailable();
   if (const char *value = std::getenv("MDIR_DIST_AUTO_MEMORY_BYTES")) {
     uint64_t limit;
     if (!StringRef(value).getAsInteger(10, limit))
       available = std::min(available, limit);
   }
-  if (mdrtMPIAllTrue(needed <= available))
-    return std::nullopt;
   double local[] = {needed, static_cast<double>(available)};
   std::vector<double> all(2 * ranks);
   mdrtMPIGatherTimes(local, all.data(), 2);
@@ -535,6 +533,19 @@ checkTrialMemory(double needed, int ranks) {
   for (int rank = 1; rank < ranks; ++rank)
     if (all[2*rank] - all[2*rank+1] > all[2*worst] - all[2*worst+1])
       worst = rank;
+  const bool fits = all[2*worst] <= all[2*worst+1];
+  if (writer) {
+    constexpr double MiB = 1024 * 1024;
+    for (int rank = 0; rank < ranks; ++rank)
+      llvm::errs() << llvm::formatv(
+          "MDIR: distributed list {0:f3} Ang preflight: rank {1} needs an "
+          "estimated {2:f1} MiB, {3:f1} MiB available ({4})\n",
+          reach, rank, all[2*rank] / MiB, all[2*rank+1] / MiB,
+          fits ? "admitted" : "skipped");
+    llvm::errs().flush();
+  }
+  if (fits)
+    return std::nullopt;
   return std::array<double, 3>{static_cast<double>(worst), all[2*worst],
                                all[2*worst+1]};
 }
@@ -1442,7 +1453,8 @@ static int runControlImpl(StringRef controlFile, Emit emit,
 #ifdef MDIR_ENABLE_MPI
   if (distributedTrial && distributedTrial->skin) {
     distributedTrial->memoryRefusal = checkTrialMemory(
-        estimateTrialMemory(*control, *system, *program, ranks), ranks);
+        distributedTrial->reach,
+        estimateTrialMemory(*control, *system, *program, ranks), ranks, writer);
     if (distributedTrial->memoryRefusal)
       return 0;
   }
