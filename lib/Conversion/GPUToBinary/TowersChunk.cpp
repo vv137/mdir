@@ -4,17 +4,96 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/IRMapping.h"
+#include "llvm/ADT/MapVector.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include <array>
+#include <functional>
 #include <set>
 
 using namespace mlir;
 namespace {
+// A value of the host that a captured kernel takes by value is fixed at
+// capture. The cell of a barostat is the one such value that changes
+// between chunks: the host keeps it in its own memory, loads it before each
+// chunk, and derives the launch arguments from it with pure arithmetic
+// (D[towers-graph-npt]). The sink clones that arithmetic into each kernel,
+// whose leaves then read a device mirror of the host memory instead.
+struct Sink {
+  // Whether `v` is a leaf, and the value that replaces it in a kernel.
+  std::function<bool(Value)> isLeaf;
+  std::function<Value(OpBuilder &, Location, Value)> leaf;
+  DenseMap<Value, bool> memo;
+  // Whether a kernel may take invariant values from above (false when the
+  // clone goes into another function), and whether one was needed.
+  bool capture = true, failed = false;
+
+  static bool pure(Operation *op) {
+    return op->getNumRegions() == 0 && isMemoryEffectFree(op) &&
+           isa<arith::ArithDialect, vector::VectorDialect, math::MathDialect>(op->getDialect());
+  }
+  bool varying(Value v) {
+    if (auto it = memo.find(v); it != memo.end()) return it->second;
+    bool result = isLeaf(v);
+    if (!result)
+      if (Operation *def = v.getDefiningOp(); def && pure(def))
+        result = llvm::any_of(def->getOperands(), [&](Value x) { return varying(x); });
+    return memo[v] = result;
+  }
+  Value clone(OpBuilder &k, Location loc, Value v, IRMapping &local) {
+    if (Value done = local.lookupOrNull(v)) return done;
+    Value result;
+    if (isLeaf(v)) {
+      result = leaf(k, loc, v);
+    } else {
+      Operation *def = v.getDefiningOp();
+      for (Value x : def->getOperands())
+        if (varying(x)) clone(k, loc, x, local);
+        else if (Operation *c = x.getDefiningOp(); c && !local.contains(x)) {
+          if (!c->hasTrait<OpTrait::ConstantLike>()) {
+            // An invariant operand that is not a constant is taken as
+            // the kernel took it before: by value from the host. Another
+            // function cannot take it.
+            failed |= !capture;
+            continue;
+          }
+          k.clone(*c, local);
+        } else if (!x.getDefiningOp() && !local.contains(x)) {
+          failed |= !capture;
+        }
+      Operation *copy = k.clone(*def, local);
+      result = copy->getResult(cast<OpResult>(v).getResultNumber());
+    }
+    local.map(v, result);
+    return result;
+  }
+  // Replace each varying value that `region` takes from above. Returns
+  // whether it changed anything.
+  bool sink(Region &region, Location loc) {
+    llvm::SetVector<Value> used;
+    getUsedValuesDefinedAbove(region, used);
+    OpBuilder k(&region.front(), region.front().begin());
+    IRMapping local;
+    bool changed = false;
+    for (Value v : used) {
+      if (!varying(v)) continue;
+      Value inner = clone(k, loc, v, local);
+      v.replaceUsesWithIf(inner, [&](OpOperand &use) {
+        return region.isAncestor(use.getOwner()->getParentRegion());
+      });
+      changed = true;
+    }
+    return changed;
+  }
+};
+
 struct Chunk {
   ModuleOp module;
   scf::ForOp loop;
@@ -27,6 +106,13 @@ struct Chunk {
   Value positions, certificate;
   gpu::GPUFuncOp finish;
   int64_t atoms;
+  // The device mirrors of host memory that the chunk's kernels read
+  // (D[towers-graph-npt]), in the order of their creation.
+  llvm::MapVector<Value, Value> mirrors;
+  DenseMap<Value, Value> *target = nullptr;
+  llvm::SmallDenseSet<Value> storedInLoop;
+  Sink cells;
+  int variants = 0;
 
   Chunk(ModuleOp mod, scf::ForOp loop, Value cache)
       : module(mod), loop(loop), b(loop), loc(loop.getLoc()), i64(b.getI64Type()),
@@ -40,6 +126,139 @@ struct Chunk {
   func::CallOp call(StringRef name, ValueRange args) {
     return func::CallOp::create(b, loc, module.lookupSymbol<func::FuncOp>(name), args);
   }
+  // Host memory that a mirror can stand for: a small array of static shape
+  // defined before the chunk, which the chunk itself does not write.
+  bool mirrorable(Value memory) {
+    auto type = dyn_cast<MemRefType>(memory.getType());
+    if (!type || !type.hasStaticShape() || type.getMemorySpace() ||
+        !type.getLayout().isIdentity() || !type.getElementType().isIntOrFloat() ||
+        type.getNumElements() * type.getElementTypeBitWidth() > 1024 ||
+        type.getElementTypeBitWidth() % 32)
+      return false;
+    return loop.isDefinedOutsideOfLoop(memory) && !storedInLoop.contains(memory);
+  }
+  Value mirrorFor(Value memory) {
+    auto &mirror = mirrors[memory];
+    if (mirror) return mirror;
+    Operation *outer = loop;
+    while (auto parent = outer->getParentOfType<scf::ForOp>()) outer = parent;
+    auto type = cast<MemRefType>(memory.getType());
+    auto device = MemRefType::get(type.getShape(), type.getElementType(), MemRefLayoutAttrInterface(),
+                                  b.getI64IntegerAttr(1));
+    OpBuilder hoist(outer);
+    mirror = gpu::AllocOp::create(hoist, loc, device, Type(), ValueRange{}, ValueRange{},
+                                  ValueRange{}, false).getMemref();
+    hoist.setInsertionPointAfter(outer);
+    Value freed = memref::MemorySpaceCastOp::create(hoist, loc, type, mirror);
+    gpu::DeallocOp::create(hoist, loc, Type(), ValueRange{}, freed);
+    return mirror;
+  }
+  void initCells() {
+    loop.walk([&](memref::StoreOp st) { storedInLoop.insert(st.getMemref()); });
+    cells.isLeaf = [this](Value v) {
+      auto load = v.getDefiningOp<memref::LoadOp>();
+      return load && mirrorable(load.getMemref()) &&
+             llvm::all_of(load.getIndices(), [](Value i) { return matchPattern(i, m_Constant()); });
+    };
+    cells.leaf = [this](OpBuilder &k, Location at, Value v) -> Value {
+      auto load = v.getDefiningOp<memref::LoadOp>();
+      Value memory = target ? target->lookup(load.getMemref()) : mirrorFor(load.getMemref());
+      SmallVector<Value> indices;
+      for (Value i : load.getIndices())
+        indices.push_back(k.clone(*i.getDefiningOp())->getResult(0));
+      return memref::LoadOp::create(k, at, memory, indices);
+    };
+  }
+  void leaves(Value v, llvm::SetVector<Value> &memories) {
+    if (cells.isLeaf(v)) {
+      memories.insert(v.getDefiningOp<memref::LoadOp>().getMemref());
+      return;
+    }
+    if (Operation *def = v.getDefiningOp(); def && cells.varying(v))
+      for (Value x : def->getOperands()) leaves(x, memories);
+  }
+  // A non-pure op of the host outside the kernels must not take a varying
+  // value: what it computed at capture would be replayed.
+  LogicalResult checkHost(Region &region, Sink &sink, const llvm::SmallDenseSet<Operation *> &done) {
+    WalkResult r = region.walk<WalkOrder::PreOrder>([&](Operation *op) {
+      if (isa<gpu::LaunchOp>(op)) {
+        for (Value x : op->getOperands())
+          if (sink.varying(x)) {
+            op->emitError("step_graph: the cell sets a launch dimension in the TOWERS chunk");
+            return WalkResult::interrupt();
+          }
+        return WalkResult::skip();
+      }
+      if (Sink::pure(op) || done.contains(op)) return WalkResult::advance();
+      for (Value x : op->getOperands())
+        if (sink.varying(x)) {
+          op->emitError("step_graph: the cell reaches host work in the TOWERS chunk");
+          return WalkResult::interrupt();
+        }
+      return WalkResult::advance();
+    });
+    return failure(r.wasInterrupted());
+  }
+  // Each kernel of the clone reads the cell from its mirrors. A PME wrapper
+  // that takes the cell gets a variant whose kernels do the same.
+  LogicalResult sinkCells(Operation *clone, llvm::SmallDenseSet<Operation *> &done) {
+    if (auto launch = dyn_cast<gpu::LaunchFuncOp>(clone)) {
+      for (Value x : launch.getKernelOperands())
+        if (cells.varying(x))
+          return launch.emitError("step_graph: an outlined TOWERS kernel takes the cell by value");
+      return success();
+    }
+    if (auto call = dyn_cast<func::CallOp>(clone); call && call.getCallee().starts_with("mdrt_gpu_pme_")) {
+      SmallVector<unsigned> taken;
+      llvm::SetVector<Value> memories;
+      for (auto [i, x] : llvm::enumerate(call.getArgOperands()))
+        if (cells.varying(x)) {
+          taken.push_back(i);
+          leaves(x, memories);
+        }
+      if (taken.empty()) return success();
+      auto original = module.lookupSymbol<func::FuncOp>(call.getCallee());
+      auto variant = original.clone();
+      std::string name;
+      do name = (call.getCallee() + "_cell" + Twine(++variants)).str();
+      while (module.lookupSymbol(name));
+      variant.setSymName(name);
+      module.push_back(variant);
+      DenseMap<Value, Value> inner;
+      for (Value memory : memories) {
+        Value device = mirrorFor(memory);
+        unsigned n = variant.getNumArguments();
+        if (failed(variant.insertArgument(n, device.getType(), {}, loc))) return failure();
+        inner[memory] = variant.getArgument(n);
+        call.getArgOperandsMutable().append(device);
+      }
+      DenseMap<Value, Value> roots;
+      for (unsigned i : taken) roots[variant.getArgument(i)] = call.getArgOperands()[i];
+      Sink local;
+      local.isLeaf = [&](Value v) { return roots.count(v) != 0; };
+      local.leaf = [&](OpBuilder &k, Location at, Value v) -> Value {
+        auto *saved = target;
+        target = &inner;
+        bool capture = cells.capture;
+        cells.capture = false;
+        IRMapping m;
+        Value r = cells.clone(k, at, roots.lookup(v), m);
+        cells.capture = capture;
+        target = saved;
+        return r;
+      };
+      variant.walk([&](gpu::LaunchOp launch) { local.sink(launch.getBody(), loc); });
+      if (cells.failed)
+        return call.emitError("step_graph: the cell of a PME wrapper depends on a value of the run");
+      if (failed(checkHost(variant.getBody(), local, {}))) return failure();
+      call.setCallee(variant.getSymName());
+      done.insert(call);
+      return success();
+    }
+    clone->walk([&](gpu::LaunchOp launch) { cells.sink(launch.getBody(), loc); });
+    return success();
+  }
+
   LogicalResult examine() {
     if (!loop.getInductionVar().use_empty() || !matchPattern(loop.getLowerBound(), m_Zero()) ||
         !matchPattern(loop.getStep(), m_One()))
@@ -292,6 +511,8 @@ struct Chunk {
       }
     }
     Value fatal = call("mdrtStepFatalAddress", cache).getResult(0);
+    initCells();
+    llvm::SmallDenseSet<Operation *> sunk;
     llvm::SmallDenseSet<Value> defined;
     bool drift = true;
     bool guardIntegration = false;
@@ -351,6 +572,7 @@ struct Chunk {
             }).wasInterrupted())
           continue;
       auto *clone = b.clone(op, map);
+      if (failed(sinkCells(clone, sunk))) return failure();
       // A kernel reads the most recent definition of each field and
       // writes into the proposal. Constraint kernels consume the
       // unconstrained fields produced by the preceding launch.
@@ -407,7 +629,14 @@ struct Chunk {
       return loop.emitError("step_graph: a side-stream window is not joined "
                             "within the step");
     call("mdrtStepEnd", cache);
+    if (failed(checkHost(record.getThenRegion(), cells, sunk))) return failure();
     b.setInsertionPointAfter(record);
+    // The host wrote the cell of this chunk before it; the graph reads it.
+    for (auto [memory, mirror] : mirrors) {
+      auto type = cast<MemRefType>(memory.getType());
+      call("mdrtStepMirror", {cache, address(mirror), address(memory),
+                              word(type.getNumElements() * type.getElementTypeBitWidth() / 8)});
+    }
     Value accepted = call("mdrtStepRun", {cache,old.front(),k}).getResult(0);
     call("mdrtStepCheck", {cache, accepted});
     for (auto [st, prev] : llvm::zip(counts, old)) {
@@ -448,6 +677,7 @@ LogicalResult lowerTowersChunks(ModuleOp module, func::FuncOp fn, ArrayRef<scf::
   declare("mdrtStepEnd", 1, {});
   declare("mdrtStepRun", 3, i64);
   declare("mdrtStepCheck", 2, {});
+  declare("mdrtStepMirror", 4, {});
   auto seed = declare("mdrtStepSeed", 2, {}, 2);
   auto boundary = declare("mdrtStepBoundary", 1, {});
   auto read = declare("mdrtStepRead", 2, i64);

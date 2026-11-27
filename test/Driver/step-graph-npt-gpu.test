@@ -1,0 +1,9 @@
+# Graph replay of TOWERS steps under stochastic cell rescaling
+# (D[towers-graph-npt]): GRAPH against LAUNCH within ten times the LAUNCH
+# spread, isotropic, semi-isotropic, anisotropic and triclinic, and a
+# continuation; a stale cell (MDRT_STEP_MIRROR_FAULT) fails the bound; a
+# crushed cell stops the run.
+# REQUIRES: cuda, towers-mma, hdf5, h5py
+# RUN: rm -rf %t && mkdir %t
+# RUN: %h5md_python %S/Inputs/check_step_graph_npt.py %S/Inputs/dipeptide %t mdir | FileCheck %s
+# CHECK: step graph npt: ok
