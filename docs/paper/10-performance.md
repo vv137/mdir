@@ -749,3 +749,61 @@ ratios are 6.757, 6.745, and 7.270; the reported 6.924 $\pm$ 0.300
 includes that third-round outlier, while the first two ratios are about
 6.75. No round was removed from Tables 10.8 and 10.9.
 
+
+## 10.8 Concurrent force terms
+
+The force terms of a step read the positions and meet at the kick. On one
+stream they run one after another, so the device time of a step is the sum
+of their kernels and the gaps between them. `[execution] term_streams`
+(D[concurrent-terms]) runs the reciprocal sums of PME on a second stream
+(`RECIPROCAL`) and also the loops over tuples on a third (`TERMS`); the
+argument that the results are those of one stream is that of D87, with the
+order of each sum fixed by the program (Section 8).
+
+Table 10.10 gives the kernel time of each part of a step on one stream.
+If the three chains after the positions (direct: upkeep and pairs;
+reciprocal: spread, FFT, solve, gather; tuples) overlapped without
+slowing each other, a step would take the rest plus the longest chain.
+That bound is 32–56% below the span of the step. It is an upper bound:
+kernels that run at once share the multiprocessors, and on one stream the
+span also holds the gaps between launches.
+
+*Table 10.10. RTX 4090, MDIR `main`, Nsight Systems; mean kernel time per
+step in µs over every step after the first quarter, two jobs. Integration
+includes the constraints fused into its kernels (D110). The span is the
+device time from one PME weights kernel to the next.*
+
+| System | Traversal | Pairs | Upkeep | PME | Tuples | Integration | Sum | Span | Bound |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| JAC | AUTO | 35.2 | 19.7 | 34.3 | 11.1 | 20.0 | 120.3 | 141.5 | 74.9 |
+| JAC | TOWERS | 39.2 | 3.3 | 29.2 | 9.3 | 17.8 | 98.9 | 113.4 | 60.3 |
+| Factor IX | AUTO | 120.4 | 25.8 | 77.2 | 17.1 | 41.3 | 282.0 | 303.3 | 187.7 |
+| Factor IX | TOWERS | 116.5 | 6.7 | 71.5 | 13.6 | 38.5 | 247.0 | 262.7 | 161.9 |
+| Cellulose | AUTO | 526.3 | 98.1 | 236.6 | 90.3 | 137.9 | 1091.2 | 1116.4 | 764.3 |
+| Cellulose | TOWERS | 527.1 | 21.0 | 244.2 | 80.0 | 132.2 | 1006.6 | 1025.6 | 682.3 |
+| TIP3P 10k | AUTO | 21.9 | 17.9 | 26.3 | 5.4 | 20.4 | 91.9 | 120.7 | 60.3 |
+| TIP3P 10k | TOWERS | 26.0 | 2.7 | 19.7 | 5.7 | 18.1 | 72.6 | 106.7 | 47.3 |
+
+With launched steps the host issues a step's kernels in program order. On
+JAC and TIP3P 10k with `TERMS`, the tuples ran beside PME, but the loop
+over pairs began only after the host had issued the side work, and the
+step did not shorten. A captured step (`step_graph = "GRAPH"`, D439) has
+no such order: its branches start when their events allow. Table 10.11
+gives the spans of the ordinary steps in the traces.
+
+*Table 10.11. RTX 4090, TOWERS, graph replay, Nsight Systems with graph
+nodes traced; median span of the ordinary steps and the time two chains
+ran at once, µs per step.*
+
+| System | One stream | `RECIPROCAL` | `TERMS` | Overlap direct/PME, `TERMS` | Overlap tuples/direct, `TERMS` | Bound |
+|---|---:|---:|---:|---:|---:|---:|
+| JAC (NVT) | 101.1 | 88.6 | 88.1 | 30.8 | 11.5 | 61.9 |
+| TIP3P 10k | 72.6 | 67.5 | 60.7 | 19.4 | 8.3 | 47.3 |
+| TIP3P 20k | 102.5 | 85.2 | 85.6 | 32.6 | 7.3 | 66.7 |
+
+The best schedule reaches 33–48% of the reduction that the bound allows. The
+kernel times grow under overlap: on JAC the sum of the kernels of a step
+goes from 100.0 to 132.7 µs with `TERMS`. Issuing the side work after the
+pairs, from an event recorded earlier, removed the overlap of PME with the
+pairs (21 to 3 µs on JAC with TOWERS), since kernels issued after the pair
+kernel wait for its blocks, and was not kept.
