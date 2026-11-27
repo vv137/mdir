@@ -131,6 +131,7 @@ struct DomainMatrix {
   int buffered;
   struct BufferedRow { int32_t stable, selected; } *bufferedRows;
   double *pruneReference;
+  int32_t maxRawCount;
 };
 
 struct TransferRow { int64_t domain, ghost, offset; int peer; int64_t source,row; };
@@ -563,7 +564,10 @@ void _mlir_ciface_mdrtDistBuildMidpoint(int64_t halo, int64_t matrix, struct Mem
       m->counts[i] = count;
       if (count > largest) largest = count;
     }
-    if (largest <= entries.sizes[1]) break;
+    if (largest <= entries.sizes[1]) {
+      m->maxRawCount = largest > 0 ? largest : 1;
+      break;
+    }
     mdrtHostMatrixGrow(m->raw,largest);
   }
   free(sites); free(spans); free(order);
@@ -665,22 +669,23 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
   int64_t d = m->domain, n = l->rows[d];
   struct HostBuffer2 src, dst;
   _mlir_ciface_mdrtHostMatrixEntries(&src,m->raw);
+  int64_t width = m->maxRawCount ? m->maxRawCount : src.sizes[1];
   if (!m->selected) {
-    m->selected = mdrtHostMatrixAllocate(m->centers,src.sizes[1]);
+    m->selected = mdrtHostMatrixAllocate(m->centers,width);
     m->selectedCounts = calloc(m->centers ? m->centers : 1,sizeof *m->selectedCounts);
     if (!m->selectedCounts) fail("out of memory allocating selected row counts");
   }
-  mdrtHostMatrixGrow(m->selected,src.sizes[1]);
+  mdrtHostMatrixGrow(m->selected,width);
   _mlir_ciface_mdrtHostMatrixEntries(&dst,m->selected);
   struct HostBuffer2 candidates = dst;
   int32_t *counts = m->selectedCounts;
   if (rule == 2) {
     if (!m->candidates) {
-      m->candidates = mdrtHostMatrixAllocate(m->centers,src.sizes[1]);
+      m->candidates = mdrtHostMatrixAllocate(m->centers,width);
       m->candidateCounts = calloc(m->centers ? m->centers : 1,sizeof *m->candidateCounts);
       if (!m->candidateCounts) fail("out of memory allocating midpoint row counts");
     }
-    mdrtHostMatrixGrow(m->candidates,src.sizes[1]);
+    mdrtHostMatrixGrow(m->candidates,width);
     _mlir_ciface_mdrtHostMatrixEntries(&candidates,m->candidates);
     counts = m->candidateCounts;
   }

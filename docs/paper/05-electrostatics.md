@@ -1547,3 +1547,9 @@ directory. Sharing their requests reduced the Cellulose coordinate reply
 from 29.82 to 18.43 MB per step in a one-node trace. Across the same
 eight-step measurement window, each rank made 48 tuple-schedule record
 exchanges, down from 80. Row routing still takes place for each relation.
+
+The candidate and selected neighbor matrices use the maximum occupied
+raw row as their initial stride. A Cellulose snapshot needed at most 431
+entries in a raw row with capacity 896. In a paired one-node mixed run,
+sizing the two derived matrices by occupancy reduced mean step time
+from 122.79 to 120.14 ms. Raw neighbor order and force order are preserved.

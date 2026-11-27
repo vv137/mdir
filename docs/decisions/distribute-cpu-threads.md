@@ -288,3 +288,8 @@ schedule gathers the union of remote particle identities. Each relation
 maps its members into the reply in its original tuple order. The next
 snapshot refreshes the coordinates even if the allocator reused an
 address. Loop-local relations use a plan with their own lifetime.
+
+A midpoint rebuild records the largest actual raw row. Both filtered
+matrices need at most that many entries per row. A later rebuild can
+grow them before generating new candidates. The general neighbor builder
+continues to supply its allocated width when it has no measured maximum.
