@@ -393,7 +393,7 @@ static llvm::Expected<CompiledRun> compileEntry(mlir::ModuleOp module,
 }
 
 // Both candidates have the same passes up to the graph transformation.
-// Retain the input as well: a nonaligned restart can build different loops.
+// Retain the input as well, and reuse the lowering only for an equivalent one.
 struct TrialLowering {
   mlir::MLIRContext context{compiler::getRegistry(), mlir::MLIRContext::Threading::DISABLED};
   mlir::OwningOpRef<mlir::ModuleOp> input, lowered;
