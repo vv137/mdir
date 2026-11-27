@@ -27,8 +27,8 @@ Three errors make up the difference of the two programs:
    vector; the margin covers the rest), and its sum over n terms in any
    order and any blocking (Higham 2002, eq. 4.4): (n - 1) e sum_t |q_t|.
 2. The displacement itself: each program rounds the coordinates it
-   subtracts (the mixed kernels narrow positions to binary32 where they load
-   them, D283), so a component of d = x_i - x_j is off by at most
+   subtracts (the mixed kernels compute in binary32, from positions stored
+   in binary64), so a component of d = x_i - x_j is off by at most
    2 e X, with X the largest coordinate either program holds, and
    |delta d| <= 2 sqrt(3) e X. A term then changes by at most
    |dq_t/dd| |delta d|: |U'| for an energy, |U'| + r |U''| for a virial,
