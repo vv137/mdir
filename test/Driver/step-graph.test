@@ -8,6 +8,10 @@
 # RUN: mdir pin %t/choices.jsonl | FileCheck %s --check-prefix=PIN
 # PIN: [execution]
 # PIN: step_graph = "LAUNCH"
+# RUN: %python -c "import json; p='%t/choices.jsonl'; start=json.loads(open(p).readline()); start['resolved_choices']['pairlist_distance']={'value_angstrom': 13.25}; open('%t/pairlist.jsonl','w').write(json.dumps(start)+'\n')"
+# RUN: mdir pin %t/pairlist.jsonl | FileCheck %s --check-prefix=PIN-LIST
+# PIN-LIST: [energy]
+# PIN-LIST-NEXT: pairlist_distance = 13.25
 # RUN: sed -i 's/step_graph = "AUTO"/step_graph = "GRAPH"/' %t/control.toml
 # RUN: not mdir check %t/control.toml 2>&1 | FileCheck %s --check-prefix=REFUSE
 # RUN: sed -i 's/"GRAPH"/"WHILE"/' %t/control.toml

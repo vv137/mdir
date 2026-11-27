@@ -1489,6 +1489,8 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   ++output.numEnergyTimes;
   if (!output.rateFrom && step >= output.rateStep)
     output.rateFrom = time;
+  if (output.rateSplitStep && !output.rateSplit && step >= *output.rateSplitStep)
+    output.rateSplit = time;
   output.rateLast = time;
 }
 

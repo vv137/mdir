@@ -418,8 +418,9 @@ PTX, cubin and host object counts distinguish cache hits from compilation.
 `shared_lowering` indicates reuse of the other candidate’s common passes. Set `step_graph` to the
 record's `value` to pin that choice and skip the trial. Python exposes the
 same strings through `Execution.step_graph`. `mdir pin MANIFEST` prints
-the latest invocation’s resolved `[execution]` keys as TOML, including
-the TOWERS shape when present and the step timings in a comment. Python's segmented simulations
+resolved choices from the latest invocation as TOML. It includes the
+TOWERS shape and measured distributed pair-list distance when present,
+along with the step timings in a comment. Python's segmented simulations
 currently resolve AUTO to LAUNCH. See D439.
 
 For periodic TOWERS preflight, `[execution] towers_shape` accepts an
@@ -1809,14 +1810,25 @@ split and unsplit traversal on the allocated layout for runs of at least
 32 steps. Short runs use the unsplit path. Set `pair_overlap = "split"`
 or `"unsplit"` to override selection. The log records the choice.
 
-A numeric `[energy] pairlist_distance` fixes the halo reach. For directed
-NCCL runs without topology, `"AUTO"` can measure that reach on the allocated
-layout. An explicit request searches for runs of at least 204 steps. An
-omitted reach searches for runs of at least 4,080 steps. Each candidate
-uses a disposable 204-step trajectory with the production energy cadence,
-capped at 102 steps between reports. The run log gives each skin and its
-measured time, and the manifest records the candidate times and selected
-reach. The search precedes automatic selection of pair overlap.
+A numeric `[energy] pairlist_distance` fixes the list distance. For eligible
+NCCL dynamics, `"AUTO"` measures list distances on the allocated layout
+with displacement-triggered rebuilds.
+Each candidate starts from the same state and uses at least 204 disposable
+steps. Each half ends on a coupling and energy-report boundary. The
+production energy interval is capped at the length of one half. Explicit
+`"AUTO"` searches when the run is at least as long as one trial. An
+omitted distance searches when the run is at least twenty times as long.
+The second half measures the slowest rank's mean step time, including
+rebuilds. The log and manifest record every measured distance and the
+winner. Distributed phase markers provide pair time, rebuild count, and
+the available covered and rebuild costs. The one-domain periodic half
+MATRIX measures between energy reports. The log and manifest report a
+margin within the variation between timed blocks when those samples are
+available. The force cutoff stays fixed. A different list distance
+can change traversal order and floating-point rounding. The search
+precedes automatic selection of pair overlap. Use the numeric
+`[energy] pairlist_distance` printed by `mdir pin MANIFEST` to repeat
+the selected distance without a search.
 
 Node placement groups neighboring domains by periodic face area. At each
 report the intra-node and inter-node byte totals count directed logical

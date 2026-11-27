@@ -462,6 +462,9 @@ struct DistributedTrial {
   int64_t steps;
   double milliseconds = 0;
   double reach = 0;
+  std::optional<DistributedSkinTiming> skin;
+  int64_t localTimingSteps = 0;
+  std::optional<double> localTimingVariation;
 };
 
 static int runControlImpl(StringRef controlFile, Emit emit,
@@ -1036,48 +1039,170 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   if (options.segments)
     *control = compiler::getSegmentsControl(*control);
   llvm::json::Array distributedSkinTrials;
+  llvm::json::Object distributedSkinSelection;
   double distributedSkinSeconds = 0;
   double pairTimes[2] = {};
   bool requestedAutoOverlap = control->distribution && control->distribution->pairOverlap == "auto";
 #ifdef MDIR_ENABLE_MPI
   // Replay the same initial state and user energy cadence for each
   // halo reach. The second half of each disposable run includes both
-  // covered steps and rebuilds. All ranks use the writer's measurements.
+  // covered steps and rebuilds. Select using the slowest rank's measurements.
   const char *policy = std::getenv("MDIR_SKIN_SEARCH");
   StringRef skinPolicy = policy ? policy : "auto";
-  constexpr int64_t skinSteps = 204;
+  constexpr int64_t skinHalf = 102;
+  const int64_t coupling = std::max<int64_t>(1, control->getCouplingPeriod());
+  int64_t skinSteps = 0;
+  if (coupling <= skinHalf) {
+    int64_t half = llvm::alignTo(static_cast<uint64_t>(skinHalf), coupling);
+    // The control reader requires the energy cadence to be a multiple of
+    // coupling. End both halves on a report boundary when keeping it.
+    if (control->energyPeriod > 0 && control->energyPeriod <= half)
+      half = llvm::alignTo(static_cast<uint64_t>(half), control->energyPeriod);
+    skinSteps = 2 * half;
+  }
   if (!distributedTrial && !trial && emit == Emit::Run && control->distribution &&
       control->distribution->transport == "nccl" &&
-      control->distribution->traversal == "directed" && control->pairlistDistanceAuto &&
-      !control->hasTopology() && !control->minimize && !control->rebuildPeriod &&
+      control->pairlistDistanceAuto && !control->minimize && !control->rebuildPeriod &&
+      skinSteps > 0 &&
       !fromPositions && !options.segments && (skinPolicy == "auto" || skinPolicy == "always") &&
       (skinPolicy == "always" || (control->numSteps >= skinSteps &&
        (control->skinsRequested || control->numSteps >= 20*skinSteps)))) {
     auto searchBegan = std::chrono::steady_clock::now();
     double original = control->pairlistDistance;
-    double best = 0;
+    struct Measurement { double cost; std::optional<double> variation; };
+    std::optional<Measurement> best, runnerUp;
     StringRef mode = requestedAutoOverlap ? StringRef("unsplit") : StringRef(control->distribution->pairOverlap);
     llvm::raw_string_ostream lines(skinLines);
-    for (double skin : {original-control->cutoffDistance, 0.15, 0.30, 0.60, 1.20}) {
-      double reach = control->cutoffDistance + skin;
-      if (reach > original || skin <= 0) continue;
+    double reference = original - control->cutoffDistance;
+    SmallVector<double> skins{reference};
+    if (control->hasTopology()) {
+      for (double skin : {2.0, 3.0, 4.0, 5.0})
+        if (std::abs(skin - reference) >= 1e-9)
+          skins.push_back(skin);
+    } else {
+      for (double skin : {0.15, 0.30, 0.60, 1.20})
+        if (skin < reference)
+          skins.push_back(skin);
+    }
+    double leastEdge = *std::min_element(std::begin(system->box), std::end(system->box));
+    for (double skin : skins) {
+      double reach = skin == reference ? original : control->cutoffDistance + skin;
+      if (skin != reference && (reach * units::length > 0.999 * leastEdge ||
+                               reach <= control->prunedDistance))
+        continue;
       DistributedTrial sample{mode, control->restartInput, skinSteps};
       sample.reach = reach;
+      sample.skin.emplace();
       if (runControlImpl(controlFile, Emit::Run, argv0, {}, nullptr, &sample))
-        return fail("could not time the distributed halo reach");
+        return fail(llvm::formatv("could not time the distributed halo reach at {0:f3} Ang",
+                                  reach).str());
       mdrtMPIBroadcast(&sample.milliseconds, 1, 0);
+      const auto &[covered, rebuilt, other, firstCount, firstSeconds] = *sample.skin;
+      enum Column {
+        CoveredCount, CoveredTime, CoveredPairs,
+        RebuiltCount, RebuiltTime, RebuiltPairs,
+        OtherCount, OtherTime, FirstCount, FirstTime, Columns
+      };
+      double local[] = {covered.count, covered.seconds, covered.pairSeconds,
+                        rebuilt.count, rebuilt.seconds, rebuilt.pairSeconds,
+                        other.count, other.seconds, firstCount, firstSeconds};
+      static_assert(std::size(local) == Columns);
+      std::vector<double> times(ranks * Columns);
+      mdrtMPIGatherTimes(local, times.data(), Columns);
+      double cost = 0, rebuilds = 0, steps = 0, coveredSteps = 0;
+      std::optional<double> variation, pairs, coveredPairs, rebuildCost;
+      for (int r = 0; r < ranks; ++r) {
+        const double *row = times.data() + r * Columns;
+        double count = row[CoveredCount] + row[RebuiltCount] + row[OtherCount];
+        if (!count)
+          continue;
+        double wall = row[CoveredTime] + row[RebuiltTime] + row[OtherTime];
+        double measured = 1000 * wall / count;
+        if (measured <= cost)
+          continue;
+        cost = measured;
+        double first = row[FirstCount], second = count - first;
+        variation = first && second
+                        ? std::optional(1000 * std::abs(row[FirstTime] / first -
+                                          (wall - row[FirstTime]) / second))
+                        : std::nullopt;
+        pairs = 1000 * (row[CoveredPairs] + row[RebuiltPairs]) / count;
+        rebuilds = row[RebuiltCount];
+        steps = count;
+        coveredSteps = row[CoveredCount];
+        coveredPairs.reset();
+        rebuildCost.reset();
+        if (coveredSteps) {
+          coveredPairs = 1000 * row[CoveredPairs] / coveredSteps;
+          double coveredWall = row[CoveredTime] / coveredSteps;
+          rebuildCost = 1000 * (row[RebuiltTime] - rebuilds * coveredWall) / count;
+        }
+      }
+      // One-domain unique execution uses the ordinary GPU integrator.
+      // Its energy reports synchronize the device and bracket the same
+      // measured steps without the distributed phase markers.
+      if (!steps && sample.localTimingSteps) {
+        cost = sample.milliseconds;
+        steps = sample.localTimingSteps;
+        variation = sample.localTimingVariation;
+      }
+      if (!steps)
+        return fail(llvm::formatv("the distributed halo trial at {0:f3} Ang "
+                                  "reported no timed steps", reach).str());
       distributedSkinTrials.emplace_back(llvm::json::Object{
           {"skin_angstrom", skin}, {"pairlist_distance_angstrom", reach},
-          {"milliseconds_per_step", sample.milliseconds}, {"steps", skinSteps}});
-      lines << llvm::formatv("MDIR: distributed skin {0:f3} Ang, {1:f3} ms per step\n",
-                             skin, sample.milliseconds);
-      if (!best || sample.milliseconds < best) {
-        best = sample.milliseconds;
+          {"milliseconds_per_step", sample.milliseconds}, {"steps", skinSteps},
+          {"cost_ms_per_step", cost},
+          {"timing_variation_ms_per_step", variation ? llvm::json::Value(*variation) : nullptr},
+          {"pair_ms_per_step", pairs ? llvm::json::Value(*pairs) : nullptr},
+          {"covered_pairs_ms", coveredPairs ? llvm::json::Value(*coveredPairs) : nullptr},
+          {"rebuild_cost_ms_per_step", rebuildCost ? llvm::json::Value(*rebuildCost) : nullptr},
+          {"rebuilds", pairs ? llvm::json::Value(rebuilds) : nullptr},
+          {"covered_intervals", pairs ? llvm::json::Value(coveredSteps) : nullptr},
+          {"timed_intervals", steps}});
+      lines << llvm::formatv("MDIR: distributed list {0:f3} Ang: {1:f3} ms/step, "
+                             "measured cost {2:f3} ms/step",
+                             reach, sample.milliseconds, cost);
+      if (pairs)
+        lines << llvm::formatv(", pairs {0:f3} ms/step "
+                              "({1:f0} rebuilds, {2:f0} covered, {3:f0} total intervals)",
+                              *pairs, rebuilds, coveredSteps, steps);
+      else
+        lines << llvm::formatv(" ({0:f0} timed steps from energy reports)", steps);
+      if (coveredPairs)
+        lines << llvm::formatv(", covered pairs {0:f3} ms, rebuild premium {1:f3} ms/step",
+                               *coveredPairs, *rebuildCost);
+      lines << '\n';
+      Measurement measured{cost, variation};
+      if (!best || cost < best->cost) {
+        runnerUp = best;
+        best = measured;
         control->pairlistDistance = reach;
+      } else if (!runnerUp || cost < runnerUp->cost) {
+        runnerUp = measured;
       }
     }
     control->skinSource = "measured";
-    control->skinReason = "the fastest measured distributed Verlet step";
+    control->skinReason = "the lowest measured distributed step cost including rebuilds";
+    lines << llvm::formatv("MDIR: selected distributed pair list distance {0:f3} Ang",
+                           control->pairlistDistance);
+    if (runnerUp) {
+      double margin = runnerUp->cost - best->cost;
+      distributedSkinSelection["margin_ms_per_step"] = margin;
+      lines << llvm::formatv(", margin {0:f3} ms/step", margin);
+      if (best->variation && runnerUp->variation) {
+        double variation = std::max(*best->variation, *runnerUp->variation);
+        bool belowVariation = margin <= variation;
+        distributedSkinSelection["timing_variation_ms_per_step"] = variation;
+        distributedSkinSelection["margin_below_timing_variation"] = belowVariation;
+        lines << llvm::formatv(", variation {0:f3} ms/step{1}", variation,
+                               belowVariation ? " (within timing variation)" : "");
+      } else {
+        lines << " (timing variation unavailable at this energy cadence)";
+      }
+    }
+    lines << '\n';
+    lines << "MDIR: changing the list distance can change traversal order and rounding\n";
     distributedSkinSeconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now()-searchBegan).count();
   }
@@ -1680,6 +1805,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
           object["aliasing_estimate"] = program->pmeAliasing;
       }
     }
+    bool measuredDistributedSkin = !distributedSkinTrials.empty();
     llvm::json::Object effective{
         {"seed", std::to_string(control->seed)}, {"time_step_ps", control->timestep},
         {"trajectory_format", control->framePeriod == 0 ? llvm::json::Value(nullptr) :
@@ -1703,10 +1829,14 @@ static int runControlImpl(StringRef controlFile, Emit emit,
          control->getSkinSource(/*outer=*/true)},
         {"pruned_distance_source",
          control->getSkinSource(/*outer=*/false)},
-        {"skin_search", !distributedSkinTrials.empty()
+        {"skin_search", measuredDistributedSkin
              ? llvm::json::Value(llvm::json::Object{
                    {"source", "measured"}, {"searched", true},
+                   {"category", "setup trial"}, {"requested", "AUTO"},
+                   {"value_angstrom", control->pairlistDistance},
+                   {"can_change_rounding", true},
                    {"reason", control->skinReason}, {"seconds", distributedSkinSeconds},
+                   {"selection", std::move(distributedSkinSelection)},
                    {"candidates", std::move(distributedSkinTrials)}})
              : control->isSkinAuto()
              ? skinChoice.toJSON(*control) : llvm::json::Value(nullptr)},
@@ -1734,6 +1864,9 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       effective["towers_shape"] = towersShapeReport;
     if (!towersCellHeight.empty())
       effective["towers_cell_height"] = towersCellHeight;
+    if (measuredDistributedSkin)
+      resolvedChoices["pairlist_distance"] =
+          llvm::json::Object(*effective.getObject("skin_search"));
     resolvedChoices["step_graph"] = std::move(graphChoice);
     llvm::json::Object metadata{
         {"build", getManifestBuild()}, {"effective", std::move(effective)},
@@ -1767,6 +1900,8 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // run, and the temperatures of the solute and of the solvent in ten
   // blocks of the rows after the first, which has none.
   output.rateStep = firstStep + control->numSteps / 2;
+  if (distributedTrial && distributedTrial->skin && program->localUniquePairs)
+    output.rateSplitStep = output.rateStep + control->numSteps / 4;
   int64_t temperatureRows =
       control->energyPeriod > 0 ? control->numSteps / control->energyPeriod : 0;
   for (BlockMean *mean : {&output.soluteOptimal, &output.solventOptimal,
@@ -2227,6 +2362,31 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     }
     return *symbol;
   };
+  // Disposable reach trials share the process and CUDA context. Return each
+  // trial's device allocations before building the next candidate's lists.
+  using EnterActivation = int64_t (*)();
+  using LeaveActivation = void (*)(int64_t);
+  using TrimDevice = uint64_t (*)();
+  LeaveActivation leaveActivation = nullptr;
+  TrimDevice trimDevice = nullptr;
+  int64_t trialActivation = 0;
+  if (onDevice && distributedTrial && distributedTrial->skin) {
+    auto enterActivation = reinterpret_cast<EnterActivation>(
+        findRuntime("mdrtDeviceDomainEnter", "mdrtDeviceDomainEnter"));
+    leaveActivation = reinterpret_cast<LeaveActivation>(
+        findRuntime("mdrtDeviceDomainLeave", "mdrtDeviceDomainLeave"));
+    trimDevice = reinterpret_cast<TrimDevice>(
+        findRuntime("mdrtDeviceTrim", "mdrtDeviceTrim"));
+    if (!enterActivation || !leaveActivation || !trimDevice)
+      return fail("distributed reach trials require CUDA activation support");
+    trialActivation = enterActivation();
+  }
+  llvm::scope_exit releaseTrialDevice([&] {
+    if (leaveActivation) {
+      leaveActivation(trialActivation);
+      trimDevice();
+    }
+  });
   void *tupleStore = nullptr;
   if (void *open = findRuntime("mdrtTuplesOpen", "mdrtDeviceTuplesOpen"))
     tupleStore = reinterpret_cast<void *(*)()>(open)();
@@ -2241,6 +2401,10 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     const auto &g = program->domainGrid;
     distLog.emplace(output.log, manifest, distRank, distRanks, g[0]*g[1]*g[2],
                     firstStep, control->energyPeriod, domainReach);
+    if (distributedTrial && distributedTrial->skin) {
+      distLog->skinTiming = &*distributedTrial->skin;
+      distLog->skinWarmup = distributedTrial->steps / 2;
+    }
     const char *prefix = distributedTrial ? nullptr : std::getenv("MDIR_DIST_STEP_TRACE");
 #ifdef MDIR_ENABLE_MPI
     if (control->distribution->transport != "local") {
@@ -2321,9 +2485,22 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   }
   if (distributedTrial) {
     distributedTrial->milliseconds = 1000 * runTime / control->numSteps;
-    if (output.rateFrom && output.rateLast.first > output.rateFrom->first)
+    if (output.rateFrom && output.rateLast.first > output.rateFrom->first) {
       distributedTrial->milliseconds = 1000 * (output.rateLast.second - output.rateFrom->second) /
                                 (output.rateLast.first - output.rateFrom->first);
+      if (program->localUniquePairs) {
+        distributedTrial->localTimingSteps = output.rateLast.first - output.rateFrom->first;
+        if (output.rateSplit && output.rateSplit->first > output.rateFrom->first &&
+            output.rateSplit->first < output.rateLast.first) {
+          auto [first, start] = *output.rateFrom;
+          auto [middle, split] = *output.rateSplit;
+          auto [last, end] = output.rateLast;
+          distributedTrial->localTimingVariation =
+              1000 * std::abs((split - start) / (middle - first) -
+                              (end - split) / (last - middle));
+        }
+      }
+    }
     if (auto reset = findRuntime("mdrtResetCounts", "mdrtResetCounts"))
       reinterpret_cast<void (*)()>(reset)();
     setOutput(nullptr);

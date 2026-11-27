@@ -10,6 +10,14 @@
 #include <map>
 
 namespace mdir::tool {
+struct DistributedSkinTiming {
+  struct Intervals {
+    double count = 0, seconds = 0, pairSeconds = 0;
+  };
+  Intervals covered, rebuilt, other;
+  double firstHalfCount = 0, firstHalfSeconds = 0;
+};
+
 class DistributionLog {
   using Clock = std::chrono::steady_clock;
   using Edge = std::pair<int64_t, int64_t>;
@@ -186,6 +194,20 @@ class DistributionLog {
                   (long long)current.faceBytes[0], (long long)current.faceBytes[1],
                   (long long)current.reverseBytes[0], (long long)current.reverseBytes[1]);
       current.seconds[0] = std::chrono::duration<double>(now-began).count();
+      if (skinTiming && step - first > skinWarmup) {
+        auto *sample = &skinTiming->other;
+        if (current.seconds[DistHaloBuild] || current.seconds[DistList])
+          sample = &skinTiming->rebuilt;
+        else if (current.seconds[DistPairs])
+          sample = &skinTiming->covered;
+        ++sample->count;
+        sample->seconds += current.seconds[0];
+        sample->pairSeconds += current.seconds[DistPairs];
+        if (step - first <= skinWarmup + skinWarmup / 2) {
+          ++skinTiming->firstHalfCount;
+          skinTiming->firstHalfSeconds += current.seconds[0];
+        }
+      }
       if (trace) rows(current, "trace", true);
       add(interval, current);
       current = Sample(domains);
@@ -207,6 +229,8 @@ class DistributionLog {
     }
   }
 public:
+  DistributedSkinTiming *skinTiming = nullptr;
+  int64_t skinWarmup = 0;
   int (*rankOwner)(int64_t, int64_t) = nullptr;
   int (*nodeOfRank)(int) = nullptr;
   std::array<int64_t, 3> grid{};

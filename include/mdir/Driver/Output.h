@@ -432,6 +432,9 @@ struct Output {
   int64_t numEnergyTimes = 0;
   std::optional<std::pair<int64_t, double>> rateFrom;
   std::pair<int64_t, double> rateLast = {0, 0.0};
+  // A setup trial may split the measured half at an energy report.
+  std::optional<int64_t> rateSplitStep;
+  std::optional<std::pair<int64_t, double>> rateSplit;
 
   /// Where checkpoints go, and what they hold beside the state.
   std::string checkpointPath;

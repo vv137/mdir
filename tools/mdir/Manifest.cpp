@@ -11,6 +11,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/SHA256.h"
 #include <cerrno>
+#include <cmath>
 #include <ctime>
 #include <fstream>
 #include <filesystem>
@@ -65,6 +66,12 @@ llvm::Expected<std::string> mdir::tool::getExecutionPins(StringRef path) {
     if (height != "FULL" && height != "HALF")
       return llvm::createStringError("incomplete TOWERS cell height");
     os << "cell_height = \"" << *height << "\" }\n";
+  }
+  if (auto *list = choices->getObject("pairlist_distance")) {
+    auto reach = list->getNumber("value_angstrom");
+    if (!reach || !std::isfinite(*reach) || *reach <= 0)
+      return llvm::createStringError("invalid resolved pair-list distance");
+    os << "\n[energy]\npairlist_distance = " << Value(*reach) << '\n';
   }
   return text;
 }

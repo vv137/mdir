@@ -19,7 +19,7 @@ static llvm::cl::SubCommand emitCommand(
     "emit", "Print the program of a run instead of executing it");
 static llvm::cl::SubCommand checkCommand(
     "check", "Check the input and summarize the run, outputs, and warnings");
-static llvm::cl::SubCommand pinCommand("pin", "Print the resolved step graph and TOWERS shape as TOML");
+static llvm::cl::SubCommand pinCommand("pin", "Print resolved choices as TOML");
 static llvm::cl::opt<std::string> pinManifest(llvm::cl::Positional, llvm::cl::desc("<manifest>"),
                                               llvm::cl::Required, llvm::cl::sub(pinCommand));
 static llvm::cl::SubCommand templateCommand(

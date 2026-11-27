@@ -630,11 +630,17 @@ and one NCCL rank, the driver can use the single-device integrator with
 an input-order periodic half MATRIX. This path requires no thermostat
 or user pair, triplet, or model terms.
 
-A numeric `[energy] pairlist_distance` fixes the halo reach. For directed
-NCCL runs without topology, `"AUTO"` can measure that reach on the allocated
-layout. An explicit request searches for runs of at least 204 steps. An
-omitted reach searches for runs of at least 4,080 steps. Each candidate
-uses a disposable 204-step trajectory with the production energy cadence,
-capped at 102 steps between reports. The run log gives each skin and its
-measured time, and the manifest records the candidate times and selected
-reach. The search precedes automatic selection of pair overlap.
+A numeric `[energy] pairlist_distance` fixes the list distance. For eligible
+NCCL dynamics, `"AUTO"` measures candidate distances on the allocated
+layout with displacement-triggered rebuilds. Each candidate uses at least
+204 steps from the same starting state. The halves end on coupling and
+energy-report boundaries, with the production energy interval capped at
+one half. An explicit request searches when the run is at least as long as
+one trial. An omitted distance searches when the run is at least twenty
+times as long. The measured cost is the slowest rank's mean step time
+in the second half, including rebuilds. The log and manifest record the
+trial measurements, the winner, and the margin against available timing
+variation. The force cutoff stays fixed. List distance can change traversal
+order and rounding. The search precedes automatic selection of pair
+overlap. `mdir pin MANIFEST` prints the chosen distance as a numeric
+`[energy] pairlist_distance`.
