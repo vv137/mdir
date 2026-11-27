@@ -208,6 +208,10 @@ static int sideLane = -1;
 #define onSide (sideLane >= 0)
 static CUevent forkEvent = NULL, joinEvents[SIDE_LANES];
 static int joinPending[SIDE_LANES];
+/* A fork of a lane (mdrtSideFork): the event of the first stream at the
+   fork, from which the lane's work starts until the next join. */
+static CUevent forkEvents[SIDE_LANES];
+static int forkPending[SIDE_LANES];
 
 /* Whether the device may still be running work that was issued. */
 static int isPending = 0;
@@ -672,10 +676,24 @@ static void sideBegin(int lane) {
     check(cuEventCreate(&joinEvents[lane], CU_EVENT_DISABLE_TIMING),
           "cuEventCreate");
   }
-  check(cuEventRecord(forkEvent, sharedStream), "cuEventRecord");
-  check(cuStreamWaitEvent(sideStreams[lane], forkEvent, 0),
-        "cuStreamWaitEvent");
+  if (forkPending[lane]) {
+    check(cuStreamWaitEvent(sideStreams[lane], forkEvents[lane], 0),
+          "cuStreamWaitEvent");
+  } else {
+    check(cuEventRecord(forkEvent, sharedStream), "cuEventRecord");
+    check(cuStreamWaitEvent(sideStreams[lane], forkEvent, 0),
+          "cuStreamWaitEvent");
+  }
   sideLane = lane;
+}
+
+static void sideFork(int lane) {
+  mgpuStreamCreate();
+  if (!forkEvents[lane])
+    check(cuEventCreate(&forkEvents[lane], CU_EVENT_DISABLE_TIMING),
+          "cuEventCreate");
+  check(cuEventRecord(forkEvents[lane], sharedStream), "cuEventRecord");
+  forkPending[lane] = 1;
 }
 
 static void sideEnd(int lane) {
@@ -688,9 +706,12 @@ void mdrtSideBegin(void) { sideBegin(0); }
 void mdrtSideEnd(void) { sideEnd(0); }
 void mdrtSide2Begin(void) { sideBegin(1); }
 void mdrtSide2End(void) { sideEnd(1); }
+void mdrtSideFork(void) { sideFork(0); }
+void mdrtSide2Fork(void) { sideFork(1); }
 
 void mdrtSideJoin(void) {
   for (int lane = 0; lane != SIDE_LANES; ++lane) {
+    forkPending[lane] = 0;
     if (!joinPending[lane])
       continue;
     check(cuStreamWaitEvent(sharedStream, joinEvents[lane], 0),

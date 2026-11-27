@@ -7,9 +7,9 @@
 #    stream and the same program on one stream give the same checkpoint, the
 #    same forces to the bit, and the same H5MD datasets, in mixed and double
 #    precision. The stream assignment does not decide the order of a sum.
-#    The lowered program issues a kernel of tuples between mdrtSide2Begin
-#    and mdrtSide2End (the third stream) and a loop over pairs after it,
-#    before mdrtSideJoin.
+#    The lowered program forks the third stream (mdrtSide2Fork), issues a
+#    loop over pairs, then a kernel of tuples between mdrtSide2Begin and
+#    mdrtSide2End, before mdrtSideJoin.
 # 2. `term_streams = "TERMS"` outside the deterministic mode: the forces of
 #    one step equal those of `SINGLE` within the rounding of the other order
 #    of the sum of the terms (relative RMS 1e-5 in mixed, 1e-12 in double).
@@ -25,16 +25,16 @@
 # RUN: sed -e 's/PRECISION/double/' -e 's/STREAMS/SINGLE/' -e 's/DETERMINISTIC/true/' %t/template.toml > %t/double-one/run.toml
 # RUN: cp %t/mixed-one/run.toml %t/mixed-two/ && cp %t/double-one/run.toml %t/double-two/
 # RUN: cd %t/mixed-one && mdir emit run.toml --stage=pipeline | sed 's/md-exec-accumulate-destinations,/md-exec-accumulate-destinations{separate-tuples=true},/' > pipeline
-# RUN: sed 's/md-exec-assign-streams,/md-exec-assign-streams{reciprocal=true tuples=true},/' %t/mixed-one/pipeline > %t/mixed-two/pipeline
+# RUN: sed 's/md-exec-assign-streams,/md-exec-assign-streams{reciprocal=true tuples=true fork-after-pairs=true},/' %t/mixed-one/pipeline > %t/mixed-two/pipeline
 # RUN: cd %t/double-one && mdir emit run.toml --stage=pipeline | sed 's/md-exec-accumulate-destinations,/md-exec-accumulate-destinations{separate-tuples=true},/' > pipeline
-# RUN: sed 's/md-exec-assign-streams,/md-exec-assign-streams{reciprocal=true tuples=true},/' %t/double-one/pipeline > %t/double-two/pipeline
+# RUN: sed 's/md-exec-assign-streams,/md-exec-assign-streams{reciprocal=true tuples=true fork-after-pairs=true},/' %t/double-one/pipeline > %t/double-two/pipeline
 # RUN: grep -c 'tuples=true' %t/mixed-two/pipeline %t/double-two/pipeline | FileCheck %s --check-prefix=PIPELINES
 # RUN: cd %t/mixed-one && sh -c 'MDIR_PIPELINE="$(cat pipeline)" mdir run run.toml' > log 2>&1
 # RUN: cd %t/mixed-two && sh -c 'MDIR_PIPELINE="$(cat pipeline)" mdir run run.toml' > log 2>&1
 # RUN: cd %t/double-one && sh -c 'MDIR_PIPELINE="$(cat pipeline)" mdir run run.toml' > log 2>&1
 # RUN: cd %t/double-two && sh -c 'MDIR_PIPELINE="$(cat pipeline)" mdir run run.toml' > log 2>&1
 # RUN: cd %t/mixed-two && env MDIR_PRINT_AFTER=convert-md-exec-to-gpu sh -c 'MDIR_PIPELINE="$(cat pipeline)" mdir emit run.toml --stage=lowered' 2> gpu.mlir > /dev/null
-# RUN: awk '/call @mdrtSide2Begin\(/{open=1; tuples=0} /call @mdrtSide2End\(/{if (open && tuples) ended=1; open=0} open && /gpu.launch .*module\(@mdir_run_tuple_for_/{tuples=1} /call @mdrtSideJoin\(/{ended=0} ended && /gpu.launch .*module\(@mdir_run_pair_for_/{found=1} END{exit !found}' %t/mixed-two/gpu.mlir
+# RUN: awk '/call @mdrtSide2Fork\(/{fork=1; pair=0} fork && /gpu.launch .*module\(@mdir_run_pair_for_/{pair=1} /call @mdrtSide2Begin\(/{open=fork && pair} open && /gpu.launch .*module\(@mdir_run_tuple_for_/{found=1} /call @mdrtSide2End\(/{open=0} /call @mdrtSideJoin\(/{fork=0} END{exit !found}' %t/mixed-two/gpu.mlir
 # RUN: mdir checkpoint %t/mixed-one/state.h5 %t/mixed-two/state.h5 | FileCheck %s --check-prefix=SAME
 # RUN: mdir checkpoint %t/double-one/state.h5 %t/double-two/state.h5 | FileCheck %s --check-prefix=SAME
 # RUN: %h5md_python -c "import h5py,sys; a,b=(h5py.File(p)['particles/all/force/value'][()] for p in sys.argv[1:]); assert a.size and a.tobytes() == b.tobytes(); print('forces equal')" %t/mixed-one/state.h5 %t/mixed-two/state.h5 | FileCheck %s --check-prefix=FORCES
@@ -77,7 +77,7 @@
 # MIXED: mixed: relative difference {{.*}} ok
 # DOUBLE: double: relative difference {{.*}} ok
 # DETPIPE: md-exec-accumulate-destinations{{$}}
-# DETPIPE: md-exec-assign-streams{reciprocal=true}{{$}}
+# DETPIPE: md-exec-assign-streams{reciprocal=true fork-after-pairs=true}{{$}}
 # DETLOG: MDIR: term_streams {"category":"rule","changes_rounding":false,"inputs":{"deterministic":true,"target":"GPU"},"reason":"the deterministic mode keeps the tuples with the pairs","requested":"TERMS","value":"RECIPROCAL"}
 
 #--- run.toml

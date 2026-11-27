@@ -357,7 +357,7 @@ Operation *md_exec::findJoin(Operation *side, BufferAliases &aliases) {
        next = next->getNextNode()) {
     // An op marked for the same side stream runs after it there, in the
     // order of the program (D[concurrent-terms]).
-    if (getSideLane(next) == getSideLane(side))
+    if (getSideLane(next) == getSideLane(side) || isa<ForkOp>(next))
       continue;
     if (isa<JoinOp>(next) || !areIndependent(side, next, aliases))
       break;
@@ -366,6 +366,31 @@ Operation *md_exec::findJoin(Operation *side, BufferAliases &aliases) {
 }
 
 LogicalResult md_exec::verifySide(Operation *side, BufferAliases &aliases) {
+  // A fork of its lane before it, with no join between: the op starts from
+  // the first stream at the fork, so the ops between the two run beside it
+  // as well (D[concurrent-terms]).
+  for (Operation *before = side->getPrevNode(); before;
+       before = before->getPrevNode()) {
+    if (isa<JoinOp>(before))
+      break;
+    auto fork = dyn_cast<ForkOp>(before);
+    if (!fork || static_cast<unsigned>(fork.getLane()) != getSideLane(side))
+      continue;
+    for (Operation *between = fork->getNextNode(); between != side;
+         between = between->getNextNode()) {
+      if (getSideLane(between) == getSideLane(side) || isa<ForkOp>(between))
+        continue;
+      if (!areIndependent(side, between, aliases)) {
+        InFlightDiagnostic diagnostic =
+            side->emitOpError() << "runs on a side stream from a fork "
+                                   "before an op that is not independent of "
+                                   "it";
+        diagnostic.attachNote(between->getLoc()) << "the op";
+        return diagnostic;
+      }
+    }
+    break;
+  }
   for (Operation *next = side->getNextNode(); next;
        next = next->getNextNode()) {
     if (isa<JoinOp>(next))
@@ -374,7 +399,7 @@ LogicalResult md_exec::verifySide(Operation *side, BufferAliases &aliases) {
     // there; the ops of the other streams after it must still be
     // independent of this one, which may be running then
     // (D[concurrent-terms]).
-    if (getSideLane(next) == getSideLane(side))
+    if (getSideLane(next) == getSideLane(side) || isa<ForkOp>(next))
       continue;
     if (!areIndependent(side, next, aliases)) {
       InFlightDiagnostic diagnostic =

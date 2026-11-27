@@ -1,8 +1,8 @@
 # D[concurrent-terms]: `[execution] term_streams`, without a device. The
 # program of a GPU run of the dipeptide in water, after
 # md-exec-assign-streams: with TERMS the loops over tuples of an ordinary
-# step are marked for the third stream and stand before the loop over
-# pairs, which runs before the join; RECIPROCAL marks the reciprocal sums
+# step are marked for the third stream, forked before the loop over pairs
+# and issued after it, before the join; RECIPROCAL marks the reciprocal sums
 # alone, SINGLE nothing; TERMS in the deterministic mode is RECIPROCAL.
 # `mdir check` states the resolution; an unknown value is refused.
 # RUN: rm -rf %t && mkdir -p %t
@@ -25,7 +25,7 @@
 # RUN: cd %t && mdir check deterministic.toml | FileCheck %s --check-prefix=CHECK-DET
 # RUN: cd %t && not mdir check bad.toml 2>&1 | FileCheck %s --check-prefix=BAD
 # RUN: rm -rf %t
-# TERMS: TERMS: {{[1-9][0-9]*}} loops over tuples on the third stream, {{[1-9][0-9]*}} beside a loop over pairs before a join and the kick
+# TERMS: TERMS: {{[1-9][0-9]*}} loops over tuples on the third stream, {{[1-9][0-9]*}} forked before a loop over pairs and issued after it
 # RECIPROCAL: RECIPROCAL: {{[1-9][0-9]*}} reciprocal sums marked, no loop over tuples
 # SINGLE: SINGLE: no op is marked and there is no join
 # CHECK-TERMS: term_streams TERMS (as requested)

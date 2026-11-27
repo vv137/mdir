@@ -3,12 +3,12 @@ an ordinary step, read from the storage form after the pass.
 
     check_term_streams_ir.py STREAMS_MLIR VALUE
 
-VALUE is the resolved term_streams. For TERMS, some block holds a loop over
-tuples marked for the third stream (md_exec.lane = 2) before a loop over
-pairs on the first, and a join after the pair loop, before the loop over
-particles that kicks; no unmarked loop over tuples writes the destination
-of a marked one. For RECIPROCAL, only reciprocal sums are marked. For
-SINGLE, nothing is marked and there is no join. Prints what it found.
+VALUE is the resolved term_streams. For TERMS, some block holds a fork of
+the third stream (`md_exec.fork 2`), then a loop over pairs on the first
+stream, then loops over tuples marked for the third (md_exec.lane = 2),
+issued after the pairs, then a join and the loop over particles that
+kicks. For RECIPROCAL, only reciprocal sums are marked. For SINGLE,
+nothing is marked and there is no join or fork. Prints what it found.
 """
 import re
 import sys
@@ -49,8 +49,9 @@ marked = [(ind, kind, i, attributes(i, kind)) for ind, kind, i in found]
 side = [(k, a) for _, k, _, a in marked if "md_exec.side" in a]
 lanes = [(k, a) for k, a in side if "md_exec.lane = 2" in a]
 joins = [m for m in marked if m[1] == "join"]
+forks = [m for m in marked if m[1] == "fork"]
 if value == "SINGLE":
-    assert not side and not joins, (side[:2], len(joins))
+    assert not side and not joins and not forks, (side[:2], len(joins), len(forks))
     print("SINGLE: no op is marked and there is no join")
 elif value == "RECIPROCAL":
     assert side and all(k == "reciprocal" for k, _ in side), {k for k, _ in side}
@@ -61,16 +62,20 @@ else:
     assert lanes and all(k == "tuple_for" for k, _ in lanes), {k for k, _ in lanes}
     windows = 0
     for n, (ind, kind, i, attr) in enumerate(marked):
-        if kind != "tuple_for" or "md_exec.lane = 2" not in attr:
+        if kind != "fork" or "md_exec.fork 2" not in lines[i]:
             continue
         rest = [m for m in marked[n + 1:] if m[0] == ind]
         kinds = [m[1] for m in rest]
-        if "pair_for" not in kinds or "join" not in kinds:
+        if "join" not in kinds:
             continue
-        pair, join = kinds.index("pair_for"), kinds.index("join")
+        join = kinds.index("join")
+        window = rest[:join]
+        pairs = [k for k, m in enumerate(window) if m[1] == "pair_for"]
+        tuples = [k for k, m in enumerate(window)
+                  if m[1] == "tuple_for" and "md_exec.lane = 2" in m[3]]
         kick = next((k for k, m in enumerate(rest) if m[1] == "particle_for" and k > join), None)
-        if pair < join and kick is not None:
+        if pairs and tuples and min(tuples) > max(pairs) and kick is not None:
             windows += 1
     assert windows, "no marked loop over tuples runs beside a loop over pairs"
     print(f"TERMS: {len(lanes)} loops over tuples on the third stream, "
-          f"{windows} beside a loop over pairs before a join and the kick")
+          f"{windows} forked before a loop over pairs and issued after it")
