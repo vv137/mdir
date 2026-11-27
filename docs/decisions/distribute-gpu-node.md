@@ -514,53 +514,66 @@ search still uses current positions with twice that margin.
 
 ### Mixed trajectory acceptance
 
-For each protein, fix two ordinary mixed runs $O_1,O_2$ with identical
-coordinates, velocities, seed, reaction-field parameters and 2 fs step.
-For potential energy and scalar virial separately, define the scale
-$S_Q=\max_{0\le t\le204}|O_{1,Q}(t)-O_{2,Q}(t)|$, where $t$ indexes
-the frame. On Factor IX the scales were 0.596020 and 3.772862 kcal/mol.
-Another ordinary run differed from the first reference by 0.639589 and
-4.957110 kcal/mol. Using the reference pair alone as the acceptance
-limit would reject this ordinary control.
+The mixed gate uses ordinary MATRIX runs of each protein at 2 fs with
+identical input coordinates, velocities, dynamics seed and reaction-field
+parameters. The original calibration used two reference runs and 19
+additional pairs in the ordinary neighbor order. Reversing only the
+neighbor slots of the ordinary JAC-RF run produced a 1.275243 kcal/mol
+virial difference, above that calibration's 1.098365 kcal/mol limit.
 
-Run 19 additional pairs through the ordinary executor. For each pair
-$C$ compute the single score
-$M(C)=\max_{j,Q,t}|C_{j,Q}(t)-O_{j,Q}(t)|/S_Q$. The maximum includes
-the initial frame, all 204 subsequent frames, both repetitions and both
-quantities. Fix the acceptance multiplier $K$ at the largest of the 19
-ordinary scores. If ordinary blocks are exchangeable, a new block has
-probability at most $1/20$ of exceeding all 19 calibration scores.
-This is a prediction threshold for one layout. It does not require
-independent frames. Candidate results have no role in setting $K$.
+Keep the original 40 ordinary histories and add two runs each in the
+original order, reversed order and eight seeded orders. In each seeded
+order, four rounds compose bijections of each row's occupied slots. In
+one round slot $i$ is paired with $(p-i)\bmod n$, where $p$ depends on the
+row and seed and $n$ is the row length. Both partners use the same
+decision, derived from the smaller index. The cutoff test, exclusions,
+pair expressions, and lane reduction structure are identical in all
+orders. Separate compile caches keep the generated variants distinct.
 
-Two distributed repetitions $D_1,D_2$ pass a layout together when
-$M(D)\le K$. Equivalently, the potential and virial maxima must each
-lie within $K S_Q$. The script in
-`scripts/validation/distributed/trajectory.py` checks the frame indices,
-times, and both traces and reports the frame and repetition of each peak.
-For the frozen Factor IX gate, run the following command with the two
-new distributed files in repetition order.
+For each quantity $Q$ (potential energy and scalar virial), collect
+$|O_{a,Q}(t)-O_{b,Q}(t)|$ over all unordered pairs of distinct ordinary
+histories and all frames $t$ from 0 through 204. The 60 histories give
+362,850 differences per quantity. The bound is 1.25 times the empirical
+99.95th percentile of those differences, using the higher sample when
+the quantile falls between samples. The percentile and margin were fixed
+before comparing the distributed candidate. Frames and differences that
+share histories are correlated. This is an empirical tolerance for
+the tested RF datasets and orders.
+
+| System | Potential 99.95th percentile | Virial 99.95th percentile | Potential bound | Virial bound |
+|---|---:|---:|---:|---:|
+| JAC-RF | 0.103113 | 1.499141 | 0.128891 | 1.873926 |
+| Factor IX | 1.279922 | 9.642828 | 1.599903 | 12.053535 |
+
+All four values for each system are in kcal/mol. The exact bounds are
+stored in the calibration summaries.
+
+Two distributed repetitions pass when both potential and virial
+differences from the original two ordinary reference histories stay
+within their respective bounds at every frame. The checker reports
+the repetition and frame of peak error for each quantity.
 
 ```sh
 python scripts/validation/distributed/trajectory.py --system factorix distributed1.dat distributed2.dat
 ```
 
-Use `--system jac-rf` for JAC-RF. The two accompanying data files hold
-the ordinary potential and virial at each frame. Passing the original
-energy files with `--reference` also verifies their hashes and order.
-The checker exits with status 1 when either quantity
-exceeds its limit. Supplying 19 ordinary pairs with `--control`
-reproduces the calibration for a specified reference pair.
+Use `--system jac-rf` for JAC-RF. The reference data store the ordinary
+potential and virial for each frame. Passing the original energy files
+with `--reference` verifies their hashes and order. The checker exits
+with status 1 if either quantity exceeds its bound. The double limits
+remain the same.
 
-| System | Ordinary spread, potential / virial (kcal/mol) | $K$ | Limits, potential / virial (kcal/mol) |
-|---|---:|---:|---:|
-| Factor IX | 0.596020 / 3.772862 | 2.052090 | 1.223086 / 7.742251 |
-| JAC-RF | 0.057902 / 0.630265 | 1.742703 | 0.100906 / 1.098365 |
-
-The single-domain reference-list implementation exceeded both Factor IX
-limits at one, two, four and eight domains. Its two-domain peaks were
-2.958531 and 9.855857 kcal/mol. On JAC-RF the one-domain virial reached
-1.522593 kcal/mol. Both quantities passed on two, four and eight domains.
+To reproduce the calibration, use
+`scripts/validation/distributed/calibrate-orders.py overlay SOURCE` on
+a disposable copy of the source and build it. For each label printed by
+`calibrate-orders.py orders`, set `MDIR_CALIBRATION_ORDER` to that label
+and use a compile cache specific to the system and label. Run the
+ordinary mixed deck twice, storing `energy.dat` under
+`LABEL/1/` and `LABEL/2/`. Place the original references followed by the
+38 same-order controls under `existing/01/` through `existing/40/`.
+Run `calibrate-orders.py summarize HISTORIES` to generate the bounds and
+input digests. The `--calibration` and `--reference` options accept a
+regenerated summary and an explicit ordinary reference pair.
 
 ### Large reaction-field benchmarks
 
