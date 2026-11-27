@@ -1,0 +1,20 @@
+# REQUIRES: cuda, nccl
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/towers-one-step.toml %S/../../examples/argon/argon.pdb %t/
+# RUN: sed -e 's/"TOWERS"/"MATRIX"/' -e 's/"MIXED"/"DOUBLE"/' -e 's/pairlist_distance *=.*/pairlist_distance = "AUTO"/' -e '/^\[output\]/a manifest = "run.jsonl"' %t/towers-one-step.toml > %t/run.toml
+# RUN: printf '\n[distribute]\ntransport = "nccl"\n' >> %t/run.toml
+# RUN: cd %t && env MDIR_SKIN_SEARCH=always MDIR_DIST_PIN_CACHE_DIR=pins mdir run run.toml > cold.log
+# RUN: FileCheck %s --check-prefix=COLD < %t/cold.log
+# RUN: cd %t && env MDIR_SKIN_SEARCH=always MDIR_DIST_PIN_CACHE_DIR=pins mdir run run.toml > warm.log
+# RUN: FileCheck %s --check-prefix=WARM < %t/warm.log
+# RUN: FileCheck %s --check-prefix=MANIFEST < %t/run.jsonl
+# RUN: printf '\n# exact deck content changed\n' >> %t/run.toml
+# RUN: cd %t && env MDIR_SKIN_SEARCH=always MDIR_DIST_PIN_CACHE_DIR=pins mdir run run.toml > changed.log
+# RUN: FileCheck %s --check-prefix=COLD < %t/changed.log
+
+# COLD: selected distributed pair list distance
+# WARM: cached measured choice for the exact input, build and layout
+# WARM-NOT: selected distributed pair list distance
+# MANIFEST: "pairlist_distance_source":"cached"
+# MANIFEST-SAME: "searched":false
+# MANIFEST-SAME: "source":"cached"

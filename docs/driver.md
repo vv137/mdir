@@ -1736,6 +1736,9 @@ Before a distributed AUTO reach trial, each rank estimates its device
 memory requirement at the initial geometry. All ranks skip the distance
 if any rank's estimate exceeds its available device memory. The search
 reports the limiting rank and fails if every eligible distance is skipped.
+Set `MDIR_DIST_PIN_CACHE_DIR` to reuse a completed measured AUTO choice
+on the same inputs, MDIR build and layout. The log and manifest report
+the cache hit. Cold calibration retains the full measurement window.
 
 The setup log and the manifest start event give the requested domain count,
 factor grids and their scores in inverse nm, the source of each choice, and

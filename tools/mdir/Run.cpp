@@ -53,6 +53,7 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/Format.h"
@@ -536,6 +537,97 @@ checkTrialMemory(double needed, int ranks) {
       worst = rank;
   return std::array<double, 3>{static_cast<double>(worst), all[2*worst],
                                all[2*worst+1]};
+}
+
+static std::string distributedPinPath(InputPaths inputs, StringRef executable,
+                                      const Control &control, const System &system,
+                                      int ranks) {
+  const char *directory = std::getenv("MDIR_DIST_PIN_CACHE_DIR");
+  if (!mdrtMPIAllTrue(directory && *directory))
+    return {};
+  llvm::SmallString<256> runtime(llvm::sys::path::parent_path(
+      llvm::sys::path::parent_path(executable)));
+  llvm::sys::path::append(runtime, "lib");
+  inputs.emplace_back("cli", executable.str());
+  for (StringRef file : {"libmdrt.so", "libmdrt_cuda.so"}) {
+    auto library = runtime;
+    llvm::sys::path::append(library, file);
+    inputs.emplace_back(file.str(), library.str().str());
+  }
+  auto hashes = hashManifestInputs(inputs);
+  auto device = getManifestDevice(control.target);
+  bool identified = mdrtMPIAllTrue(static_cast<bool>(hashes) &&
+                                   static_cast<bool>(device));
+  if (!identified) {
+    if (!hashes) llvm::consumeError(hashes.takeError());
+    if (!device) llvm::consumeError(device.takeError());
+    return {};
+  }
+  std::string fields;
+  llvm::raw_string_ostream key(fields);
+  key << "distributed-reach-v1\n";
+  for (const auto &item : *hashes) {
+    const auto &record = *item.getAsObject();
+    key << *record.getString("role") << '=' << *record.getString("sha256") << '\n';
+  }
+  const auto &properties = *device->getAsObject();
+  key << *properties.getString("name") << '\n'
+      << *properties.getInteger("driver_api_version") << '\n';
+  if (const char *limit = std::getenv("MDIR_DIST_AUTO_MEMORY_BYTES"))
+    key << limit;
+  key << '\n';
+  auto grid = control.distribution->grid;
+  if (control.distribution->domains)
+    llvm::copy(md_dist::selectGrid(ranks, system.box), grid.begin());
+  for (auto size : grid) key << size << ' ';
+  key << '\n';
+  for (int rank = 0; rank < ranks; ++rank) key << mdrtMPINode(rank) << ' ';
+  key.flush();
+  std::string digest = hashInput(fields);
+  std::vector<double> local(digest.begin(), digest.end());
+  std::vector<double> all(local.size() * ranks);
+  mdrtMPIGatherTimes(local.data(), all.data(), local.size());
+  for (int rank = 1; rank < ranks; ++rank)
+    if (!std::equal(all.begin(), all.begin() + local.size(),
+                    all.begin() + rank * local.size()))
+      return {};
+  llvm::SmallString<256> path(directory);
+  llvm::sys::path::append(path, digest + ".json");
+  return path.str().str();
+}
+
+static double readDistributedPin(StringRef path, double cutoff, double boxLimit) {
+  auto file = llvm::MemoryBuffer::getFile(path);
+  if (!file) return 0;
+  auto parsed = llvm::json::parse((*file)->getBuffer());
+  if (!parsed) {
+    llvm::consumeError(parsed.takeError());
+    return 0;
+  }
+  auto *record = parsed->getAsObject();
+  if (!record || record->getString("key") != llvm::sys::path::stem(path))
+    return 0;
+  double reach = record->getNumber("pairlist_distance_angstrom").value_or(0);
+  return reach > cutoff && reach < boxLimit ? reach : 0;
+}
+
+static void writeDistributedPin(StringRef path, double reach) {
+  if (llvm::sys::fs::create_directories(llvm::sys::path::parent_path(path)))
+    return;
+  llvm::SmallString<256> temporary;
+  int fd;
+  if (llvm::sys::fs::createUniqueFile(llvm::Twine(path) + ".%%%%%%.tmp", fd,
+                                     temporary))
+    return;
+  llvm::raw_fd_ostream out(fd, true);
+  out << llvm::json::Value(llvm::json::Object{
+      {"key", llvm::sys::path::stem(path)}, {"pairlist_distance_angstrom", reach}})
+      << '\n';
+  out.close();
+  bool failed = out.has_error();
+  out.clear_error();
+  if (failed || llvm::sys::fs::rename(temporary, path))
+    llvm::sys::fs::remove(temporary);
 }
 #endif
 
@@ -1113,6 +1205,8 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   llvm::json::Array distributedSkinTrials;
   llvm::json::Object distributedSkinSelection;
   double distributedSkinSeconds = 0;
+  std::string distributedPin;
+  bool reusedDistributedPin = false;
   double pairTimes[2] = {};
   bool requestedAutoOverlap = control->distribution && control->distribution->pairOverlap == "auto";
 #ifdef MDIR_ENABLE_MPI
@@ -1158,7 +1252,24 @@ static int runControlImpl(StringRef controlFile, Emit emit,
           skins.push_back(skin);
     }
     double leastEdge = *std::min_element(std::begin(system->box), std::end(system->box));
-    for (double skin : skins) {
+    if (!isRestart) {
+      auto executable = llvm::sys::fs::getMainExecutable(argv0, (void *)(intptr_t)&anchor);
+      distributedPin = distributedPinPath(inputPaths, executable, *control, *system, ranks);
+    }
+    double cachedReach = writer && !distributedPin.empty()
+        ? readDistributedPin(distributedPin, std::max(control->cutoffDistance, control->prunedDistance),
+                             leastEdge / units::length) : 0;
+    mdrtMPIBroadcast(&cachedReach, 1, 0);
+    if (cachedReach > 0) {
+      control->pairlistDistance = cachedReach;
+      control->skinSource = "cached";
+      control->skinReason = "the measured distributed choice for the exact input, build and layout";
+      reusedDistributedPin = true;
+      lines << llvm::formatv("MDIR: distributed pair list distance {0:f3} Ang "
+                             "(cached measured choice for the exact input, build and layout)\n",
+                             cachedReach);
+    }
+    for (double skin : reusedDistributedPin ? llvm::ArrayRef<double>() : llvm::ArrayRef<double>(skins)) {
       double reach = skin == reference ? original : control->cutoffDistance + skin;
       if (skin != reference && (reach * units::length > 0.999 * leastEdge ||
                                reach <= control->prunedDistance))
@@ -1269,7 +1380,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
         runnerUp = measured;
       }
     }
-    if (!best) {
+    if (!best && !reusedDistributedPin) {
       if (writer) {
         lines.flush();
         llvm::errs() << skinLines
@@ -1279,10 +1390,12 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     }
     if (!skipped.empty())
       distributedSkinSelection["skipped_for_memory"] = std::move(skipped);
-    control->skinSource = "measured";
-    control->skinReason = "the lowest measured distributed step cost including rebuilds";
-    lines << llvm::formatv("MDIR: selected distributed pair list distance {0:f3} Ang",
-                           control->pairlistDistance);
+    if (best) {
+      control->skinSource = "measured";
+      control->skinReason = "the lowest measured distributed step cost including rebuilds";
+      lines << llvm::formatv("MDIR: selected distributed pair list distance {0:f3} Ang",
+                             control->pairlistDistance);
+    }
     if (runnerUp) {
       double margin = runnerUp->cost - best->cost;
       distributedSkinSelection["margin_ms_per_step"] = margin;
@@ -1298,10 +1411,11 @@ static int runControlImpl(StringRef controlFile, Emit emit,
         lines << " (timing variation unavailable at this energy cadence)";
       }
     }
-    lines << '\n';
+    if (best) lines << '\n';
     lines << "MDIR: changing the list distance can change traversal order and rounding\n";
-    distributedSkinSeconds = std::chrono::duration<double>(
-        std::chrono::steady_clock::now()-searchBegan).count();
+    if (best)
+      distributedSkinSeconds = std::chrono::duration<double>(
+          std::chrono::steady_clock::now()-searchBegan).count();
   }
   if (requestedAutoOverlap && emit == Emit::Run && ranks > 1 &&
       control->distribution->transport == "nccl" &&
@@ -1910,7 +2024,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
           object["aliasing_estimate"] = program->pmeAliasing;
       }
     }
-    bool measuredDistributedSkin = !distributedSkinTrials.empty();
+    bool resolvedDistributedSkin = reusedDistributedPin || !distributedSkinTrials.empty();
     llvm::json::Object effective{
         {"seed", std::to_string(control->seed)}, {"time_step_ps", control->timestep},
         {"trajectory_format", control->framePeriod == 0 ? llvm::json::Value(nullptr) :
@@ -1934,9 +2048,11 @@ static int runControlImpl(StringRef controlFile, Emit emit,
          control->getSkinSource(/*outer=*/true)},
         {"pruned_distance_source",
          control->getSkinSource(/*outer=*/false)},
-        {"skin_search", measuredDistributedSkin
+        {"skin_search", resolvedDistributedSkin
              ? llvm::json::Value(llvm::json::Object{
-                   {"source", "measured"}, {"searched", true},
+                   {"source", control->skinSource}, {"searched", !reusedDistributedPin},
+                   {"cache", distributedPin.empty() ? llvm::json::Value(nullptr)
+                                                     : llvm::json::Value(distributedPin)},
                    {"category", "setup trial"}, {"requested", "AUTO"},
                    {"value_angstrom", control->pairlistDistance},
                    {"can_change_rounding", true},
@@ -1969,7 +2085,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       effective["towers_shape"] = towersShapeReport;
     if (!towersCellHeight.empty())
       effective["towers_cell_height"] = towersCellHeight;
-    if (measuredDistributedSkin)
+    if (resolvedDistributedSkin)
       resolvedChoices["pairlist_distance"] =
           llvm::json::Object(*effective.getObject("skin_search"));
     resolvedChoices["step_graph"] = std::move(graphChoice);
@@ -2616,6 +2732,10 @@ static int runControlImpl(StringRef controlFile, Emit emit,
                                               ? output.lastMinimizationStep
                                               : output.endStep))
     return fail(std::move(error));
+#ifdef MDIR_ENABLE_MPI
+  if (writer && !distributedPin.empty() && control->skinSource == "measured")
+    writeDistributedPin(distributedPin, control->pairlistDistance);
+#endif
 
 
   output.log.print("MDIR: ran in %.2f s", runTime);
