@@ -28,7 +28,8 @@ recovers into two limbs before publication. Exclusion replay uses the
 closest periodic image. Setup retains the system-based height rule. At that height it measures launch
 shapes with the moving force and finish entries and caches the measurements
 (D432).
-Setup reads the initial cell populations and specializes one pack kernel for the run (D434). Programs without an eligible direct region use the derived pair shape. Moving-step dispatch indexes topology exclusions once per run.
+Setup reads the initial cell populations and specializes one pack kernel for the run (D434).
+Graph replay of ordinary TOWERS steps (D439) runs under stochastic cell rescaling; the chunk kernels read the cell's launch arguments from a device mirror (D[towers-graph-npt], #1017). Next: the coupling step on the device. Programs without an eligible direct region use the derived pair shape. Moving-step dispatch indexes topology exclusions once per run.
 Moving pressure steps accumulate direct force and virial in one traversal.
 Ordinary steps certify and publish the force in one cooperative launch. The force loop reuses the target within each record and selects zero contributions outside the cutoff when its pair region permits (D430). The force grid compacts large exclusion lists and schedules them among the tower splits (D431). D442 extends the screen to Volta and lowers certification votes for both Volta and Turing. TOWERS remains an explicit choice. Double precision is tracked in #937.
 
