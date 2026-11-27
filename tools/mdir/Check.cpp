@@ -890,6 +890,7 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
                                             system->getNumParticles(),
                                             control->stepGraphGiven,
                                             control->spansRefusal());
+  addSpansChoice(graphChoice, control->target == Target::GPU, false);
   std::optional<llvm::json::Object> towers;
   if (control->towersShapeGiven || control->neighborStructure == NeighborStructure::Towers) {
     auto shape = checkTowersShape(*control, *system, /*setup=*/false);

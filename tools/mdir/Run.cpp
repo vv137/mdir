@@ -966,24 +966,8 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     }
   }
   graphChoice["value"] = control->stepGraph;
-  // Whether the runtime records spans (D[step-no-host-wait]): the value,
-  // unless MDRT_SPANS says otherwise or a variable that observes each
-  // launch turns them off. The record says which.
-  bool spansOn = control->target == Target::GPU && !trial &&
-                 (control->stepGraph == "SPANS" || control->stepGraph == "GRAPH");
-  if (control->target == Target::GPU && !trial) {
-    const char *forced = std::getenv("MDRT_SPANS");
-    if (forced && *forced) {
-      spansOn = std::strcmp(forced, "0") != 0;
-      graphChoice["spans_reason"] = std::string("MDRT_SPANS=") + forced;
-    }
-    for (const char *observer : {"MDRT_WAIT", "MDRT_PROFILE", "MDRT_TRACE"})
-      if (spansOn && std::getenv(observer)) {
-        spansOn = false;
-        graphChoice["spans_reason"] = std::string(observer) + " observes each launch";
-      }
-  }
-  graphChoice["spans"] = spansOn;
+  addSpansChoice(graphChoice, control->target == Target::GPU, trial != nullptr);
+  bool spansOn = *graphChoice.getBoolean("spans");
   std::string graphReport = llvm::formatv("{0}", llvm::json::Value(llvm::json::Object(graphChoice))).str();
   // The stored forces use the writer's strict pair predicate. Rebuild
   // them at the restored positions if the requested traversal or its
