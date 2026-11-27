@@ -551,16 +551,43 @@ int64_t _mlir_ciface_mdrtDistMatrixRebuild(int64_t matrix, struct Memref2D *x) {
   struct DomainMatrix *m = (struct DomainMatrix *)(intptr_t)matrix;
   double limit = 0.25*m->skin*m->skin;
   if (m->valid) {
-    int64_t i = 0;
-    for (; i < m->rows; ++i) {
-      double r2 = 0.0;
-      for (int c = 0; c < 3; ++c) {
-        double dx = *at2(x, i, c) - m->reference[3*i+c];
-        r2 += dx*dx;
+    if (!m->rows) return 0;
+    int changed = 0;
+    if (x->strides[0] == 3 && x->strides[1] == 1) {
+      /* Keep early termination for motion past the skin and vectorize
+         the distance checks in a covered interval. */
+      enum { block = 32 };
+      const double *base = x->aligned+x->offset;
+      int64_t begin = 0;
+      while (begin < m->rows && !changed) {
+        int64_t end = m->rows-begin > block ? begin+block : m->rows;
+        int64_t rows = end-begin;
+        const double *current = base+3*begin;
+        const double *reference = m->reference+3*begin;
+        double squared[3*block];
+        #pragma omp simd
+        for (int64_t c = 0; c < 3*rows; ++c) {
+          double delta = current[c]-reference[c];
+          squared[c] = delta*delta;
+        }
+        for (int64_t i = 0; i < rows; ++i) {
+          const double *r = squared+3*i;
+          double r2 = ((0.0 + r[0]) + r[1]) + r[2];
+          changed |= !(r2 <= limit);
+        }
+        begin = end;
       }
-      if (!(r2 <= limit)) break;
+    } else {
+      for (int64_t i = 0; i < m->rows && !changed; ++i) {
+        double r2 = 0.0;
+        for (int c = 0; c < 3; ++c) {
+          double dx = *at2(x,i,c)-m->reference[3*i+c];
+          r2 += dx*dx;
+        }
+        changed = !(r2 <= limit);
+      }
     }
-    if (i == m->rows) return 0;
+    if (!changed) return 0;
   }
   double lo[3] = {INFINITY, INFINITY, INFINITY};
   double hi[3] = {-INFINITY, -INFINITY, -INFINITY};
@@ -921,9 +948,34 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
     if (buffered) {
       begin = m->bufferedRows[i].stable;
       if (refresh) {
-        for (int32_t k = 0; k < begin; ++k)
-          if (!(distanceToRow(center,packed,neighbors[k]) > buffered2))
-            selected[count++] = neighbors[k];
+        /* Test a batch of neighbors before compacting it, so the distance
+           loop has no dependence on the number of accepted neighbors. */
+        enum { batch = 8 };
+        int32_t k = 0;
+        for (; k <= begin-batch; k += batch) {
+          double x[batch], y[batch], z[batch];
+          for (int lane = 0; lane < batch; ++lane) {
+            int32_t row = neighbors[k+lane];
+            x[lane] = *at2(packed,row,0);
+            y[lane] = *at2(packed,row,1);
+            z[lane] = *at2(packed,row,2);
+          }
+          int keep[batch];
+          #pragma omp simd
+          for (int lane = 0; lane < batch; ++lane) {
+            double dx = center[0]-x[lane], dy = center[1]-y[lane], dz = center[2]-z[lane];
+            double distance2 = ((0.0 + dx*dx) + dy*dy) + dz*dz;
+            keep[lane] = !(distance2 > buffered2);
+          }
+          for (int lane = 0; lane < batch; ++lane) {
+            selected[count] = neighbors[k+lane];
+            count += keep[lane];
+          }
+        }
+        for (; k < begin; ++k) {
+          selected[count] = neighbors[k];
+          count += !(distanceToRow(center,packed,neighbors[k]) > buffered2);
+        }
         m->bufferedRows[i].selected = count;
       } else {
         count = m->bufferedRows[i].selected;
@@ -3518,23 +3570,24 @@ int64_t _mlir_ciface_mdrtDistScheduleTuples(int64_t handle, int64_t groups, int6
     const int64_t *record = in+packetWidth*i;
     schedule->indices[i] = record[0];
     int64_t *local = schedule->rows+width*i;
-    {
-      local[0] = record[1];
+    local[0] = record[1];
+    if (compact) {
+      int64_t memberOffset = members->offset + record[0]*members->strides[0];
       for (int64_t a = 0; a < width-1; ++a) {
-        if (compact) {
-          int64_t code = record[2+a];
-          if (code < 0) {
-            int imageCode = (int)~code;
-            int64_t image[] = {imageCode/9-1, (imageCode/3)%3-1, imageCode%3-1};
-            int64_t id = memberAt(members,record[0]*(width-1)+a);
-            code = imageRow((struct Halo *)(intptr_t)handle,local[0],id,image,record[0]);
-          }
-          local[1+a] = code;
-        } else {
-          const int64_t *ref = record+2+4*a;
-          local[1+a] = ref[0] >= 0 ? ref[0] :
-              imageRow((struct Halo *)(intptr_t)handle,local[0],-1-ref[0],ref+1,record[0]);
+        int64_t code = record[2+a];
+        if (code < 0) {
+          int imageCode = (int)~code;
+          int64_t image[] = {imageCode/9-1, (imageCode/3)%3-1, imageCode%3-1};
+          int64_t id = members->aligned[memberOffset+a*members->strides[1]];
+          code = imageRow((struct Halo *)(intptr_t)handle,local[0],id,image,record[0]);
         }
+        local[1+a] = code;
+      }
+    } else {
+      for (int64_t a = 0; a < width-1; ++a) {
+        const int64_t *ref = record+2+4*a;
+        local[1+a] = ref[0] >= 0 ? ref[0] :
+            imageRow((struct Halo *)(intptr_t)handle,local[0],-1-ref[0],ref+1,record[0]);
       }
     }
   }

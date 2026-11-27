@@ -332,3 +332,9 @@ lies within a quarter of its positive periodic edge. This bound ensures
 that the rounded fractional displacement plus one half has floor zero.
 The full minimum-image calculation handles other displacements, including
 ones near a half-cell face.
+
+The midpoint neighbor filter batches the distance checks for stable-owner
+neighbors and compacts their indices in row order. The Verlet coverage
+check batches contiguous coordinate differences while keeping the
+three-component sum order. Compact tuple packets recover remote member
+identities from the topology row and column strides.
