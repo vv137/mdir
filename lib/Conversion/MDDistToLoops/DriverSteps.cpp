@@ -207,8 +207,7 @@ LogicalResult Segment::run(scf::ForOp root) {
   SmallVector<Value> inputs(root.getInitArgs());
   llvm::append_range(inputs, parameters);
   Epoch e;
-  e.layout = dd::PartitionOp::create(b, loc, partition.getLayout().getType(),
-                                     inputs[0], cell);
+  e.layout = dd::PartitionOp::create(b, loc, partition.getLayout().getType(), inputs[0], cell, partition.getGroups());
   auto decomposition = partition.getLayout().getType().getDecomposition();
   SmallVector<Type> types;
   for (auto [i, v] : llvm::enumerate(inputs)) {
@@ -221,8 +220,10 @@ LogicalResult Segment::run(scf::ForOp root) {
                                                 i == 0 ? cell : Value{}));
   }
   auto ht = halo.getResult().getType();
-  stateType = dd::StateType::get(b.getContext(), decomposition, ht.getReach(),
-                                 neighbors.getCutoff(), types);
+  double radius = neighbors.getCutoff().convertToDouble();
+  if (neighbors.getResult().getType().getTraversal() == dd::Traversal::Midpoint)
+    radius *= 0.5;
+  stateType = dd::StateType::get(b.getContext(), decomposition, ht.getReach(), APFloat(radius), types);
   e.halo = dd::HaloOp::create(b, loc, ht, e.layout, e.fields[0], cell);
   e = unpack(b, loop(b, root, pack(b, e), {}));
   for (auto [i, result] : llvm::enumerate(root.getResults()))

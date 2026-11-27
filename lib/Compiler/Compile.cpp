@@ -344,16 +344,20 @@ std::string mdir::compiler::getPairRegionPipeline(const Control &control,
   llvm::raw_string_ostream os(pipeline);
   os << "md-check-exchange,";
   if (control.distribution) {
+    if (program.domainTopology) os << "md-differentiate,";
     const auto &grid = program.domainGrid;
     os << "md-distribute{grid=" << grid[0] << "," << grid[1] << "," << grid[2]
        << " traversal=" << control.distribution->traversal
-       << " reach=" << control.pairlistDistance * driver::units::length << "},";
+       << (program.domainTopology ? " derivatives=true" : "")
+       << " reach=" << (control.getDistributionReach() * driver::units::length + program.domainTupleExtent) << "},";
   }
   os << "md-differentiate,md-expand-truncation,md-inline,"
      << "dyn-expand-couplings,md-bypass-updates,";
   if (control.distribution)
-    os << "md-dist-owner-computes,md-distribute-driver-steps"
-       << (control.deterministic ? "{wrap-drift=true}" : "") << ",md-exec-assign-algebra,"
+    os << "md-dist-owner-computes,"
+       << (program.domainGroupSteps ? "" : control.deterministic
+           ? "md-distribute-driver-steps{wrap-drift=true}," : "md-distribute-driver-steps,")
+       << "md-exec-assign-algebra,"
        << "convert-md-dist-to-loops{halo-events=true"
        << (control.deterministic ? " fixed-point=true" : "")
        << (control.threads > 1 ? " parallel-domains=true" : "")

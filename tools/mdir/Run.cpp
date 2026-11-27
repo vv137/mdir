@@ -1590,6 +1590,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
 #ifdef MDIR_ENABLE_MPI
   if (ranks > 1) distRank = mdrtMPIRank();
 #endif
+  const double domainReach = control->getDistributionReach() + program->domainTupleExtent / units::length;
   llvm::json::Object distribution;
   if (const auto &dist = control->distribution) {
     const auto &grid = program->domainGrid;
@@ -1622,14 +1623,14 @@ static int runControlImpl(StringRef controlFile, Emit emit,
         {"ranks", distRanks},
         {"cutoff_angstrom", control->cutoffDistance},
         {"skin_angstrom", control->pairlistDistance - control->cutoffDistance},
-        {"reach_angstrom", control->pairlistDistance}};
+        {"reach_angstrom", domainReach}};
     output.log.print(
         "MDIR: grid choice %s, requested count %lld, ranks %d; %s transport "
-        "(%s), %s traversal (%s); reach %g Ang = cutoff %g Ang + skin %g Ang\n",
+        "(%s), %s traversal (%s); reach %g Ang, cutoff %g Ang, skin %g Ang\n",
         source, (long long)dist->domains, distRanks, dist->transport.c_str(),
         dist->transportGiven ? "requested" : "default", dist->traversal.c_str(),
-        dist->traversalGiven ? "requested" : "default",
-        control->pairlistDistance, control->cutoffDistance,
+        dist->traversalGiven ? "requested" : "default", domainReach,
+        control->cutoffDistance,
         control->pairlistDistance - control->cutoffDistance);
   }
   if (writer && !control->manifestFile.empty()) {
@@ -2074,7 +2075,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
         static_cast<long long>(grid[0]), static_cast<long long>(grid[1]),
         static_cast<long long>(grid[2]),
         control->distribution->transport.c_str(),
-        control->distribution->traversal.c_str(), control->pairlistDistance);
+        control->distribution->traversal.c_str(), domainReach);
   }
   if (program->pme)
     output.log.print("MDIR: PME force-only product rule: %s\n", pmeForceProduct);
@@ -2272,7 +2273,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   if (control->distribution) {
     const auto &g = program->domainGrid;
     distLog.emplace(output.log, manifest, distRank, distRanks, g[0]*g[1]*g[2],
-                    firstStep, control->energyPeriod, control->pairlistDistance);
+                    firstStep, control->energyPeriod, domainReach);
     const char *prefix = std::getenv("MDIR_DIST_STEP_TRACE");
 #ifdef MDIR_ENABLE_MPI
     if (control->distribution->transport == "mpi") {

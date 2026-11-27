@@ -1033,7 +1033,7 @@ static llvm::Error findShakes(Topology &topology) {
     return number > 0 ? number == 1 : topology.masses[atom] < 1.2;
   };
   std::map<unsigned, size_t> groupOf;
-  std::vector<bool> taken(topology.getNumParticles(), false);
+  std::vector<unsigned> center(topology.getNumParticles(), 0);
   for (const Topology::Bond &bond : topology.bonds) {
     if (!bond.hydrogen)
       continue;
@@ -1047,10 +1047,11 @@ static llvm::Error findShakes(Topology &topology) {
                   "'rigid_water = true'");
     unsigned heavy = first ? bond.j : bond.i;
     unsigned hydrogen = first ? bond.i : bond.j;
-    if (taken[hydrogen])
+    if (center[hydrogen])
       return fail("the hydrogen " + llvm::Twine(hydrogen + 1) +
-                  " has two bonds that SHAKE would keep");
-    taken[hydrogen] = true;
+                  " has two bonds that SHAKE would keep, to atoms " +
+                  llvm::Twine(center[hydrogen]) + " and " + llvm::Twine(heavy + 1));
+    center[hydrogen] = heavy + 1;
     auto [entry, inserted] =
         groupOf.insert({heavy, topology.shakes.size()});
     if (inserted)
@@ -1064,7 +1065,7 @@ static llvm::Error findShakes(Topology &topology) {
     group.lengths.push_back(bond.r0);
   }
   for (const Topology::Shake &group : topology.shakes)
-    if (taken[group.center])
+    if (center[group.center])
       return fail("the atom " + llvm::Twine(group.center + 1) +
                   " is a hydrogen of one group of SHAKE and the center of "
                   "another");

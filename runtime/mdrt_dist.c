@@ -81,6 +81,12 @@ struct Layout {
   int64_t references;
   int64_t grid[3], domains, count;
   double edges[3];
+  struct ConstraintGroup {
+    int32_t atoms[4];
+    int size;
+  } *groups;
+  size_t groupCount;
+  int32_t *groupCenters; /* center + 1; zero for a free atom */
   int64_t *owner; /* [count]: the domain that owns each particle */
   int64_t *row;   /* [count]: its owned row there */
   int64_t *rows;  /* [domains]: the number of owned rows */
@@ -101,6 +107,49 @@ struct Halo {
   size_t edgeCount;
   int64_t *sourceDomain, *sourceRow, *ids, *image;
 };
+
+/* Input tuple members use particle-set indices even after a reorder. The
+   symmetric key removes both orientations from the cutoff relation. */
+struct Exclusions {
+  size_t count;
+  uint64_t pairs[];
+};
+
+struct Members {
+  int32_t *allocated, *aligned;
+  int64_t offset, sizes[2], strides[2];
+};
+
+static int compareKeys(const void *lhs, const void *rhs) {
+  uint64_t a = *(const uint64_t *)lhs, b = *(const uint64_t *)rhs;
+  return (a > b) - (a < b);
+}
+
+int64_t _mlir_ciface_mdrtDistExclusions(struct Members *members) {
+  size_t count = members->sizes[0];
+  if (count > (SIZE_MAX - sizeof(struct Exclusions)) / sizeof(uint64_t))
+    fail("exclusion table too large");
+  struct Exclusions *e = malloc(sizeof *e + count * sizeof *e->pairs);
+  if (!e) fail("out of memory building exclusions");
+  e->count = count;
+  for (size_t r = 0; r < count; ++r) {
+    const int32_t *row = members->aligned + members->offset + r * members->strides[0];
+    uint32_t i = row[0], j = row[members->strides[1]];
+    e->pairs[r] = i < j ? ((uint64_t)i << 32) | j : ((uint64_t)j << 32) | i;
+  }
+  qsort(e->pairs, count, sizeof *e->pairs, compareKeys);
+  return (int64_t)(intptr_t)e;
+}
+
+int64_t mdrtDistPairAllowed(int64_t handle, int64_t i, int64_t j) {
+  const struct Exclusions *e = (const struct Exclusions *)(intptr_t)handle;
+  uint64_t key = ((uint64_t)i << 32) | (uint32_t)j;
+  return !bsearch(&key, e->pairs, e->count, sizeof key, compareKeys);
+}
+
+void mdrtDistFreeExclusions(int64_t handle) {
+  free((void *)(intptr_t)handle);
+}
 
 static const char *const quantityNames[DistQuantityCount] = {
     "pair energy or virial",
@@ -141,13 +190,11 @@ typedef __int128 DistWide;
 /* Bucket the local rows by their current Cartesian image. Each center
    covers three adjacent x bins in each of nine (y,z) slabs. The caller
    still evaluates the original distance, cutoff and identity predicate. */
-void _mlir_ciface_mdrtDistPairCells(int64_t d, int64_t owned, int64_t count,
-                                    double cutoff, struct Memref3D *xo,
-                                    struct Memref3D *xg,
-                                    struct Memref3D *shifts, int64_t shifted,
-                                    struct Memref1I *order,
-                                    struct Memref1I *spans) {
-  if (!owned)
+static void pairCells(int64_t d, int64_t owned, int64_t count, int64_t centers,
+    double cutoff, struct Memref3D *xo, struct Memref3D *xg,
+    struct Memref3D *shifts, int64_t shifted, struct Memref1I *order,
+    struct Memref1I *spans) {
+  if (!centers)
     return;
   int64_t *rows = order->aligned + order->offset;
   int64_t *ranges = spans->aligned + spans->offset;
@@ -205,7 +252,7 @@ void _mlir_ciface_mdrtDistPairCells(int64_t d, int64_t owned, int64_t count,
   /* Fill backward. offset[b+1] then points at the start of bin b. */
   for (int64_t r = count; r-- > 0;)
     rows[--offset[cell[r] + 1]] = r;
-  for (int64_t i = 0; i < owned; ++i) {
+  for (int64_t i = 0; i < centers; ++i) {
     int64_t x = cell[i] % shape[0], yz = cell[i] / shape[0];
     int64_t y = yz % shape[1], z = yz / shape[1];
     for (int dz = -1; dz <= 1; ++dz)
@@ -225,6 +272,20 @@ void _mlir_ciface_mdrtDistPairCells(int64_t d, int64_t owned, int64_t count,
   }
   free(cell);
   free(offset);
+}
+
+void _mlir_ciface_mdrtDistPairCells(int64_t d, int64_t owned, int64_t count,
+    double cutoff, struct Memref3D *xo, struct Memref3D *xg,
+    struct Memref3D *shifts, int64_t shifted, struct Memref1I *order,
+    struct Memref1I *spans) {
+  pairCells(d, owned, count, owned, cutoff, xo, xg, shifts, shifted, order, spans);
+}
+
+void _mlir_ciface_mdrtDistMidpointCells(int64_t d, int64_t owned, int64_t count,
+    double cutoff, struct Memref3D *xo, struct Memref3D *xg,
+    struct Memref3D *shifts, int64_t shifted, struct Memref1I *order,
+    struct Memref1I *spans) {
+  pairCells(d, owned, count, count, cutoff, xo, xg, shifts, shifted, order, spans);
 }
 
 DistWide mdrtDistAddWide(DistWide a, DistWide b) {
@@ -280,6 +341,93 @@ static int64_t division(double u, int64_t g) {
   if (a >= g)
     a = g - 1;
   return a;
+}
+
+/* xi is the untranslated position of the lesser identity. Form its midpoint
+   before choosing a grid. Of all common translations of this pair, use
+   exactly the one that puts the midpoint in the primary cell. */
+int64_t mdrtDistMidpointOwns(int64_t handle, int64_t d, int64_t i,
+    double x, double y, double z, double dx, double dy, double dz) {
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  struct Layout *l = h->layout;
+  double midpoint[3] = {x - 0.5*dx, y - 0.5*dy, z - 0.5*dz};
+  int64_t owner = 0;
+  for (int k = 2; k >= 0; --k) {
+    double u = midpoint[k] / l->edges[k];
+    double image = floor(u);
+    int64_t n = i < l->rows[d] ? 0 :
+        h->image[3*(d*h->capacity + i-l->rows[d]) + k];
+    if (image != -(double)n)
+      return 0;
+    owner = owner*l->grid[k] + division(u - image, l->grid[k]);
+  }
+  return owner == d;
+}
+
+/* Constraints in a group share the periodic image of the center atom.
+   The arithmetic mean is evaluated in topology order before division. */
+static int64_t groupOwner(const struct Layout *l, const struct ConstraintGroup *g,
+                          const double points[4][3]) {
+  int64_t owner = 0;
+  for (int k = 2; k >= 0; --k) {
+    double sum = 0, length = l->edges[k];
+    for (int a = 1; a < g->size; ++a) {
+      double delta = points[a][k] - points[0][k];
+      sum += delta - length * floor(delta / length + 0.5);
+    }
+    double u = (points[0][k] + sum / g->size) / length;
+    owner = owner * l->grid[k] + division(u - floor(u), l->grid[k]);
+  }
+  return owner;
+}
+
+static void numberOwnedRows(struct Layout *l) {
+  int64_t cap = l->count ? l->count : 1;
+  for (int64_t d = 0; d < l->domains; ++d)
+    l->rows[d] = 0;
+  for (int64_t j = 0; j < l->count; ++j) {
+    int64_t d = l->owner[j], r = l->rows[d]++;
+    l->ids[d * cap + r] = j;
+    l->row[j] = r;
+  }
+}
+
+void _mlir_ciface_mdrtDistGroupOwners(int64_t handle, struct Memref2D *positions,
+                                      struct Members *members) {
+  struct Layout *l = (struct Layout *)(intptr_t)handle;
+  size_t count = members->sizes[0];
+  int64_t size = members->sizes[1];
+  if (!count) return;
+  if (size < 2 || size > 4 || count > (size_t)l->count ||
+      count > SIZE_MAX / sizeof *l->groups - l->groupCount)
+    fail("invalid constraint group dimensions");
+  if (!l->groupCenters)
+    l->groupCenters = calloc(l->count, sizeof *l->groupCenters);
+  l->groups = realloc(l->groups, (l->groupCount + count) * sizeof *l->groups);
+  if (!l->groupCenters || !l->groups) fail("out of memory partitioning constraint groups");
+  for (size_t row = 0; row < count; ++row) {
+    struct ConstraintGroup *g = &l->groups[l->groupCount++];
+    g->size = size;
+    double points[4][3];
+    for (int a = 0; a < size; ++a) {
+      int32_t atom = members->aligned[members->offset + row * members->strides[0] + a * members->strides[1]];
+      if (atom < 0 || atom >= l->count) fail("invalid atom in constraint group");
+      g->atoms[a] = atom;
+      if (l->groupCenters[atom]) {
+        char message[192];
+        snprintf(message, sizeof message, "coupled constraint groups: atom %lld occurs at centers %lld and %lld",
+                 (long long)atom + 1, (long long)l->groupCenters[atom], (long long)g->atoms[0] + 1);
+        fail(message);
+      }
+      l->groupCenters[atom] = g->atoms[0] + 1;
+      for (int k = 0; k < 3; ++k)
+        points[a][k] = *at2(positions, atom, k);
+    }
+    int64_t owner = groupOwner(l, g, points);
+    for (int a = 0; a < size; ++a)
+      l->owner[g->atoms[a]] = owner;
+  }
+  numberOwnedRows(l);
 }
 
 int64_t _mlir_ciface_mdrtDistPartition(struct Memref2D *x, int64_t gx,
@@ -408,6 +556,8 @@ void mdrtDistReleaseLayout(int64_t handle) {
     fail("release of a released layout");
   if (--l->references > 0)
     return;
+  free(l->groups);
+  free(l->groupCenters);
   free(l->owner);
   free(l->row);
   free(l->rows);
@@ -514,13 +664,31 @@ int64_t _mlir_ciface_mdrtDistMigrate(int64_t oldHandle,
     }
     int64_t d = cell[0] + next->grid[0] *
                             (cell[1] + next->grid[1] * cell[2]);
-    if (observer && old->owner[j] != d)
-      observer->migration(observer->context, old->owner[j], d);
     next->owner[j] = d;
-    next->row[j] = next->rows[d];
-    next->ids[d * cap + next->rows[d]] = j;
-    ++next->rows[d];
   }
+  if (old->groupCount) {
+    next->groups = malloc(old->groupCount * sizeof *next->groups);
+    if (!next->groups) fail("out of memory migrating constraint groups");
+    next->groupCount = old->groupCount;
+    for (size_t r = 0; r < old->groupCount; ++r) {
+      struct ConstraintGroup *g = &next->groups[r];
+      *g = old->groups[r];
+      double points[4][3];
+      for (int a = 0; a < g->size; ++a) {
+        int32_t j = g->atoms[a];
+        for (int k = 0; k < 3; ++k)
+          points[a][k] = *at3(positions, old->owner[j], old->row[j], k);
+      }
+      int64_t owner = groupOwner(next, g, points);
+      for (int a = 0; a < g->size; ++a)
+        next->owner[g->atoms[a]] = owner;
+    }
+  }
+  numberOwnedRows(next);
+  if (observer)
+    for (int64_t j = 0; j < n; ++j)
+      if (old->owner[j] != next->owner[j])
+        observer->migration(observer->context, old->owner[j], next->owner[j]);
   checkIdentities(next);
   if (tracing())
     traceMigration(old, next);
@@ -752,6 +920,100 @@ int64_t _mlir_ciface_mdrtDistCovered(int64_t handle,
     return mdrtMPIAllTrue(1);
 #endif
   return 1;
+}
+
+/* The partition checked disjointness before assigning a row to each
+   member. Verify the common owner again at the epoch of the solve. */
+void _mlir_ciface_mdrtDistConstraintRows(int64_t handle, struct Memref3D *positions,
+                                         struct Members *members, struct Memref2I *out) {
+  const struct Layout *l = ((struct Halo *)(intptr_t)handle)->layout;
+  (void)positions;
+  for (int64_t t = 0; t < members->sizes[0]; ++t) {
+    int64_t *record = out->aligned + out->offset + t*out->strides[0];
+    for (int64_t a = 0; a < members->sizes[1]; ++a) {
+      int32_t j = members->aligned[members->offset + t*members->strides[0] + a*members->strides[1]];
+      if (j < 0 || j >= l->count) fail("constraint member outside particle set");
+      if (a == 0) record[0] = l->owner[j];
+      if (record[0] != l->owner[j]) fail("constraint group split across domains");
+      record[(a+1)*out->strides[1]] = l->row[j];
+    }
+  }
+}
+
+/* Index the imported images by identity. An atom may have several images
+   on one domain, including periodic images of a locally owned atom. */
+void _mlir_ciface_mdrtDistTupleRows(int64_t handle, struct Memref3D *positions,
+                                    struct Members *members, struct Memref2I *out) {
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  struct Layout *l = h->layout;
+  int64_t count = members->sizes[0], arity = members->sizes[1];
+  if (arity < 2 || out->sizes[0] != count || out->sizes[1] != 1 + arity)
+    fail("invalid tuple ownership schedule shape");
+  if (count == 0) return;
+  shareRows(l, l->rows, positions);
+  int64_t *first = malloc(l->domains * l->count * sizeof *first);
+  int64_t *next = malloc(l->domains * h->capacity * sizeof *next);
+  int64_t *ids = malloc(arity * sizeof *ids);
+  int64_t (*image)[3] = calloc(arity, sizeof *image);
+  if (!first || !next || !ids || !image) fail("out of memory locating tuples");
+  for (int64_t d = 0; d < l->domains; ++d) {
+    for (int64_t j = 0; j < l->count; ++j)
+      first[d*l->count + j] = -1;
+    for (int64_t r = 0; r < h->rows[d]; ++r) {
+      int64_t slot = d*h->capacity + r;
+      int64_t *head = &first[d*l->count + h->ids[slot]];
+      next[slot] = *head;
+      *head = r;
+    }
+  }
+  for (int64_t t = 0; t < count; ++t) {
+    int64_t anchor = l->count;
+    for (int64_t a = 0; a < arity; ++a) {
+      ids[a] = members->aligned[members->offset + t*members->strides[0] + a*members->strides[1]];
+      if (ids[a] < 0 || ids[a] >= l->count) fail("tuple member outside particle set");
+      if (ids[a] < anchor) anchor = ids[a];
+    }
+    int64_t d = 0;
+    for (int k = 2; k >= 0; --k) {
+      double origin = *at3(positions, l->owner[anchor], l->row[anchor], k);
+      double lo = 0, hi = 0, length = l->edges[k];
+      for (int64_t a = 0; a < arity; ++a) {
+        double delta = *at3(positions, l->owner[ids[a]], l->row[ids[a]], k) - origin;
+        image[a][k] = -(int64_t)floor(delta / length + 0.5);
+        delta += (double)image[a][k] * length;
+        lo = fmin(lo, delta);
+        hi = fmax(hi, delta);
+      }
+      double u = (origin + 0.5*(lo + hi)) / length;
+      double translation = floor(u);
+      d = d*l->grid[k] + division(u - translation, l->grid[k]);
+      for (int64_t a = 0; a < arity; ++a)
+        image[a][k] -= (int64_t)translation;
+    }
+    int64_t *record = out->aligned + out->offset + t*out->strides[0];
+    record[0] = d;
+    for (int64_t a = 0; a < arity; ++a) {
+      int64_t j = ids[a], row = -1;
+      if (l->owner[j] == d && !image[a][0] && !image[a][1] && !image[a][2])
+        row = l->row[j];
+      for (int64_t g = first[d*l->count+j]; row < 0 && g >= 0; g = next[d*h->capacity+g]) {
+        int64_t *n = &h->image[3*(d*h->capacity + g)];
+        if (n[0] == image[a][0] && n[1] == image[a][1] && n[2] == image[a][2])
+          row = l->rows[d] + g;
+      }
+      if (row < 0) {
+        char message[192];
+        snprintf(message, sizeof message, "missing tuple owner coverage: tuple %lld domain %lld lacks atom %lld",
+                 (long long)t+1, (long long)d, (long long)j+1);
+        fail(message);
+      }
+      record[(a+1)*out->strides[1]] = row;
+    }
+  }
+  free(image);
+  free(ids);
+  free(next);
+  free(first);
 }
 
 /* The ghost rows of each domain, and the particle each is an image of. */

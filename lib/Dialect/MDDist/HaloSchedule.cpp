@@ -16,6 +16,10 @@ mdir::md_dist::proveCenterPartition(PartitionCentersOp op) {
     op.emitOpError("expected a direct md_dist.neighborhood relation");
     return failure();
   }
+  if (relation.getResult().getType().getTraversal() == Traversal::Midpoint) {
+    op.emitOpError("owned center sets cannot partition midpoint pairs with two ghost endpoints");
+    return failure();
+  }
   if (relation->getBlock() != op->getBlock() ||
       !relation->isBeforeInBlock(op)) {
     op.emitOpError(

@@ -134,6 +134,11 @@ LogicalResult FromBufferOp::verify() {
 }
 
 LogicalResult ToBufferOp::verify() {
+  if (auto relation = dyn_cast<md::RelationType>(getField().getType())) {
+    if (relation.getTupleSet() && getResult().getType() == getMembersType(relation))
+      return success();
+    return emitOpError("expected the member index buffer of a tuple set");
+  }
   if (auto table = dyn_cast<md::TableType>(getField().getType())) {
     if (getResult().getType() == getTableBufferType(table) ||
         isDeviceTableBuffer(getResult().getType(), table))

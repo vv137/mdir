@@ -863,6 +863,11 @@ struct Control {
     std::string transport = "local";
   };
   std::optional<Distribution> distribution;
+  double getDistributionReach() const {
+    return distribution && distribution->traversal == "midpoint"
+               ? pairlistDistance - 0.5 * cutoffDistance
+               : pairlistDistance;
+  }
 };
 
 /// Reads the control file `path`. Paths of files in it are relative to the

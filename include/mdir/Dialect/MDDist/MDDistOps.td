@@ -58,10 +58,12 @@ def MDDist_PartitionOp : MDDist_Op<"partition", [
            : !md.field<@atoms, 3 x f64> -> !md_dist.layout<@dd>
     ```
   }];
-  let arguments = (ins MD_ReferenceFieldType:$positions, MD_CellType:$cell);
+  let arguments = (ins MD_ReferenceFieldType:$positions, MD_CellType:$cell,
+                       Variadic<MD_RelationType>:$groups);
   let results = (outs MDDist_LayoutType:$layout);
   let assemblyFormat = [{
-    $positions `,` $cell attr-dict `:` qualified(type($positions)) `->`
+    $positions `,` $cell (`groups` `(` $groups^ `:` type($groups) `)`)? attr-dict
+    `:` qualified(type($positions)) `->`
     qualified(type($layout))
   }];
 }
@@ -439,13 +441,33 @@ def MDDist_NeighborhoodOp : MDDist_Op<"neighborhood", [Pure]> {
     MDDist_FieldType:$positions,
     MDDist_FieldType:$ghosts,
     MDDist_HaloType:$halo,
-    F64Attr:$cutoff
+    F64Attr:$cutoff,
+    Optional<MD_RelationType>:$excluded
   );
   let results = (outs MDDist_RelationType:$result);
   let assemblyFormat = [{
-    $positions `,` $ghosts `,` $halo `cutoff` `(` $cutoff `)` attr-dict
+    $positions `,` $ghosts `,` $halo `cutoff` `(` $cutoff `)`
+    (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)? attr-dict
     `:` qualified(type($positions)) `,` qualified(type($ghosts)) `,`
     qualified(type($halo)) `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def MDDist_TupleRowsOp : MDDist_Op<"tuple_rows", [Pure]> {
+  let summary = "Locate every topology tuple at its periodic midpoint owner";
+  let description = [{
+    One row per input tuple in input order. Column zero names its unique
+    domain. Each subsequent column names the corresponding local member
+    (owned rows, then ghost rows). A missing member is a coverage error.
+    The executor resolves the integer images again at current positions.
+  }];
+  let arguments = (ins MD_RelationType:$tuples, MDDist_FieldType:$positions,
+                       MDDist_HaloType:$halo, UnitAttr:$group);
+  let results = (outs I64MemRef:$rows);
+  let assemblyFormat = [{
+     $tuples `,` $positions `,` $halo (`group` $group^)? attr-dict `:` type($tuples) `,`
+    qualified(type($positions)) `,` qualified(type($halo)) `->` type($rows)
   }];
   let hasVerifier = 1;
 }
@@ -475,11 +497,24 @@ def MDDist_PartitionCentersOp : MDDist_Op<"partition_centers", [Pure]> {
 def MDDist_YieldOp : MDDist_Op<"yield", [
     Pure, Terminator, ReturnLike,
     ParentOneOf<["SumPairsOp", "GatherPairsOp", "SumParticlesOp",
-                 "MapParticlesOp"]>
+                 "MapParticlesOp", "TupleKernelOp"]>
   ]> {
   let summary = "Yields the value of a kernel";
   let arguments = (ins Variadic<AnyType>:$values);
   let assemblyFormat = "attr-dict ($values^ `:` type($values))?";
+}
+
+def MDDist_TupleKernelOp : MDDist_Op<"tuple_kernel", [
+    AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock]> {
+  let summary = "Evaluate a topology tuple once on its scheduled CPU domain";
+  let arguments = (ins I64MemRef:$rows, MDDist_FieldType:$positions,
+      MDDist_FieldType:$ghosts, MDDist_HaloType:$halo,
+      Variadic<MDDist_FieldType>:$gathered, Variadic<MD_ReferenceFieldType>:$parameters,
+      DenseI32ArrayAttr:$coordinate_kinds, DenseI64ArrayAttr:$coordinate_members);
+  let regions = (region SizedRegion<1>:$kernel);
+  let results = (outs Variadic<AnyType>:$results);
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
 }
 
 class MDDist_PairOp<string mnemonic> : MDDist_Op<mnemonic, [

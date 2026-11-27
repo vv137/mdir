@@ -109,7 +109,7 @@ def MDRT_ToBufferOp : MDRT_Op<"to_buffer", [Pure]> {
     converts or copies the table. A host view requires an existing host
     buffer. The storage owner must outlive all work using the view.
   }];
-  let arguments = (ins AnyTypeOf<[MD_FieldType, MD_TableType]>:$field);
+  let arguments = (ins MDRT_FieldOrRelation:$field);
   let results = (outs AnyMemRef:$result);
   let assemblyFormat = [{
     $field attr-dict `:` qualified(type($field)) `to` type($result)

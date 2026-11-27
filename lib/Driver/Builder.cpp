@@ -292,6 +292,11 @@ llvm::Error Builder::build() {
       groups.push_back(&set);
   for (const Program::TupleSet *set : getShakeSets())
     groups.push_back(set);
+  if (program.domainTopology)
+    for (const auto *set : groups) {
+      auto declaration = termIR.getModule().lookupSymbol<mdir::md::TupleSetOp>(set->name);
+      declaration->setAttr("md_dist.constraint_group", declarationBuilder.getUnitAttr());
+    }
   std::vector<int32_t> members;
   for (const Program::TupleSet *set : groups)
     members.insert(members.end(), set->members.begin(), set->members.end());
@@ -449,7 +454,8 @@ llvm::Error mdir::driver::checkDistributedSystem(const Control &control,
                                                  const System &system) {
   if (!control.distribution)
     return llvm::Error::success();
-  if (system.numConstraints || system.numSettles)
+  if ((system.numConstraints || system.numSettles) &&
+      control.distribution->traversal == "directed")
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
         "distributed constraints require cross-domain constraint partners");
@@ -458,6 +464,32 @@ llvm::Error mdir::driver::checkDistributedSystem(const Control &control,
         llvm::inconvertibleErrorCode(),
         "distributed halos require an orthorhombic cell");
   return llvm::Error::success();
+}
+
+// Half the diagonal of the tuple's bounding box bounds the distance of
+// every member from its midpoint. Unwrap about the least particle identity,
+// in the same image convention as the runtime schedule.
+static double tupleExtent(const Program &program, const System &system) {
+  double largest = 0;
+  for (const auto &set : program.tupleSets) {
+    for (size_t row = 0; row < set.size(); ++row) {
+      auto members = llvm::ArrayRef(set.members.get()).slice(row * set.arity, set.arity);
+      int32_t anchor = *std::min_element(members.begin(), members.end());
+      double diameter2 = 0;
+      for (int k = 0; k < 3; ++k) {
+        double lo = 0, hi = 0;
+        for (int32_t j : members) {
+          double delta = system.positions[3*j+k] - system.positions[3*anchor+k];
+          delta -= system.box[k] * std::floor(delta / system.box[k] + 0.5);
+          lo = std::min(lo, delta);
+          hi = std::max(hi, delta);
+        }
+        diameter2 += (hi - lo) * (hi - lo);
+      }
+      largest = std::max(largest, 0.5 * std::sqrt(diameter2));
+    }
+  }
+  return largest;
 }
 
 llvm::Expected<Program> mdir::driver::buildProgram(const Control &control,
@@ -469,6 +501,8 @@ llvm::Expected<Program> mdir::driver::buildProgram(const Control &control,
     if (llvm::Error error = checkDistributedSystem(control, system))
       return std::move(error);
     program.distributed = true;
+    program.domainTopology = system.topology && control.distribution->traversal != "directed";
+    program.domainGroupSteps = program.domainTopology && (system.numConstraints || system.numSettles || control.thermostat);
     program.domainGrid = control.distribution->grid;
     if (control.distribution->domains) {
       auto grid =
@@ -480,6 +514,8 @@ llvm::Expected<Program> mdir::driver::buildProgram(const Control &control,
   builder.kept = kept;
   if (llvm::Error error = builder.build())
     return std::move(error);
+  if (program.domainTopology)
+    program.domainTupleExtent = tupleExtent(program, system);
   if (llvm::Error error = builder.finishIR())
     return std::move(error);
   return std::move(program);

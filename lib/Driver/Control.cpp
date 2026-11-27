@@ -3139,7 +3139,9 @@ Error Reader::readDistribute(const toml::table &table) {
 #endif
   if (Error err = readChoice<std::string>(
           table, "traversal", dist.traversal,
-          {{"directed", "directed"}, {"unique", "unique"}}))
+          {{"directed", "directed"},
+           {"unique", "unique"},
+           {"midpoint", "midpoint"}}))
     return err;
   if (control.pairlistDistance <= control.cutoffDistance)
     return fail(table, "distributed halo coverage requires a positive skin");
@@ -3152,9 +3154,15 @@ Error Reader::readDistribute(const toml::table &table) {
     return fail(table, "reciprocal sums require a distributed mesh");
   if (!control.periodic || control.barostat)
     return fail(table, "distributed execution requires a fixed periodic cell");
-  if (control.minimize || control.thermostat ||
+  bool supportedBath =
+      !control.thermostat ||
+      (control.hasTopology() && dist.traversal != "directed" &&
+       control.thermostatMethod == ThermostatMethod::VRescale);
+  if (control.minimize || !supportedBath ||
       control.integrator != Integrator::VelocityVerlet)
-    return fail(table, "distributed dynamics requires NVE velocity Verlet");
+    return fail(table, "distributed dynamics requires NVE velocity Verlet or, "
+                       "for a topology with unique or midpoint traversal, "
+                       "V-rescale NVT");
   return Error::success();
 }
 
