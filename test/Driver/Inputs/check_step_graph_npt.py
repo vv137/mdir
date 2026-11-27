@@ -91,10 +91,11 @@ def compare(launch, again, graph, label):
     spread = np.abs(l - again["rows"]).max(axis=0)
     np.testing.assert_array_less(np.abs(l - g), 10 * spread + 0.05 + 1e-4 * np.abs(l), err_msg=label)
     # The cell moved, and the chunks read each new cell from the mirror
-    # without a graph of their own.
+    # without a graph of their own. A scaling may leave the binary32 edges
+    # as they were, and then the words are not written again.
     assert abs(l[-1, -2] / l[0, -2] - 1) > 0.01 or label != "isotropic", l[:, -2]
     graphs, chunks, writes = map(int, graph["report"].groups())
-    assert graphs <= 16 and chunks >= 9 and writes == chunks, (label, graphs, chunks, writes)
+    assert graphs <= 16 and chunks >= 9 and chunks - 2 <= writes <= chunks, (label, graphs, chunks, writes)
 
 
 launch = run("launch", "LAUNCH")
@@ -102,6 +103,14 @@ again = run("launch-again", "LAUNCH")
 graph = run("graph", "GRAPH")
 assert launch["report"] is None and graph["report"]
 compare(launch, again, graph, "isotropic")
+
+# Five coupling periods per row, as in production schedules: the outer
+# loops of the schedule permute the banks over more chunks, and the chunk
+# graphs repeat.
+long = [run(f"long-{name}", mode, steps=400, energy=50)
+        for name, mode in (("launch", "LAUNCH"), ("again", "LAUNCH"), ("graph", "GRAPH"))]
+compare(*long, "five periods per row")
+assert int(long[2]["report"].group(1)) < int(long[2]["report"].group(2)), long[2]["report"].group(0)
 
 # A graph that kept its first cell: the cell is written once and the test
 # sees the replay.

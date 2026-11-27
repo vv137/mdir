@@ -61,7 +61,8 @@ Measured on the suite's NPT inputs with LAUNCH, a row at every scaling. JAC and 
 
 The chunk graphs are keyed by their banks and buffers (D439). The barostat does not add keys: the mirror is one buffer per chunk site.
 
-1. [measured] On 100,000 steps of JAC with coupling every 25 steps, NPT made 30 chunk graphs in 4,000 chunks and 7 proposal banks (2.7 MiB). The same schedule in NVT made 84 graphs in 10,000 chunks and 12 proposal banks (5.4 MiB). In both runs every graph was made in the first part of the run, while the outer loops of the schedule permute the banks.
+1. [measured] On 100,000 steps of JAC with coupling every 25 steps and a row every 1,000, NPT made 30 chunk graphs in 4,000 chunks and 7 proposal banks (2.7 MiB). With the coupling every 10 steps of the NVT input of the same system, GRAPH made 84 graphs in 10,000 chunks and 12 proposal banks (5.4 MiB).
+2. [computed] The proposal banks are allocated per input bank address (`partner` in `runtime/mdrt_step_graph.cu`). Their fixed count shows that the keys are permutations of a fixed set of banks, as in D439, and that the number of graphs is bounded by the number of these permutations.
 
 ## 5. Validation
 
