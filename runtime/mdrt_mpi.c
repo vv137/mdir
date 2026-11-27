@@ -175,6 +175,11 @@ void mdrtMPIExchange(void *send, int *sendCounts, int *sendOffsets,
                 recv, recvCounts, recvOffsets, type, comm);
 }
 
+void mdrtMPIExchangeFloats(float *send, int *ns, int *os,
+                           float *recv, int *nr, int *offsets) {
+  arrival();
+  MPI_Alltoallv(send, ns, os, MPI_FLOAT, recv, nr, offsets, MPI_FLOAT, comm);
+}
 
 MPI_Request mdrtMPIStartChargeExchange(int64_t *send, int *ns, int *os,
                                        int64_t *recv, int *nr, int *offsets) {

@@ -19,7 +19,8 @@ struct PmePencils {
   int n[3], px, py, rank, peers, mixed;
   rfft_plan rz;
   cfft_plan cy, cx;
-  double *a, *b, *send, *recv;
+  double *a, *b;
+  void *send, *recv;
   int *schedule;
 };
 
@@ -141,18 +142,29 @@ static struct PmeBox intersect(struct PmeBox b, struct PmeBox c) {
 }
 
 static void transfer(struct PmeBox b, struct PmeBox part, double *field,
-                     double *packet, int pack) {
+                     void *buffer, int offset, int mixed, int pack) {
   int width = 2 * (part.hi[2] - part.lo[2]);
   if (!width)
     return;
   for (int x = part.lo[0]; x < part.hi[0]; ++x)
     for (int y = part.lo[1]; y < part.hi[1]; ++y) {
       double *row = field + 2 * indexOf(b, x, y, part.lo[2]);
-      if (pack)
-        memcpy(packet, row, width * sizeof(double));
-      else
-        memcpy(row, packet, width * sizeof(double));
-      packet += width;
+      if (mixed) {
+        float *packet = (float *)buffer + offset;
+        if (pack)
+          for (int k = 0; k < width; ++k)
+            packet[k] = (float)row[k];
+        else
+          for (int k = 0; k < width; ++k)
+            row[k] = packet[k];
+      } else {
+        double *packet = (double *)buffer + offset;
+        if (pack)
+          memcpy(packet, row, width * sizeof(double));
+        else
+          memcpy(row, packet, width * sizeof(double));
+      }
+      offset += width;
     }
 }
 
@@ -175,15 +187,19 @@ static void transpose(struct PmePencils *p, int from, int to, double *src,
     nr[r] = 2 * volume(in);
     os[r] = sent;
     or[r] = received;
-    transfer(old, out, src, p->send + sent, 1);
+    transfer(old, out, src, p->send, sent, p->mixed, 1);
     sent += ns[r];
     received += nr[r];
   }
-  mdrtDistMeshBytes(DistTransposeBytes, (int64_t)(sent - ns[p->rank]) * sizeof(double));
-  mdrtMPIExchange(p->send, ns, os, p->recv, nr, or, 0);
+  size_t width = p->mixed ? sizeof(float) : sizeof(double);
+  mdrtDistMeshBytes(DistTransposeBytes, (int64_t)(sent - ns[p->rank]) * width);
+  if (p->mixed)
+    mdrtMPIExchangeFloats(p->send, ns, os, p->recv, nr, or);
+  else
+    mdrtMPIExchange(p->send, ns, os, p->recv, nr, or, 0);
   for (int r = 0; r < p->peers; ++r)
-    transfer(next, intersect(next, bounds(p, from, r)), dst, p->recv + or[r],
-             0);
+    transfer(next, intersect(next, bounds(p, from, r)), dst, p->recv, or[r],
+             p->mixed, 0);
   mdrtDistPhase(-DistTranspose);
 #endif
 }
@@ -221,8 +237,9 @@ struct PmePencils *mdrtPmePencils(int nx, int ny, int nz, int px, int py,
   }
   p->a = allocate(2 * (size_t)largest, sizeof(double));
   p->b = allocate(2 * (size_t)largest, sizeof(double));
-  p->send = allocate(2 * (size_t)largest, sizeof(double));
-  p->recv = allocate(2 * (size_t)largest, sizeof(double));
+  size_t wireWidth = mixed ? sizeof(float) : sizeof(double);
+  p->send = allocate(2 * (size_t)largest, wireWidth);
+  p->recv = allocate(2 * (size_t)largest, wireWidth);
   p->schedule = allocate(p->peers, 4 * sizeof(int));
   acquirePlans(p);
   return p;

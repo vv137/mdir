@@ -1336,6 +1336,12 @@ first, then transforms along $y$, $x$ and $z$. These transforms commute
 in exact arithmetic. The ordinary CPU path rounds after each axis in
 this order, so exchanging the inverse axes changes the rounded potential.
 
+A completed mixed transform line stores each component rounded to binary32,
+as does the influence multiplication before the inverse transform. A pencil
+transpose therefore sends two four-byte components per complex coefficient.
+Widening them on receipt recovers the same inputs to the next binary64 line
+transform. A double-precision pencil sends sixteen bytes per coefficient.
+
 Both precisions use the charge representation of ordinary CPU PME.
 Each stencil multiplies the scaled charge $2^{40}q$ by the three
 weights in axis order, rounding each product in the selected precision.

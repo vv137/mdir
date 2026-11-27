@@ -41,6 +41,10 @@ rounding boundary. The distribution log counts logical bytes sent to other ranks
 other ranks on the same node. The overlap counter includes the subgrid
 bounds and the charge and potential rows. The transpose counter includes
 the complex pencil intersections sent during forward and inverse transforms.
+Each mixed complex coefficient occupies eight bytes in a transpose packet.
+The line transform and the influence multiplication have already rounded
+both components to binary32. The receiver widens each component exactly
+for the next line transform. Double coefficients occupy sixteen bytes.
 Local copies contribute zero bytes. An interval reports totals across
 ranks and steps.
 

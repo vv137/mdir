@@ -25,6 +25,8 @@ void mdrtMPIWaitHalo(struct HaloRequests *pending);
 void mdrtMPIShareBlocks(void *values, const int *counts, const int *offsets, int words);
 void mdrtMPIExchange(void *send, int *sendCounts, int *sendOffsets,
                      void *recv, int *recvCounts, int *recvOffsets, int words);
+void mdrtMPIExchangeFloats(float *send, int *ns, int *os,
+                           float *recv, int *nr, int *offsets);
 int mdrtMPIShareDomainPartials(void *values, int64_t domains, int64_t width, int words);
 void mdrtMPICollectIntervals(void *data, int64_t count, int64_t width, int integer, int rootOnly);
 void mdrtMPIShareIndexRows(int64_t *rows, int64_t domains, int64_t width);
