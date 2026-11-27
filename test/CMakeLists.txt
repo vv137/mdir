@@ -5,6 +5,18 @@ set(MDIR_TEST_PYTHON 0)
 if(MDIR_ENABLE_PYTHON)
   set(MDIR_TEST_PYTHON 1)
 endif()
+# MPI tests launch two ranks even when the enclosing allocation has one slot.
+# Other MPI launchers do not accept Open MPI's option.
+set(MDIR_TEST_MPI_OVERSUBSCRIBE "")
+if(MDIR_ENABLE_MPI AND MPIEXEC_EXECUTABLE)
+  execute_process(COMMAND "${MPIEXEC_EXECUTABLE}" --version
+    OUTPUT_VARIABLE MDIR_MPIEXEC_VERSION
+    ERROR_QUIET TIMEOUT 5)
+  if(MDIR_MPIEXEC_VERSION MATCHES "Open MPI|OpenRTE")
+    set(MDIR_TEST_MPI_OVERSUBSCRIBE " --oversubscribe")
+  endif()
+endif()
+
 # For the site configuration of lit.
 if(MDIR_CUDA_FOUND)
   set(MDIR_TEST_CUDA 1)
