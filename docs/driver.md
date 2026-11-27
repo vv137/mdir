@@ -1746,7 +1746,7 @@ volume in cubic Ang is the shell within halo reach of the domain box,
 including its rounded edges and corners. A rejected distributed control records the reason in its log and manifest:
 a refusal of `[distribute]` itself, of the builder (constraints, a
 triclinic cell), or a diagnostic of the passes of `md_dist` (the exclusions
-of bonded terms, a table of types). Any other error of the control file is
+of bonded terms). Any other error of the control file is
 reported as without the table.
 An existing MDIR log and a valid manifest history accept another refusal.
 An unsafe output alias or unrecognized existing file is protected and the

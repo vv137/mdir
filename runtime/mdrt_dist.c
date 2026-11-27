@@ -151,8 +151,22 @@ void mdrtDistFreeExclusions(int64_t handle) {
   free((void *)(intptr_t)handle);
 }
 
-/* Word conversion is defined even for a singular pair or huge finite input. */
-int64_t mdrtDistWord(double x, double scale) {
+static const char *const quantityNames[DistQuantityCount] = {
+    "pair energy or virial",
+    "force or gathered field",
+    "particle sum",
+    "kinetic energy",
+    "momentum",
+    "sum of F^2/m (the kinetic correction)"};
+
+static const char *quantityName(int64_t quantity) {
+  return quantity >= 0 && quantity < DistQuantityCount ? quantityNames[quantity]
+                                                       : "quantity";
+}
+
+/* Word conversion is defined even for a singular pair or huge finite input:
+   the rounded value is checked before the cast. */
+int64_t mdrtDistWord(double x, double scale, int64_t quantity) {
   double w = round(x * scale);
   if (!(w >= -0x1p63 && w < 0x1p63)) {
     char message[160];
@@ -237,7 +251,7 @@ static void pairCells(int64_t d, int64_t owned, int64_t count, int64_t centers,
     offset[b] += offset[b - 1];
   /* Fill backward. offset[b+1] then points at the start of bin b. */
   for (int64_t r = count; r-- > 0;)
-    rows[--offset[cell[r]+1]] = r;
+    rows[--offset[cell[r] + 1]] = r;
   for (int64_t i = 0; i < centers; ++i) {
     int64_t x = cell[i] % shape[0], yz = cell[i] / shape[0];
     int64_t y = yz % shape[1], z = yz / shape[1];
@@ -259,7 +273,6 @@ static void pairCells(int64_t d, int64_t owned, int64_t count, int64_t centers,
   free(cell);
   free(offset);
 }
-
 
 void _mlir_ciface_mdrtDistPairCells(int64_t d, int64_t owned, int64_t count,
     double cutoff, struct Memref3D *xo, struct Memref3D *xg,

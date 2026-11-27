@@ -219,8 +219,8 @@ private:
   Value finish(OpBuilder &b, Value sum, Format format);
   Value add(OpBuilder &b, Value lhs, Value rhs);
   llvm::DenseMap<Value, Value> imageShifts, fieldWords, excludedPairs;
-  llvm::DenseMap<Value, std::pair<Value, int>> observableWords;
-  Value decodeObservable(OpBuilder &b, Value sum, int bits);
+  llvm::DenseMap<Value, std::pair<Value, Format>> observableWords;
+  Value decodeObservable(OpBuilder &b, Value sum, Format format);
   bool needsWords(Value field) {
     return fixedPoint && llvm::any_of(field.getUsers(), [](Operation *user) {
              return user->hasAttr("md_dist.add_terms");
@@ -410,20 +410,10 @@ Value Lowering::finish(OpBuilder &b, Value sum, Format format) {
       b, loc, arith::SIToFPOp::create(b, loc, type, sum), scale);
 }
 
-Value Lowering::decodeObservable(OpBuilder &b, Value sum, int bits) {
-  if (!fixedPoint) return sum;
-  // Extensive observables (including the sum of squared forces per mass)
-  // may exceed a single Q32 word even when every term fits. Round the
-  // checked wide sum directly, once, before restoring physical units.
-  Type type = b.getF64Type();
-  Value scale = real(b, std::ldexp(1.0, -bits));
-  if (auto vector = dyn_cast<VectorType>(sum.getType())) {
-    type = VectorType::get(vector.getShape(), type);
-    scale = vector::BroadcastOp::create(b, loc, type, scale);
-  }
-  Value value = arith::MulFOp::create(b, loc,
-      arith::SIToFPOp::create(b, loc, type, sum), scale);
-  observableWords[value] = {sum, bits};
+Value Lowering::decodeObservable(OpBuilder &b, Value sum, Format format) {
+  Value value = finish(b, sum, format);
+  if (fixedPoint)
+    observableWords[value] = {sum, format};
   return value;
 }
 
@@ -1110,7 +1100,7 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
             cloneKernelOp(k, nested, map);
           auto yielded = body.getTerminator()->getOperands();
           if (reduce) {
-            Value word = quantize(k, map.lookupOrDefault(yielded.front()), 32);
+            Value word = quantize(k, map.lookupOrDefault(yielded.front()), pairEnergy);
             for (int64_t c = 0; c < width; ++c) {
               Value component = vector ? Value(vector::ExtractOp::create(k, loc, word, c)) : word;
               SmallVector<Value, 2> place{d, index(k, c)};
@@ -1128,7 +1118,7 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
             }
           } else {
             for (int64_t a = 0; a < arity; ++a) {
-              Value word = quantize(k, map.lookupOrDefault(yielded[a]), 40);
+              Value word = quantize(k, map.lookupOrDefault(yielded[a]), pairForce);
               scf::IfOp::create(k, loc, isOwned[a], [&](OpBuilder &yes, Location) {
                 addValue(yes, word, ownedOut, d, localRows[a]);
                 scf::YieldOp::create(yes, loc);

@@ -450,6 +450,22 @@ void mdir::driver::keepDependentTerms(Control &control, const System &system) {
                  [&](const Control::Observable &o) { return !stays(o); });
 }
 
+llvm::Error mdir::driver::checkDistributedSystem(const Control &control,
+                                                 const System &system) {
+  if (!control.distribution)
+    return llvm::Error::success();
+  if ((system.numConstraints || system.numSettles) &&
+      control.distribution->traversal == "directed")
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "distributed constraints require cross-domain constraint partners");
+  if (llvm::any_of(system.tilt, [](double t) { return t != 0.0; }))
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "distributed halos require an orthorhombic cell");
+  return llvm::Error::success();
+}
+
 // Half the diagonal of the tuple's bounding box bounds the distance of
 // every member from its midpoint. Unwrap about the least particle identity,
 // in the same image convention as the runtime schedule.
@@ -482,12 +498,8 @@ llvm::Expected<Program> mdir::driver::buildProgram(const Control &control,
   if (llvm::Error error = checkEntryControl(control)) return std::move(error);
   Program program;
   if (control.distribution) {
-    if ((system.numConstraints || system.numSettles) && control.distribution->traversal == "directed")
-      return llvm::createStringError(llvm::inconvertibleErrorCode(),
-          "distributed constraints require cross-domain constraint partners");
-    if (llvm::any_of(system.tilt, [](double t) { return t != 0.0; }))
-      return llvm::createStringError(llvm::inconvertibleErrorCode(),
-          "distributed halos require an orthorhombic cell");
+    if (llvm::Error error = checkDistributedSystem(control, system))
+      return std::move(error);
     program.distributed = true;
     program.domainTopology = system.topology && control.distribution->traversal != "directed";
     program.domainGroupSteps = program.domainTopology && (system.numConstraints || system.numSettles || control.thermostat);

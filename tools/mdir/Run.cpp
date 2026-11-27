@@ -1618,15 +1618,20 @@ static int runControlImpl(StringRef controlFile, Emit emit,
         {"candidates", std::move(candidates)},
         {"transport", dist->transport},
         {"transport_source", dist->transportGiven ? "requested" : "default"},
-        {"traversal", dist->traversal}, {"traversal_source", dist->traversalGiven ? "requested" : "default"},
-        {"ranks", distRanks}, {"cutoff_angstrom", control->cutoffDistance},
-        {"skin_angstrom", control->pairlistDistance-control->cutoffDistance},
+        {"traversal", dist->traversal},
+        {"traversal_source", dist->traversalGiven ? "requested" : "default"},
+        {"ranks", distRanks},
+        {"cutoff_angstrom", control->cutoffDistance},
+        {"skin_angstrom", control->pairlistDistance - control->cutoffDistance},
         {"reach_angstrom", domainReach}};
-    output.log.print("MDIR: grid choice %s, requested count %lld, ranks %d; %s transport (%s), %s traversal (%s); reach %g Ang, cutoff %g Ang, skin %g Ang\n",
+    output.log.print(
+        "MDIR: grid choice %s, requested count %lld, ranks %d; %s transport "
+        "(%s), %s traversal (%s); reach %g Ang, cutoff %g Ang, skin %g Ang\n",
         source, (long long)dist->domains, distRanks, dist->transport.c_str(),
         dist->transportGiven ? "requested" : "default", dist->traversal.c_str(),
         dist->traversalGiven ? "requested" : "default", domainReach,
-        control->cutoffDistance, control->pairlistDistance-control->cutoffDistance);
+        control->cutoffDistance,
+        control->pairlistDistance - control->cutoffDistance);
   }
   if (writer && !control->manifestFile.empty()) {
     auto device = getManifestDevice(control->target);
@@ -2064,11 +2069,13 @@ static int runControlImpl(StringRef controlFile, Emit emit,
                  control->timestep);
   if (control->distribution) {
     const auto &grid = program->domainGrid;
-    output.log.print("MDIR: domain grid %lld x %lld x %lld, %s transport, "
-                     "%s traversal, halo reach %g Ang\n",
-                     static_cast<long long>(grid[0]), static_cast<long long>(grid[1]),
-                     static_cast<long long>(grid[2]), control->distribution->transport.c_str(),
-                     control->distribution->traversal.c_str(), domainReach);
+    output.log.print(
+        "MDIR: domain grid %lld x %lld x %lld, %s transport, "
+        "%s traversal, halo reach %g Ang\n",
+        static_cast<long long>(grid[0]), static_cast<long long>(grid[1]),
+        static_cast<long long>(grid[2]),
+        control->distribution->transport.c_str(),
+        control->distribution->traversal.c_str(), domainReach);
   }
   if (program->pme)
     output.log.print("MDIR: PME force-only product rule: %s\n", pmeForceProduct);
