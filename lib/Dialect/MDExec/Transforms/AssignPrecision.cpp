@@ -781,7 +781,8 @@ static Value createCopy(OpBuilder &builder, Location loc, Value field) {
 void Assigner::isolateBoundaries() {
   SmallVector<Operation *> boundaries;
   function.walk([&](Operation *op) {
-    if (isa<mdrt::FromBufferOp, mdrt::ToBufferOp, mdrt::SnapshotOp, mdrt::HostCallOp>(op))
+    if (isa<mdrt::FromBufferOp, mdrt::ToBufferOp, mdrt::SnapshotOp,
+            mdrt::HostCallOp>(op))
       boundaries.push_back(op);
   });
   for (Operation *op : boundaries) {
@@ -812,7 +813,8 @@ LogicalResult Assigner::run() {
   // In the deterministic mode the type of a buffer decides that of its
   // copy alone: the fields of the steps are stored as their roles say,
   // whatever buffers the program reaches them from or hands them to.
-  if (deterministic || function->getParentOfType<ModuleOp>()->hasAttr("md_dist.driver"))
+  if (deterministic ||
+      function->getParentOfType<ModuleOp>()->hasAttr("md_dist.driver"))
     isolateBoundaries();
   for (BlockArgument argument : function.getArguments())
     if (isRealField(argument.getType()))

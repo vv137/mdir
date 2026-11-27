@@ -420,9 +420,12 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
       Handle position(H5Gcreate2(all, "position", H5P_DEFAULT, H5P_DEFAULT,
                                  H5P_DEFAULT),
                       H5Gclose);
-      h->step = createSeries(datasets, position, "step", H5T_STD_I64LE, {0}, 1024);
-      h->time = createSeries(datasets, position, "time", H5T_IEEE_F64LE, {0}, 1024);
-      h->position = createSeries(datasets, position, "value", real, {0, count, 3}, rows);
+      h->step =
+          createSeries(datasets, position, "step", H5T_STD_I64LE, {0}, 1024);
+      h->time =
+          createSeries(datasets, position, "time", H5T_IEEE_F64LE, {0}, 1024);
+      h->position =
+          createSeries(datasets, position, "value", real, {0, count, 3}, rows);
       ok &= h->step >= 0 && h->time >= 0 && h->position >= 0;
       ok = ok && writeUnit(h->time, "ps") &&
            writeUnit(h->position, "nm");
@@ -458,8 +461,8 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
         h->edges = options.triclinic
                        ? createSeries(datasets, edges, "value", H5T_IEEE_F64LE,
                                       {0, 3, 3}, 1024)
-                       : createSeries(datasets, edges, "value", H5T_IEEE_F64LE, {0, 3},
-                                      1024);
+                       : createSeries(datasets, edges, "value", H5T_IEEE_F64LE,
+                                      {0, 3}, 1024);
         ok = ok && h->edges >= 0 && writeUnit(h->edges, "nm");
       }
     }
@@ -476,7 +479,8 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
         ok = ok && h->velocityTime >= 0 &&
              writeUnit(h->velocityTime, "ps");
       }
-      h->velocity = createSeries(datasets, velocity, "value", real, {0, count, 3}, rows);
+      h->velocity =
+          createSeries(datasets, velocity, "value", real, {0, count, 3}, rows);
       ok = ok && h->velocity >= 0 && writeUnit(h->velocity, "nm ps-1");
     }
     if (options.forces) {
@@ -484,7 +488,8 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
                               H5P_DEFAULT),
                    H5Gclose);
       link(force);
-      h->force = createSeries(datasets, force, "value", real, {0, count, 3}, rows);
+      h->force =
+          createSeries(datasets, force, "value", real, {0, count, 3}, rows);
       ok = ok && h->force >= 0 &&
            writeUnit(h->force, "kJ mol-1 nm-1");
     }
@@ -518,7 +523,8 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
                                 H5P_DEFAULT, H5P_DEFAULT),
                      H5Gclose);
         link(group);
-        h->energy = createSeries(datasets, group, "value", H5T_IEEE_F64LE, {0}, 1024);
+        h->energy =
+            createSeries(datasets, group, "value", H5T_IEEE_F64LE, {0}, 1024);
         ok = ok && h->energy >= 0 && writeUnit(h->energy, "kJ mol-1");
       }
       if (options.tunables) {
@@ -526,7 +532,8 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
                                 H5P_DEFAULT, H5P_DEFAULT),
                      H5Gclose);
         link(group);
-        h->version = createSeries(datasets, group, "value", H5T_STD_I64LE, {0}, 1024);
+        h->version =
+            createSeries(datasets, group, "value", H5T_STD_I64LE, {0}, 1024);
         ok = ok && h->version >= 0;
       }
     }

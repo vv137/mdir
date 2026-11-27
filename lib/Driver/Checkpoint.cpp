@@ -310,8 +310,8 @@ public:
       return;
     Handle space(H5Screate_simple(shape.size(), shape.data(), nullptr),
                  H5Sclose);
-    Handle dataset(H5Dcreate2(parent, name, type, space, H5P_DEFAULT,
-                              datasets, H5P_DEFAULT),
+    Handle dataset(H5Dcreate2(parent, name, type, space, H5P_DEFAULT, datasets,
+                              H5P_DEFAULT),
                    H5Dclose);
     failed |= !dataset.isValid() ||
               H5Dwrite(dataset, type, H5S_ALL, H5S_ALL, H5P_DEFAULT, data) < 0;
@@ -328,8 +328,8 @@ public:
     H5Tset_size(type, text.size() + 1);
     H5Tset_strpad(type, H5T_STR_NULLTERM);
     Handle space(H5Screate(H5S_SCALAR), H5Sclose);
-    Handle dataset(H5Dcreate2(parent, name, type, space, H5P_DEFAULT,
-                              datasets, H5P_DEFAULT),
+    Handle dataset(H5Dcreate2(parent, name, type, space, H5P_DEFAULT, datasets,
+                              H5P_DEFAULT),
                    H5Dclose);
     failed |= !dataset.isValid() ||
               H5Dwrite(dataset, type, H5S_ALL, H5S_ALL, H5P_DEFAULT,

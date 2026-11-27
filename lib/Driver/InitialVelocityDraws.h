@@ -13,6 +13,7 @@ namespace mdir::driver {
 class InitialVelocityDraws {
   using State = std::array<uint64_t, 4>;
   using Transition = std::array<State, 256>;
+
 public:
   explicit InitialVelocityDraws(uint64_t seed) {
     for (uint64_t &word : state) {
@@ -87,7 +88,7 @@ private:
       }
       for (unsigned n = 1; n < result.size(); ++n)
         for (unsigned i = 0; i < 256; ++i)
-          result[n][i] = applyTransition(result[n-1], result[n-1][i]);
+          result[n][i] = applyTransition(result[n - 1], result[n - 1][i]);
       return result;
     }();
     return powers;
@@ -96,4 +97,4 @@ private:
   uint64_t next = 0;
 };
 
-} // namespace
+} // namespace mdir::driver

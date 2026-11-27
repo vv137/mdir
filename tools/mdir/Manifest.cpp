@@ -278,17 +278,20 @@ llvm::Error Manifest::open(const std::string &given, bool append) {
       const Object *record = json ? json->getAsObject() : nullptr;
       int64_t number = record ? record->getInteger("invocation").value_or(0) : 0;
       auto event = record ? record->getString("event") : std::nullopt;
-      bool refused = event && *event == "refused" && record->getString("reason");
+      bool refused =
+          event && *event == "refused" && record->getString("reason");
       bool start = event && *event == "start";
       bool end = event && *event == "end";
-      bool valid = record && record->getInteger("schema_version") == 1 && number > 0 &&
-          record->getString("timestamp_utc") &&
-          (((start || refused) && number == last + 1) ||
-           (event && *event == "domain_setup" && last > 0 && number == last && !ended && record->getArray("domains")) ||
-           (end && last > 0 && number == last && !ended));
+      bool valid = record && record->getInteger("schema_version") == 1 &&
+                   number > 0 && record->getString("timestamp_utc") &&
+                   (((start || refused) && number == last + 1) ||
+                    (event && *event == "domain_setup" && last > 0 &&
+                     number == last && !ended && record->getArray("domains")) ||
+                    (end && last > 0 && number == last && !ended));
       if (end && record) {
         auto status = record->getString("status");
-        valid &= status && (*status == "completed" || *status == "stopped" || *status == "refused");
+        valid &= status && (*status == "completed" || *status == "stopped" ||
+                            *status == "refused");
       }
       if (!json)
         llvm::consumeError(json.takeError());
@@ -312,21 +315,26 @@ llvm::Error Manifest::open(const std::string &given, bool append) {
   return llvm::Error::success();
 }
 
-llvm::Error Manifest::start(const std::string &given, bool append, Object metadata) {
-  if (auto e = open(given, append)) return e;
+llvm::Error Manifest::start(const std::string &given, bool append,
+                            Object metadata) {
+  if (auto e = open(given, append))
+    return e;
   began = std::chrono::steady_clock::now();
   metadata["event"] = "start";
   return write(std::move(metadata));
 }
 
 llvm::Error Manifest::refuse(const std::string &given, llvm::StringRef reason) {
-  if (auto e = open(given, true)) return e;
+  if (auto e = open(given, true))
+    return e;
   return write(Object{{"event", "refused"}, {"reason", reason}});
 }
 
 llvm::Error Manifest::domainSetup(llvm::json::Array domains) {
-  if (!file) return llvm::Error::success();
-  return write(Object{{"event", "domain_setup"}, {"domains", std::move(domains)}});
+  if (!file)
+    return llvm::Error::success();
+  return write(
+      Object{{"event", "domain_setup"}, {"domains", std::move(domains)}});
 }
 
 llvm::Error Manifest::finish(StringRef status, int64_t step, StringRef reason) {

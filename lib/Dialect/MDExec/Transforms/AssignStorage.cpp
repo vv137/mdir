@@ -2052,8 +2052,8 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     if (from->hasAttr("mdrt.collect_buffer")) {
       // Each other use fills the buffer before this handoff.
       auto allocated = from.getBuffer().getDefiningOp<memref::AllocOp>();
-      if (onDevice || !allocated || llvm::any_of(from.getBuffer().getUsers(),
-          [&](Operation *user) {
+      if (onDevice || !allocated ||
+          llvm::any_of(from.getBuffer().getUsers(), [&](Operation *user) {
             if (user == op)
               return false;
             auto store = dyn_cast<memref::StoreOp>(user);
@@ -2062,13 +2062,16 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
             Operation *ancestor = op->getBlock()->findAncestorOpInBlock(*user);
             return !ancestor || !ancestor->isBeforeInBlock(op);
           }))
-        return op->emitOpError("collected field requires its own filled allocation");
+        return op->emitOpError(
+            "collected field requires its own filled allocation");
       Type field = from.getResult().getType();
       Attribute set = getParticleSet(field);
       Value size = sizes.lookup(set);
       if (!size)
-        return op->emitOpError("collected field requires a known particle-set extent");
-      Value held = scope.request(getStorageType(field), size, set, op->getLoc());
+        return op->emitOpError(
+            "collected field requires a known particle-set extent");
+      Value held =
+          scope.request(getStorageType(field), size, set, op->getLoc());
       memref::CopyOp::create(builder, op->getLoc(), buffer, held);
       memref::DeallocOp::create(builder, op->getLoc(), buffer);
       bind(from.getResult(), held, scope);
@@ -2141,9 +2144,11 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
       return failure();
     auto type = cast<MemRefType>(snapshot.getResult().getType());
     if (type != mdrt::getBufferType(snapshot.getField().getType()))
-      return snapshot.emitOpError("requires the buffer shape and type of its field");
+      return snapshot.emitOpError(
+          "requires the buffer shape and type of its field");
     Value size = memref::DimOp::create(builder, op->getLoc(), buffer, 0);
-    auto copy = memref::AllocOp::create(builder, op->getLoc(), type, ValueRange{size});
+    auto copy =
+        memref::AllocOp::create(builder, op->getLoc(), type, ValueRange{size});
     memref::CopyOp::create(builder, op->getLoc(), buffer, copy);
     mapping.map(snapshot.getResult(), copy.getResult());
     return success();

@@ -1,8 +1,8 @@
-#include "InitialVelocityDraws.h"
 // The particles of a run.
 
 #include "mdir/Driver/System.h"
 
+#include "InitialVelocityDraws.h"
 #include "mdir/Driver/Cell.h"
 #include "mdir/Driver/Expression.h"
 #include "mdir/Driver/Selection.h"
@@ -1140,7 +1140,6 @@ llvm::Expected<System> mdir::driver::readSystem(const Control &control) {
     return std::move(error);
   return std::move(system);
 }
-
 
 double mdir::driver::getKineticEnergy(const System &system) {
   double twice = 0.0;
