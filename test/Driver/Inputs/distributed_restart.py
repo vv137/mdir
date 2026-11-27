@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 import h5py
+import numpy as np
 
 root = Path(sys.argv[1]).resolve()
 example = Path(sys.argv[2]).resolve()
@@ -86,49 +87,62 @@ def run(name, domains, ranks, *, stop=False, resume=False, trace=False, auto_gri
     return path
 
 
-def grid(path):
-    """The grid that the fingerprint of the checkpoint names."""
-    with h5py.File(path / "state.h5") as state:
-        text = state["parameters/mdir/fingerprint/execution"][()].decode()
-    return [e for e in text.splitlines() if e.startswith("[distribute] domains")]
+metadata = "parameters/mdir"
+execution = f"{metadata}/fingerprint/execution"
+domain_key = b"[distribute] domains\t"
+
+
+def exact(x, y, context):
+    x, y = np.asarray(x), np.asarray(y)
+    assert x.dtype == y.dtype and x.shape == y.shape, context
+    if x.dtype.hasobject:
+        assert list(x.flat) == list(y.flat), context
+    else:
+        assert x.tobytes() == y.tobytes(), context
 
 
 def compare(a, b):
     assert (a / "traj.h5").read_bytes() == (b / "traj.h5").read_bytes()
-    # Continuations increment the checkpoint part even for an identical
-    # physical state, and the fingerprint names the grid of the run.
-    same = (a / "resume.log").exists() == (b / "resume.log").exists()
-    if same and grid(a) == grid(b):
-        assert (a / "state.h5").read_bytes() == (b / "state.h5").read_bytes()
     assert (a / "energy.dat").read_bytes() == (b / "energy.dat").read_bytes()
-    for filename in ["state.h5", "traj.h5"]:
-        with h5py.File(a / filename) as ref, h5py.File(b / filename) as current:
-            datasets = []
-            ref.visititems(lambda name, obj: datasets.append(name)
-                           if isinstance(obj, h5py.Dataset) and obj.dtype.kind in 'iuf' else None)
-            assert datasets
-            if filename == "state.h5":
-                meta = ref["parameters/mdir"]
-                assert meta.attrs["seed"] == current["parameters/mdir"].attrs["seed"] == 314159
-                names = []
-                current.visit(names.append)
-                words = {"domain", "domains", "grid", "owner", "ownership", "ghosts", "epoch"}
-                assert not any(words.intersection(path.split("/")) for path in names)
-                # The fingerprints differ in the grid alone.
-                for group in ["physics", "coupling", "execution"]:
-                    key = f"parameters/mdir/fingerprint/{group}"
-                    x, y = ([e for e in h[key][()].decode().splitlines()
-                             if not e.startswith("[distribute] domains")]
-                            for h in (ref, current))
-                    assert x == y, (a.name, b.name, group)
-            other_datasets = []
-            current.visititems(lambda name, obj: other_datasets.append(name)
-                               if isinstance(obj, h5py.Dataset) and obj.dtype.kind in 'iuf' else None)
-            assert other_datasets == datasets
-            for name in datasets:
-                x, y = ref[name][()], current[name][()]
-                assert x.dtype == y.dtype and x.shape == y.shape
-                assert x.tobytes() == y.tobytes(), (a.name, b.name, filename, name)
+    first, second = a / "state.h5", b / "state.h5"
+    with h5py.File(first) as ref, h5py.File(second) as current:
+        left, right = ref[execution][()], current[execution][()]
+        for fingerprint in (left, right):
+            assert sum(line.startswith(domain_key) for line in fingerprint.splitlines()) == 1
+        assert [line for line in left.splitlines() if not line.startswith(domain_key)] == [
+            line for line in right.splitlines() if not line.startswith(domain_key)
+        ], (a.name, b.name, execution)
+
+        # Continuation changes the part, and a new layout changes the domain
+        # fingerprint. The checkpoint reader independently validates each digest.
+        for path, file in ((a, ref), (b, current)):
+            assert file[metadata].attrs["part"] == 1 + (path / "resume.log").exists()
+            assert file[metadata].attrs["seed"] == 314159
+        same_part = ref[metadata].attrs["part"] == current[metadata].attrs["part"]
+        if same_part and left == right:
+            assert first.read_bytes() == second.read_bytes()
+            return
+
+        for path in (first, second):
+            subprocess.run([program, "checkpoint", str(path)], check=True,
+                           stdout=subprocess.DEVNULL)
+        assert ref[metadata].attrs["state_sha256"] != current[metadata].attrs["state_sha256"]
+
+        names, other_names = [], []
+        ref.visit(names.append)
+        current.visit(other_names.append)
+        assert names == other_names
+        words = {"domain", "domains", "grid", "owner", "ownership", "ghosts", "epoch"}
+        assert not any(words.intersection(path.split("/")) for path in names)
+        for name in ["/", *names]:
+            x, y = ref[name], current[name]
+            assert type(x) is type(y) and set(x.attrs) == set(y.attrs), name
+            for key in x.attrs:
+                if name == metadata and key in ("part", "state_sha256"):
+                    continue
+                exact(x.attrs[key], y.attrs[key], (a.name, b.name, name, key))
+            if isinstance(x, h5py.Dataset) and name != execution:
+                exact(x[()], y[()], (a.name, b.name, name))
 
 
 ranks = 2 if mpi else 0

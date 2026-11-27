@@ -601,7 +601,8 @@ uses checked fixed-point words across grids and restarts, and its
 `--continue` refuses a control file that adds or drops `[distribute]`
 unless `mdir run --continue --force` overrides it, which the log, the
 manifest, and the checkpoints record; the checkpoint's fingerprint records
-the traversal, the transport, and the grid, whose change is a note
+the traversal, the transport, and the grid. A changed grid is a note
+and the new grid contributes to the checkpoint's integrity digest
 (D447).
 Floating-point MPI with one midpoint domain per rank may resize
 domains automatically (D[distribute-auto-balance]). Covered bonded tuples may
