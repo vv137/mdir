@@ -872,6 +872,10 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
   auto control = readControl(controlFile);
   if (!control)
     return fail(control.takeError(), json);
+  if (llvm::Error error = control->resolveNCCLDistribution())
+    return fail(std::move(error), json);
+  if (control->usesOrdinaryGPUExecutor())
+    control->distribution.reset();
   auto system = readSystem(*control);
   if (!system)
     return fail(system.takeError(), json);

@@ -21,6 +21,7 @@ without towers-mma: *
 without volta: Driver/volta-target-gpu.test
 without cuda-toolkit: *
 without mpi: *
+without nccl-multigpu: *
 without nccl: Driver/distribute-nccl-gpu.test
 without nccl: Driver/distributed-auto-memory-gpu.test
 without nccl: Driver/distributed-auto-pin-gpu.test

@@ -28,6 +28,9 @@ if "mpi" in config.available_features:
     llvm_config.with_system_environment([name for name in os.environ
         if name.startswith(("I_MPI_", "FI_", "SLURM_", "PMI_", "PMIX_", "UCX_"))
         or name in ("LD_LIBRARY_PATH", "PATH")])
+# The caller must allocate two distinct devices before enabling these tests.
+if lit_config.params.get("nccl_multigpu") == "1":
+    config.available_features.add("nccl-multigpu")
 # What lit itself was given, for the test that the tests receive it
 # (test/Lit/environment.test).
 for variable in ("CUDA_CACHE_PATH", "TMPDIR"):

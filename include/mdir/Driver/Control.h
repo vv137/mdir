@@ -243,8 +243,18 @@ struct Control {
     std::string traversal = "directed";
     std::string pairOverlap = "auto";
     std::string transport = "local";
+    int64_t count() const {
+      return domains ? domains : grid[0] * grid[1] * grid[2];
+    }
   };
   std::optional<Distribution> distribution;
+  // Resolve NCCL with a runtime world size, or the requested grid for emit
+  // and check. A one-rank request keeps the ordinary GPU execution choices.
+  llvm::Error resolveNCCLDistribution(int64_t ranks = 0);
+  bool usesOrdinaryGPUExecutor() const {
+    return distribution && distribution->transport == "nccl" &&
+           distribution->count() == 1;
+  }
   double getDistributionReach() const {
     return distribution && distribution->traversal == "midpoint"
                ? pairlistDistance - 0.5 * cutoffDistance : pairlistDistance;

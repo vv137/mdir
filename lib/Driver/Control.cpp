@@ -3358,14 +3358,8 @@ Error Reader::read(const toml::table &root) {
 #endif
       if (control.target != Target::GPU)
         return fail(*table, "NCCL transport requires a GPU target");
-      if (control.deterministic)
-        return fail(*table, "distributed GPU pairs do not implement deterministic fixed-point sums");
       if (dist.traversal == "midpoint")
         return fail(*table, "distributed GPU pairs require directed or unique traversal");
-      if (control.neighborStructure != NeighborStructure::Auto &&
-          control.neighborStructure != NeighborStructure::Matrix)
-        return fail(*table, "distributed GPU pairs require MATRIX");
-      control.neighborStructure = NeighborStructure::Matrix;
       if (Error err = readChoice<std::string>(*table, "pair_overlap", dist.pairOverlap,
               {{"auto", "auto"}, {"split", "split"}, {"unsplit", "unsplit"}}))
         return err;
@@ -3412,6 +3406,29 @@ Error Reader::read(const toml::table &root) {
   }
 
   return validateControl(control, path);
+}
+
+llvm::Error mdir::driver::Control::resolveNCCLDistribution(int64_t ranks) {
+  if (!distribution || distribution->transport != "nccl")
+    return llvm::Error::success();
+  auto &dist = *distribution;
+  if (ranks && !dist.gridGiven)
+    dist.domains = ranks;
+  if (ranks && dist.count() != ranks)
+    return llvm::createStringError("NCCL requires one domain per rank");
+  if (usesOrdinaryGPUExecutor())
+    return llvm::Error::success();
+  if (deterministic)
+    return llvm::createStringError(
+        "distributed GPU pairs do not implement deterministic fixed-point sums");
+  if (neighborStructure != NeighborStructure::Auto &&
+      neighborStructure != NeighborStructure::Matrix)
+    return llvm::createStringError("distributed GPU pairs require MATRIX");
+  if (prunedDistance != 0.0)
+    return llvm::createStringError("distributed GPU MATRIX does not support a dual list");
+  neighborStructure = NeighborStructure::Matrix;
+  neighborStructureReason = "multi-domain NCCL execution requires MATRIX";
+  return llvm::Error::success();
 }
 
 StringRef mdir::driver::Control::stepGraphRefusal(size_t constraints) const {
@@ -3809,9 +3826,10 @@ llvm::Expected<Control> mdir::driver::readControl(StringRef path, Control *refus
       // The error may precede parsing the transport. Identify the writer
       // of diagnostics from the requested transport in this case too.
       if (auto transport = result.table()["distribute"]["transport"].value<std::string>())
-        if (StringRef(*transport).equals_insensitive("mpi")) {
+        if (StringRef(*transport).equals_insensitive("mpi") ||
+            StringRef(*transport).equals_insensitive("nccl")) {
           if (!control.distribution) control.distribution.emplace();
-          control.distribution->transport = "mpi";
+          control.distribution->transport = StringRef(*transport).lower();
         }
       *refusedDistribution = std::move(control);
     }

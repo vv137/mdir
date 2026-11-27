@@ -4,15 +4,17 @@
 # RUN: sed -e 's/"TOWERS"/"MATRIX"/' -e 's/"MIXED"/"DOUBLE"/' -e 's/steps *= *1$/steps = 2/' %t/towers-one-step.toml > %t/run.toml
 # RUN: printf '\n[distribute]\ntransport = "nccl"\nplacement = "node"\n' >> %t/run.toml
 # RUN: cd %t && mdir run run.toml | FileCheck %s
-# CHECK: domain grid 1 x 1 x 1, nccl transport, directed traversal
-# CHECK: intra-node halo bytes 0 inter-node halo bytes 0
-# RUN: sed 's/"DOUBLE"/"MIXED"/' %t/run.toml > %t/mixed.toml
-# RUN: cd %t && mdir run mixed.toml | FileCheck %s --check-prefix=MIXED
-# MIXED: the total energy changed by
+# CHECK: domain grid 1 x 1 x 1, ordinary GPU executor
+# CHECK-NOT: DIST:
+# CHECK: the total energy changed by
 # RUN: sed '/^\[execution\]$/a deterministic = true' %t/run.toml > %t/det.toml
-# RUN: not mdir run %t/det.toml 2>&1 | FileCheck %s --check-prefix=DET
-# DET: distributed GPU pairs do not implement deterministic fixed-point sums
-# RUN: cd %t && mdir emit run.toml --stage=lowered | FileCheck %s --check-prefix=EPOCH
+# RUN: cd %t && mdir run det.toml | FileCheck %s --check-prefix=DET-ONE
+# DET-ONE: ordinary GPU executor
+# RUN: sed '/^\[distribute\]$/a domains = 2' %t/det.toml > %t/det-two.toml
+# RUN: cd %t && not mdir emit det-two.toml --stage=lowered 2>&1 | FileCheck %s --check-prefix=DET-TWO
+# DET-TWO: distributed GPU pairs do not implement deterministic fixed-point sums
+# RUN: sed '/^\[distribute\]$/a domains = 2' %t/run.toml > %t/epoch.toml
+# RUN: cd %t && mdir emit epoch.toml --stage=lowered | FileCheck %s --check-prefix=EPOCH
 # EPOCH-DAG: llvm.call @mdrtDistDeviceEpoch(
 # EPOCH-DAG: llvm.call @mdrtDistEpochPositions(
 # EPOCH-DAG: llvm.call @mdrtDistDeviceEpochHalo(
@@ -27,14 +29,3 @@
 # SPLIT-DAG: llvm.call @mdrtDistBeginPositions(
 # SPLIT-DAG: llvm.call @mdrtDistWriteCenters(
 # SPLIT-DAG: llvm.call @mdrtDistPairPlaces(
-
-# A narrow skin rebuilds the periodic self-images at both steps. Compare
-# the device face map with the host geometry for the same coordinates.
-# RUN: sed 's/pairlist_distance = 9.5/pairlist_distance = 8.501/' %t/run.toml > %t/faces.toml
-# RUN: sed -e 's/"GPU"/"CPU"/' -e 's/transport = "nccl"/transport = "mpi"/' -e '/placement = "node"/d' %t/faces.toml > %t/host-faces.toml
-# RUN: cd %t && mdir run faces.toml > faces.log && mdir run host-faces.toml > host-faces.log
-# RUN: FileCheck %s --check-prefix=REBUILD < %t/faces.log
-# REBUILD: neighbor structures were built 3 times
-# RUN: grep -E '^DIST: interval step [12] rank 0 domain 0 owned' %t/faces.log > %t/gpu-rows
-# RUN: grep -E '^DIST: interval step [12] rank 0 domain 0 owned' %t/host-faces.log > %t/cpu-rows
-# RUN: diff %t/cpu-rows %t/gpu-rows

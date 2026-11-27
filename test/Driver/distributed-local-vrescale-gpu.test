@@ -8,10 +8,10 @@
 # RUN: cd %t && env MDRT_PROFILE=1 mdir run local.toml > local.log 2>local.profile
 # RUN: FileCheck %s < %t/local.log
 # RUN: %python %S/Inputs/check_bonds.py %S/Inputs/ff19sb/vacuum.prmtop %t/local.dcd | FileCheck %s --check-prefix=BONDS
-# RUN: awk '/^mdrt: launches / { n[FILENAME] = $3 } END { exit !(n[ARGV[1]] && n[ARGV[2]] && n[ARGV[2]] <= n[ARGV[1]] + 20) }' %t/ordinary.profile %t/local.profile
+# RUN: awk '/^mdrt: launches / { n[FILENAME] = $3 } END { exit !(n[ARGV[1]] && n[ARGV[2]] && n[ARGV[2]] == n[ARGV[1]]) }' %t/ordinary.profile %t/local.profile
 
 # Each run reports every other step, including the V-rescale application.
-# Allow two extra launches per step for the periodic half MATRIX.
-# CHECK: domain grid 1 x 1 x 1, nccl transport, unique traversal
+# The ordinary executor uses the same launch sequence.
+# CHECK: domain grid 1 x 1 x 1, ordinary GPU executor
 # CHECK: INFO: 10
 # BONDS: bonds ok

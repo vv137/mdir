@@ -702,20 +702,23 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     writer = mdrtMPIRank() == 0;
     ranks = mdrtMPISize();
     output.log.quiet = !writer;
+  }
+#endif
+  if (llvm::Error error = control->resolveNCCLDistribution(emit == Emit::Run ? ranks : 0))
+    return refuse(*control, std::move(error));
+  // Keep the request for provenance. The ordinary executor sees the same
+  // control and state as a deck without the distribution table.
+  std::optional<Control::Distribution> oneDomain;
+  if (control->usesOrdinaryGPUExecutor())
+    oneDomain = std::exchange(control->distribution, std::nullopt);
+#ifdef MDIR_ENABLE_MPI
+  if (emit == Emit::Run && control->distribution &&
+      control->distribution->transport != "local") {
+    if (control->distribution->count() < ranks)
+      return refuse(*control, llvm::createStringError("each rank needs at least one domain"));
     output.checkpointVote = mdrtMPIMax;
-    const auto &d = *control->distribution;
-    auto domains = d.domains ? d.domains : d.grid[0]*d.grid[1]*d.grid[2];
-    if (d.transport == "nccl") {
-      if (!d.gridGiven) {
-        control->distribution->domains = ranks;
-        domains = ranks;
-      }
-      if (domains != ranks)
-        return writer ? refuse(*control, llvm::createStringError("NCCL requires one domain per rank")) : 1;
+    if (control->distribution->transport == "nccl")
       mdrtMPIStartNCCL();
-    }
-    if (domains < ranks)
-      return writer ? refuse(*control, llvm::createStringError("each rank needs at least one domain")) : 1;
   }
 #endif
   if (trial || distributedTrial) {
@@ -1945,7 +1948,12 @@ static int runControlImpl(StringRef controlFile, Emit emit,
 #endif
   const double domainReach = control->getDistributionReach() + program->domainTupleExtent / units::length;
   llvm::json::Object distribution;
-  if (const auto &dist = control->distribution) {
+  if (oneDomain) {
+    distribution = llvm::json::Object{
+        {"grid", llvm::json::Array{1, 1, 1}}, {"ranks", 1},
+        {"transport", "nccl"}, {"executor", "ordinary"},
+        {"requested_traversal", oneDomain->traversal}};
+  } else if (const auto &dist = control->distribution) {
     const auto &grid = program->domainGrid;
     const char *source = dist->domains ? "minimum surface area; lexicographic ties" :
         dist->gridGiven ? "explicit grid" : "default one domain";
@@ -2079,7 +2087,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       if (checkpoint)
         effective["input_box_rounding_delta_nm"] = deltas(inputBoxRounding);
     }
-    if (control->distribution)
+    if (control->distribution || oneDomain)
       effective["distribute"] = std::move(distribution);
     if (towersShapeReport.getAsObject())
       effective["towers_shape"] = towersShapeReport;
@@ -2398,7 +2406,9 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     output.log.print("MDIR: %zu particles, %lld steps of %g ps\n",
                  count, static_cast<long long>(control->numSteps),
                  control->timestep);
-  if (control->distribution) {
+  if (oneDomain) {
+    output.log.print("MDIR: domain grid 1 x 1 x 1, ordinary GPU executor\n");
+  } else if (control->distribution) {
     const auto &grid = program->domainGrid;
     output.log.print("MDIR: domain grid %lld x %lld x %lld, %s transport, "
                      "%s traversal, halo reach %g Ang\n",

@@ -1,13 +1,13 @@
-# REQUIRES: cuda, nccl
+# REQUIRES: cuda, nccl, nccl-multigpu
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: cp %S/Inputs/towers-one-step.toml %S/../../examples/argon/argon.pdb %t/
 # RUN: sed -e 's/"TOWERS"/"MATRIX"/' -e 's/"MIXED"/"DOUBLE"/' -e 's/steps *= *1$/steps = 3/' %t/towers-one-step.toml > %t/run.toml
-# RUN: printf '\n[distribute]\ntransport = "nccl"\n' >> %t/run.toml
-# RUN: cd %t && mdir run run.toml > run.log
+# RUN: printf '\n[distribute]\ntransport = "nccl"\ndomains = 2\n' >> %t/run.toml
+# RUN: cd %t && %mpiexec -n 2 mdir run run.toml > run.log
 # RUN: FileCheck %s < %t/run.log
 
 # The covered steps allocate NCCL's device coverage scratch. The command
 # must finish the run and return success after releasing it.
-# CHECK: domain grid 1 x 1 x 1, nccl transport
-# CHECK: DIST: interval step 2 halo_build min/mean/max 0 0 0 s
+# CHECK: nccl transport, directed traversal
+# CHECK: DIST: interval step 2 halo_build min/mean/max
 # CHECK: MDIR: ran in

@@ -1724,9 +1724,10 @@ atom identity. Hydrogen groups and rigid waters migrate together. Reciprocal
 space needs a distributed mesh. Analytic EAM has an IR oracle in ML2
 Section 15.
 
-Eligible one-domain NCCL reaction-field runs with unique traversal use
-the periodic half MATRIX and the device-local Verlet and constraint
-kernels in both NVE and V-rescale NVT.
+A one-domain NCCL request runs the ordinary GPU executor. It uses the
+same neighbor structure, traversal, and streams as the corresponding
+ordinary control file. The request is recorded in the manifest. The
+ordinary executor handles deterministic execution and list selection.
 
 Rank-local GPU MATRIX entries have their own device allocations. When a
 halo retires, its entry allocation returns to the driver. Smaller
@@ -1805,12 +1806,9 @@ writer. A collect shared with the following segment also supplies its peers.
 
 ### GPU spatial decomposition (D[distribute-gpu-node])
 
-With NCCL transport, pointwise constraint corrections on owned three-component fields run on each rank’s GPU. The halo retains mapped exclusions on the GPU for covered steps. With one domain, complete unique traversals use a periodic MATRIX of owned positions and skip excluded pairs.
-
-For constrained built-in reaction-field dynamics with unique traversal
-and one NCCL rank, the driver can use the single-device integrator with
-an input-order periodic half MATRIX. This path requires no thermostat
-or user pair, triplet, or model terms.
+With multiple NCCL ranks, each GPU applies pointwise constraint
+corrections to its owned fields. Covered steps reuse the mapped
+exclusions on the GPU.
 
 With MPI, CUDA, and NCCL enabled at build time, select a GPU target,
 `[distribute] transport = "nccl"`, and `placement = "node"`. The latter
@@ -1818,16 +1816,16 @@ is the default. Each MPI rank owns one domain and one distinct CUDA
 device. The default grid has one domain per rank. An explicit count or
 grid must match the MPI world size. Local ranks index the visible GPUs
 when launched with a shared visibility mask. A rank that sees a single
-assigned GPU uses ordinal zero. Stage 1 uses MATRIX with directed or
-unique traversal and floating-point accumulation. A deterministic GPU
-request fails at setup.
+assigned GPU uses ordinal zero. Multi-domain execution uses MATRIX with
+directed or unique traversal and floating-point accumulation. It
+refuses deterministic execution.
 For eligible directed multi-GPU runs, `pair_overlap = "auto"` times
 split and unsplit traversal on the allocated layout for runs of at least
 32 steps. Short runs use the unsplit path. Set `pair_overlap = "split"`
 or `"unsplit"` to override selection. The log records the choice.
 
 A numeric `[energy] pairlist_distance` fixes the list distance. For eligible
-NCCL dynamics, `"AUTO"` measures list distances on the allocated layout
+multi-domain NCCL dynamics, `"AUTO"` measures list distances on the allocated layout
 with displacement-triggered rebuilds.
 Each candidate starts from the same state and uses at least 204 disposable
 steps. Each half ends on a coupling and energy-report boundary. The
@@ -1837,8 +1835,7 @@ omitted distance searches when the run is at least twenty times as long.
 The second half measures the slowest rank's mean step time, including
 rebuilds. The log and manifest record every measured distance and the
 winner. Distributed phase markers provide pair time, rebuild count, and
-the available covered and rebuild costs. The one-domain periodic half
-MATRIX measures between energy reports. The log and manifest report a
+the available covered and rebuild costs. The log and manifest report a
 margin within the variation between timed blocks when those samples are
 available. The force cutoff stays fixed. A different list distance
 can change traversal order and floating-point rounding. The search

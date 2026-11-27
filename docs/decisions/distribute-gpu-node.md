@@ -975,3 +975,12 @@ the runtime after the trial has started. Safe recovery needs a
 collectively agreed capacity check or isolation of the trial, with a
 regression test that rejects an oversized candidate and still selects a
 viable distance. This remains open.
+
+### Ordinary execution for one NCCL rank
+
+With one domain, all interaction endpoints are local. The CLI keeps
+the NCCL request in the manifest and runs the ordinary GPU executor.
+The ordinary path selects the neighbor structure and accumulation
+mode. It can also run in deterministic mode. The grid must still
+match the rank count. Runs on multiple ranks retain their domain
+traversal and exchange.

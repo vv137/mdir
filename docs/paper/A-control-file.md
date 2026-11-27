@@ -616,8 +616,8 @@ Only crossing rows of unshifted fields are exchanged between owners.
 For constrained NCCL systems on multiple GPUs, halo construction
 encloses owned sites on opposite sides of a periodic seam separately.
 The reported domain box is their outer enclosure.
-Eligible one-domain NCCL reaction-field runs with unique traversal use
-a periodic half MATRIX in NVE and V-rescale NVT.
+With one NCCL rank, MDIR runs the ordinary GPU executor using its
+neighbor structure and traversal.
 For directed multi-GPU runs of at least 32 steps, `pair_overlap = "auto"`
 times the split and unsplit traversals on the allocated layout. A short
 run uses the unsplit path. The values `"split"` and `"unsplit"` override
@@ -625,15 +625,12 @@ selection. The run log records the choice. Both modes pack contiguous
 messages by peer. With split traversal, the boundary pass waits for the
 position halo and the interior pass uses owned positions. Covered pair-only steps test displacement without copying the host owner or face tables.
 
-With NCCL transport, pointwise constraint corrections on owned three-component fields run on each rank’s GPU. The halo retains mapped exclusions on the GPU for covered steps. With one domain, complete unique traversals use a periodic MATRIX of owned positions and skip excluded pairs.
-
-For constrained built-in reaction-field dynamics with unique traversal
-and one NCCL rank, the driver can use the single-device integrator with
-an input-order periodic half MATRIX. This path requires no thermostat
-or user pair, triplet, or model terms.
+With multiple NCCL ranks, each GPU applies pointwise constraint
+corrections to its owned fields. Covered steps reuse the mapped
+exclusions on the GPU.
 
 A numeric `[energy] pairlist_distance` fixes the list distance. For eligible
-NCCL dynamics, `"AUTO"` measures candidate distances on the allocated
+multi-domain NCCL dynamics, `"AUTO"` measures candidate distances on the allocated
 layout with displacement-triggered rebuilds. Each candidate uses at least
 204 steps from the same starting state. The halves end on coupling and
 energy-report boundaries, with the production energy interval capped at
