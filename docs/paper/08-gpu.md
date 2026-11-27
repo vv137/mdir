@@ -473,7 +473,8 @@ pointer table. The drift checks and force certificate guard subsequent
 particle work, including the final kick. The absolute step and simulation
 time advance only on acceptance. At a boundary the host reads progress and
 selects the accepted banks. A failed proposal can be replayed from those banks.
-Coupling, output and checkpointing retain their absolute schedule.
+Coupling, output and checkpointing keep the schedule of launched steps,
+counted from the start step of the run, also after a continuation (#1014).
 Setup selects the pack network before capture (D434). The ordinary force
 region includes the bonded work-unit grid when enabled (D436–D438).
 On an axis FFT mesh, each replay executes the five D435 passes. For the

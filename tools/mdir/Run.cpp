@@ -869,7 +869,6 @@ static int runControlImpl(StringRef controlFile, Emit emit,
                       "the run recomputes its forces and barostat state");
     }
     firstStep = checkpoint->step;
-    control->restoredStep = firstStep;
     firstTime = checkpoint->time;
   } else if (control->minimize) {
     system->velocities.assign(3 * system->getNumParticles(), 0.0);

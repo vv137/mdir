@@ -16,9 +16,6 @@ namespace mdir::dyn { class ProgramOp; }
 namespace mdir::driver::builder {
 struct SimpleStepEntryIRConfig {
   int64_t plainSteps;
-  struct RestartPeriods {
-    int64_t start, steps, coupling, energy, frame, checkpoint;
-  };
   std::optional<int64_t> energyIntervals;
   bool periodic = true;
   std::optional<int64_t> frameIntervals;
@@ -53,7 +50,6 @@ struct SimpleStepEntryIRConfig {
   std::optional<BarostatParameters> barostatParameters;
   std::optional<unsigned> barostatConstant, barostatEnergyConstant;
   std::optional<std::array<unsigned, 3>> referenceEdges;
-  std::optional<RestartPeriods> graphRestart;
 };
 llvm::Expected<mlir::func::FuncOp> buildSimpleStepEntry(
     mlir::OpBuilder &, const Program &, mdir::dyn::ProgramOp step, mdir::dyn::ProgramOp energy,

@@ -1,0 +1,16 @@
+# Graph replay of the TOWERS steps continued from a checkpoint at step 20,
+# a step that is not a multiple of the intervals of the continued run, gives
+# the energy rows, frames, checkpoint and final state of the launched steps,
+# for several intervals of coupling, energies, frames and checkpoints and
+# numbers of steps (#1014).
+# REQUIRES: cuda, towers-mma, hdf5, h5py
+# RUN: rm -rf %t && mkdir %t
+# RUN: %h5md_python %S/Inputs/check_step_graph_restart.py %S/Inputs/dipeptide %t mdir | FileCheck %s
+# CHECK: start 20 steps 12 coupling 6 energy 6 trajectory 6 checkpoint 12: same
+# CHECK-NEXT: start 20 steps 18 coupling 3 energy 6 trajectory 3 checkpoint 18: same
+# CHECK-NEXT: start 20 steps 32 coupling 4 energy 8 trajectory 16 checkpoint 32: same
+# CHECK-NEXT: start 20 steps 24 coupling 8 energy 8 trajectory 8 checkpoint 24: same
+# CHECK-NEXT: start 20 steps 30 coupling 5 energy 15 trajectory 30 checkpoint 30: same
+# CHECK-NEXT: start 20 steps 30 coupling 3 energy 30 trajectory 30 checkpoint 30: same
+# CHECK-NEXT: start 20 steps 16 coupling 4 energy 16 trajectory 8 checkpoint 16: same
+# CHECK-NEXT: start 20 steps 32 coupling 4 energy 4 trajectory 4 checkpoint 8: same
