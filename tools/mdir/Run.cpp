@@ -1468,7 +1468,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
           object["aliasing_estimate"] = program->pmeAliasing;
       } else {
         // The mesh error estimate of the B-spline window on this grid, and
-        // the bound the automatic grid meets (D[prolate-bspline-grid]).
+        // the bound the automatic grid meets (D444).
         object["aliasing_estimate"] = program->pmeAliasing;
         object["aliasing_bound"] = mdir::prolate::getSplineBound(
             control->pmeAlphaTolerance, control->pmeBasisTerms > 0);
@@ -1842,7 +1842,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     if (control->pmeWindow == "BSPLINE")
       output.log.print(
           "MDIR: a grid of %lld x %lld x %lld (%s), the mesh error estimate "
-          "%.2g, the bound of the automatic grid %.2g (D[prolate-bspline-grid])\n",
+          "%.2g, the bound of the automatic grid %.2g (D444)\n",
           static_cast<long long>(program->pmeGrid[0]),
           static_cast<long long>(program->pmeGrid[1]),
           static_cast<long long>(program->pmeGrid[2]),

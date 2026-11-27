@@ -1101,7 +1101,7 @@ the inverse transform. The Gaussian product in the inverse-load callback
 reciprocal force for this split. Both prolate windows therefore use the
 separate radial product, including under automatic FFT selection.
 
-**The grid of the B-spline window (D[prolate-bspline-grid]).** The
+**The grid of the B-spline window (D444).** The
 estimate $E_A$ of the prolate window covers neither this window nor the
 constrained density, whose transform the reciprocal sum takes at every
 wave vector. Without a rule of its own the automatic grid stayed at the

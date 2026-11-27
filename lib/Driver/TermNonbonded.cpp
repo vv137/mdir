@@ -901,7 +901,7 @@ llvm::Error NonbondedWork::collectProlate() {
   for (int k = 0; k != 3; ++k)
     spacing = std::max(spacing, edges[k] / static_cast<double>(grid[k]));
   if (spline) {
-    // The B-spline window (D[prolate-bspline-grid]): its estimate of the
+    // The B-spline window (D444): its estimate of the
     // mesh error (getSplineMeshError), on any grid, and the automatic grid
     // the coarsest at one spacing for the three edges with the estimate at
     // most its bound. The spectrum is the one the kernels take: the

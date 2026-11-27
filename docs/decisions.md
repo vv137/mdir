@@ -739,6 +739,7 @@ specification follow those made with it.
 | [D441](decisions/D441.md) | Forced PTX uses the detected Volta architecture when no architecture override is present. | 2026-11-26 |
 | [D442](decisions/D442.md) | The optional `[execution] towers_shape.screen` selects `"AUTO"`, `"MMA"`, or `"SCALAR"`. | 2026-11-26 |
 | [D443](decisions/D443.md) | Use one representable periodic cell per step. | 2026-11-26 |
+| [D444](decisions/D444.md) | **With `kernel = "PROLATE"` and `window = "BSPLINE"`, the automatic grid is refined until the mesh error estimate $E_B$ of the B-spline window is at most `tolerance` $\eta$ (at most $\eta/2$ for the original density with this window), from the grid of eq. | 2026-11-27 |
 <!-- end decisions-table -->
 
 

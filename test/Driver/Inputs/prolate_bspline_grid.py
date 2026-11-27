@@ -1,5 +1,5 @@
 """The automatic grid of the prolate kernel with the B-spline window
-(D[prolate-bspline-grid], issue #985) on 400 charges at uncorrelated places,
+(D444, issue #985) on 400 charges at uncorrelated places,
 where the estimate of the grid is the expected error: the error of the
 reciprocal force, the forces less those of a grid three times finer, over
 the reciprocal force, the forces of that grid less the direct sum of the

@@ -121,7 +121,7 @@ int main() {
     std::printf("aliasing %.3g at 48, %.3g at 36 %s\n", a48, a36,
                 ok ? "ok" : "FAIL");
   }
-  // The B-spline window (D[prolate-bspline-grid]): χ̂ of the constrained
+  // The B-spline window (D444): χ̂ of the constrained
   // density as the kernels evaluate it, against the quadrature of the
   // transform below the transition and continuous at it; and the mesh error
   // estimate against `spline_grid.py functional`

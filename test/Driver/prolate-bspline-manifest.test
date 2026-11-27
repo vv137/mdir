@@ -1,5 +1,5 @@
 # The log and the manifest of the grid of the prolate kernel with the
-# B-spline window (D[prolate-bspline-grid]): aliasing_estimate,
+# B-spline window (D444): aliasing_estimate,
 # aliasing_bound, and grid_source for the automatic grid, a given grid, and
 # max_spacing; the bound eta/2 with continuity 0 and no basis_terms.
 # RUN: rm -rf %t && mkdir -p %t

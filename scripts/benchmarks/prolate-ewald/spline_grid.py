@@ -1,5 +1,5 @@
 """The automatic grid of the prolate kernel with the B-spline window
-(D[prolate-bspline-grid], issue #985): the mesh error estimate against the
+(D444, issue #985): the mesh error estimate against the
 measured force error.
 
 spline_grid.py functional C K0 K1 K2 L0 L1 L2 RC [CONTINUITY TERMS]

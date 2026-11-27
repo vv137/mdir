@@ -150,7 +150,7 @@ double evaluatePolynomialInfluence(const Influence &influence, double k);
 
 /// The mesh error of the B-spline window of `order` points p with the
 /// deconvolution 1/sinc^{2p} of each axis and the forces of the gradient of
-/// the mesh energy (D[prolate-bspline-grid]): the root of Q/R, where Q is
+/// the mesh energy (D444): the root of Q/R, where Q is
 /// the mean square error of the reciprocal force between two charges at
 /// uncorrelated places, the error functional of [HockneyEastwood1988] for
 /// this scheme [Ballenegger2012], and R the mean square of the exact
@@ -173,7 +173,7 @@ double getSplineMeshError(const std::function<double(double)> &spectrum,
                           unsigned threads = 0);
 
 /// The bound of getSplineMeshError for the automatic grid at the tolerance
-/// ε of [pme] (D[prolate-bspline-grid]): ε for the transform of the
+/// ε of [pme] (D444): ε for the transform of the
 /// constrained density taken in full, whose reciprocal sum the grid alone
 /// limits; ε/2 for the prolate's taken within its band, whose cut leaves a
 /// floor of 0.6 to 0.9 ε, as the bound of getAliasing.

@@ -1,5 +1,5 @@
 """What the log and the manifest of `mdir run` record of the grid of the
-prolate kernel with the B-spline window (D[prolate-bspline-grid]):
+prolate kernel with the B-spline window (D444):
 `aliasing_estimate`, `aliasing_bound`, and `grid_source`, for the automatic
 grid, a given grid, and `max_spacing`; the bound eta for the constrained
 density (continuity 2, eight terms by default) and eta/2 for the prolate's
@@ -34,7 +34,7 @@ def run(name, pme):
     start = next(row for row in rows if row["event"] == "start")
     line = re.search(r"MDIR: a grid of (\d+) x (\d+) x (\d+) \(([a-z_ ]+)\), the mesh error "
                      r"estimate (\S+), the bound of the automatic grid (\S+) "
-                     r"\(D\[prolate-bspline-grid\]\)", output)
+                     r"\(D444\)", output)
     assert line, (name, output)
     pme = start["effective"]["pme"]
     grid, source = [int(k) for k in line.groups()[:3]], line.group(4)

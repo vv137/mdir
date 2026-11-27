@@ -1388,7 +1388,7 @@ B-spline transform on each axis. The split bandwidth comes from `bandwidth` or t
 `tolerance` rule. The initial automatic grid spacing is $\pi r_c/c$.
 The aliasing refinement of eq. 10 applies to the original density with the
 prolate window; the B-spline window has a refinement of its own
-([below](#the-grid-of-the-b-spline-window), D[prolate-bspline-grid]). Gaussian inputs reject all three new keys. Prolate inputs
+([below](#the-grid-of-the-b-spline-window), D444). Gaussian inputs reject all three new keys. Prolate inputs
 reject explicit `beta` and `influence`.
 
 **Construction.** The density is $\chi(x)=\sum_{j=0}^{N-1}a_jP_{2j}(x)$ on $x=r/r_c\in[0,1]$, the split is $\phi(r)=(1-\Phi(r/r_c))/r$ with $\Phi(x)=\int_0^x\chi$ and $\Phi(1)=1$. The coefficients maximize the band concentration $a^{\mathsf T}Aa/a^{\mathsf T}Ga$ (sinc kernel of bandwidth $c$) subject to $\chi^{(m)}(1)=0$ for $m<k$. Then $\phi$ is $C^k$ at $r_c$, and the first nonzero jump is $\Delta\phi^{(k+1)}(r_c)=-\chi^{(k)}(1)/r_c^{k+2}$, from $r\phi^{(k)}+k\phi^{(k-1)}=-\chi^{(k-1)}/r_c^k$. With $k=0$ the maximizer is the prolate function of the current kernel; $\phi(r_c)=0$ holds for every $k$, so `coulomb_modifier` changes nothing for this kernel.
