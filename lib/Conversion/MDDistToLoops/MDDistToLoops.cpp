@@ -989,11 +989,31 @@ LogicalResult Lowering::lowerMesh(MeshOp op) {
   if (mpi)
     for (int64_t n : decomposition.getGrid())
       args.push_back(index(b, n));
-  auto solve = declare(mpi ? "mdrtDistSpatialPME" : "mdrtDistPME",
-      b.getFunctionType(ValueRange(args).getTypes(), {}), true);
+  // A dedicated mesh rank can finish its pencil solve while particle
+  // ranks evaluate the next local force rows. Keep the join before the
+  // first mesh consumer, and before subsequent halo collectives.
+  Operation *pairs = op->getNextNode();
+  bool overlap = mpi && isa_and_nonnull<GatherPairsOp>(pairs) &&
+      llvm::all_of(op->getUsers(), [&](Operation *user) {
+        Operation *inBlock = op->getBlock()->findAncestorOpInBlock(*user);
+        return inBlock && pairs->isBeforeInBlock(inBlock);
+      });
+  Type i64 = b.getI64Type();
+  auto solve = declare(overlap ? "mdrtDistStartSpatialPME" :
+      mpi ? "mdrtDistSpatialPME" : "mdrtDistPME",
+      b.getFunctionType(ValueRange(args).getTypes(),
+                        overlap ? TypeRange{i64} : TypeRange{}), true);
   for (unsigned i : {0u, 3u, 4u, 5u})
     solve.setArgAttr(i, "mdrt.read_only", b.getUnitAttr());
-  func::CallOp::create(b, loc, solve, args);
+  auto start = func::CallOp::create(b, loc, solve, args);
+  if (overlap) {
+    b.setInsertionPointAfter(pairs);
+    SmallVector<Value> finishArgs{start.getResult(0), layout.rows, forces, sums};
+    auto finish = declare("mdrtDistFinishSpatialPME",
+        b.getFunctionType(ValueRange(finishArgs).getTypes(), {}), true);
+    finish.setArgAttr(1, "mdrt.read_only", b.getUnitAttr());
+    func::CallOp::create(b, loc, finish, finishArgs);
+  }
   storage[op.getForces()].buffer = forces;
   op.getEnergy().replaceAllUsesWith(memref::LoadOp::create(b,loc,sums,ValueRange{index(b,0)}));
   SmallVector<Value> virial;

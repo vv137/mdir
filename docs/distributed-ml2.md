@@ -1687,8 +1687,13 @@ MPI can reserve a separate rank range for reciprocal pencils using the
 existing particle domain and PME rank counts. Choose counts that sum
 to the MPI transport size. The particle ranks perform spread and
 gather, and the reciprocal ranks execute the FFT and influence stages
-in the existing force schedule [Hess2008](references.md#hess2008).
+[Hess2008](references.md#hess2008).
 See [D[distribute-pme-rank-groups]](decisions/distribute-pme-rank-groups.md).
+
+For a force step with disjoint ranks, the compiler advances the
+reciprocal FFTs and convolution while particle ranks evaluate local
+midpoint force rows. The full-transport potential exchange and
+observable reduction join the phases (D[distribute-pme-pair-overlap]).
 
 Floating mixed midpoint pairs stage each explicit-image coordinate as
 two binary32 parts. The pair loop corrects the leading subtraction

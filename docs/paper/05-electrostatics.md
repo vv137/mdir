@@ -1608,5 +1608,11 @@ An explicit rank split assigns fewer particle domains than MPI ranks
 and gives all remaining ranks to the reciprocal mesh [Hess2008].
 Charge and potential still transfer across the full communicator.
 Only the owners of reciprocal pencils perform the transforms and
-influence operation, at the same point in the ordered force schedule.
+influence operation.
 D[distribute-pme-rank-groups].
+
+When the compiler schedules independent local midpoint forces after
+charge exchange, the particle ranks evaluate those forces while the
+reciprocal ranks perform the FFTs and convolution. The shared
+transport joins the two paths for the potential exchange and reduces
+reciprocal observables in rank order (D[distribute-pme-pair-overlap]).

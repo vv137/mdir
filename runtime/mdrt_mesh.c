@@ -686,14 +686,28 @@ static void spectrum(const int n[3], const double box[3], struct PmeBox b,
   for (int a = 0; a < 3; ++a)
     free(axisModes[a]);
 }
-void _mlir_ciface_mdrtDistSpatialPME(struct Rows *rows, int64_t first, int64_t past,
+/* Keep the reciprocal state until the particle ranks finish their pairs. */
+struct SpatialPME {
+  int n[3], peers, rank, fixed, mixed, threaded, order, inverseReady;
+  int64_t first, past;
+  double box[3], sums[10], *fft, *real;
+  __int128 words[10];
+  struct PmePencils *mesh;
+  struct PmeBox realBox;
+  struct DomainMesh *domains;
+  struct Exchange exchange;
+  void *send, *recv;
+};
+
+static void beginSpatialPME(struct SpatialPME *work, struct Rows *rows,
+                            int64_t first, int64_t past,
                               struct Field *x, struct Field *q, struct Table *t,
-                              struct Field *f, struct Results *result,
                               double lx, double ly, double lz, double beta,
                               double coulomb, int64_t nx, int64_t ny,
                               int64_t nz, int64_t order, int64_t px, int64_t py,
                               int64_t mpi, int64_t fixed, int64_t mixed,
-                              int64_t threaded, int64_t gx, int64_t gy, int64_t gz) {
+                            int64_t threaded, int64_t gx, int64_t gy, int64_t gz,
+                            int overlap) {
   if (nx < 1 || ny < 1 || nz < 1 || nx > INT_MAX || ny > INT_MAX ||
       nz > INT_MAX || nx * ny > INT64_MAX / nz || order < 3 || order > 8)
     fail("unsupported PME mesh size or assignment order");
@@ -783,9 +797,37 @@ void _mlir_ciface_mdrtDistSpatialPME(struct Rows *rows, int64_t first, int64_t p
   mdrtPmeForward(mesh, real, fft);
   mdrtDistPhase(-DistFFT);
   mdrtDistPhase(DistSolve);
-  double sums[10] = {0};
-  __int128 words[10] = {0};
-  spectrum(n, box, modes, fft, t, beta, coulomb, fixed, mixed, threaded, sums, words);
+  *work = (struct SpatialPME){
+      .n = {nx, ny, nz}, .peers = peers, .rank = rank,
+      .fixed = fixed, .mixed = mixed, .threaded = threaded, .order = order,
+      .first = first, .past = past, .box = {lx, ly, lz}, .fft = fft, .real = real,
+      .mesh = mesh, .realBox = realBox, .domains = domains,
+      .exchange = e, .send = send, .recv = recv};
+  spectrum(n, box, modes, fft, t, beta, coulomb, fixed, mixed, threaded,
+           work->sums, work->words);
+  if (overlap && rankBase) {
+    mdrtDistPhase(-DistSolve);
+    mdrtDistPhase(DistFFT);
+    if (rank >= rankBase) mdrtPmeBackward(mesh, fft, real);
+    mdrtDistPhase(-DistFFT);
+    work->inverseReady = 1;
+  }
+}
+
+static void finishSpatialPME(struct SpatialPME *work, struct Rows *rows,
+                             struct Field *f, struct Results *result) {
+  const int *n = work->n;
+  const double *box = work->box;
+  const int64_t first = work->first, past = work->past;
+  const int peers = work->peers, rank = work->rank, fixed = work->fixed;
+  const int mixed = work->mixed, threaded = work->threaded, order = work->order;
+  double *sums = work->sums, *real = work->real;
+  __int128 *words = work->words;
+  struct PmePencils *mesh = work->mesh;
+  struct PmeBox realBox = work->realBox;
+  struct DomainMesh *domains = work->domains;
+  struct Exchange e = work->exchange;
+  if (work->inverseReady) mdrtDistPhase(DistSolve);
 #ifdef MDIR_ENABLE_MPI
   if (peers > 1) {
     int *counts = alloc(peers, 2 * sizeof(int)), *offsets = counts + peers;
@@ -798,8 +840,8 @@ void _mlir_ciface_mdrtDistSpatialPME(struct Rows *rows, int64_t first, int64_t p
     memcpy(all + rank * 10 * width, fixed ? (void *)words : (void *)sums,
            10 * width);
     mdrtMPIShareBlocks(all, counts, offsets, fixed);
-    memset(sums, 0, sizeof sums);
-    memset(words, 0, sizeof words);
+    memset(sums, 0, sizeof work->sums);
+    memset(words, 0, sizeof work->words);
     for (int r = 0; r < peers; ++r)
       for (int k = 0; k < 10; ++k)
         if (fixed)
@@ -814,13 +856,15 @@ void _mlir_ciface_mdrtDistSpatialPME(struct Rows *rows, int64_t first, int64_t p
     result->data[result->offset + k * result->s] =
         fixed ? mdrtDistNarrowWord(words[k], DistPairEnergy) * 0x1p-32 : sums[k];
   mdrtDistPhase(-DistSolve);
-  mdrtDistPhase(DistFFT);
-  mdrtPmeBackward(mesh, fft, real);
-  mdrtDistPhase(-DistFFT);
+  if (!work->inverseReady) {
+    mdrtDistPhase(DistFFT);
+    mdrtPmeBackward(mesh, work->fft, real);
+    mdrtDistPhase(-DistFFT);
+  }
   mdrtDistPhase(DistOverlap);
   /* Reverse the schedule. Both buffers can hold at least one double per point.
    */
-  double *out = recv, *in = send;
+  double *out = work->recv, *in = work->send;
   for (int r = 0; r < peers; ++r)
     if (r != rank)
       moveDomains(domains, e.domains[r], e.domains[r + 1], realBox, n,
@@ -864,13 +908,59 @@ void _mlir_ciface_mdrtDistSpatialPME(struct Rows *rows, int64_t first, int64_t p
   }
   mdrtDistPhase(-DistGather);
   free(domains);
-  free(send);
-  free(recv);
-  free(fft);
+  free(work->send);
+  free(work->recv);
+  free(work->fft);
   free(real);
   free(e.domains);
   free(e.counts);
   mdrtPmeFreePencils(mesh);
+}
+
+void _mlir_ciface_mdrtDistSpatialPME(struct Rows *rows, int64_t first, int64_t past,
+                              struct Field *x, struct Field *q, struct Table *t,
+                              struct Field *f, struct Results *result,
+                              double lx, double ly, double lz, double beta,
+                              double coulomb, int64_t nx, int64_t ny,
+                              int64_t nz, int64_t order, int64_t px, int64_t py,
+                              int64_t mpi, int64_t fixed, int64_t mixed,
+                              int64_t threaded, int64_t gx, int64_t gy, int64_t gz) {
+  struct SpatialPME work;
+  beginSpatialPME(&work, rows, first, past, x, q, t, lx, ly, lz, beta, coulomb,
+      nx, ny, nz, order, px, py, mpi, fixed, mixed, threaded, gx, gy, gz, 0);
+  finishSpatialPME(&work, rows, f, result);
+}
+
+int64_t _mlir_ciface_mdrtDistStartSpatialPME(struct Rows *rows, int64_t first, int64_t past,
+                              struct Field *x, struct Field *q, struct Table *t,
+                              struct Field *f, struct Results *result,
+                              double lx, double ly, double lz, double beta,
+                              double coulomb, int64_t nx, int64_t ny,
+                              int64_t nz, int64_t order, int64_t px, int64_t py,
+                              int64_t mpi, int64_t fixed, int64_t mixed,
+                              int64_t threaded, int64_t gx, int64_t gy, int64_t gz) {
+#ifdef MDIR_ENABLE_MPI
+  if (mpi && rows->size < mdrtMPISize()) {
+    struct SpatialPME *work = alloc(1, sizeof *work);
+    beginSpatialPME(work, rows, first, past, x, q, t, lx, ly, lz, beta, coulomb,
+        nx, ny, nz, order, px, py, mpi, fixed, mixed, threaded, gx, gy, gz, 1);
+    return (intptr_t)work;
+  }
+#endif
+  _mlir_ciface_mdrtDistSpatialPME(rows, first, past, x, q, t, f, result,
+      lx, ly, lz, beta, coulomb, nx, ny, nz, order, px, py, mpi, fixed, mixed,
+      threaded, gx, gy, gz);
+  return 0;
+}
+
+void _mlir_ciface_mdrtDistFinishSpatialPME(int64_t handle, struct Rows *rows,
+                                         struct Field *f,
+                                         struct Results *result) {
+  if (handle) {
+    struct SpatialPME *work = (struct SpatialPME *)(intptr_t)handle;
+    finishSpatialPME(work, rows, f, result);
+    free(work);
+  }
 }
 
 void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,

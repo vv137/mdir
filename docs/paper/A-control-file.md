@@ -629,6 +629,10 @@ count is below the MPI size, the explicit PME rank count must fill
 the remaining ranks. The two rank ranges then have disjoint particle
 and reciprocal roles (D[distribute-pme-rank-groups]).
 
+The driver can overlap the reciprocal solve with the local midpoint
+force loop when those operations are independent
+(D[distribute-pme-pair-overlap]).
+
 For MPI transport, the driver assembles native output fields in particle identity order from distributed ranges (D[distribute-cpu-threads]).
 
 MPI distribution uses rank-local native integration fields and halo-local
