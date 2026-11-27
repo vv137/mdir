@@ -963,7 +963,23 @@ def AccumulateDestinations
     terms before it, so that the loop is evaluated once for each tuple
     with atomics. The sums are those of the loop over particles in another
     order: equal, not to the bit.
+
+    With `separate-tuples`, a chain whose loops over pairs come first and
+    whose loops over tuples follow becomes two chains (D[concurrent-terms]):
+    the loops over pairs accumulate into one destination and the loops over
+    tuples into another, from zeros, and the loop over particles adds the
+    second to the first, `a + (b0 + b1 + ...)` in place of
+    `((a + b0) + b1) + ...`. The two chains then write disjoint memory, so
+    the tuples may run beside the pairs on a second stream
+    (`md-exec-assign-streams{tuples=true}`). The order of each sum is fixed
+    by the program, not by the streams; it differs from the single chain in
+    the last bits.
   }];
+  let options = [
+    Option<"separateTuples", "separate-tuples", "bool", /*default=*/"false",
+           "Accumulate the loops over tuples into a destination of their "
+           "own, apart from the loops over pairs before them">
+  ];
   let dependentDialects = ["::mlir::arith::ArithDialect"];
 }
 
@@ -976,8 +992,8 @@ def AssignStreams : Pass<"md-exec-assign-streams", "::mlir::ModuleOp"> {
     `md_exec.join` after each where the first stream waits for it. Each
     marked op first moves up its block past the ops that it is independent
     of and whose results it does not take; the join goes before the first
-    op after it that is not independent of it (or that is marked too), or
-    before the terminator of the block.
+    op after it that is not independent of it, or before the terminator of
+    the block. A marked op after it does not end its window.
 
     The ops between a marked op and its join run in another order than the
     program gives, or at once. That leaves memory and every value as the
@@ -989,11 +1005,26 @@ def AssignStreams : Pass<"md-exec-assign-streams", "::mlir::ModuleOp"> {
     Nothing runs beside by default: measured, the sums gained nothing
     beside the refresh of the neighbor structure, and slowed the loops over
     pairs beside them (D81).
+
+    With `tuples`, a loop over tuples also goes to the second stream if it
+    can move up past a loop over pairs before it in its block, so that it
+    runs beside the pairs (D[concurrent-terms]). It can where it writes a
+    destination of its own (`md-exec-accumulate-destinations{separate-tuples=true}`).
+    A loop over particles that stops it, writing what it reads (the
+    positions in f32 that the tuples take), moves up first, as far as it is
+    independent of the ops above it. A loop that would not pass a loop over
+    pairs stays where it stood, unmarked. Marked ops that follow each other
+    share a window: they run on the second stream in the order of the
+    program, and the first stream waits once, before the first op that is
+    not independent of one of them.
   }];
   let options = [
     Option<"reciprocal", "reciprocal", "bool", /*default=*/"false",
            "Run the reciprocal sums of particle mesh Ewald on a second "
-           "stream">
+           "stream">,
+    Option<"tuples", "tuples", "bool", /*default=*/"false",
+           "Run the loops over tuples that can move up past a loop over "
+           "pairs on the second stream">
   ];
 }
 

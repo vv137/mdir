@@ -346,10 +346,14 @@ bool md_exec::areIndependent(Operation *a, Operation *b,
 Operation *md_exec::findJoin(Operation *side, BufferAliases &aliases) {
   Operation *next = side->getNextNode();
   for (; next && !next->hasTrait<OpTrait::IsTerminator>();
-       next = next->getNextNode())
-    if (isa<JoinOp>(next) || next->hasAttr(kSideAttrName) ||
-        !areIndependent(side, next, aliases))
+       next = next->getNextNode()) {
+    // A marked op after it runs after it on the second stream, in the
+    // order of the program (D[concurrent-terms]).
+    if (next->hasAttr(kSideAttrName))
+      continue;
+    if (isa<JoinOp>(next) || !areIndependent(side, next, aliases))
       break;
+  }
   return next;
 }
 
@@ -358,10 +362,11 @@ LogicalResult md_exec::verifySide(Operation *side, BufferAliases &aliases) {
        next = next->getNextNode()) {
     if (isa<JoinOp>(next))
       return success();
+    // Another marked op runs after this one on the second stream; the ops
+    // of the first stream after it must still be independent of this one,
+    // which may be running then (D[concurrent-terms]).
     if (next->hasAttr(kSideAttrName))
-      return side->emitOpError()
-             << "runs on a second stream up to a join, but another op that "
-                "runs there comes first";
+      continue;
     if (!areIndependent(side, next, aliases)) {
       InFlightDiagnostic diagnostic =
           side->emitOpError() << "runs on a second stream beside an op that "

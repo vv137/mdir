@@ -79,13 +79,14 @@ bool areIndependent(mlir::Operation *a, mlir::Operation *b,
 inline constexpr llvm::StringLiteral kSideAttrName = "md_exec.side";
 
 /// Returns the first op after `side` in its block that must not run beside
-/// it: one that is not independent of it, a join, another marked op, or the
-/// terminator.
+/// it: one that is not independent of it, a join, or the terminator.
+/// Another marked op does not end the window: it runs after `side` on the
+/// second stream, in the order of the program (D[concurrent-terms]).
 mlir::Operation *findJoin(mlir::Operation *side, BufferAliases &aliases);
 
 /// Checks that the op `side`, marked to run on a second stream, is followed
-/// in its block by a join, that every op between the two is independent of
-/// it, and that none is marked. Reports an error on `side` if not.
+/// in its block by a join, and that every op between the two that is not
+/// marked as well is independent of it. Reports an error on `side` if not.
 mlir::LogicalResult verifySide(mlir::Operation *side, BufferAliases &aliases);
 
 } // namespace md_exec

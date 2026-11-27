@@ -409,8 +409,12 @@ static bool sinkAfter(Operation *loop, Operation *after) {
 }
 
 /// Rewrites the first chain of sums in the kernel of `op` that it can.
-/// Returns true if it did.
-static bool accumulateOnce(ParticleForOp op) {
+/// Returns true if it did. With `separateTuples`, the loops over tuples
+/// that follow the loops over pairs of the chain accumulate into their own
+/// destination, which the loop over particles adds to that of the pairs
+/// (D[concurrent-terms]); after that split it clears `separateTuples` and
+/// returns false, since the sum of the two chains must stay as it is.
+static bool accumulateOnce(ParticleForOp op, bool &separateTuples) {
   Block &kernel = op.getKernel().front();
   for (Chain &chain : getChains(op)) {
     ArrayRef<unsigned> arguments = chain.arguments;
@@ -439,6 +443,64 @@ static bool accumulateOnce(ParticleForOp op) {
     }
     if (terms.size() < 2)
       continue;
+
+    // Where the loops over tuples begin, after one or more loops over
+    // pairs, if all that follow are loops over tuples: there the second
+    // chain starts from its own zeros.
+    unsigned split = 0;
+    if (separateTuples) {
+      auto isTuple = [](const Term &t) { return isa<TupleForOp>(t.loop); };
+      unsigned at = static_cast<unsigned>(llvm::find_if(terms, isTuple) -
+                                          terms.begin());
+      ArrayRef<Term> all(terms);
+      if (at > 0 && at < terms.size() &&
+          llvm::all_of(all.drop_front(at), isTuple) &&
+          llvm::all_of(all.take_front(at), [](const Term &t) {
+            return isa<PairForOp>(t.loop);
+          }))
+        split = at;
+    }
+    if (split) {
+      // Each chain accumulates onto what the loop before it in the chain
+      // gave; the second starts from the zeros of its first loop.
+      for (unsigned k = 1; k != terms.size(); ++k) {
+        if (k == split)
+          continue;
+        Value previous = terms[k - 1].loop->getResult(terms[k - 1].out);
+        MutableOperandRange outs = getOutsMutable(terms[k].loop);
+        Operation *zeros = outs[terms[k].out].get().getDefiningOp();
+        outs[terms[k].out].set(previous);
+        if (zeros->use_empty())
+          zeros->erase();
+      }
+      // The loop over particles adds the last of the second chain to the
+      // last of the first, in place of the sums.
+      unsigned kept = arguments[0], second = arguments[split];
+      arith::AddFOp through = sums[terms.size() - 2];
+      OpBuilder builder(through);
+      Value sum = arith::AddFOp::create(builder, through.getLoc(),
+                                        kernel.getArgument(kept),
+                                        kernel.getArgument(second));
+      through.getResult().replaceAllUsesWith(sum);
+      for (int k = static_cast<int>(terms.size()) - 2; k >= 0; --k)
+        sums[k]->erase();
+      op.getInsMutable()[kept].set(
+          terms[split - 1].loop->getResult(terms[split - 1].out));
+      op.getInsMutable()[second].set(
+          terms.back().loop->getResult(terms.back().out));
+      SmallVector<unsigned> dropped;
+      for (unsigned k = 1; k != terms.size(); ++k)
+        if (k != split)
+          dropped.push_back(arguments[k]);
+      llvm::sort(dropped, std::greater<unsigned>());
+      for (unsigned index : dropped) {
+        op.getInsMutable().erase(index);
+        kernel.eraseArgument(index);
+      }
+      // The sum of the two chains is not a chain to accumulate again.
+      separateTuples = false;
+      return false;
+    }
 
     // Each loop accumulates onto what the loop before it gave.
     for (unsigned k = 1; k != terms.size(); ++k) {
@@ -491,7 +553,8 @@ public:
     for (ParticleForOp op : loops) {
       while (mergeOnce(op)) {
       }
-      while (accumulateOnce(op)) {
+      bool separate = separateTuples;
+      while (accumulateOnce(op, separate)) {
       }
     }
   }
