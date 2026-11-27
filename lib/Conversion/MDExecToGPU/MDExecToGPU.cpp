@@ -6602,13 +6602,14 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
     // too narrow (emitBuild).
     Type wide = builder.getI64Type();
     auto function = op->getParentOfType<func::FuncOp>();
-    bool haloOwnsEntries = llvm::any_of(function.getOps<func::CallOp>(), [](func::CallOp call) {
+    bool distributedMatrix = module->hasAttr("md_dist.driver") ||
+        llvm::any_of(function.getOps<func::CallOp>(), [](func::CallOp call) {
       return call.getCallee() == "mdrtDistDeviceMatrixSlot" || call.getCallee() == "mdrtDistPeriodicMatrixSlot" || call.getCallee() == "mdrtDistUniqueMatrixSlot";
     });
     structure.handle =
         func::CallOp::create(
             builder, loc,
-            getOrDeclare(haloOwnsEntries ? "mdrtDomainMatrixCreate" : createMatrixName,
+            getOrDeclare(distributedMatrix ? "mdrtDomainMatrixCreate" : createMatrixName,
                          builder.getFunctionType({wide, wide}, {wide})),
             ValueRange{
                 arith::IndexCastOp::create(builder, loc, wide, structure.size),

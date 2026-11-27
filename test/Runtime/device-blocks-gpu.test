@@ -158,3 +158,8 @@
 # RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda stream-ok | FileCheck %s --check-prefix=STREAM-OK
 # STREAM-OK: the first stream named, and after the second stream: live 0, live bytes 0, idle 0, idle bytes 0, driver blocks 0
 # STREAM-OK-NEXT: not refused
+
+# Epoch matrices use separate arenas so tiny allocations cannot keep a
+# retired list resident. The ordinary matrix still follows the pool policy.
+# RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda domain-matrix | FileCheck %s --check-prefix=DOMAIN
+# DOMAIN: domain matrix arena released

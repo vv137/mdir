@@ -957,6 +957,8 @@ struct Block {
   /* What the block was last allocated for: a buffer of the runtime's
      structures, or null for compiled code (MDIR_DEVICE_MEMORY=2). */
   const char *tag;
+  /* An arena reserved for the lifetime of this buffer alone. */
+  bool dedicated;
   /* The bytes of the piece that it occupies from `pointer`: at least
      `size`, and a multiple of POOL_ALIGNMENT unless the piece ends its
      arena. */
@@ -1233,7 +1235,8 @@ static void checkPoolStream(CUstream stream, const char *what) {
   abort();
 }
 
-void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
+static void *allocateBlock(uint64_t size, CUstream stream, bool isHostShared,
+                           bool dedicated) {
   enter();
   CUdeviceptr pointer = 0;
   if (size == 0)
@@ -1257,7 +1260,8 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
   watchDeviceMemory();
   struct Block block = {.size = size,
                         .owner = currentActivation,
-                        .tag = allocationTag};
+                        .tag = allocationTag,
+                        .dedicated = dedicated};
   /* First an idle piece that last held a block of exactly this size and
      has not been merged or cut since, the last such in the list: a request
      that recurs at every step takes the piece it freed, as the pool took
@@ -1266,12 +1270,12 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
      if none does, the idle pieces are merged with their idle neighbors and
      the best fit is sought again. */
   int best = -1;
-  for (int i = numFree; i-- != 0;)
+  for (int i = numFree; !dedicated && i-- != 0;)
     if (freeBlocks[i].asked == size) {
       best = i;
       break;
     }
-  for (int pass = 0; best < 0 && pass != 2 && numFree; ++pass) {
+  for (int pass = 0; !dedicated && best < 0 && pass != 2 && numFree; ++pass) {
     if (pass)
       mergeIdle();
     for (int i = numFree; i-- != 0;) {
@@ -1322,6 +1326,10 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
   noteBytes();
   end(ALLOCATE, start);
   return (void *)pointer;
+}
+
+void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
+  return allocateBlock(size, stream, isHostShared, false);
 }
 
 void mgpuMemFree(void *pointer, CUstream stream) {
@@ -1413,6 +1421,10 @@ static void addIdle(struct Block block, int gone, int replaced, int merge) {
    (mergeIdle), where an arena that the merge finds idle as a whole goes
    back to the driver. */
 static void poolBlock(struct Block block, int gone, int replaced) {
+  if (block.dedicated) {
+    releaseArena(block, gone, replaced);
+    return;
+  }
   if (replaced && block.pointer == block.base &&
       block.extent == block.baseSize) {
     releaseArena(block, gone, 1);
@@ -2320,17 +2332,18 @@ struct Matrix {
   void *data;
   int64_t rows;
   int64_t width;
+  bool dedicated;
 };
 
 static void allocateMatrix(struct Matrix *matrix) {
   allocationTag = "matrix: rows";
-  matrix->data = mgpuMemAlloc(
+  matrix->data = allocateBlock(
       (uint64_t)(matrix->rows * matrix->width) * sizeof(int32_t), NULL,
-      false);
+      false, matrix->dedicated);
   allocationTag = NULL;
 }
 
-int64_t mdrtDomainMatrixCreate(int64_t rows, int64_t width) {
+static int64_t createMatrix(int64_t rows, int64_t width, bool dedicated) {
   struct Matrix *matrix = calloc(1, sizeof(struct Matrix));
   if (!matrix) {
     fprintf(stderr, "mdrt: out of memory of the host\n");
@@ -2338,12 +2351,19 @@ int64_t mdrtDomainMatrixCreate(int64_t rows, int64_t width) {
   }
   matrix->rows = rows > 0 ? rows : 1;
   matrix->width = width > 0 ? width : 1;
+  matrix->dedicated = dedicated;
   recordCallHandle(matrix);
   return (int64_t)(intptr_t)matrix;
 }
 
+int64_t mdrtDomainMatrixCreate(int64_t rows, int64_t width) {
+  // Halo sizes change between epochs. A retired list's multi-GiB arena
+  // would otherwise remain resident if reused for even one small buffer.
+  return createMatrix(rows, width, true);
+}
+
 int64_t mdrtMatrixCreate(int64_t rows, int64_t width) {
-  int64_t handle = mdrtDomainMatrixCreate(rows, width);
+  int64_t handle = createMatrix(rows, width, false);
   allocateMatrix((struct Matrix *)(intptr_t)handle);
   return handle;
 }

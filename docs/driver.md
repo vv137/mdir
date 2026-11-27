@@ -1728,6 +1728,10 @@ Eligible one-domain NCCL reaction-field runs with unique traversal use
 the periodic half MATRIX and the device-local Verlet and constraint
 kernels in both NVE and V-rescale NVT.
 
+Rank-local GPU MATRIX entries have their own device allocations. When a
+halo retires, its entry allocation returns to the driver. Smaller
+runtime allocations can reuse the general device pool.
+
 The setup log and the manifest start event give the requested domain count,
 factor grids and their scores in inverse nm, the source of each choice, and
 the real-space cutoff and skin in Ang. The first halo adds a

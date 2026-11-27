@@ -330,5 +330,6 @@ boxes. Independent tuple observables can share a collective. Pointwise updates o
 An eligible one-domain NCCL reaction-field step uses the
 single-device integrator and a periodic half MATRIX in input row order
 in NVE and V-rescale NVT.
+Rank-local MATRIX entries return their arenas when retired.
 
 Midpoint GPU pair traversal and reproducible integer GPU sums remain open.

@@ -39,6 +39,7 @@ The pool's best fit with splitting and coalescing (D416):
   replaced  a buffer of the runtime that a growth replaces goes back to the
             driver if it is an arena of its own, and to the pool if it is
             a piece of a larger one (D312)
+  domain-matrix  a retired domain matrix releases its whole arena
   side-alloc, side-free, other-stream
             an allocation or a free of a block of the pool on the second
             stream (between mdrtSideBegin and mdrtSideEnd), or with a stream
@@ -156,6 +157,18 @@ elif scenario in ("side-alloc", "side-free", "other-stream", "stream-ok"):
         lib.mdrtDeviceTrim()
         show("the first stream named, and after the second stream")
     print("not refused", flush=True)
+elif scenario == "domain-matrix":
+    lib.mdrtDomainMatrixCreate.argtypes = [ctypes.c_int64, ctypes.c_int64]
+    lib.mdrtDomainMatrixCreate.restype = ctypes.c_int64
+    a, _ = activation([])
+    handle = lib.mdrtDomainMatrixCreate(1024, 1)
+    assert counts()["live bytes"] == 0
+    lib.mdrtMatrixGrow(handle, 1024)
+    assert counts()["live bytes"] > 4 * MIB
+    close(a)
+    assert counts()["driver blocks"] == 0
+    assert counts()["idle bytes"] == 0
+    print("domain matrix arena released")
 elif scenario in ("split", "tail", "best", "coalesce", "arenas", "trim",
                   "pieces", "off", "replaced", "streams", "exact", "close"):
     def allocate(size):
