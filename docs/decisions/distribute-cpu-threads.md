@@ -273,3 +273,11 @@ copy rounds each value once to binary32. The pair kernel reads binary32
 charges directly. A scalar with a native consumer keeps its assigned
 precision. Explicit midpoint images still form displacements in binary64
 before the force calculation rounds them.
+
+For a Verlet interval, the exact midpoint numerator is half the sum of
+the two coordinates and the rounded relative image shift. Its extrema
+occur at the respective lower and upper coordinate bounds. A binary64
+error margin covers both endpoint evaluation and the subtraction sequence
+used by the pair kernel. A near-face or extreme-scale result falls back
+to the current-coordinate ownership check. This proves stable ownership
+for more pairs while preserving force coverage at a rounded face.

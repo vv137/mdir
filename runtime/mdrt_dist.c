@@ -116,11 +116,6 @@ struct Layout {
   int64_t *ids;   /* [domains * stride]: the particle of each owned row */
 };
 
-struct MidpointBounds {
-  double low[3], high[3], shift[3];
-  int64_t image[3];
-};
-
 struct DomainMatrix {
   struct DomainMatrix *next;
   int64_t domain, centers, rows, raw, selected;
@@ -632,26 +627,6 @@ static void rowRanges(const struct Layout *l, const int64_t cell[3],
         midpointRange(l->edges[c],image[c],l->grid[c],cell[c]);
 }
 
-/* Bound each operation of (xi - .5*((xi-xj)-(b-a))) / L separately.
-   Subtraction is increasing in its first operand and decreasing in its
-   second. Using the same operations at the bounding endpoints also
-   encloses rounded results at a domain face. */
-static int classifyMidpoint(const struct MidpointBounds *i, const struct MidpointBounds *j,
-                            const struct MidpointRange ranges[3]) {
-  int stable = 1;
-  for (int c = 0; c < 3; ++c) {
-    double shift = j->shift[c]-i->shift[c];
-    double dxLow = (i->low[c]-j->high[c])-shift;
-    double dxHigh = (i->high[c]-j->low[c])-shift;
-    double low = i->low[c]-0.5*dxHigh;
-    double high = i->high[c]-0.5*dxLow;
-    if (!isfinite(low) || !isfinite(high)) return 0;
-    if (low >= ranges[c].upper || high < ranges[c].lower) return -1;
-    stable &= low >= ranges[c].lower && high < ranges[c].upper;
-  }
-  return stable;
-}
-
 static inline double distanceToRow(const double center[3], struct Memref2D *x, int64_t row) {
   double r2 = 0.0;
   for (int c = 0; c < 3; ++c) {
@@ -726,6 +701,7 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
     m->pruneReference = calloc(m->rows ? m->rows : 1,3*sizeof *m->pruneReference);
     if (!m->bufferedRows || !m->pruneReference) fail("out of memory buffering midpoint neighbors");
   }
+  double coordinateBound = 1.0;
   struct MidpointRange common[3][3];
   if (rule == 2) {
     for (int c = 0; c < 3; ++c)
@@ -745,7 +721,7 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
         }
     }
     if (rebuild) {
-      #pragma omp parallel for schedule(static) if(m->rows > 512)
+      #pragma omp parallel for schedule(static) reduction(max:coordinateBound) if(m->rows > 512)
       for (int64_t i = 0; i < m->rows; ++i)
         for (int c = 0; c < 3; ++c) {
           double x = i<n ? *at3(owned,d,i,c) : *at3(ghost,d,i-n,c);
@@ -754,10 +730,17 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
           int64_t image = i<n ? 0 : h->image[3*((d-h->idBase)*h->capacity+i-n)+c];
           m->bounds[i].image[c] = image;
           m->bounds[i].shift[c] = image*l->edges[c];
+          coordinateBound = fmax(coordinateBound, fabs(m->bounds[i].low[c]));
+          coordinateBound = fmax(coordinateBound, fabs(m->bounds[i].high[c]));
+          coordinateBound = fmax(coordinateBound, fabs(m->bounds[i].shift[c]));
         }
     }
   }
   if (rebuild) {
+    /* Each intermediate has magnitude below eight times the coordinate
+       bound. Include the additions at both enclosing endpoints. For
+       extreme scales, defer the decision to the per-evaluation test. */
+    double padding = midpointPadding(coordinateBound);
     #pragma omp parallel for schedule(static,8) if(m->centers > 256)
     for (int64_t i = 0; i < m->centers; ++i) {
       int64_t idi = i<n ? domainIds(l,d)[i] : h->ids[(d-h->idBase)*h->capacity+i-n];
@@ -782,7 +765,7 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
         if (e && !rule && !mdrtDistPairAllowed(exclusions,idi<idj ? idi : idj,
                                                 idi<idj ? idj : idi)) continue;
         if (rule == 2) {
-          int membership = classifyMidpoint(&m->bounds[i],&m->bounds[j],ranges);
+          int membership = classifyMidpoint(&m->bounds[i],&m->bounds[j],ranges,padding);
           if (membership < 0) continue;
           if (buffered && !membership) {
             scratch[uncertain++] = j;

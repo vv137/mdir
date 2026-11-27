@@ -1532,3 +1532,12 @@ pair-only charge fields when it copies them from spatial transport.
 This removes four packed double-to-float conversion sites from the
 Cellulose force kernel. The compiled kernel retains the same 62 packed
 binary32 multiply sites and the same binary64 image subtractions.
+
+The distributed neighbor filter bounds midpoint motion at the coordinate
+extrema. The affine expression contains each coordinate once. A margin
+of 32 machine epsilons times the largest coordinate or image-shift
+magnitude (with a lower bound of one) covers roundoff in the original
+midpoint arithmetic. If that magnitude exceeds one sixteenth of the
+largest finite binary64 number, the filter checks current coordinates.
+In a paired Cellulose measurement this reduced mixed step time by
+2.52 ms and double step time by 2.98 ms.

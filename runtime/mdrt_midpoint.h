@@ -1,6 +1,7 @@
 #ifndef MDRT_MIDPOINT_H
 #define MDRT_MIDPOINT_H
 
+#include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
@@ -54,6 +55,32 @@ static struct MidpointRange midpointRange(double edge, int64_t image,
                                          int64_t grid, int64_t cell) {
   return (struct MidpointRange){midpointFace(edge,image,grid,cell,0),
                                 midpointFace(edge,image,grid,cell,1)};
+}
+
+struct MidpointBounds {
+  double low[3], high[3], shift[3];
+  int64_t image[3];
+};
+
+static double midpointPadding(double coordinateBound) {
+  return coordinateBound <= DBL_MAX/16 ? 32*DBL_EPSILON*coordinateBound : INFINITY;
+}
+
+/* The exact affine midpoint is (xi + xj + (b-a))/2. Bound it
+   at the coordinate endpoints and allow for rounding in both this
+   expression and xi - .5*((xi-xj)-(b-a)), used by the pair test. */
+static int classifyMidpoint(const struct MidpointBounds *i, const struct MidpointBounds *j,
+                            const struct MidpointRange ranges[3], double padding) {
+  int stable = 1;
+  for (int c = 0; c < 3; ++c) {
+    double shift = j->shift[c]-i->shift[c];
+    double low = 0.5*((i->low[c]+j->low[c])+shift)-padding;
+    double high = 0.5*((i->high[c]+j->high[c])+shift)+padding;
+    if (!isfinite(low) || !isfinite(high)) return 0;
+    if (low >= ranges[c].upper || high < ranges[c].lower) return -1;
+    stable &= low >= ranges[c].lower && high < ranges[c].upper;
+  }
+  return stable;
 }
 
 #endif
