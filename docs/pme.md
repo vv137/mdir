@@ -598,8 +598,10 @@ a buffer must not run at once. On one stream they do not, since the stream
 runs its work in the order in which it was issued. A sum on the second
 stream (`md-exec-assign-streams{reciprocal=true}`, D87) runs beside the
 ops up to its join, and the op declares that it reads and writes its
-buffers, so the next sum that shares them is not independent of it: the
-join goes before that sum, and the lowering checks the window again. A
+buffers, so the next sum that shares them is not independent of it. That
+sum is marked as well and runs after it on the same stream, in the order
+of the program (D[concurrent-terms]); the lowering checks the window
+again. A
 sum moved before the test of a neighbor structure (D113) may cross a sum
 that moves with it.
 

@@ -46,11 +46,23 @@ run of rows, the fused integration kernel of D110).
 few microseconds a launch, so the marked ops at the top of a window delay
 the issue of the loops over pairs. A placement that issued the side work
 after the pairs instead, from an event recorded where it stood, was
-measured and not kept: on JAC (RTX 4090, LAUNCH) it took the reciprocal
-sum's overlap with the pairs from 21 µs a step to 3 (TOWERS) and from 8 to
-0 (the default lists), and the step from 97.7 to 98.4 and from 101.8 to
-113.2 µs in the trace, since kernels issued after the pair kernel wait for
-its blocks to drain.
+traced and not kept: on JAC (RTX 4090, LAUNCH, Nsight Systems) it took
+the reciprocal sum's overlap with the pairs from 21 µs a step to 3
+(TOWERS) and from 8 to 0 (the default lists), and the traced step from
+97.7 to 98.4 and from 101.8 to 113.2 µs. One explanation, not tested, is
+that kernels issued after the pair kernel wait for its blocks. It was not
+timed without the tracer.
+
+**Kernels.** The programs of `SINGLE` and `TERMS` launch the same pair,
+list, refresh and PME kernels with the same shapes (in the default
+traversal the lists were rebuilt at slightly different counts, by the
+trajectory). The tuples differ: on
+one stream the exclusion corrections and the bonded terms of TOWERS are
+one kernel that publishes with the pairs (D436); in a destination of
+their own they are two (JAC: one kernel of 432 blocks, 9.4 µs, against
+2,945 and 161 blocks, 4.6 and 6.7 µs). The measurements below include
+that difference; a program with the destinations split on one stream was
+not timed, so the lowering and the streams are not separated.
 
 **Correctness.** D87's argument holds with two side streams and several
 side ops in a window. The host issues ops in program order; each stream
@@ -72,8 +84,8 @@ per-tuple tables among them), reads and writes of its `outs` (writes alone
 where it overwrites), and its scratch; `storageEffects` adds a read of each
 table that its kernel looks up. Its lowering reads, besides, the structures
 of the tuples that the runtime keeps (D253) and the plans of bonded work
-units, which no op of the ordinary step writes, and the block memory of its
-kernel. It allocates nothing on the side stream, which the lowering checks
+units, built from the tuples outside the windows in the programs tested,
+and the block memory of its kernel. It allocates nothing on the side stream, which the lowering checks
 (P4), and it must issue a kernel there.
 
 **Graph capture.** The begins, ends and the join are event records and

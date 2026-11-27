@@ -784,12 +784,14 @@ device time from one PME weights kernel to the next.*
 | TIP3P 10k | AUTO | 21.9 | 17.9 | 26.3 | 5.4 | 20.4 | 91.9 | 120.7 | 60.3 |
 | TIP3P 10k | TOWERS | 26.0 | 2.7 | 19.7 | 5.7 | 18.1 | 72.6 | 106.7 | 47.3 |
 
-With launched steps the host issues a step's kernels in program order. On
-JAC and TIP3P 10k with `TERMS`, the tuples ran beside PME, but the loop
-over pairs began only after the host had issued the side work, and the
-step did not shorten. A captured step (`step_graph = "GRAPH"`, D439) has
-no such order: its branches start when their events allow. Table 10.11
-gives the spans of the ordinary steps in the traces.
+With launched steps the host issues a step's kernels in program order. In
+the traces of launched JAC and TIP3P 10k with `TERMS`, the tuples ran
+beside PME, but the loop over pairs began only after the host had issued
+the side work, and the traced step did not shorten. Tracing adds to the
+cost of each launch: untraced, `TERMS` is the faster schedule on JAC
+(Table 10.12). A captured step (`step_graph = "GRAPH"`, D439) has no such
+order: its branches start when their events allow. Table 10.11 gives the
+spans of the ordinary steps in the traces.
 
 *Table 10.11. RTX 4090, TOWERS, graph replay, Nsight Systems with graph
 nodes traced; median span of the ordinary steps and the time two chains
@@ -803,10 +805,16 @@ ran at once, µs per step.*
 
 The best schedule reaches 33–48% of the reduction that the bound allows. The
 kernel times grow under overlap: on JAC the sum of the kernels of a step
-goes from 100.0 to 132.7 µs with `TERMS`. Issuing the side work after the
-pairs, from an event recorded earlier, removed the overlap of PME with the
-pairs (21 to 3 µs on JAC with TOWERS), since kernels issued after the pair
-kernel wait for its blocks, and was not kept.
+goes from 100.0 to 132.7 µs with `TERMS`. Part of the growth of the
+tuples is their lowering: on one stream the exclusion corrections and the
+bonded terms of TOWERS are one kernel that publishes with the pairs
+(D436); in a destination of their own they are two kernels (JAC: 9.4 µs
+against 4.6 and 6.7; Factor IX and TIP3P alike). No other kernel differs
+between the programs, apart from how often the lists of the default
+traversal were rebuilt in each trace. In launched traces, issuing the side work after
+the pairs, from an event recorded earlier, removed the overlap of PME
+with the pairs (21 to 3 µs on JAC with TOWERS) and was not kept; it was
+not timed without the tracer.
 
 *Table 10.12. RTX 4090, 2 fs, ns/day against `main`. Two jobs; within each,
 three rounds of fresh processes, the order of the arms reversed in

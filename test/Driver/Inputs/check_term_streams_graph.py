@@ -5,7 +5,8 @@ positions, velocities and forces agree within a relative L2 difference of
 1e-3 and the energies within 1e-4 (the tolerances of check_step_graph.py;
 the runs differ by the order of floating-point atomics and of the sum of
 the forces), the steps and times to the bit. The lowered program of a
-graph forks both side streams inside the captured step.
+graph forks both side streams inside the captured step. One launched step
+with TERMS gives the forces of SINGLE within a relative L2 of 1e-5.
 
     check_term_streams_graph.py INPUTS WORK MDIR
 """
@@ -54,6 +55,27 @@ def compare(name, a, b):
     np.testing.assert_allclose(a[2], b[2], rtol=1e-4, atol=0.05)
     print(f"{name}: agrees, largest relative L2 difference {worst:.1e}")
 
+
+def forces(name, streams):
+    """The forces after one step of 1e-6 ps, launched, TOWERS."""
+    directory = work / name
+    directory.mkdir()
+    control = deck.format(inputs=inputs, mode="LAUNCH", steps=1, period=1)
+    control = control.replace("time_step  = 0.001", "time_step  = 1e-6")
+    control += f'term_streams = "{streams}"\n'
+    (directory / "control.toml").write_text(control)
+    subprocess.check_output([mdir, "run", "control.toml"], cwd=directory, text=True)
+    with h5py.File(directory / "state.h5") as f:
+        return f["particles/all/force/value"][()]
+
+
+# TOWERS forces of one step, TERMS against SINGLE: the order of the sum of
+# the forces of the terms and the atomics differ, within the rounding of
+# f32 (relative L2 1e-5).
+a, b = forces("one-single", "SINGLE"), forces("one-terms", "TERMS")
+error = np.linalg.norm(a - b) / np.linalg.norm(a)
+assert a.size and error < 1e-5, error
+print(f"one step, TERMS against SINGLE: forces agree, relative L2 {error:.1e}")
 
 reference = run("launch-single", "LAUNCH", "SINGLE")
 for mode, streams in (("LAUNCH", "TERMS"), ("GRAPH", "RECIPROCAL"), ("GRAPH", "TERMS")):

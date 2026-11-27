@@ -50,7 +50,9 @@
 # RUN: sed -e 's/PRECISION/double/' -e 's/STREAMS/SINGLE/' %t/one-step.toml > %t/double-SINGLE/run.toml
 # RUN: sed -e 's/PRECISION/double/' -e 's/STREAMS/TERMS/' %t/one-step.toml > %t/double-TERMS/run.toml
 # RUN: cd %t/mixed-SINGLE && mdir run run.toml > log 2>&1 && mdir checkpoint state.h5 --print=forces > forces
+# RUN: sed -i 's/^\[output\]/[output]\nmanifest = "choices.jsonl"/' %t/mixed-TERMS/run.toml
 # RUN: cd %t/mixed-TERMS && mdir run run.toml > log 2>&1 && mdir checkpoint state.h5 --print=forces > forces
+# RUN: cd %t/mixed-TERMS && mdir pin choices.jsonl | FileCheck %s --check-prefix=PIN
 # RUN: cd %t/double-SINGLE && mdir run run.toml > log 2>&1 && mdir checkpoint state.h5 --print=forces > forces
 # RUN: cd %t/double-TERMS && mdir run run.toml > log 2>&1 && mdir checkpoint state.h5 --print=forces > forces
 # RUN: grep -h 'term_streams' %t/mixed-TERMS/log %t/mixed-SINGLE/log | FileCheck %s --check-prefix=LOG
@@ -74,6 +76,7 @@
 # FORCES: forces equal
 # LOG: MDIR: term_streams {"category":"rule","changes_rounding":true,"inputs":{"deterministic":false,"target":"GPU"},"reason":"as requested","requested":"TERMS","value":"TERMS"}
 # LOG: MDIR: term_streams {"category":"rule","changes_rounding":false,"inputs":{"deterministic":false,"target":"GPU"},"reason":"as requested","requested":"SINGLE","value":"SINGLE"}
+# PIN: term_streams = "TERMS"
 # MIXED: mixed: relative difference {{.*}} ok
 # DOUBLE: double: relative difference {{.*}} ok
 # DETPIPE: md-exec-accumulate-destinations{{$}}
