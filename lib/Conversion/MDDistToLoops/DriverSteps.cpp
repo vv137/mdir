@@ -170,8 +170,11 @@ Value Segment::loop(OpBuilder &b, scf::ForOp source, Value state, IRMapping map)
             map.map(operand, dd::CollectOp::create(body, loc, operand.getType(),
                 e.fields[it->second], e.layout).getResult());
         }
-        scf::YieldOp::create(body, loc, pack(body, e));
-      });
+        body.clone(op, map);
+      }
+    }
+    scf::YieldOp::create(body, loc, pack(body, e));
+  });
   return result.getResult(0);
 }
 
