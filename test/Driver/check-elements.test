@@ -1,0 +1,148 @@
+# `mdir check` reports the elements of a topology, where each comes from,
+# and the constraints by kind, and warns where other evidence disagrees with
+# an element (#469, D[gromacs-hmr-elements]). The run is unchanged: the
+# degrees of freedom and the constraints are those of main.
+#
+# The inputs are the dipeptide of gromacs-dipeptide.test with the masses of
+# its hydrogens repartitioned to 3.024 amu (Inputs/hmr_topology.py). grompp
+# of GROMACS 2026.3 takes the hydrogens of `constraints = h-bonds` by the
+# first letter of the atom's name and gives every variant 12 constraints and
+# 2343 degrees of freedom (3 x 1168 - 3 x 382 - 12 - 3).
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/hmr_topology.py %S/Inputs/dipeptide/dipeptide.top %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.gro %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: sed 's/TOPOLOGY/given.top/' %t/run.toml > %t/given.toml
+# RUN: sed 's/TOPOLOGY/guessed.top/' %t/run.toml > %t/guessed.toml
+# RUN: sed 's/TOPOLOGY/absent.top/' %t/run.toml > %t/absent.toml
+# RUN: sed 's/TOPOLOGY/unnamed.top/' %t/run.toml > %t/unnamed.toml
+# RUN: sed 's/TOPOLOGY/plain.top/' %t/run.toml > %t/plain.toml
+# RUN: sed 's/TOPOLOGY/names.top/' %t/run.toml > %t/names.toml
+
+# The elements given by the file, and no warning: SHAKE keeps the 12 bonds
+# of hydrogen, SETTLE the 382 waters.
+#
+# RUN: mdir check %t/given.toml 2> %t/given.err | FileCheck %s --check-prefix=GIVEN
+# RUN: FileCheck %s --check-prefix=QUIET --allow-empty < %t/given.err
+# GIVEN: elements: H 776, C 6, N 2, O 384
+# GIVEN-NEXT: element sources: 1168 from the file, 0 from a fallback (0 from the name and the mass, 0 from the mass, 0 none in the file)
+# GIVEN: degrees of freedom: 2343
+# GIVEN: constraints: 1158 distances; hydrogen bonds yes, rigid water yes
+# GIVEN-NEXT: constrained: 12 bonds of hydrogen in 6 groups, 382 rigid waters
+# QUIET-NOT: warning
+
+# The atomic numbers guessed from the repartitioned masses, as a conversion
+# from a prmtop without ATOMIC_NUMBER wrote them: the run keeps them, takes
+# no hydrogen, and constrains no bond of hydrogen; the check says so and
+# names each type.
+#
+# RUN: mdir check %t/guessed.toml 2> %t/guessed.err | FileCheck %s --check-prefix=GUESSED
+# RUN: FileCheck %s --check-prefix=GUESSED-WARN < %t/guessed.err
+# GUESSED: elements: He 776, Li 3, B 1, C 386, O 2
+# GUESSED-NEXT: element sources: 1168 from the file, 0 from a fallback
+# GUESSED: degrees of freedom: 2355
+# GUESSED: constrained: 0 bonds of hydrogen in 0 groups, 382 rigid waters
+# The mass of a heavy atom with its hydrogens.
+# GUESSED-WARN: warning: elements: 6 groups of a particle of the type 'HC', taken for He (from the file), and the hydrogens bonded to it differ by -0.979 amu from the standard atomic weights of their elements; repartitioning the masses of hydrogens keeps the mass of such a group, so an element is likely wrong: check the atomic number of the type 'HC' and of the hydrogens bonded to it, in the at.num column of its line in [ atomtypes ]
+# GUESSED-WARN: warning: elements: 3 groups of a particle of the type 'CT', taken for Li (from the file), and the hydrogens bonded to it differ by -0.978 amu
+# GUESSED-WARN: warning: elements: 1 group of a particle of the type 'CX', taken for B (from the file), and the hydrogens bonded to it differ by -0.816 amu
+# Light particles with one bond that are not hydrogens; not the waters of
+# SETTLE, which are rigid whatever their elements.
+# GUESSED-WARN: warning: elements: 6 particles of the type 'HC' have one bond and a mass of 3.024 amu, below 4.1 amu, but are taken for He (from the file), not hydrogen, so 'hydrogen_bonds = true' leaves their bonds free; if they are hydrogens, give the type 'HC' the atomic number 1 in the at.num column of its line in [ atomtypes ]
+# GUESSED-WARN-NOT: type 'HW' have one bond
+# The name of the type: N is taken for carbon, which its mass of 11.994 amu
+# does not tell.
+# GUESSED-WARN: warning: elements: the file gives the type 'N' (2 particles) the atomic number 6 (C), but the name 'N' begins with the symbol of N; if the name is right, correct the atomic number in the at.num column of its line in [ atomtypes ]
+# GUESSED-WARN: warning: elements: the file gives the type 'OW' (382 particles) the atomic number 6 (C), but the name 'OW' begins with the symbol of O;
+
+# The JSON report has the same.
+#
+# RUN: mdir check --json %t/guessed.toml | %python %S/Inputs/check_elements_json.py | FileCheck %s --check-prefix=JSON
+# JSON: elements He:file:776 Li:file:3 B:file:1 C:file:386 O:file:2
+# JSON-NEXT: sources file=1168 name_and_mass=0 mass=0 none=0 fallback=0
+# JSON-NEXT: constraints hydrogen_bonds=0 groups=0 rigid_waters=382
+# JSON-NEXT: warnings element_group_mass=6 element_light_atom=3 element_type_name=8
+
+# Without the at.num column, the elements come from a fallback: the run
+# takes a hydrogen by a mass below 1.2 amu, or by a name that begins with H
+# and a mass below 4.1 amu, as grompp takes it by the name. Main took the
+# repartitioned hydrogens by mass alone, constrained none of their bonds,
+# and gave 2355 degrees of freedom.
+#
+# RUN: mdir check %t/absent.toml 2> %t/absent.err | FileCheck %s --check-prefix=ABSENT
+# RUN: FileCheck %s --check-prefix=QUIET --allow-empty < %t/absent.err
+# ABSENT: elements: H 776, ? 392
+# ABSENT-NEXT: element sources: 0 from the file, 1168 from a fallback (0 from the name and the mass, 0 from the mass, 1168 none in the file)
+# ABSENT: degrees of freedom: 2343
+# ABSENT: constrained: 12 bonds of hydrogen in 6 groups, 382 rigid waters
+
+# A repartitioned hydrogen whose name does not begin with H is not taken
+# for one, and the check says so; grompp leaves its bond free too (2344
+# degrees of freedom).
+#
+# RUN: mdir check %t/unnamed.toml 2> %t/unnamed.err | FileCheck %s --check-prefix=UNNAMED
+# RUN: FileCheck %s --check-prefix=UNNAMED-WARN < %t/unnamed.err
+# UNNAMED: elements: H 775, ? 393
+# UNNAMED: degrees of freedom: 2344
+# UNNAMED: constrained: 11 bonds of hydrogen in 6 groups, 382 rigid waters
+# UNNAMED-WARN: warning: elements: 1 particle of the type 'HC' has one bond and a mass of 3.024 amu, below 4.1 amu, but is taken for no element (none in the file, and neither below 1.2 amu nor named H below 4.1 amu), not hydrogen, so 'hydrogen_bonds = true' leaves its bond free; if it is a hydrogen, give the type 'HC' the atomic number 1 in an at.num column of [ atomtypes ]
+# UNNAMED-WARN-NOT: warning
+
+# Without the at.num column and without repartitioning, the hydrogens are
+# found by their masses, and nothing is wrong.
+#
+# RUN: mdir check %t/plain.toml 2> %t/plain.err | FileCheck %s --check-prefix=PLAIN
+# RUN: FileCheck %s --check-prefix=QUIET --allow-empty < %t/plain.err
+# PLAIN: elements: H 776, ? 392
+# PLAIN-NEXT: element sources: 0 from the file, 1168 from a fallback (0 from the name and the mass, 0 from the mass, 1168 none in the file)
+# PLAIN: degrees of freedom: 2343
+# PLAIN: constrained: 12 bonds of hydrogen in 6 groups, 382 rigid waters
+
+# Names that agree with their elements: CA of carbon, whose two letters are
+# the symbol of calcium, and C0 of carbon, the name of Amber's calcium.
+#
+# RUN: mdir check %t/names.toml 2> %t/names.err | FileCheck %s --check-prefix=GIVEN
+# RUN: FileCheck %s --check-prefix=QUIET --allow-empty < %t/names.err
+
+# An Amber topology without ATOMIC_NUMBER: the elements come from the names
+# and the masses, and the bonds of hydrogen from BONDS_INC_HYDROGEN.
+#
+# RUN: %python -c "import re,sys; t=open(sys.argv[1]).read(); open(sys.argv[2],'w').write(re.sub(r'%%FLAG ATOMIC_NUMBER.*?(?=%%FLAG)', '', t, flags=re.S))" %S/Inputs/dipeptide/dipeptide.prmtop %t/old.prmtop
+# RUN: sed -e 's/^topology .*/topology = "old.prmtop"/' -e 's/^coordinates .*/coordinates = "dipeptide.inpcrd"/' -e 's/^\[input\]/[input]\nformat = "AMBER"/' %t/run.toml > %t/amber.toml
+# RUN: mdir check %t/amber.toml 2> %t/amber.err | FileCheck %s --check-prefix=AMBER
+# RUN: FileCheck %s --check-prefix=QUIET --allow-empty < %t/amber.err
+# AMBER: elements: H 776, C 6, N 2, O 384
+# AMBER-NEXT: element sources: 0 from the file, 1168 from a fallback (1168 from the name and the mass, 0 from the mass, 0 none in the file)
+# AMBER: degrees of freedom: 2343
+# AMBER: constrained: 12 bonds of hydrogen in 6 groups, 382 rigid waters
+
+#--- run.toml
+[input]
+topology    = "TOPOLOGY"
+coordinates = "dipeptide.gro"
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+
+[constraints]
+hydrogen_bonds = true
+rigid_water    = true
+
+[dynamics]
+integrator = "LEAPFROG"
+time_step  = 0.004
+steps      = 0
+
+[ensemble]
+ensemble    = "NVT"
+temperature = 300.0
+
+[thermostat]
+method         = "V-RESCALE"
+time_constant  = 1.0
+
+[boundary]
+type = "PERIODIC"
+#--- end

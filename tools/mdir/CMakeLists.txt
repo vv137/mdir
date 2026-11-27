@@ -16,6 +16,7 @@ add_llvm_executable(mdir
   TowersTrialInputs.cpp
   TowersShape.cpp
   Check.cpp
+  Elements.cpp
   Checkpoint.cpp
   Manifest.cpp
   Doctor.cpp

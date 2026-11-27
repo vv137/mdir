@@ -276,6 +276,46 @@ massive atoms without a constrained distance, or a site that is no
 constant-weight combination of the frame. The lines are a diagnosis: no
 run reads them, and no input runs differently for them.
 
+With a topology the report also has the elements of the particles and
+where each comes from (#469, D[gromacs-hmr-elements]), and the constraints
+by kind:
+
+```
+elements:           H 776, C 6, N 2, O 384
+element sources:    1168 from the file, 0 from a fallback (0 from the name and the mass, 0 from the mass, 0 none in the file)
+...
+constraints:        1158 distances; hydrogen bonds yes, rigid water yes
+constrained:        12 bonds of hydrogen in 6 groups, 382 rigid waters
+```
+
+An element comes from the file (Amber's `ATOMIC_NUMBER`, the at.num column
+of GROMACS's `[ atomtypes ]`, the element of CHARMM's `MASS`) or from a
+fallback: from the name and the mass (Amber without `ATOMIC_NUMBER`), from
+the mass alone (CHARMM without an element), or none (GROMACS without the
+at.num column; `?` in the counts). A particle without an element is
+counted as H where the run takes it for a hydrogen: below 1.2 amu, or
+named with an H first and below 4.1 amu (a hydrogen of repartitioned
+mass; [constraints.md](constraints.md), Section 1.2). `none` is a massless
+site. The element is what the run takes: the readers assign the same
+atomic numbers as before, and a wrong number given by the file is kept.
+
+Three warnings, `element_group_mass`, `element_light_atom`, and
+`element_type_name`, flag an element that other evidence contradicts,
+one warning for each atom type (the text lists 8 types of each kind and
+counts the rest). Each names the type and where its element is to be
+corrected.
+
+| Code | Evidence |
+|---|---|
+| `element_group_mass` | A heavy atom with the hydrogens bonded to it: repartitioning the masses of hydrogens keeps the mass of the group, so $m_\mathrm{heavy} + \sum m_\mathrm{H}$ is compared with the standard atomic weights of the elements (IUPAC 2021). It warns when they differ by more than 0.1 amu, except for a united atom of C, N, O, or S, whose excess is one to three hydrogens ($k \times 1.008$ amu, within 0.1 amu) |
+| `element_light_atom` | A particle with one bond and a mass below 4.1 amu that the run does not take for a hydrogen: `hydrogen_bonds = true` leaves its bond free. Not the waters of SETTLE, which are rigid whatever their elements |
+| `element_type_name` | An element given by the file that is neither the one- nor the two-letter symbol that the type name begins with (after digits, as `2C`; the bonded type of GROMACS, which in OPLS-AA differs from the type), nor the element of a known ion type whose name begins otherwise (CHARMM's `SOD`, `POT`, `CLA`, `CAL`, `CES`, `RUB`, `LIT`, `BAR`, `CAD`; Amber's `C0` for calcium, `IP`, `IM`). A name that begins with no symbol is not compared |
+
+A topology converted from a prmtop with repartitioned masses but without
+`ATOMIC_NUMBER`, whose at.num were guessed from the masses (H as He, C as
+Li or B), gets all three. These are warnings of `mdir check` alone: the
+exit status is unchanged, and `mdir run` runs the input as before.
+
 The output list has the files of Section 2.8 in the order of its table:
 the log, on standard output and in the file of `log`, the energies and
 the terms over centers as columns, the trajectory in DCD, XTC, or H5MD, and the
@@ -310,13 +350,15 @@ Its schema begins at version 1:
 | `schema_version`, `ok` | Version 1; `ok` is true when reading and validation succeeded, even with warnings |
 | `system` | Particle and type counts, mass in amu, degrees of freedom, supplied velocities, restrained particles, periodicity, and topology counts when present |
 | `system.topology.rigid_groups` | `molecules`, the number of molecules; `kinds`, most populous first, each with `molecules` (its copies), `particles` (of a copy), `frame` (the places of the massive atoms, from 0), `types` (names) and `charges_e` by place, `frame_distances_angstrom` (the pairs of `frame` in lexicographic order), `sites` (`place` and `weights` over `frame`), `first_particle` (of its first copy, from 0), and the counts of copies `scattered`, `incomplete_exclusions`, `outside_exclusions`; `left_out`, the molecules that are no rigid group, as `flexible_frame` and `site_not_constant_weight` (D403, [constraints.md](constraints.md), Section 3) |
+| `system.topology.elements` | `counts`: objects with `element` (symbol, `?` for none, `none` for a massless site), `atomic_number` (`null` for none), `source` (`file`, `name_and_mass`, `mass`, `none`), and `particles`; `sources`, the particles by source; `fallback`, those not from the file (#469, D[gromacs-hmr-elements]) |
 | `system.cell_angstrom` | The reduced cell's `diagonal` and `tilt` ($b_x$, $c_x$, $c_y$) in Å; `null` without periodicity |
 | `run` | Kind, ensemble, method, steps, `time_step_ps`, `duration_ns`, `temperature_kelvin`, `pressure_atm`, thermostat and barostat coupling, cutoff, PME, constraints, execution, the neighbor structure, and input checkpoint path |
+| `run.constraints` | `distances`, the settings `hydrogen_bonds`, `rigid_water`, `analytic_bonds`, and by kind `constrained_hydrogen_bonds`, `hydrogen_bond_groups`, and `rigid_waters` (`null` without a topology; #469) |
 | `run.neighbors` | `requested` (`auto`, `matrix`, `groups`), `structure` (`matrix` or `groups`, `AUTO` resolved for the system), `reason` (`given`, or why `AUTO` took it), `pairlist_distance_angstrom`, and `pruned_distance_angstrom` (`null` without a dual list); the text output has the line `neighbors:` (D261) |
 | `run.skins` | `pairlist_distance_source` and `pruned_distance_source` (`given`, `default`, or `cached`: the check measures nothing), `reason`, and `cache_key`, the key of the cache of the skins where a run reads that cache, else null with the reason in `cache_key_reason` (D401); the text output has the line `skins:` (D281, [neighbors.md](neighbors.md), Section 6.4) |
 | `run.pme` | `null` when disabled; otherwise `grid_points` (three nulls when automatic), `beta_inverse_angstrom` (`null` when automatic), `order`, `max_spacing_angstrom`, and `tolerance` |
 | `outputs` | Entries with `kind` (`log`, `energy`, `pull`, `free_energy`, `observables`, `trajectory`, `checkpoint`, `manifest`, `profile_map`), `path`, `format`, `interval_steps`, `enabled`, `at_end`, `count` and `count_of` (`rows`, `frames`, `checkpoints`, `files`; `count` is null where the run decides, as in a minimization), `exists`, and `backup`, the name under which a run keeps the file that exists (D149), or null; `path` is null for an unconfigured file, and for the log when it goes to standard output only |
-| `warnings` | Objects with `code` and `message`: `backup_limit`, `constant_expression`, `empty_selection`, `flexible_water`, `long_time_step`, `short_thermostat_period` (D163a), `brownian_step` (D163b), `charged_soft_core` (D161), `pair_tail_left_out` (D209), `unused_parameter`, `fixed_rebuild_interval`, `no_checkpoint`, `no_energies`, `missing_input_checkpoint`, `hdf5_unavailable`, `gpu_unavailable`, or `pme_cutoff_jump` (D395, below). Each is reported once (`short_thermostat_period` was added twice for a run from a topology before #124), and a run whose particles come from a PDB file reports the warnings of its control file (`unused_parameter`, `constant_expression`, D158) as a run from a topology does (#129) |
+| `warnings` | Objects with `code` and `message`: `backup_limit`, `constant_expression`, `empty_selection`, `flexible_water`, `long_time_step`, `short_thermostat_period` (D163a), `brownian_step` (D163b), `charged_soft_core` (D161), `pair_tail_left_out` (D209), `unused_parameter`, `fixed_rebuild_interval`, `no_checkpoint`, `no_energies`, `missing_input_checkpoint`, `hdf5_unavailable`, `gpu_unavailable`, `pme_cutoff_jump` (D395, below), or `element_group_mass`, `element_light_atom`, `element_type_name` (#469, above). Each is reported once (`short_thermostat_period` was added twice for a run from a topology before #124), and a run whose particles come from a PDB file reports the warnings of its control file (`unused_parameter`, `constant_expression`, D158) as a run from a topology does (#129) |
 | `notes` | Objects with `code` and `message` for what a run will do that needs no change: `output_backup`, an output that exists and the name it will be kept under; `skin_cache_refused`, an entry of the cache of the skins for the run's key that is refused, and why (D401, [neighbors.md](neighbors.md), Section 6.4) |
 | `errors` | Error messages; empty on success. On failure, `system`, `run`, and `outputs` are absent |
 

@@ -478,7 +478,9 @@ adapted. The files retain the input coordinates as the restraint reference.
 
 `mdir check FILE` reports the ensemble, configured length in steps and ns,
 time step in ps, PME, constraints, target, and precision for every input
-format, beside the topology or particle summary (D151). It lists energies,
+format, beside the topology or particle summary (D151). With a topology
+it counts the elements, by where each comes from (the file or a
+fallback), and the constraints by kind (#469). It lists energies,
 trajectory, checkpoint, and pulling-coordinate outputs with their paths,
 formats, intervals, and whether they are enabled and already exist.
 Minimization has an iteration count and a checkpoint at the end, with no

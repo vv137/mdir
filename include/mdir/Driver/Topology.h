@@ -103,6 +103,20 @@ struct ExternalTerm {
   std::vector<std::string> observe;
 };
 
+/// Whether a particle without an atomic number (GROMACS without the at.num
+/// column) is a hydrogen: below 1.2 amu, or named with an H first and
+/// below 4.1 amu, a hydrogen whose mass has been repartitioned (#469,
+/// D[gromacs-hmr-elements]). grompp takes the hydrogens of
+/// `constraints = h-bonds` by the first letter of the name; the bound of
+/// 4.1 amu is that of the Amber reader's inference.
+inline bool isHydrogenWithoutNumber(double mass, llvm::StringRef name) {
+  if (mass < 1.2)
+    return true;
+  llvm::StringRef trimmed = name.ltrim();
+  return mass < 4.1 && !trimmed.empty() &&
+         (trimmed.front() == 'H' || trimmed.front() == 'h');
+}
+
 struct Topology {
   /// GROMACS topology files actually opened, including active includes.
   std::vector<std::string> sourceFiles;
@@ -121,6 +135,35 @@ struct Topology {
   /// The type of Lennard-Jones of each particle, from 0.
   std::vector<unsigned> types;
   std::vector<std::string> typeNames;
+
+  /// Where the atomic number of a particle comes from, for the diagnosis of
+  /// `mdir check` (#469, D[gromacs-hmr-elements]); no run reads it.
+  enum class ElementSource : unsigned char {
+    /// The file gives it: Amber's ATOMIC_NUMBER, the at.num column of
+    /// GROMACS's [ atomtypes ], the element of CHARMM's MASS.
+    File,
+    /// Inferred from the name and the mass (Amber without ATOMIC_NUMBER).
+    Name,
+    /// Inferred from the mass alone.
+    Mass,
+    /// None: GROMACS without the at.num column. Only whether the particle
+    /// is a hydrogen is inferred (isHydrogenWithoutNumber).
+    None,
+  };
+  /// The force-field atom types of the particles, which the diagnosis of
+  /// the elements names: Amber's AMBER_ATOM_TYPE, the types of GROMACS's
+  /// [ atoms ], the types of CHARMM's MASS. `atomTypeLabels` is the name
+  /// whose letters are compared with the element (the bonded type of
+  /// GROMACS, which differs from the type in OPLS-AA). Empty where a reader
+  /// gives none; no run reads them, and a reordering of the particles does
+  /// not follow them.
+  struct ElementOrigins {
+    std::vector<ElementSource> sources;
+    std::vector<unsigned> atomTypes;
+    std::vector<std::string> atomTypeNames;
+    std::vector<std::string> atomTypeLabels;
+  };
+  ElementOrigins elementOrigins;
 
   /// The residues: their names, and the particle that each begins with.
   std::vector<std::string> residueNames;

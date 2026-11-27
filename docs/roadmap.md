@@ -141,7 +141,7 @@ that of the work; P0 is what a production run on a cluster needs.
 | U3 | A stop on SIGTERM, SIGINT, or `--max-walltime` | P0 | Done (D131; exit status 75) |
 | U4 | Keep the previous checkpoint | P0 | Done (D132, D173: `<checkpoint>.prev`, `fsync`, SHA-256) |
 | U5 | A directory for a run: the log in a file, protection against overwriting, a manifest | P1 | Done (D149, D168; [driver.md](driver.md), Section 2.8) |
-| U6 | `mdir check` as a preflight | P1 | Done (2026-10-03, D151) |
+| U6 | `mdir check` as a preflight | P1 | Done (2026-10-03, D151); the elements by source, the constraints by kind, and warnings where other evidence contradicts an element (#469, D[gromacs-hmr-elements]) |
 | U7 | Errors that say what to do | P1 | Done (2026-10-03, D146; the constraints' step and set, D278, #349) |
 | U8 | A quickstart first in the README, and `mdir doctor` | P1 | Done (D155) |
 | U9 | Control files of the standard pipeline from `mdir template` | P2 | Done (2026-10-03, D147) |

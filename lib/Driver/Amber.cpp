@@ -124,7 +124,9 @@ private:
 /// hydrogens take from it; `CA` of 40 amu is calcium, and of 12 or less
 /// carbon. Otherwise the element of the nearest standard atomic weight,
 /// within 0.5 amu.
-static int inferAtomicNumber(double mass, StringRef name) {
+/// `byName` says whether the name chose it.
+static int inferAtomicNumber(double mass, StringRef name, bool &byName) {
+  byName = false;
   if (mass <= 0.0)
     return 0;
   struct Element {
@@ -151,8 +153,10 @@ static int inferAtomicNumber(double mass, StringRef name) {
         continue;
       if (element.number == 1 ? mass < 4.1
                               : mass <= element.weight + 0.5 &&
-                                    mass >= element.weight - 6.5)
+                                    mass >= element.weight - 6.5) {
+        byName = true;
         return element.number;
+      }
     }
   }
   int best = 0;
@@ -1071,10 +1075,20 @@ llvm::Expected<Topology> Reader::read() {
   // Older topologies have no atomic numbers; they are taken from the
   // masses, and from the names for a hydrogen whose mass has been
   // repartitioned.
-  if (topology.atomicNumbers.empty())
-    for (size_t i = 0; i != natom; ++i)
-      topology.atomicNumbers.push_back(
-          inferAtomicNumber(topology.masses[i], topology.atomNames[i]));
+  // Where each comes from, for `mdir check` (#469).
+  if (topology.atomicNumbers.empty()) {
+    for (size_t i = 0; i != natom; ++i) {
+      bool byName;
+      topology.atomicNumbers.push_back(inferAtomicNumber(
+          topology.masses[i], topology.atomNames[i], byName));
+      topology.elementOrigins.sources.push_back(
+          byName ? Topology::ElementSource::Name
+                 : Topology::ElementSource::Mass);
+    }
+  } else {
+    topology.elementOrigins.sources.assign(natom,
+                                           Topology::ElementSource::File);
+  }
 
   std::vector<long> types;
   if (llvm::Error error = readIntegers("ATOM_TYPE_INDEX", natom, types))
@@ -1083,11 +1097,19 @@ llvm::Expected<Topology> Reader::read() {
   if (llvm::Error error = readStrings("AMBER_ATOM_TYPE", natom, typeNames))
     return std::move(error);
   topology.typeNames.assign(ntypes, "");
+  std::map<std::string, unsigned> elementTypeIndex;
   for (long i = 0; i != natom; ++i) {
     if (types[i] < 1 || types[i] > ntypes)
       return fail("ATOM_TYPE_INDEX of atom " + llvm::Twine(i + 1) +
                   " is out of range");
     topology.types.push_back(types[i] - 1);
+    auto [atomType, newType] = elementTypeIndex.insert(
+        {typeNames[i], topology.elementOrigins.atomTypeNames.size()});
+    if (newType) {
+      topology.elementOrigins.atomTypeNames.push_back(typeNames[i]);
+      topology.elementOrigins.atomTypeLabels.push_back(typeNames[i]);
+    }
+    topology.elementOrigins.atomTypes.push_back(atomType->second);
     // The name of the first atom of a type names the type.
     std::string &name = topology.typeNames[types[i] - 1];
     if (name.empty())

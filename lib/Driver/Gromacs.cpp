@@ -1182,7 +1182,8 @@ llvm::Error TopologyReader::expandMolecule(const MoleculeType &molecule,
     const AtomType *type = findType(molecule.atoms[atom].type);
     if (type->atomicNumber >= 0)
       return type->atomicNumber == 1;
-    return molecule.atoms[atom].mass < 1.2;
+    return isHydrogenWithoutNumber(molecule.atoms[atom].mass,
+                                   molecule.atoms[atom].name);
   };
 
   // The terms that MDIR takes as terms given by expressions (D136), in the
@@ -1579,6 +1580,10 @@ llvm::Error TopologyReader::build(Topology &topology) {
         return error;
     }
 
+  for (const AtomType &type : atomTypes) {
+    topology.elementOrigins.atomTypeNames.push_back(type.name);
+    topology.elementOrigins.atomTypeLabels.push_back(type.bondedType);
+  }
   unsigned offset = 0, residue = 0;
   for (auto [index, count] : molecules) {
     const MoleculeType &molecule = moleculeTypes[index];
@@ -1588,6 +1593,12 @@ llvm::Error TopologyReader::build(Topology &topology) {
         const AtomType &type = atomTypes[atomTypeIndex.at(atom.type)];
         topology.atomNames.push_back(atom.name);
         topology.atomicNumbers.push_back(type.atomicNumber);
+        // Where it comes from, for `mdir check` (#469).
+        topology.elementOrigins.sources.push_back(
+            type.atomicNumber >= 0 ? Topology::ElementSource::File
+                                   : Topology::ElementSource::None);
+        topology.elementOrigins.atomTypes.push_back(
+            atomTypeIndex.at(atom.type));
         topology.masses.push_back(atom.mass);
         topology.charges.push_back(atom.charge);
         topology.types.push_back(used[atomTypeIndex.at(atom.type)]);
