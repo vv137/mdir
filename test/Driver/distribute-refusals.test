@@ -100,3 +100,15 @@
 # RUN: printf '[distribute]\ndomains = [2, 1, 1]\n' >> tilt.toml
 # RUN: not mdir run tilt.toml 2>&1 | FileCheck %s --check-prefix=TILT
 # TILT: distributed halos require an orthorhombic cell
+
+# A table of types, which [[energy.pair_override]] gives a pair, is an
+# integer field that the reference executor of the domains does not carry:
+# charged.toml as written, which distribute-oracle.test takes without it.
+# RUN: mkdir -p %t/override && cd %t/override
+# RUN: sed -e 's|Inputs/mixture.pdb|%S/Inputs/mixture.pdb|' -e '/^\[output\]/a log = "override.log"' \
+# RUN:     %S/charged.toml > override.toml
+# RUN: printf '\n[distribute]\ndomains = [2, 2, 2]\n' >> override.toml
+# RUN: not mdir run override.toml 2>&1 | FileCheck %s --check-prefix=OVERRIDE
+# RUN: FileCheck %s --check-prefix=OVERRIDE-LOG < override.log
+# OVERRIDE: 'md_dist.distribute' op the reference executor runs f64 only
+# OVERRIDE-LOG: MDIR: distributed setup refused: 'md_dist.distribute' op the reference executor runs f64 only

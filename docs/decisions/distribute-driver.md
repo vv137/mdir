@@ -56,8 +56,8 @@ quantization (Q40: $n_i\,2^{-41}$ kJ/mol/nm on particle $i$; Q32:
 $2^{-33}$ kJ/mol per visit), the pairs within the coordinate error of the
 cutoff, and the print quantum (5e-7 kcal/mol). Here $e$ is the unit
 roundoff of the ordinary kernels ($2^{-24}$ mixed, $2^{-53}$ double), $n$
-the number of terms, $S=\sum_t|q_t|$, $D=2\sqrt3\sum_t|\partial q_t/\partial
-\mathbf d|$ the response to the rounding of a coordinate difference, and
+the number of terms, $S=\sum_t|q_t|$,
+$D=2\sqrt3\sum_t|\partial q_t/\partial\mathbf d|$ the response to the rounding of a coordinate difference, and
 $X$ the largest coordinate; NumPy computes $S$ and $D$ from the positions.
 The script derives each term. The largest ratios of difference to bound:
 
@@ -121,7 +121,8 @@ energies and virials, kinetic energies, and momenta; Q40 for forces and
 gathered fields; Q16 for $\sum_iF_i^2/m_i$ of the kinetic correction. Q32
 held it below $2^{31}$: 864 atoms of argon with 250 times the example's
 $\epsilon$ give $7.6\times10^9$ (kJ/mol/nm)$^2$/amu. A force inside the Q40
-range (below $2^{23}$) has a square below $2^{46}$; Q16 gives the sum a
+range (below $2^{23}$) over a mass of at least 1 amu has a square below
+$2^{46}$; Q16 gives the sum a
 range of $2^{47}$, and its quantum, scaled by $\Delta t^2/8$, stays below
 $10^{-10}$ kJ/mol per particle at $\Delta t\le 0.01$ ps. A range error
 names the quantity, and the total energy, whose Q33 sum adds the words of

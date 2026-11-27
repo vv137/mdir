@@ -9,16 +9,16 @@
 # RUN:     %S/../../examples/argon/argon.toml > base.toml
 # RUN: cp base.toml run.toml && printf 'deterministic = true\n[distribute]\ndomains = [2, 1, 1]\n' >> run.toml
 # RUN: mdir run run.toml > run.log
-# RUN: mdir checkpoint --print=fingerprint state.h5 | FileCheck %s --check-prefix=RECORD
+# RUN: mdir checkpoint --print=fingerprint state.h5 \
+# RUN:   | FileCheck %s --check-prefix=RECORD --implicit-check-not='[distribute] domains'
 # RECORD: execution [distribute] transport = "local"
 # RECORD-NEXT: execution [distribute] traversal = "directed"
-# RECORD-NOT: [distribute] domains
 
 # Another grid continues the deterministic run, without a note.
 # RUN: cp -r %t/first %t/grid && cd %t/grid
 # RUN: sed -e 's/^steps *= 5$/steps = 10/' -e 's/domains = .*/domains = 8/' run.toml > next.toml
-# RUN: mdir run --continue next.toml | FileCheck %s --check-prefix=GRID
-# GRID-NOT: other settings of its execution
+# RUN: mdir run --continue next.toml \
+# RUN:   | FileCheck %s --check-prefix=GRID --implicit-check-not='other settings of its execution'
 # GRID: MDIR: domain grid 2 x 2 x 2
 
 # Without [distribute], the sums of the ordinary driver would not give the

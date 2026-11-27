@@ -1753,7 +1753,8 @@ fitted to its quantity. Q40 allows force and gathered-field magnitudes
 below $2^{23}$ in physical units, with half a quantum of $2^{-41}$.
 Q32 gives energy, virial, kinetic energy, and momentum a range below
 $2^{31}$ and a half quantum of $2^{-33}$. The sum $\sum_i F_i^2/m_i$ of
-the kinetic correction is a square of forces of the Q40 range: Q16 gives it
+the kinetic correction is a square of forces of the Q40 range, below
+$2^{46}$ per particle and axis for masses of at least 1 amu: Q16 gives it
 $2^{47}$ in $(\mathrm{kJ/mol/nm})^2/\mathrm{amu}$, and a quantum that the
 factor $\Delta t^2/8$ of the correction scales below $10^{-10}$ kJ/mol per
 particle at $\Delta t \le 0.01$ ps. Directed energy and virial count both
