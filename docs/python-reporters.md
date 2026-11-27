@@ -141,13 +141,31 @@ intervals:
 | | Double, CPU | Double, GPU | Mixed, CPU | Mixed, GPU |
 |---|---|---|---|---|
 | NVE, energy file and DCD/XTC | byte for byte | byte for byte | byte for byte | byte for byte |
-| NVT (V-rescale every 10 steps), energy file and DCD/XTC | byte for byte | byte for byte | within 3 E | within 3 E |
+| NVT (V-rescale every 10 steps), energy file and DCD/XTC | byte for byte | byte for byte | see below | see below |
 
-In NVT and mixed precision the rows agree within 3.3e-4 (CPU) and 1.4e-4
-(GPU) of each value and the DCD frames within 1.2e-3 Å (CPU) and 4.5e-4 Å
-(GPU), where 3 E, three times the difference of `mdir run` in mixed and in
-double, is 1.8e-2 Å: the program of segments and that of `mdir run` round
-differently in single precision (loops of another shape; #105). With SHAKE and
+In NVT and mixed precision the program of segments and that of `mdir run`
+round differently in single precision (loops of another shape; #105), and
+the trajectories part. The first row is equal to the byte; the kinetic
+energy, the temperature, and the DCD frames agree within 3 E, three times
+the difference of `mdir run` in mixed and in double, with a floor of
+$10^{-5}$ of each value (and $10^{-5}$ Å for the frames); a row of the
+interval before is rejected at every row. The potential, the total, the
+virial, the pressure, and the conserved energy are not compared after the
+first row (#992): under the plain cutoff of the Coulomb energy, a pair of
+charges within the cutoff in one trajectory and beyond it in the other
+moves the potential by $332.06\,q_iq_j/r_c$, 7.218 kcal/mol for two
+hydrogens of TIP3P at $r_c = 8$ Å and 14.44 for an oxygen and a hydrogen.
+About $N^2/2\cdot4\pi r_c^2/V = 2.7\times10^4$ pairs lie within 1 Å of the
+cutoff in this cell, so once the trajectories are some $4\times10^{-5}$ Å
+apart one such pair is expected, and the rows then differ by whole steps
+of this size, which no bound from the rounding holds. Measured: on a V100
+the rows at step 60 differ by 7.218 kcal/mol between the two programs,
+against $1.6\times10^{-3}$ between `mdir run` in mixed and in double; on
+an RTX 4090 by 14.47 kcal/mol at step 100, within 3 E there only because
+`mdir run` in mixed and in double were 16.2 kcal/mol apart by such steps
+too. The double-precision rows check every column, byte for byte.
+
+With SHAKE and
 SETTLE, where the rows take the optimal temperature from the half steps
 (D203), the rows equal those of `mdir run` in double precision, with
 energies every 10 steps and frames every 50, and with energies every 20

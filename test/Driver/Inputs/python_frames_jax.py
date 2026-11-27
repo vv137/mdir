@@ -766,8 +766,8 @@ def run_precisions():
     # sum of the magnitudes of the terms, which the evaluator does not give,
     # and is the smaller of the two, so the bound is the stricter). That
     # rest is of one sign over the frames and depends on the device and the
-    # program: measured 1.5e-3 to 2.6e-3 kJ/mol on an RTX 4090, -2.2e-3 to
-    # -3.3e-3 on a V100, below 4.5e-4 on the CPU, and -4.3e-3 to -5.9e-3 on
+    # program: measured 1.5e-3 to 2.6e-3 kJ/mol on an RTX 4090, -2.3e-3 to
+    # -3.4e-3 on a V100, below 4.5e-4 on the CPU, and -4.3e-3 to -5.9e-3 on
     # the RTX 4090 with pme_tolerance 1e-10; a bound of 5e-3 on the whole
     # difference had held on the RTX 4090 only where the two shares had
     # opposite signs.
