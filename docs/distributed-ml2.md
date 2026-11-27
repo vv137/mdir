@@ -1673,3 +1673,12 @@ image must fit that neighbor's existing buffered halo. Midpoint ownership
 covers the remaining tuples, and constraint projection keeps its original
 schedule. See [D[distribute-tuple-cost]](decisions/distribute-tuple-cost.md)
 and [Phillips2020](references.md#phillips2020).
+
+### Pencil communicator scope
+
+An adjacent PME transpose exchanges pencils within one row or column of
+the two-dimensional process grid [Jung2019Scaling](references.md#jung2019scaling).
+The mixed inverse's direct first-to-last exchange uses all PME ranks to
+retain binary32 rounding in the original axis order. The selected PME
+ranks still exchange charge and potential with the particle ranks.
+See [D[distribute-pencil-collectives]](decisions/distribute-pencil-collectives.md).

@@ -884,6 +884,15 @@ and at the half steps, which the log reports and the thermostats control,
 with the half steps measured under constraints (D45,
 D203, D263).
 
+### Jung2019Scaling
+
+J. Jung, W. Nishima, M. Daniels, et al., "Scaling molecular dynamics
+beyond 100,000 processor cores for large-scale biophysical simulations,"
+*J. Comput. Chem.* **40**, 1919–1930 (2019).
+[doi:10.1002/jcc.25840](https://doi.org/10.1002/jcc.25840)
+
+Used for: restricting distributed Fourier transposes to process-grid axes.
+
 ### Jung2020
 
 J. Jung, Y. Sugita, "Group-based evaluation of temperature and pressure

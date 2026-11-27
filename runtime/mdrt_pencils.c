@@ -86,13 +86,7 @@ static void cut(struct PmeBox *b, int axis, int parts, int part) {
   b->hi[axis] = (int64_t)n * (part + 1) / parts;
 }
 
-/* z: [x/P,y/Q,z]; y: [x/P,y,h/Q]; x: [x,y/P,h/Q]. */
-static struct PmeBox bounds(const struct PmePencils *p, int axis, int rank) {
-  struct PmeBox b = {{0, 0, 0}, {0, 0, 0}};
-  if (rank >= p->px * p->py)
-    return b;
-  memcpy(b.hi, p->n, sizeof b.hi);
-  b.hi[2] = p->n[2] / 2 + 1;
+static int logicalRank(const struct PmePencils *p, int rank) {
   /* Physical rank order is x-fastest. Subdivide each physical x/y tile
      among its z ranks using the same permutation for every FFT axis. */
   if (p->gx) {
@@ -102,6 +96,25 @@ static struct PmeBox bounds(const struct PmePencils *p, int axis, int rank) {
     int y = ((rank / p->gx) % p->gy) * tilesY + z / tilesX;
     rank = x * p->py + y;
   }
+  return rank;
+}
+
+#ifdef MDIR_ENABLE_MPI
+static int physicalRank(const struct PmePencils *p, int x, int y) {
+  if (!p->gx) return x*p->py+y;
+  int tilesX = p->px/p->gx, tilesY = p->py/p->gy;
+  int z = x%tilesX+tilesX*(y%tilesY);
+  return x/tilesX+p->gx*(y/tilesY+p->gy*z);
+}
+#endif
+
+/* z: [x/P,y/Q,z]; y: [x/P,y,h/Q]; x: [x,y/P,h/Q]. */
+static struct PmeBox bounds(const struct PmePencils *p, int axis, int rank) {
+  struct PmeBox b = {{0, 0, 0}, {0, 0, 0}};
+  if (rank >= p->px*p->py) return b;
+  memcpy(b.hi,p->n,sizeof b.hi);
+  b.hi[2] = p->n[2]/2+1;
+  rank = logicalRank(p,rank);
   cut(&b, axis == 0 ? 1 : 0, p->px, rank / p->py);
   cut(&b, axis == 2 ? 1 : 2, p->py, rank % p->py);
   return b;
@@ -178,6 +191,14 @@ static void transfer(struct PmeBox b, struct PmeBox part, double *field,
     }
 }
 
+#ifdef MDIR_ENABLE_MPI
+static int peerAt(const struct PmePencils *p, int group, int rank, int x, int y) {
+  if (group == 0) return physicalRank(p,x,rank);
+  if (group == 1) return physicalRank(p,rank,y);
+  return physicalRank(p,rank/p->py,rank%p->py);
+}
+#endif
+
 static void transpose(struct PmePencils *p, int from, int to, double *src,
                       double *dst) {
   struct PmeBox old = bounds(p, from, p->rank), next = bounds(p, to, p->rank);
@@ -186,13 +207,23 @@ static void transpose(struct PmePencils *p, int from, int to, double *src,
     return;
   }
 #ifdef MDIR_ENABLE_MPI
+  if (p->rank >= p->px*p->py) return;
   mdrtDistPhase(DistTranspose);
-  int *ns = p->schedule, *nr = ns + p->peers;
-  int *os = nr + p->peers, *or = os + p->peers;
+  /* The adjacent pencil transposes vary one process-grid coordinate
+     [Jung2019Scaling]. The mixed inverse also has a direct x/z transpose
+     to preserve FFT axis rounding order. */
+  int axes = from+to;
+  int group = axes == 3 ? 0 : (axes == 1 ? 1 : 2);
+  int peers = group == 0 ? p->py : (group == 1 ? p->px : p->px*p->py);
+  int logical = logicalRank(p,p->rank), x = logical/p->py, y = logical%p->py;
+  int self = group == 0 ? y : (group == 1 ? x : logical);
+  int *ns = p->schedule, *nr = ns + peers;
+  int *os = nr + peers, *or = os + peers;
   int sent = 0, received = 0;
-  for (int r = 0; r < p->peers; ++r) {
-    struct PmeBox out = intersect(old, bounds(p, to, r));
-    struct PmeBox in = intersect(next, bounds(p, from, r));
+  for (int r = 0; r < peers; ++r) {
+    int peer = peerAt(p,group,r,x,y);
+    struct PmeBox out = intersect(old,bounds(p,to,peer));
+    struct PmeBox in = intersect(next,bounds(p,from,peer));
     ns[r] = 2 * volume(out);
     nr[r] = 2 * volume(in);
     os[r] = sent;
@@ -202,14 +233,12 @@ static void transpose(struct PmePencils *p, int from, int to, double *src,
     received += nr[r];
   }
   size_t width = p->mixed ? sizeof(float) : sizeof(double);
-  mdrtDistMeshBytes(DistTransposeBytes, (int64_t)(sent - ns[p->rank]) * width);
-  if (p->mixed)
-    mdrtMPIExchangeFloats(p->send, ns, os, p->recv, nr, or);
-  else
-    mdrtMPIExchange(p->send, ns, os, p->recv, nr, or, 0);
-  for (int r = 0; r < p->peers; ++r)
-    transfer(next, intersect(next, bounds(p, from, r)), dst, p->recv, or[r],
-             p->mixed, 0);
+  mdrtDistMeshBytes(DistTransposeBytes, (int64_t)(sent - ns[self]) * width);
+  mdrtMPIPencilExchange(group,p->send,ns,os,p->recv,nr,or,p->mixed);
+  for (int r = 0; r < peers; ++r) {
+    int peer = peerAt(p,group,r,x,y);
+    transfer(next,intersect(next,bounds(p,from,peer)),dst,p->recv,or[r],p->mixed,0);
+  }
   mdrtDistPhase(-DistTranspose);
 #endif
 }
@@ -245,6 +274,12 @@ struct PmePencils *mdrtPmeSpatialPencils(int nx, int ny, int nz, int px, int py,
     p->gx = gx;
     p->gy = gy;
   }
+#ifdef MDIR_ENABLE_MPI
+  if (mpi && p->peers > 1) {
+    int logical = p->rank < px*py ? logicalRank(p,p->rank) : -1;
+    mdrtMPIPencilCommunicators(px,py,p->gx,p->gy,logical);
+  }
+#endif
   int largest = 0;
   for (int a = 0; a < 3; ++a) {
     int points = volume(bounds(p, a, p->rank));
@@ -256,7 +291,7 @@ struct PmePencils *mdrtPmeSpatialPencils(int nx, int ny, int nz, int px, int py,
   size_t wireWidth = mixed ? sizeof(float) : sizeof(double);
   p->send = allocate(2 * (size_t)largest, wireWidth);
   p->recv = allocate(2 * (size_t)largest, wireWidth);
-  p->schedule = allocate(p->peers, 4 * sizeof(int));
+  p->schedule = allocate((size_t)px*py,4*sizeof(int));
   acquirePlans(p);
   return p;
 }

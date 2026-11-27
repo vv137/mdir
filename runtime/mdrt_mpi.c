@@ -7,9 +7,16 @@
 
 static MPI_Comm comm = MPI_COMM_NULL;
 static MPI_Comm nodeComm = MPI_COMM_NULL;
+static MPI_Comm pencilComm[] = {MPI_COMM_NULL,MPI_COMM_NULL,MPI_COMM_NULL};
+static int pencilPx, pencilPy, pencilGx, pencilGy;
 static int nodeSize, *nodeRanks, *rankNodes;
 static MPI_Datatype wideWord = MPI_DATATYPE_NULL;
 static int initializedHere, rank, size;
+
+static void freePencilCommunicators(void) {
+  for (int i = 0; i < 3; ++i)
+    if (pencilComm[i] != MPI_COMM_NULL) MPI_Comm_free(pencilComm+i);
+}
 
 static void finish(void) {
   int done;
@@ -18,6 +25,7 @@ static void finish(void) {
     MPI_Type_free(&wideWord);
     free(nodeRanks);
     free(rankNodes);
+    freePencilCommunicators();
     MPI_Comm_free(&nodeComm);
     MPI_Comm_free(&comm);
     if (initializedHere)
@@ -32,13 +40,15 @@ extern void mdrtDistPhase(int64_t phase);
 
 // Time arrival at the payload collective with a rendezvous on the same
 // communicator. The measurement includes the latency of the barrier.
-static void arrival(void) {
-  if (size > 1 && mdrtDistObserving()) {
+static void arrivalOn(MPI_Comm group, int participants) {
+  if (participants > 1 && mdrtDistObserving()) {
     mdrtDistPhase(DistWait);
-    MPI_Barrier(comm);
+    MPI_Barrier(group);
     mdrtDistPhase(-DistWait);
   }
 }
+static void arrival(void) { arrivalOn(comm,size); }
+
 void mdrtMPIGatherMetrics(const void *send, void *recv, int bytes) {
   MPI_Allgather(send, bytes, MPI_BYTE, recv, bytes, MPI_BYTE, comm);
 }
@@ -165,6 +175,30 @@ void mdrtMPIShareBlocks(void *values, const int *counts, const int *offsets, int
   arrival();
   MPI_Allgatherv(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, values, counts, offsets,
                  words ? wideWord : MPI_DOUBLE, comm);
+}
+
+/* Logical pencil indices encode the two process-grid coordinates.
+   A new layout has the same cache key on every transport rank. */
+void mdrtMPIPencilCommunicators(int px, int py, int gx, int gy, int logical) {
+  if (pencilPx == px && pencilPy == py && pencilGx == gx && pencilGy == gy) return;
+  freePencilCommunicators();
+  int active = logical >= 0;
+  MPI_Comm_split(comm,active ? logical/py : MPI_UNDEFINED,active ? logical%py : 0,pencilComm);
+  MPI_Comm_split(comm,active ? logical%py : MPI_UNDEFINED,active ? logical/py : 0,pencilComm+1);
+  MPI_Comm_split(comm,active ? 0 : MPI_UNDEFINED,active ? logical : 0,pencilComm+2);
+  pencilPx = px;
+  pencilPy = py;
+  pencilGx = gx;
+  pencilGy = gy;
+}
+
+void mdrtMPIPencilExchange(int group, void *send, const int *ns, const int *os,
+                            void *recv, const int *nr, const int *offsets, int mixed) {
+  MPI_Comm participants = pencilComm[group];
+  MPI_Datatype type = mixed ? MPI_FLOAT : MPI_DOUBLE;
+  int count = group == 0 ? pencilPy : (group == 1 ? pencilPx : pencilPx*pencilPy);
+  arrivalOn(participants,count);
+  MPI_Alltoallv(send,ns,os,type,recv,nr,offsets,type,participants);
 }
 
 int mdrtMPIAllTrue(int predicate) {

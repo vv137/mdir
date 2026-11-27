@@ -1595,3 +1595,11 @@ one-dimensional factors and the inverse squared wave number. The rank
 evaluates each axis factor once per local index, then multiplies the
 rounded factors and the complex spectrum in binary32. Squared spectrum
 magnitudes and virial terms retain the original binary64 arithmetic.
+
+In MPI CPU PME, row and column all-to-alls handle adjacent pencil
+transposes [Jung2019Scaling]. Only ranks in the corresponding pencil
+group can have intersecting source and destination boxes. The mixed
+inverse uses the full mesh communicator for its direct two-coordinate
+transpose. The intersections and transform order continue to define
+the same discrete electrostatic operator.
+D[distribute-pencil-collectives].

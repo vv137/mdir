@@ -621,7 +621,8 @@ For electrostatic PME, `pme_ranks` in `[distribute]` selects a positive
 number of mesh ranks, defaulting to the communicator size.
 `pme_decomposition = [a, b]` pins the two mesh-rank dimensions. Their
 product must agree with an explicit rank count. The log prints both
-the physical PME grid and its pencil decomposition (D[distribute-pme]).
+the physical PME grid and its pencil decomposition (D[distribute-pme]). FFT transposes use the mesh rank groups
+induced by the pencil grid (D[distribute-pencil-collectives]).
 
 For MPI transport, the driver assembles native output fields in particle identity order from distributed ranges (D[distribute-cpu-threads]).
 
