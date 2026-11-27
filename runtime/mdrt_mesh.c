@@ -706,8 +706,12 @@ void _mlir_ciface_mdrtDistSpatialPME(struct Rows *rows, int64_t first, int64_t p
     rank = mdrtMPIRank();
   }
 #endif
+  /* Fewer particle domains than ranks reserves the remaining ranks for
+     reciprocal pencils [Hess2008]. Charge and potential still cross the
+     full transport; particle work has no rows on the mesh ranks. */
+  int rankBase = rows->size < peers ? rows->size : 0;
   struct PmePencils *mesh =
-      mdrtPmeSpatialPencils(nx, ny, nz, px, py, order, mpi, mixed, gx, gy, gz);
+      mdrtPmeRankGroup(nx,ny,nz,px,py,order,mpi,mixed,gx,gy,gz,rankBase);
   struct PmeBox realBox = mdrtPmeRealBox(mesh),
                 modes = mdrtPmeSpectrumBox(mesh);
   mdrtDistPhase(DistSpread);

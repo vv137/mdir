@@ -1682,3 +1682,10 @@ The mixed inverse's direct first-to-last exchange uses all PME ranks to
 retain binary32 rounding in the original axis order. The selected PME
 ranks still exchange charge and potential with the particle ranks.
 See [D[distribute-pencil-collectives]](decisions/distribute-pencil-collectives.md).
+
+MPI can reserve a separate rank range for reciprocal pencils using the
+existing particle domain and PME rank counts. Choose counts that sum
+to the MPI transport size. The particle ranks perform spread and
+gather, and the reciprocal ranks execute the FFT and influence stages
+in the existing force schedule [Hess2008](references.md#hess2008).
+See [D[distribute-pme-rank-groups]](decisions/distribute-pme-rank-groups.md).

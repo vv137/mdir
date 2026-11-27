@@ -36,7 +36,7 @@ void mdrtMPISumMigration(int64_t *counts, int64_t domains);
 void mdrtMPIExchangeCounts(const int *send, int *recv);
 void mdrtMPIExchangeRecords(void *send, int *ns, int *os, void *recv,
                             int *nr, int *recvOffsets, int bytes);
-void mdrtMPIPencilCommunicators(int px, int py, int gx, int gy, int logical);
+void mdrtMPIPencilCommunicators(int px, int py, int gx, int gy, int rankBase, int logical);
 void mdrtMPIPencilExchange(int group, void *send, const int *ns, const int *os,
                             void *recv, const int *nr, const int *offsets, int mixed);
 int mdrtMPIAllTrue(int predicate);

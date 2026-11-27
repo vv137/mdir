@@ -12,6 +12,9 @@ struct PmeBox {
 struct PmePencils;
 struct PmePencils *mdrtPmePencils(int nx, int ny, int nz, int px, int py,
                                   int order, int mpi, int mixed);
+struct PmePencils *mdrtPmeRankGroup(int nx, int ny, int nz, int px, int py,
+                                 int order, int mpi, int mixed,
+                                 int64_t gx, int64_t gy, int64_t gz, int rankBase);
 struct PmePencils *mdrtPmeSpatialPencils(int nx, int ny, int nz, int px, int py,
                                          int order, int mpi, int mixed,
                                          int64_t gx, int64_t gy, int64_t gz);

@@ -336,3 +336,5 @@ D[distribute-tuple-cost] uses measured bonded-kernel cost and existing halo
 coverage to route a sample of bonded tuples to a lighter adjacent domain.
 D[distribute-pencil-collectives] restricts distributed PME FFT
 transposes to the row, column, or mesh communicator that owns the data.
+D[distribute-pme-rank-groups] supports disjoint particle and reciprocal
+pencil rank ranges. Overlapping the two stages requires a separate schedule.

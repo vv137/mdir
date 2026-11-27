@@ -1499,7 +1499,7 @@ static void migrateLocal(struct Layout *old, struct Layout *next, struct Memref3
                          int64_t first, int64_t past, int keepPositions) {
   int peers = mdrtMPISize(), rank = mdrtMPIRank();
   int64_t capacity = (past-first)*old->stride;
-  int64_t *targets = malloc(capacity*sizeof *targets);
+  int64_t *targets = malloc((capacity ? capacity : 1)*sizeof *targets);
   next->migrationCounts = calloc(4*(size_t)peers,sizeof(int));
   if (!targets || !next->migrationCounts) fail("out of memory planning migration");
   int *ns = next->migrationCounts, *nr = ns+peers, *os = nr+peers, *or = os+peers;
@@ -1582,8 +1582,8 @@ static void migrateLocal(struct Layout *old, struct Layout *next, struct Memref3
   for (int64_t d = 0; d < next->domains; ++d)
     if (next->rows[d] > next->stride) next->stride = next->rows[d];
   next->idBase = first;
-  next->ids = malloc((past-first)*next->stride*sizeof *next->ids);
-  size_t slots = (past-first)*next->stride;
+  size_t slots = (past > first ? (past-first)*next->stride : 1);
+  next->ids = malloc(slots*sizeof *next->ids);
   next->sourceSlots = malloc(slots*sizeof *next->sourceSlots);
   if (!next->sourceSlots || !next->ids) fail("out of memory indexing migrated rows");
   if (old->groupCount) {
@@ -2208,10 +2208,10 @@ void mdrtDistEndPartition(int64_t handle) {
   for (int64_t d = 0; d < l->domains; ++d) if (l->rows[d] > l->stride) l->stride = l->rows[d];
   int64_t first = mdrtMPIDomainBound(l->domains,0), past = mdrtMPIDomainBound(l->domains,1);
   l->idBase = first;
-  size_t slots = (past-first)*l->stride;
+  size_t slots = past > first ? (past-first)*l->stride : 1;
   l->ids = malloc(slots*sizeof *l->ids);
   if (l->groupCount) l->localGroups = malloc(slots*sizeof *l->localGroups);
-  int64_t *cursor = calloc(past-first,sizeof *cursor);
+  int64_t *cursor = calloc(past > first ? past-first : 1,sizeof *cursor);
   if (!l->ids || !cursor || (l->groupCount && !l->localGroups)) fail("out of memory numbering initial rows");
   for (int i = 0; i < route.receives; ++i) {
     int64_t d = in[i].domain-first, slot = d*l->stride+cursor[d]++;
@@ -2517,7 +2517,7 @@ static void routeGhostRows(struct Halo *h, struct GhostList *lists, struct Ghost
     if (h->rows[d] > h->capacity) h->capacity = h->rows[d];
   if (!h->capacity) h->capacity = 1;
   h->idBase = first;
-  int64_t cap = h->capacity, slots = (past-first)*cap;
+  int64_t cap = h->capacity, slots = past > first ? (past-first)*cap : 1;
   h->ids = malloc(slots*sizeof *h->ids);
   h->image = malloc(slots*3*sizeof *h->image);
   int64_t locals = 0;
@@ -4299,7 +4299,8 @@ int64_t _mlir_ciface_mdrtDistEpochHalo(int64_t layout, struct Memref3D *x,
     struct Layout *l = (struct Layout *)(intptr_t)layout;
     if (l->mpi && mdrtMPISize() > 1) {
       int64_t first = mdrtMPIDomainBound(l->domains,0), past = mdrtMPIDomainBound(l->domains,1);
-      e->ownedReference = realloc(e->ownedReference,3*(past-first)*l->stride*sizeof(double));
+      size_t slots = past > first ? (past-first)*l->stride : 1;
+      e->ownedReference = realloc(e->ownedReference,3*slots*sizeof(double));
       if (!e->ownedReference) fail("out of memory retaining local reference positions");
       for (int64_t d = first; d < past; ++d)
         for (int64_t r = 0; r < l->rows[d]; ++r)

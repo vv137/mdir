@@ -542,7 +542,8 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     d.broadcastPmeConstants = mdrtMPIBroadcast;
     if (!d.gridGiven) d.domains = ranks;
     auto domains = d.domains ? d.domains : d.grid[0]*d.grid[1]*d.grid[2];
-    if (domains < ranks)
+    // A disjoint mesh assigns the final ranks to PME pencils [Hess2008].
+    if (domains < ranks && (!d.pmeRanks || d.pmeRanks != ranks-domains))
       return writer ? refuse(*control, llvm::createStringError("each rank needs at least one domain")) : 1;
   }
 #endif
@@ -1119,6 +1120,9 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     output.log.print("MDIR: PME mesh %lld x %lld x %lld, pencil decomposition %lld x %lld, %lld mesh ranks\n",
       (long long)program->pmeGrid[0],(long long)program->pmeGrid[1],(long long)program->pmeGrid[2],
       (long long)shape[0],(long long)shape[1],(long long)count);
+    const auto &g = program->domainGrid;
+    if (g[0]*g[1]*g[2] < ranks)
+      output.log.print("MDIR: disjoint particle-domain and PME-pencil ranks\n");
   }
   if (emit == Emit::Module) {
     llvm::outs() << printModuleForReading(*program);

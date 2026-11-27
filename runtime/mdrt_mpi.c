@@ -8,7 +8,7 @@
 static MPI_Comm comm = MPI_COMM_NULL;
 static MPI_Comm nodeComm = MPI_COMM_NULL;
 static MPI_Comm pencilComm[] = {MPI_COMM_NULL,MPI_COMM_NULL,MPI_COMM_NULL};
-static int pencilPx, pencilPy, pencilGx, pencilGy;
+static int pencilPx, pencilPy, pencilGx, pencilGy, pencilRankBase;
 static int nodeSize, *nodeRanks, *rankNodes;
 static MPI_Datatype wideWord = MPI_DATATYPE_NULL;
 static int initializedHere, rank, size;
@@ -104,8 +104,6 @@ int mdrtMPINodeSize(void) { initialize(); return nodeSize; }
 
 int64_t mdrtMPIDomainBound(int64_t domains, int64_t end) {
   initialize();
-  if (domains < size)
-    mdrtMPIAbort("each rank needs at least one domain");
   int r = rank + (end != 0);
   int64_t q = domains / size, remainder = domains % size;
   return r * q + (r < remainder ? r : remainder);
@@ -179,8 +177,9 @@ void mdrtMPIShareBlocks(void *values, const int *counts, const int *offsets, int
 
 /* Logical pencil indices encode the two process-grid coordinates.
    A new layout has the same cache key on every transport rank. */
-void mdrtMPIPencilCommunicators(int px, int py, int gx, int gy, int logical) {
-  if (pencilPx == px && pencilPy == py && pencilGx == gx && pencilGy == gy) return;
+void mdrtMPIPencilCommunicators(int px, int py, int gx, int gy, int rankBase, int logical) {
+  if (pencilPx == px && pencilPy == py && pencilGx == gx && pencilGy == gy &&
+      pencilRankBase == rankBase) return;
   freePencilCommunicators();
   int active = logical >= 0;
   MPI_Comm_split(comm,active ? logical/py : MPI_UNDEFINED,active ? logical%py : 0,pencilComm);
@@ -190,6 +189,7 @@ void mdrtMPIPencilCommunicators(int px, int py, int gx, int gy, int logical) {
   pencilPy = py;
   pencilGx = gx;
   pencilGy = gy;
+  pencilRankBase = rankBase;
 }
 
 void mdrtMPIPencilExchange(int group, void *send, const int *ns, const int *os,

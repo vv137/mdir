@@ -1603,3 +1603,10 @@ inverse uses the full mesh communicator for its direct two-coordinate
 transpose. The intersections and transform order continue to define
 the same discrete electrostatic operator.
 D[distribute-pencil-collectives].
+
+An explicit rank split assigns fewer particle domains than MPI ranks
+and gives all remaining ranks to the reciprocal mesh [Hess2008].
+Charge and potential still transfer across the full communicator.
+Only the owners of reciprocal pencils perform the transforms and
+influence operation, at the same point in the ordered force schedule.
+D[distribute-pme-rank-groups].

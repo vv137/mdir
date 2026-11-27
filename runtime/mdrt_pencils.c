@@ -17,7 +17,7 @@ extern void mdrtDistPhase(int64_t);
 
 struct PmePencils {
   int gx, gy; /* Physical grid when each local tile is a union of pencils. */
-  int n[3], px, py, rank, peers, mixed;
+  int n[3], px, py, rank, peers, mixed, rankBase;
   rfft_plan rz;
   cfft_plan cy, cx;
   double *a, *b;
@@ -86,7 +86,12 @@ static void cut(struct PmeBox *b, int axis, int parts, int part) {
   b->hi[axis] = (int64_t)n * (part + 1) / parts;
 }
 
+static int activeRank(const struct PmePencils *p, int rank) {
+  return rank >= p->rankBase && rank-p->rankBase < p->px*p->py;
+}
+
 static int logicalRank(const struct PmePencils *p, int rank) {
+  rank -= p->rankBase;
   /* Physical rank order is x-fastest. Subdivide each physical x/y tile
      among its z ranks using the same permutation for every FFT axis. */
   if (p->gx) {
@@ -101,17 +106,17 @@ static int logicalRank(const struct PmePencils *p, int rank) {
 
 #ifdef MDIR_ENABLE_MPI
 static int physicalRank(const struct PmePencils *p, int x, int y) {
-  if (!p->gx) return x*p->py+y;
+  if (!p->gx) return p->rankBase+x*p->py+y;
   int tilesX = p->px/p->gx, tilesY = p->py/p->gy;
   int z = x%tilesX+tilesX*(y%tilesY);
-  return x/tilesX+p->gx*(y/tilesY+p->gy*z);
+  return p->rankBase+x/tilesX+p->gx*(y/tilesY+p->gy*z);
 }
 #endif
 
 /* z: [x/P,y/Q,z]; y: [x/P,y,h/Q]; x: [x,y/P,h/Q]. */
 static struct PmeBox bounds(const struct PmePencils *p, int axis, int rank) {
   struct PmeBox b = {{0, 0, 0}, {0, 0, 0}};
-  if (rank >= p->px*p->py) return b;
+  if (!activeRank(p,rank)) return b;
   memcpy(b.hi,p->n,sizeof b.hi);
   b.hi[2] = p->n[2]/2+1;
   rank = logicalRank(p,rank);
@@ -122,7 +127,7 @@ static struct PmeBox bounds(const struct PmePencils *p, int axis, int rank) {
 
 struct PmeBox mdrtPmeRealBoxAt(const struct PmePencils *p, int rank) {
   struct PmeBox b = bounds(p, 2, rank);
-  if (rank < p->px * p->py)
+  if (activeRank(p,rank))
     b.hi[2] = p->n[2];
   return b;
 }
@@ -207,7 +212,7 @@ static void transpose(struct PmePencils *p, int from, int to, double *src,
     return;
   }
 #ifdef MDIR_ENABLE_MPI
-  if (p->rank >= p->px*p->py) return;
+  if (!activeRank(p,p->rank)) return;
   mdrtDistPhase(DistTranspose);
   /* The adjacent pencil transposes vary one process-grid coordinate
      [Jung2019Scaling]. The mixed inverse also has a direct x/z transpose
@@ -243,9 +248,9 @@ static void transpose(struct PmePencils *p, int from, int to, double *src,
 #endif
 }
 
-struct PmePencils *mdrtPmeSpatialPencils(int nx, int ny, int nz, int px, int py,
-                                         int order, int mpi, int mixed,
-                                         int64_t gx, int64_t gy, int64_t gz) {
+struct PmePencils *mdrtPmeRankGroup(int nx, int ny, int nz, int px, int py,
+                                 int order, int mpi, int mixed,
+                                 int64_t gx, int64_t gy, int64_t gz, int rankBase) {
   struct PmePencils *p = allocate(1, sizeof *p);
   p->peers = 1;
   p->mixed = mixed;
@@ -258,7 +263,7 @@ struct PmePencils *mdrtPmeSpatialPencils(int nx, int ny, int nz, int px, int py,
   if (mpi)
     fail("MPI transport unavailable");
 #endif
-  if (px < 1 || py < 1 || px > p->peers / py)
+  if (rankBase < 0 || rankBase >= p->peers || px < 1 || py < 1 || px > (p->peers-rankBase) / py)
     fail("PME decomposition exceeds the transport rank count");
   if (order < 2 || nx / px < order - 1 || ny / py < order - 1 || nz < order)
     fail("real-space PME pencil is smaller than the assignment overlap");
@@ -267,6 +272,7 @@ struct PmePencils *mdrtPmeSpatialPencils(int nx, int ny, int nz, int px, int py,
   p->n[0] = nx;
   p->n[1] = ny;
   p->n[2] = nz;
+  p->rankBase = rankBase;
   p->px = px;
   p->py = py;
   if (gx > 0 && gy > 0 && gz > 0 && px % gx == 0 && py % gy == 0 &&
@@ -276,8 +282,8 @@ struct PmePencils *mdrtPmeSpatialPencils(int nx, int ny, int nz, int px, int py,
   }
 #ifdef MDIR_ENABLE_MPI
   if (mpi && p->peers > 1) {
-    int logical = p->rank < px*py ? logicalRank(p,p->rank) : -1;
-    mdrtMPIPencilCommunicators(px,py,p->gx,p->gy,logical);
+    int logical = activeRank(p,p->rank) ? logicalRank(p,p->rank) : -1;
+    mdrtMPIPencilCommunicators(px,py,p->gx,p->gy,rankBase,logical);
   }
 #endif
   int largest = 0;
@@ -294,6 +300,12 @@ struct PmePencils *mdrtPmeSpatialPencils(int nx, int ny, int nz, int px, int py,
   p->schedule = allocate((size_t)px*py,4*sizeof(int));
   acquirePlans(p);
   return p;
+}
+
+struct PmePencils *mdrtPmeSpatialPencils(int nx, int ny, int nz, int px, int py,
+                                         int order, int mpi, int mixed,
+                                         int64_t gx, int64_t gy, int64_t gz) {
+  return mdrtPmeRankGroup(nx,ny,nz,px,py,order,mpi,mixed,gx,gy,gz,0);
 }
 
 struct PmePencils *mdrtPmePencils(int nx, int ny, int nz, int px, int py,
