@@ -163,7 +163,7 @@ the rows at step 60 differ by 7.218 kcal/mol between the two programs,
 against $1.6\times10^{-3}$ between `mdir run` in mixed and in double; on
 an RTX 4090 by 14.47 kcal/mol at step 100, within 3 E there only because
 `mdir run` in mixed and in double were 16.2 kcal/mol apart by such steps
-too. The double-precision rows check every column, byte for byte.
+too. The kinetic energy and the temperature do not jump at such a crossing, but their gap grows by kicks: the pair differs in force by $332.06\,q_iq_j/r_c^2$, 0.90 kcal/mol/Å for two hydrogens, while it is on opposite sides, and 3 E holds as long as the baseline takes kicks of the same kind. Measured at the worst row (step 80 of NVT): the kinetic energy at 0.75 of its bound on a V100, 0.65 on an RTX 4090, and 0.01 on the CPU; the frames at 0.18, 0.17, and below 0.001. The double-precision rows check every column, byte for byte.
 
 With SHAKE and
 SETTLE, where the rows take the optimal temperature from the half steps

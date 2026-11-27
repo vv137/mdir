@@ -141,8 +141,15 @@ for kind in ("NVE", "NVT"):
             # RTX 4090, within 3 E there only because `mdir run` in mixed
             # and in double were 16.2 apart by such steps too). In double
             # precision every column is compared above, byte for byte.
-            # The kinetic energy and the temperature (columns 4 and 5) are
-            # continuous along a trajectory and are compared within 3 E.
+            # The kinetic energy and the temperature (columns 4 and 5) do
+            # not jump when a pair crosses the cutoff, and are compared
+            # within 3 E. Their gap still grows by kicks: such a pair
+            # differs in force by 332.06 q_i q_j / r_c^2 (0.90 kcal/mol/A
+            # for two hydrogens) for as long as it is on opposite sides, so
+            # 3 E holds as long as the run of `mdir run` in double takes
+            # kicks of the same kind. Measured at step 80 of NVT: 0.75 of
+            # the bound on a V100 and 0.65 on an RTX 4090 for the kinetic
+            # energy, 0.01 on the CPU; the frames 0.18, 0.17, and 0.001.
             worst, shifted = 0.0, 0
             for i, (a, b, d) in enumerate(zip(mine, theirs, double_rows)):
                 a, b, d = (np.array([float(x) for x in r.split()])[[0, 1, 4, 5]]
