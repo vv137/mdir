@@ -1654,3 +1654,15 @@ state between evaluations. Spatial owners and interval owners exchange only
 the rows of their respective schedules. A halo projects the distributed
 exclusion directory onto its local candidate endpoints
 (D[distribute-cpu-threads]).
+
+### Automatic particle-domain resizing
+
+In the floating-point MPI CPU driver with one midpoint domain per rank,
+the runtime samples real-space force time and barrier arrival wait.
+At a Verlet rebuild it can move the axis planes toward equal measured
+slab cost [Hess2008](references.md#hess2008). The layout then rebuilds
+ownership, explicit images and tuple routes from the same cuts. This
+policy is automatic. The run log prints the choice and the observed
+mean and peak force time and mean arrival wait. Fixed-point mode uses
+uniform domains. See [D[distribute-auto-balance]](decisions/distribute-auto-balance.md)
+for the sampling window and displacement bounds.

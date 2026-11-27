@@ -15,12 +15,25 @@ static int64_t division(double u, int64_t g) {
   return a;
 }
 
+/* Nonuniform cuts share the same primary-cell convention as division. */
+static int64_t cutDivision(double u, int64_t grid, const double *cuts) {
+  if (!cuts) return division(u,grid);
+  int64_t lo = 0, hi = grid;
+  while (hi-lo > 1) {
+    int64_t mid = lo+(hi-lo)/2;
+    if (u < cuts[mid]) hi = mid;
+    else lo = mid;
+  }
+  return lo;
+}
+
 /* Classify the fractional midpoint relative to the cell of this explicit
    image, using the same primary-cell wrap and rounded division as selection. */
-static int compareMidpoint(double u, int64_t image, int64_t grid, int64_t cell) {
+static int compareMidpoint(double u, int64_t image, int64_t grid, int64_t cell,
+                           const double *cuts) {
   double whole = floor(u), target = -(double)image;
   if (whole != target) return whole < target ? -1 : 1;
-  int64_t domain = division(u-whole, grid);
+  int64_t domain = cutDivision(u-whole,grid,cuts);
   return (domain > cell) - (domain < cell);
 }
 
@@ -39,22 +52,22 @@ static double orderedCoordinate(uint64_t key) {
 }
 
 static double midpointFace(double length, int64_t image, int64_t grid,
-                           int64_t cell, int past) {
+                           int64_t cell, int past, const double *cuts) {
   uint64_t lo = UINT64_C(0x000fffffffffffff); /* -infinity */
   uint64_t hi = UINT64_C(0xfff0000000000000); /* +infinity */
   while (hi-lo > 1) {
     uint64_t mid = lo+(hi-lo)/2;
-    int side = compareMidpoint(orderedCoordinate(mid)/length,image,grid,cell);
+    int side = compareMidpoint(orderedCoordinate(mid)/length,image,grid,cell,cuts);
     if (side >= past) hi = mid;
     else lo = mid;
   }
   return orderedCoordinate(hi);
 }
 
-static struct MidpointRange midpointRange(double edge, int64_t image,
-                                         int64_t grid, int64_t cell) {
-  return (struct MidpointRange){midpointFace(edge,image,grid,cell,0),
-                                midpointFace(edge,image,grid,cell,1)};
+static struct MidpointRange midpointCutRange(double edge, int64_t image,
+                                            int64_t grid, int64_t cell, const double *cuts) {
+  return (struct MidpointRange){midpointFace(edge,image,grid,cell,0,cuts),
+                                midpointFace(edge,image,grid,cell,1,cuts)};
 }
 
 struct MidpointBounds {

@@ -736,8 +736,11 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
         }
         if (!cache) {
           OpBuilder init(scope);
+          StringRef createEpoch = mpi && !fixedPoint && (mode & 1)
+                                      ? "mdrtDistBalancedEpochCreate"
+                                      : "mdrtDistEpochCreate";
           cache = func::CallOp::create(init, loc,
-              declare("mdrtDistEpochCreate", b.getFunctionType({}, {i64}), false)).getResult(0);
+              declare(createEpoch, b.getFunctionType({}, {i64}), false)).getResult(0);
           OpBuilder after(scope->getBlock(), std::next(scope->getIterator()));
           func::CallOp::create(after, loc,
               declare("mdrtDistEpochDestroy", b.getFunctionType({i64}, {}), false), ValueRange{cache});

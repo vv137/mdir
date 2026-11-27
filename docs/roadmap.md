@@ -329,3 +329,6 @@ D[distribute-cpu-threads] carries the native integration state in compact
 identity intervals and projects exclusion membership onto each halo.
 The particle-halo runtime can wait immediately after posting messages
 to measure the effect of overlapping independent rows.
+
+D[distribute-auto-balance] samples real-space force clocks and can resize
+midpoint particle domains at existing Verlet rebuilds in floating-point MPI.

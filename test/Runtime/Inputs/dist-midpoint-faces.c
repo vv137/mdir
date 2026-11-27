@@ -1,12 +1,24 @@
 #include "mdrt_midpoint.h"
 #include <assert.h>
 #include <float.h>
+#include <stddef.h>
 
 /* Check both adjacent binary64 values at each rounded entry and exit,
    including negative images and cells with no representable numerators. */
 static void check(double x, double edge, int image, int grid, int cell,
-                  struct MidpointRange range) {
-  int reference = compareMidpoint(x/edge,image,grid,cell);
+                  struct MidpointRange range, const double *cuts) {
+  double u = x/edge, whole = floor(u);
+  int reference;
+  if (whole != -image) {
+    reference = whole < -image ? -1 : 1;
+  } else if (cuts) {
+    int owner = 0;
+    while (owner+1 < grid && u-whole >= cuts[owner+1]) ++owner;
+    reference = (owner > cell)-(owner < cell);
+  } else {
+    int64_t owner = division(u-whole,grid);
+    reference = (owner > cell)-(owner < cell);
+  }
   assert((x >= range.lower) == (reference >= 0));
   assert((x >= range.upper) == (reference > 0));
 }
@@ -50,19 +62,32 @@ int main(void) {
       for (int cell = 0; cell < grids[g]; ++cell)
         for (int image = -3; image <= 3; ++image) {
           double edge = edges[e];
-          struct MidpointRange r = midpointRange(edge,image,grids[g],cell);
+          struct MidpointRange r = midpointCutRange(edge,image,grids[g],cell,NULL);
           double probes[] = {r.lower, r.upper, -0.0, 0.0, edge,
                              edge*((double)cell/grids[g]-image)};
           for (unsigned p = 0; p < sizeof probes/sizeof *probes; ++p) {
             double x = probes[p];
             /* An infinite upper endpoint can represent an empty cell
                beyond all finite coordinates. The contract is finite x. */
-            if (isfinite(x)) check(x,edge,image,grids[g],cell,r);
+            if (isfinite(x)) check(x,edge,image,grids[g],cell,r,NULL);
             double low = nextafter(x,-INFINITY), high = nextafter(x,INFINITY);
-            if (isfinite(low)) check(low,edge,image,grids[g],cell,r);
-            if (isfinite(high)) check(high,edge,image,grids[g],cell,r);
+            if (isfinite(low)) check(low,edge,image,grids[g],cell,r,NULL);
+            if (isfinite(high)) check(high,edge,image,grids[g],cell,r,NULL);
           }
         }
+  const double cuts[] = {0, 0.28, 0.69, 1};
+  for (int image = -3; image <= 3; ++image)
+    for (int cell = 0; cell < 3; ++cell) {
+      double edge = 19.750000000000004;
+      struct MidpointRange r = midpointCutRange(edge,image,3,cell,cuts);
+      double faces[] = {r.lower, r.upper};
+      for (int i = 0; i < 2; ++i) {
+        double face = faces[i];
+        check(nextafter(face,-INFINITY),edge,image,3,cell,r,cuts);
+        check(face,edge,image,3,cell,r,cuts);
+        check(nextafter(face,INFINITY),edge,image,3,cell,r,cuts);
+      }
+    }
   double scales[] = {DBL_MIN, 1.0, 123.5, 0x1p500, DBL_MAX/8};
   for (unsigned i = 0; i < sizeof scales/sizeof *scales; ++i)
     for (int exponent = 3; exponent <= 60; exponent += 3)

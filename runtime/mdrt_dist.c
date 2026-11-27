@@ -26,6 +26,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef MDIR_ENABLE_MPI
+#include <time.h>
+#endif
 
 struct Memref1I {
   int64_t *allocated, *aligned;
@@ -63,7 +66,42 @@ void mdrtDistMeshBytes(enum DistMeshTraffic kind, int64_t bytes) {
     observer->meshBytes(observer->context, kind, bytes);
 }
 
+#ifdef MDIR_ENABLE_MPI
+struct BalanceClock {
+  double force, wait, started, waitStarted;
+  int steps, phase;
+};
+static _Thread_local struct BalanceClock *balanceClock;
+
+static void measureBalance(int64_t phase) {
+  struct BalanceClock *b = balanceClock;
+  if (!b) return;
+  if (phase == DistStep) ++b->steps;
+  if (phase != DistPairs && phase != -DistPairs &&
+      phase != DistOther && phase != -DistOther &&
+      phase != DistWait && phase != -DistWait) return;
+  struct timespec stamp;
+  clock_gettime(CLOCK_MONOTONIC, &stamp);
+  double now = stamp.tv_sec+1.e-9*stamp.tv_nsec;
+  if (phase == DistWait) b->waitStarted = now;
+  else if (phase == -DistWait) {
+    double elapsed = now-b->waitStarted;
+    b->wait += elapsed;
+    if (b->phase) b->force -= elapsed;
+  } else if (phase > 0) {
+    b->started = now;
+    b->phase = phase;
+  } else if (b->phase == -phase) {
+    b->force += now-b->started;
+    b->phase = 0;
+  }
+}
+#endif
+
 void mdrtDistPhase(int64_t phase) {
+#ifdef MDIR_ENABLE_MPI
+  measureBalance(phase);
+#endif
   if (observer)
     observer->phase(observer->context, phase);
 }
@@ -91,6 +129,7 @@ struct Layout {
   int64_t references;
   int64_t grid[3], domains, count, stride;
   double edges[3];
+  double *cuts[3];
   struct ConstraintGroup {
     int32_t atoms[4];
     int size;
@@ -427,8 +466,19 @@ static DistWide *wordAt(struct Memref3W *m, int64_t d, int64_t r, int64_t c) {
          c * m->strides[2];
 }
 
-/* The cell of the grid that fractional coordinate `u` along an axis of `g`
-   divisions falls in. */
+static int64_t layoutDivision(const struct Layout *l, int axis, double u) {
+  return cutDivision(u,l->grid[axis],l->cuts[axis]);
+}
+
+static void copyCuts(struct Layout *to, double *const from[3]) {
+  for (int axis = 0; axis < 3; ++axis) {
+    if (!from[axis]) continue;
+    size_t bytes = (to->grid[axis]+1)*sizeof(double);
+    to->cuts[axis] = malloc(bytes);
+    if (!to->cuts[axis]) fail("out of memory copying domain boundaries");
+    memcpy(to->cuts[axis],from[axis],bytes);
+  }
+}
 
 /* xi is the untranslated position of the lesser identity. Form its midpoint
    before choosing a grid. Of all common translations of this pair, use
@@ -629,7 +679,7 @@ static void rowRanges(const struct Layout *l, const int64_t cell[3],
                       struct MidpointRange ranges[3]) {
   for (int c = 0; c < 3; ++c)
     ranges[c] = image[c] >= -1 && image[c] <= 1 ? common[c][image[c]+1] :
-        midpointRange(l->edges[c],image[c],l->grid[c],cell[c]);
+        midpointCutRange(l->edges[c],image[c],l->grid[c],cell[c],l->cuts[c]);
 }
 
 static inline double distanceToRow(const double center[3], struct Memref2D *x, int64_t row) {
@@ -712,7 +762,7 @@ int64_t _mlir_ciface_mdrtDistFilterMatrix(int64_t handle, int64_t matrix,
   if (rule == 2) {
     for (int c = 0; c < 3; ++c)
       for (int image = -1; image <= 1; ++image)
-        common[c][image+1] = midpointRange(l->edges[c],image,l->grid[c],cell[c]);
+        common[c][image+1] = midpointCutRange(l->edges[c],image,l->grid[c],cell[c],l->cuts[c]);
     if (!m->bounds) {
       m->bounds = calloc(m->rows ? m->rows : 1, sizeof *m->bounds);
       m->midpointSites = calloc(m->rows ? m->rows : 1, sizeof *m->midpointSites);
@@ -868,7 +918,7 @@ static int64_t groupOwner(const struct Layout *l, const struct ConstraintGroup *
       sum += delta - length * floor(delta / length + 0.5);
     }
     double u = (points[0][k] + sum / g->size) / length;
-    owner = owner * l->grid[k] + division(u - floor(u), l->grid[k]);
+    owner = owner * l->grid[k] + layoutDivision(l,k,u-floor(u));
   }
   return owner;
 }
@@ -1079,7 +1129,7 @@ int64_t _mlir_ciface_mdrtDistPartition(struct Memref2D *x, int64_t gx,
     int64_t cell[3];
     for (int k = 0; k < 3; ++k) {
       double u = *at2(x, j, k) / l->edges[k];
-      cell[k] = division(u - floor(u), l->grid[k]);
+      cell[k] = layoutDivision(l,k,u-floor(u));
     }
     int64_t d = cell[0] + gx * (cell[1] + gy * cell[2]);
     l->owner[j] = d;
@@ -1261,6 +1311,7 @@ void mdrtDistReleaseLayout(int64_t handle) {
   free(l->sendSlots);
   free(l->sourceSlots);
 #endif
+  for (int axis = 0; axis < 3; ++axis) free(l->cuts[axis]);
   free(l->migratedPositions);
   free(l->localGroups);
   if (l->groupSource) {
@@ -1465,7 +1516,7 @@ static void migrateLocal(struct Layout *old, struct Layout *next, struct Memref3
         for (int k = 0; k < 3; ++k) {
           double u = *at3(x,d,r,k)/next->edges[k];
           if (!isfinite(u)) fail("migration requires finite coordinates");
-          cell[k] = division(u-floor(u),next->grid[k]);
+          cell[k] = layoutDivision(next,k,u-floor(u));
         }
         targets[(d-first)*old->stride+r] = cell[0]+next->grid[0]*(cell[1]+next->grid[1]*cell[2]);
       }
@@ -1595,6 +1646,7 @@ static int64_t migrate(int64_t oldHandle, struct Memref3D *positions,
     next->grid[k] = old->grid[k];
     next->edges[k] = edges[k];
   }
+  copyCuts(next,old->cuts);
   int64_t n = next->count, cap = n > 0 ? n : 1;
   next->rows = calloc(next->domains,sizeof *next->rows);
   if (!next->rows) fail("out of memory counting domains");
@@ -1637,7 +1689,7 @@ static int64_t migrate(int64_t oldHandle, struct Memref3D *positions,
           double coordinate = *at3(positions,d,r,k), u = coordinate/edges[k];
           if (!isfinite(u)) { invalid = 1; u = 0; }
           double image = floor(u);
-          cell[k] = division(u-image,next->grid[k]);
+          cell[k] = layoutDivision(next,k,u-image);
           if (keepPositions) next->migratedPositions[j][k] = coordinate-edges[k]*image;
         }
         if (!old->groupCenters || !old->groupCenters[j]) {
@@ -1751,8 +1803,13 @@ static void domainBox(struct Layout *l, const double (*points)[3], int64_t d,
   int64_t cell[3] = {d % l->grid[0], (d / l->grid[0]) % l->grid[1],
                      d / (l->grid[0] * l->grid[1])};
   for (int k = 0; k < 3; ++k) {
-    lo[k] = l->edges[k] * (double)cell[k] / (double)l->grid[k];
-    hi[k] = l->edges[k] * (double)(cell[k] + 1) / (double)l->grid[k];
+    if (l->cuts[k]) {
+      lo[k] = l->edges[k]*l->cuts[k][cell[k]];
+      hi[k] = l->edges[k]*l->cuts[k][cell[k]+1];
+    } else {
+      lo[k] = l->edges[k] * (double)cell[k] / (double)l->grid[k];
+      hi[k] = l->edges[k] * (double)(cell[k] + 1) / (double)l->grid[k];
+    }
   }
   /* At midpoint ownership the interaction center must lie in the grid
      cell. The reach bounds every participating site from that center.
@@ -1970,8 +2027,8 @@ int64_t mdrtDistHaloExclusions(int64_t halo, int64_t handle) {
   return (int64_t)(intptr_t)local;
 }
 
-int64_t _mlir_ciface_mdrtDistStartPartition(struct Memref2D *x, int64_t gx, int64_t gy,
-                                           int64_t gz, double lx, double ly, double lz) {
+static int64_t startPartition(struct Memref2D *x, int64_t gx, int64_t gy, int64_t gz,
+                              double lx, double ly, double lz, double *const cuts[3]) {
   if (mdrtMPISize() == 1)
     return _mlir_ciface_mdrtDistMPIPartition(x,gx,gy,gz,lx,ly,lz);
   struct Layout *l = calloc(1,sizeof *l);
@@ -1982,6 +2039,7 @@ int64_t _mlir_ciface_mdrtDistStartPartition(struct Memref2D *x, int64_t gx, int6
   l->count = x->sizes[0];
   l->grid[0] = gx; l->grid[1] = gy; l->grid[2] = gz;
   l->edges[0] = lx; l->edges[1] = ly; l->edges[2] = lz;
+  if (cuts) copyCuts(l,cuts);
   int64_t first = mdrtMPIIdentityBound(l->count,0), past = mdrtMPIIdentityBound(l->count,1);
   l->initial = calloc(past > first ? past-first : 1,sizeof *l->initial);
   if (!l->initial) fail("out of memory assigning particle owners");
@@ -1991,12 +2049,17 @@ int64_t _mlir_ciface_mdrtDistStartPartition(struct Memref2D *x, int64_t gx, int6
     for (int k = 2; k >= 0; --k) {
       double u = *at2(x,j,k)/l->edges[k];
       if (!isfinite(u)) fail("partition requires finite positions");
-      d = d*l->grid[k]+division(u-floor(u),l->grid[k]);
+      d = d*l->grid[k]+layoutDivision(l,k,u-floor(u));
     }
     l->initial[j-first].id = j;
     l->initial[j-first].domain = d;
   }
   return (int64_t)(intptr_t)l;
+}
+
+int64_t _mlir_ciface_mdrtDistStartPartition(struct Memref2D *x, int64_t gx, int64_t gy,
+                                           int64_t gz, double lx, double ly, double lz) {
+  return startPartition(x,gx,gy,gz,lx,ly,lz,NULL);
 }
 
 /* A solve that only visits disjoint complete groups may keep its
@@ -3116,7 +3179,7 @@ static int tupleRows(int64_t handle, struct Memref3D *positions,
         double cell = floor(u);
         member[first].image[k] = -(int64_t)cell;
         member[other].image[k] = shift - (int64_t)cell;
-        d = d*l->grid[k] + division(u - cell, l->grid[k]);
+        d = d*l->grid[k] + layoutDivision(l,k,u-cell);
       }
     } else {
       for (int k = 2; k >= 0; --k) {
@@ -3131,7 +3194,7 @@ static int tupleRows(int64_t handle, struct Memref3D *positions,
         }
         double u = (origin + 0.5*(lo + hi)) / length;
         double translation = floor(u);
-        d = d*l->grid[k] + division(u - translation, l->grid[k]);
+        d = d*l->grid[k] + layoutDivision(l,k,u-translation);
         for (int64_t a = 0; a < arity; ++a)
           member[a].image[k] -= (int64_t)translation;
       }
@@ -3922,7 +3985,88 @@ void mdrtDistReleaseHalo(int64_t handle) {
 struct TrajectoryEpoch {
   struct Halo *halo;
   double *reference, *ownedReference;
+#ifdef MDIR_ENABLE_MPI
+  int balance;
+  struct BalanceClock clock;
+  double *cuts[3];
+#endif
 };
+
+#ifdef MDIR_ENABLE_MPI
+static double boundary(const struct TrajectoryEpoch *e, int axis, int index, int width) {
+  return e->cuts[axis] ? e->cuts[axis][index] : (double)index/width;
+}
+
+/* Shift the most imbalanced set of planes at an existing list rebuild
+   [Hess2008]. Estimate each slab's force density from the rank clocks.
+   The limited displacement keeps neighboring faces ordered and bounds
+   changes to halo volume even when the timing sample is noisy. */
+static void balanceEpoch(struct TrajectoryEpoch *e, const struct Layout *l) {
+  if (balanceClock != &e->clock || e->clock.steps < 16) return;
+  int ranks = mdrtMPISize();
+  double (*times)[2] = malloc(ranks*sizeof *times);
+  if (!times) fail("out of memory collecting force times");
+  double local[] = {fmax(e->clock.force,0)/e->clock.steps, e->clock.wait/e->clock.steps};
+  mdrtMPIGatherMetrics(local,times,sizeof local);
+  e->clock = (struct BalanceClock){0};
+  double total = 0, peak = 0, wait = 0;
+  for (int r = 0; r < ranks; ++r) {
+    total += times[r][0];
+    peak = fmax(peak,times[r][0]);
+    wait += times[r][1];
+  }
+  int bestAxis = -1;
+  double bestRatio = 1.05;
+  double *best = NULL;
+  for (int axis = 0; axis < 3; ++axis) {
+    int width = l->grid[axis];
+    if (width < 2) continue;
+    double *slabs = calloc(width,sizeof *slabs);
+    if (!slabs) fail("out of memory averaging slab force times");
+    int stride = axis == 0 ? 1 : l->grid[0];
+    if (axis == 2) stride *= l->grid[1];
+    for (int r = 0; r < ranks; ++r) slabs[(r/stride)%width] += times[r][0];
+    double high = 0;
+    for (int i = 0; i < width; ++i) high = fmax(high,slabs[i]);
+    if (high > bestRatio*total/width) {
+      bestRatio = high/(total/width);
+      bestAxis = axis;
+      free(best);
+      best = slabs;
+    } else {
+      free(slabs);
+    }
+  }
+  if (mdrtMPIRank() == 0)
+    fprintf(stderr,"MDIR: automatic load balance: mean/peak force %.6g/%.6g ms/step, "
+                   "mean arrival wait %.6g ms/step, %s\n",
+            total*1000/ranks,peak*1000,wait*1000/ranks,
+            best ? "adjusting domain boundaries" : "keeping domain boundaries");
+  if (best) {
+    int width = l->grid[bestAxis], slab = 0;
+    double prefix = 0;
+    double *cuts = malloc((width+1)*sizeof *cuts);
+    if (!cuts) fail("out of memory shifting domain boundaries");
+    cuts[0] = 0;
+    cuts[width] = 1;
+    for (int i = 1; i < width; ++i) {
+      double desired = total*i/width;
+      while (slab+1 < width && prefix+best[slab] < desired)
+        prefix += best[slab++];
+      double lo = boundary(e,bestAxis,slab,width);
+      double hi = boundary(e,bestAxis,slab+1,width);
+      double target = best[slab] > 0 ? lo+(hi-lo)*(desired-prefix)/best[slab] : lo;
+      double old = boundary(e,bestAxis,i,width);
+      double shift = fmax(-0.05/width,fmin(0.05/width,0.25*(target-old)));
+      cuts[i] = fmax((i-0.20)/width,fmin((i+0.20)/width,old+shift));
+    }
+    free(e->cuts[bestAxis]);
+    e->cuts[bestAxis] = cuts;
+  }
+  free(best);
+  free(times);
+}
+#endif
 
 int64_t mdrtDistEpochCreate(void) {
   struct TrajectoryEpoch *e = calloc(1, sizeof *e);
@@ -3930,8 +4074,21 @@ int64_t mdrtDistEpochCreate(void) {
   return (int64_t)(intptr_t)e;
 }
 
+int64_t mdrtDistBalancedEpochCreate(void) {
+  int64_t handle = mdrtDistEpochCreate();
+#ifdef MDIR_ENABLE_MPI
+  struct TrajectoryEpoch *e = (struct TrajectoryEpoch *)(intptr_t)handle;
+  e->balance = mdrtMPISize() > 1;
+#endif
+  return handle;
+}
+
 void mdrtDistEpochDestroy(int64_t cache) {
   struct TrajectoryEpoch *e = (struct TrajectoryEpoch *)(intptr_t)cache;
+#ifdef MDIR_ENABLE_MPI
+  if (balanceClock == &e->clock) balanceClock = NULL;
+  for (int axis = 0; axis < 3; ++axis) free(e->cuts[axis]);
+#endif
   if (e->halo) mdrtDistReleaseHalo((int64_t)(intptr_t)e->halo);
   free(e->ownedReference);
   free(e->reference);
@@ -3947,6 +4104,10 @@ int64_t _mlir_ciface_mdrtDistEpochPartition(struct Memref2D *x, int64_t gx,
   int64_t first = 0, past = n;
 #ifdef MDIR_ENABLE_MPI
   if (mpi) { first = mdrtMPIIdentityBound(n,0); past = mdrtMPIIdentityBound(n,1); }
+  if (e->balance && observer && gx*gy*gz == mdrtMPISize() && balanceClock != &e->clock) {
+    e->clock = (struct BalanceClock){0};
+    balanceClock = &e->clock;
+  }
 #endif
   if (e->halo) {
     struct Layout *l = e->halo->layout;
@@ -3972,6 +4133,10 @@ int64_t _mlir_ciface_mdrtDistEpochPartition(struct Memref2D *x, int64_t gx,
       mdrtDistRetainLayout((int64_t)(intptr_t)l);
       return (int64_t)(intptr_t)l;
     }
+#ifdef MDIR_ENABLE_MPI
+    if (l->edges[0] == lx && l->edges[1] == ly && l->edges[2] == lz)
+      balanceEpoch(e,l);
+#endif
     mdrtDistReleaseHalo((int64_t)(intptr_t)e->halo);
     e->halo = NULL;
   }
@@ -3982,7 +4147,7 @@ int64_t _mlir_ciface_mdrtDistEpochPartition(struct Memref2D *x, int64_t gx,
     for (int c = 0; c < 3; ++c)
       e->reference[3*(j-first)+c] = *at2(x,j,c);
 #ifdef MDIR_ENABLE_MPI
-  if (mpi) return _mlir_ciface_mdrtDistStartPartition(x,gx,gy,gz,lx,ly,lz);
+  if (mpi) return startPartition(x,gx,gy,gz,lx,ly,lz,e->cuts);
 #endif
   return _mlir_ciface_mdrtDistPartition(x,gx,gy,gz,lx,ly,lz);
 }

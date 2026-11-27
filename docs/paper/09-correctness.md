@@ -913,3 +913,15 @@ indices and member rows preserves the association between parameters and
 groups at every projection. A native interval occupying the entire particle
 set can apply the spatial permutation directly since every source and
 destination belongs to the same rank.
+
+### Measured particle-domain resizing
+
+In floating-point MPI CPU runs with one midpoint domain per rank,
+nonuniform Cartesian slabs approximate equal measured real-space force
+work [Hess2008]. The driver changes the planes at an existing Verlet
+rebuild. Each pair still has exactly one primary-cell midpoint, which
+belongs to exactly one half-open domain. The halo and the midpoint
+membership intervals use those same planes, so resizing does not
+change the set of physical interactions. Fixed-point trajectories keep
+uniform planes for reproducible ownership and accumulation.
+D[distribute-auto-balance].
