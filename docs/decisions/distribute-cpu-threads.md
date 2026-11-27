@@ -261,3 +261,8 @@ assignment, each worker reads coordinates, domain, and row directly
 from the local directory or the unique replies for its peer requests.
 Only the members of the current tuple need temporary geometry. Repeated
 members of the same site share its reply across tuples.
+
+When a floating field returns from identity order to the same owned
+layout without an image change, the original owned field supplies that
+consumer. A remaining native consumer still triggers a collection.
+Fixed-point sums retain their explicit field materialization.

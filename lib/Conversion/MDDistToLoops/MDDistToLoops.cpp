@@ -3524,6 +3524,24 @@ static void addOwnedCorrections(scf::ForOp root) {
   }
 }
 
+// A complete floating field collected and distributed without imaging on
+// the same layout already has exactly the requested local rows.
+static void forwardCollectedFields(scf::ForOp root) {
+  SmallVector<DistributeOp> transfers;
+  root.walk([&](DistributeOp op) { transfers.push_back(op); });
+  for (auto op : transfers) {
+    if (op.getImage() || !op->getAttrs().empty() ||
+        !op.getResult().getType().getElementType().isF64() ||
+        llvm::any_of(op->getUsers(), [](Operation *u) { return isa<HaloOp>(u); })) continue;
+    auto collect = op.getField().getDefiningOp<CollectOp>();
+    if (!collect || !collect->getAttrs().empty() || collect.getLayout() != op.getLayout() ||
+        collect.getField().getType() != op.getResult().getType()) continue;
+    op.replaceAllUsesWith(collect.getField());
+    op.erase();
+    if (collect.use_empty()) collect.erase();
+  }
+}
+
 // The constrained native step carries ordinary particle fields in scf.for.
 // Give its maps, kicks and drifts the contiguous identity interval on this
 // rank. The separate particle-set symbol also gives storage assignment the
@@ -3742,7 +3760,10 @@ LogicalResult Lowering::run(func::FuncOp function) {
     for (auto root : roots) {
       if (root.getNumRegionIterArgs() == 3) retainConstraintLayouts(root);
       shareOwnedFields(root);
-      if (!fixedPoint) addOwnedCorrections(root);
+      if (!fixedPoint) {
+        addOwnedCorrections(root);
+        forwardCollectedFields(root);
+      }
       shardDriverLoop(root);
     }
     collect();

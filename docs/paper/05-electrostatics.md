@@ -1520,3 +1520,9 @@ distinct requested site. The worker resolves a tuple's member slots
 against the local directory and those replies as it assigns the
 midpoint. This removes the expanded coordinate and ownership array
 formerly written for every member occurrence.
+
+A constraint observation may request a correction that a preceding solver
+has already produced on its group layout. If the requested view has the
+same floating field type and layout, the driver forwards those owned rows.
+The native collection is necessary only when another consumer reads the
+correction in identity order.
