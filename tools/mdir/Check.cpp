@@ -929,7 +929,7 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
   if (json) {
     auto object = makeJSON(*control, *system, report);
     (*object.getObject("run"))["step_graph"] = std::move(graphChoice);
-    (*object.getObject("run"))["term_streams"] = termStreamsChoice(*control);
+    (*object.getObject("run"))["term_streams"] = control->termStreamsRecord();
     if (towers)
       (*object.getObject("run")->getObject("neighbors"))["towers_shape"] =
           std::move(*towers);
@@ -939,7 +939,7 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
       llvm::outs() << "step_graph " << *graphChoice.getString("value") << " ("
                    << *graphChoice.getString("reason") << ")\n";
     if (control->termStreams != "SINGLE") {
-      auto streams = termStreamsChoice(*control);
+      auto streams = control->termStreamsRecord();
       llvm::outs() << "term_streams " << *streams.getString("value") << " ("
                    << *streams.getString("reason") << ")\n";
     }

@@ -170,6 +170,7 @@
                 "category",
                 "value",
                 "reason",
+                "inputs",
                 "changes_rounding"
               ],
               "properties": {

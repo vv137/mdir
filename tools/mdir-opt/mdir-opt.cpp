@@ -40,6 +40,7 @@ int main(int argc, char **argv) {
   mdir::md::registerMDPasses();
   mdir::registerMDIRConversionPasses();
   mdir::registerGpuLowerToNVVMPipeline();
+  mdir::registerTowersStepGraph();
   mdir::md_exec::registerMDExecPasses();
   mdir::test::registerTestOutlineKernels();
   mdir::test::registerTestLoopEffects();

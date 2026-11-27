@@ -98,12 +98,11 @@ synchronization is added.
 
 **Measured** (RTX 4090, 2 fs, two jobs of three fresh processes per arm
 in alternating order, ratio of the median ns/day to `main`; white paper,
-Section 10.8). `RECIPROCAL`: JAC NVE 1.097, JAC NPT 1.069, Factor IX
-0.96, Cellulose 0.94, STMV 0.90, TIP3P 10k 0.96, TIP3P 20k 1.07, and with
-TOWERS and graph replay JAC NVT 1.14, TIP3P 10k 1.16, TIP3P 20k 1.16.
-`TERMS`: 1.149, 1.093, 0.94, 0.86–0.87, 0.83, 1.16, 1.07, and 1.14, 1.17,
-1.17. On one stream the bound of full concurrency is 32–56% below the
-step (Table 10.10); in the graph traces the best schedule removed 33–48%
+Section 10.8). `RECIPROCAL`: JAC NVE 1.10, JAC NPT 1.07, Factor IX 0.96, Cellulose 0.94,
+STMV 0.90, TIP3P 10k 0.96, TIP3P 20k 1.07, and with TOWERS and graph
+replay JAC NVT 1.14, TIP3P 10k 1.16, TIP3P 20k 1.16. `TERMS`: 1.15, 1.09,
+0.94, 0.87, 0.83, 1.16, 1.07, and 1.14, 1.17, 1.17.
+On one stream the bound of full concurrency is 32–56% below the step (Table 10.10); in the graph traces the best schedule removed 33–48%
 of the time between the step and the bound. On the large systems the
 pair kernel fills the device and the kernels beside it slow it, and
 TIP3P 10k with `TERMS` ran in two bands by process (#953). So the default

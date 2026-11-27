@@ -733,23 +733,6 @@ void mdir::tool::addSpansChoice(Object &choice, bool onDevice, bool trial) {
   choice["spans"] = on;
 }
 
-llvm::json::Object
-mdir::tool::termStreamsChoice(const driver::Control &control) {
-  auto [value, why] = control.resolveTermStreams();
-  // A rule of the request, the target and the mode (#952). TERMS adds the
-  // forces of the tuples apart from those of the pairs, which changes the
-  // rounding of their sum.
-  return Object{
-      {"requested", control.termStreams},
-      {"value", value.str()},
-      {"category", "rule"},
-      {"reason", why.empty() ? "as requested" : why.str()},
-      {"inputs",
-       Object{{"target", control.target == driver::Target::GPU ? "GPU" : "CPU"},
-              {"deterministic", control.deterministic}}},
-      {"changes_rounding", value == "TERMS"}};
-}
-
 llvm::json::Object mdir::tool::initialStepGraphChoice(llvm::StringRef request,
     llvm::StringRef refusal, size_t particles, bool given,
     llvm::StringRef spansRefusal) {

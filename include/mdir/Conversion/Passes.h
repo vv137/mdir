@@ -55,6 +55,10 @@ class MDRTDialect;
 /// `mdir-gpu-module-to-binary` (D214).
 void registerGpuLowerToNVVMPipeline();
 
+/// Registers the TOWERS step-graph pass (`mdir-towers-step-graph`, D439)
+/// that the GPU lowering pipeline runs, for its tests.
+void registerTowersStepGraph();
+
 } // namespace mdir
 
 #endif // MDIR_CONVERSION_PASSES_H

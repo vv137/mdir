@@ -158,3 +158,70 @@ func.func @tuples_reduce(%members: memref<?x2xi32>, %n: index,
   md_exec.join
   return %u : f64
 }
+
+// -----
+
+// D[concurrent-terms], the rule across streams: a loop over tuples on the
+// third stream and a reciprocal sum on the second write one buffer before
+// the join. Each side stream orders only its own ops, so the two would run
+// at once.
+
+func.func @cross_lane(%members: memref<?x2xi32>, %n: index, %k: index,
+                      %x: memref<?x3xf32, 1>, %cell: !md.cell) {
+  %f = gpu.alloc (%n) : memref<?x3xf32, 1>
+  %q = gpu.alloc (%n) : memref<?xf32, 1>
+  %m = gpu.alloc (%k, %k) : memref<?x?xf64, 1>
+  %s0 = gpu.alloc (%k) : memref<?xi64, 1>
+  %s1 = gpu.alloc (%k) : memref<?xf32, 1>
+  %s2 = gpu.alloc (%k) : memref<?xf32, 1>
+  %s3 = gpu.alloc (%k) : memref<?xf64, 1>
+  %inc = md_exec.build_incidence %members size(%n)
+      : memref<?x2xi32> -> memref<?xi32, 1>
+  // expected-error @+1 {{runs on a second stream beside an op that is not independent of it}}
+  md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
+      outs(%f : memref<?x3xf32, 1>) arity(2) {
+  ^bb0(%d: vector<3xf32>):
+    %n0 = arith.negf %d : vector<3xf32>
+    md_exec.yield %d, %n0 : vector<3xf32>, vector<3xf32>
+  } {md_exec.side, md_exec.lane = 2 : i64} : memref<?xi32, 1>, memref<?x3xf32, 1>
+  // expected-note @+1 {{the op}}
+  %e, %w = md_exec.reciprocal %x, %q, %cell, %m outs(%f : memref<?x3xf32, 1>)
+      scratch(%s0, %s1, %s2, %s3 : memref<?xi64, 1>, memref<?xf32, 1>,
+              memref<?xf32, 1>, memref<?xf64, 1>)
+      grid([8, 8, 8]) order(4) beta(3.0) coulomb(138.935457644)
+      {md_exec.side} : memref<?x3xf32, 1>, memref<?xf32, 1>, memref<?x?xf64, 1> -> f64, vector<9xf64>
+  md_exec.join
+  return
+}
+
+// -----
+
+// Two loops over tuples on the third stream, which orders them, and between
+// them an op of the first stream that reads what the first writes: it may
+// run while the first does.
+
+func.func @same_lane_dependent(%members: memref<?x2xi32>, %n: index,
+                               %x: memref<?x3xf32, 1>, %cell: !md.cell) {
+  %g = gpu.alloc (%n) : memref<?x3xf32, 1>
+  %h = gpu.alloc (%n) : memref<?x3xf32, 1>
+  %o = gpu.alloc (%n) : memref<?xi32, 1>
+  %inc = md_exec.build_incidence %members size(%n)
+      : memref<?x2xi32> -> memref<?xi32, 1>
+  // expected-error @+1 {{runs on a second stream beside an op that is not independent of it}}
+  md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
+      outs(%g : memref<?x3xf32, 1>) arity(2) {
+  ^bb0(%d: vector<3xf32>):
+    %n0 = arith.negf %d : vector<3xf32>
+    md_exec.yield %d, %n0 : vector<3xf32>, vector<3xf32>
+  } {md_exec.side, md_exec.lane = 2 : i64} : memref<?xi32, 1>, memref<?x3xf32, 1>
+  // expected-note @+1 {{the op}}
+  md_exec.permute %g, %o outs(%h : memref<?x3xf32, 1>) : memref<?x3xf32, 1>, memref<?xi32, 1>
+  md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
+      outs(%g : memref<?x3xf32, 1>) arity(2) {
+  ^bb0(%d: vector<3xf32>):
+    %n0 = arith.negf %d : vector<3xf32>
+    md_exec.yield %n0, %d : vector<3xf32>, vector<3xf32>
+  } {md_exec.side, md_exec.lane = 2 : i64} : memref<?xi32, 1>, memref<?x3xf32, 1>
+  md_exec.join
+  return
+}

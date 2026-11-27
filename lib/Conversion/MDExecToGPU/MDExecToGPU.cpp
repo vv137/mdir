@@ -1806,8 +1806,8 @@ void Lowering::findOnceRuns(func::FuncOp function) {
       // A run is on one stream: its kernel is launched once, at its last
       // loop (D[concurrent-terms]).
       bool joins = !run.empty() &&
-                   loop->hasAttr(md_exec::kSideAttrName) ==
-                       run.front()->hasAttr(md_exec::kSideAttrName) &&
+                   md_exec::getSideLane(loop) ==
+                       md_exec::getSideLane(run.front()) &&
                    loop.getPositions() == run.front().getPositions() &&
                    loop.getCellMutable().get() ==
                        run.front().getCellMutable().get();
@@ -2404,8 +2404,7 @@ void Lowering::findRows(func::FuncOp function) {
                                : cast<md_exec::TupleForOp>(op).getScratch();
       // A run is on one stream (D[concurrent-terms]).
       bool joins = !run.empty() && getPositions(&op) == getPositions(run[0]) &&
-                   op.hasAttr(md_exec::kSideAttrName) ==
-                       run[0]->hasAttr(md_exec::kSideAttrName);
+                   md_exec::getSideLane(&op) == md_exec::getSideLane(run[0]);
       // The loops over pairs of a run share the order of one structure.
       if (auto pair = dyn_cast<md_exec::PairForOp>(op))
         for (Operation *member : run)

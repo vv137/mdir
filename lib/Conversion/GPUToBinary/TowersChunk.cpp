@@ -335,6 +335,15 @@ struct Chunk {
               n == "mdrtCooperativeGridSize" || sideCall))
           return f.emitError("step_graph: unexpected host call in plain TOWERS graph");
       }
+      // A fork or join inside a region would escape the phase check above.
+      if (op.getNumRegions() &&
+          op.walk([](func::CallOp f) {
+              return f.getCallee().starts_with("mdrtSide")
+                         ? WalkResult::interrupt()
+                         : WalkResult::advance();
+            }).wasInterrupted())
+        return op.emitError("step_graph: a side-stream call inside a region "
+                            "of the plain TOWERS step");
       if (auto cond = dyn_cast<scf::IfOp>(op))
         if (cond.walk([](func::CallOp f) {
               return f.getCallee() == "mdrtStopConstraintFailure" ? WalkResult::interrupt() :

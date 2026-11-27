@@ -13,6 +13,11 @@
 # RUN: sed -e 's/STREAMS/SINGLE/' -e 's/DETERMINISTIC/false/' %t/template.toml > %t/single.toml
 # RUN: sed -e 's/STREAMS/TERMS/' -e 's/DETERMINISTIC/true/' %t/template.toml > %t/deterministic.toml
 # RUN: sed -e 's/STREAMS/BOTH/' -e 's/DETERMINISTIC/false/' %t/template.toml > %t/bad.toml
+# Without the key, and with SINGLE, the pipeline is that of before: the two
+# passes take no options.
+# RUN: sed -e '/^term_streams/d' -e 's/DETERMINISTIC/false/' %t/template.toml > %t/default.toml
+# RUN: cd %t && mdir emit default.toml --stage=pipeline | FileCheck %s --check-prefix=BARE
+# RUN: cd %t && mdir emit single.toml --stage=pipeline | FileCheck %s --check-prefix=BARE
 # RUN: cd %t && env MDIR_PRINT_AFTER=md-exec-assign-streams mdir emit terms.toml --stage=lowered 2> terms.mlir > /dev/null
 # RUN: cd %t && env MDIR_PRINT_AFTER=md-exec-assign-streams mdir emit reciprocal.toml --stage=lowered 2> reciprocal.mlir > /dev/null
 # RUN: cd %t && env MDIR_PRINT_AFTER=md-exec-assign-streams mdir emit single.toml --stage=lowered 2> single.mlir > /dev/null
@@ -22,6 +27,10 @@
 # RUN: %python %S/Inputs/check_term_streams_ir.py %t/single.mlir SINGLE | FileCheck %s --check-prefix=SINGLE
 # RUN: %python %S/Inputs/check_term_streams_ir.py %t/deterministic.mlir RECIPROCAL | FileCheck %s --check-prefix=RECIPROCAL
 # RUN: not %python %S/Inputs/check_term_streams_ir.py %t/reciprocal.mlir TERMS
+# A kick before the join is refused: drop the first join after a loop of
+# the third stream, so that the kick reads the tuples before the next one.
+# RUN: %python %S/Inputs/drop_side_join.py %t/terms.mlir %t/late-join.mlir
+# RUN: not %python %S/Inputs/check_term_streams_ir.py %t/late-join.mlir TERMS 2>&1 | FileCheck %s --check-prefix=LATE
 # Without destinations of their own the tuples cannot pass the pairs: the
 # pass puts them back, unmarked.
 # RUN: cd %t && mdir emit single.toml --stage=pipeline | sed 's/md-exec-assign-streams,/md-exec-assign-streams{reciprocal=true tuples=true},/' > shared.pipeline
@@ -34,6 +43,9 @@
 # TERMS: TERMS: {{[1-9][0-9]*}} loops over tuples on the third stream, {{[1-9][0-9]*}} beside a loop over pairs before a join and the kick
 # RECIPROCAL: RECIPROCAL: {{[1-9][0-9]*}} reciprocal sums marked, no loop over tuples
 # SINGLE: SINGLE: no op is marked and there is no join
+# LATE: particle_for at line {{[0-9]+}} uses %{{.*}} before the join
 # CHECK-TERMS: term_streams TERMS (as requested)
 # CHECK-DET: term_streams RECIPROCAL (the deterministic mode keeps the tuples with the pairs)
 # BAD: expected one of SINGLE, RECIPROCAL, TERMS for 'term_streams', got 'BOTH'
+# BARE: md-exec-accumulate-destinations,
+# BARE: md-exec-assign-streams,

@@ -74,6 +74,10 @@ struct Chain {
 };
 } // namespace
 
+/// Marks, within this pass, the sum of the two chains of a split
+/// (D[concurrent-terms]); removed when the pass ends.
+static constexpr llvm::StringLiteral kSplitSum = "md_exec.split_sum";
+
 /// The chains of sums of the kernel of `op`, from the first.
 static SmallVector<Chain> getChains(ParticleForOp op) {
   Block &kernel = op.getKernel().front();
@@ -86,6 +90,9 @@ static SmallVector<Chain> getChains(ParticleForOp op) {
   SmallVector<Chain> chains;
   for (Operation &start : kernel.without_terminator()) {
     auto first = dyn_cast<arith::AddFOp>(start);
+    // The sum of two chains that a split made is not a chain to rewrite.
+    if (first && first->hasAttr(kSplitSum))
+      continue;
     if (!first || argumentIndex(first.getLhs()) < 0 ||
         argumentIndex(first.getRhs()) < 0)
       continue;
@@ -412,8 +419,8 @@ static bool sinkAfter(Operation *loop, Operation *after) {
 /// Returns true if it did. With `separateTuples`, the loops over tuples
 /// that follow the loops over pairs of the chain accumulate into their own
 /// destination, which the loop over particles adds to that of the pairs
-/// (D[concurrent-terms]); after that split it clears `separateTuples` and
-/// returns false, since the sum of the two chains must stay as it is.
+/// (D[concurrent-terms]); after that split it clears `separateTuples`, and
+/// the sum of the two chains is not rewritten again (kSplitSum).
 static bool accumulateOnce(ParticleForOp op, bool &separateTuples) {
   Block &kernel = op.getKernel().front();
   for (Chain &chain : getChains(op)) {
@@ -478,9 +485,10 @@ static bool accumulateOnce(ParticleForOp op, bool &separateTuples) {
       unsigned kept = arguments[0], second = arguments[split];
       arith::AddFOp through = sums[terms.size() - 2];
       OpBuilder builder(through);
-      Value sum = arith::AddFOp::create(builder, through.getLoc(),
-                                        kernel.getArgument(kept),
-                                        kernel.getArgument(second));
+      auto sum = arith::AddFOp::create(builder, through.getLoc(),
+                                       kernel.getArgument(kept),
+                                       kernel.getArgument(second));
+      sum->setAttr(kSplitSum, builder.getUnitAttr());
       through.getResult().replaceAllUsesWith(sum);
       for (int k = static_cast<int>(terms.size()) - 2; k >= 0; --k)
         sums[k]->erase();
@@ -497,9 +505,10 @@ static bool accumulateOnce(ParticleForOp op, bool &separateTuples) {
         op.getInsMutable().erase(index);
         kernel.eraseArgument(index);
       }
-      // The sum of the two chains is not a chain to accumulate again.
+      // One split for each loop over particles; its other chains are
+      // rewritten as before.
       separateTuples = false;
-      return false;
+      return true;
     }
 
     // Each loop accumulates onto what the loop before it gave.
@@ -556,6 +565,7 @@ public:
       bool separate = separateTuples;
       while (accumulateOnce(op, separate)) {
       }
+      op.walk([](arith::AddFOp sum) { sum->removeAttr(kSplitSum); });
     }
   }
 };

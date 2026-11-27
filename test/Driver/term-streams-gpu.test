@@ -59,6 +59,14 @@
 # RUN: %python %S/Inputs/compare_forces_rms.py %t/mixed-TERMS/forces %t/mixed-SINGLE/forces 1e-5 mixed | FileCheck %s --check-prefix=MIXED
 # RUN: %python %S/Inputs/compare_forces_rms.py %t/double-TERMS/forces %t/double-SINGLE/forces 1e-12 double | FileCheck %s --check-prefix=DOUBLE
 #
+# TOWERS: without the key and with SINGLE the two passes take no options.
+# RUN: sed -e '/^term_streams/d' -e 's/PRECISION/mixed/' -e 's/DETERMINISTIC/false/' %t/template.toml > %t/towers-default.toml
+# RUN: printf 'neighbor_structure = "TOWERS"\n' >> %t/towers-default.toml
+# RUN: sed -e 's/PRECISION/mixed/' -e 's/STREAMS/SINGLE/' -e 's/DETERMINISTIC/false/' %t/template.toml > %t/towers-single.toml
+# RUN: printf 'neighbor_structure = "TOWERS"\n' >> %t/towers-single.toml
+# RUN: cd %t && mdir emit towers-default.toml --stage=pipeline | FileCheck %s --check-prefix=BARE
+# RUN: cd %t && mdir emit towers-single.toml --stage=pipeline | FileCheck %s --check-prefix=BARE
+#
 # 3. TERMS in the deterministic mode: the tuples stay with the pairs.
 # RUN: mkdir -p %t/det-TERMS %t/det-SINGLE
 # RUN: sed -e 's/PRECISION/mixed/' -e 's/STREAMS/TERMS/' -e 's/DETERMINISTIC/true/' %t/template.toml > %t/det-TERMS/run.toml
@@ -77,6 +85,8 @@
 # LOG: MDIR: term_streams {"category":"rule","changes_rounding":true,"inputs":{"deterministic":false,"target":"GPU"},"reason":"as requested","requested":"TERMS","value":"TERMS"}
 # LOG: MDIR: term_streams {"category":"rule","changes_rounding":false,"inputs":{"deterministic":false,"target":"GPU"},"reason":"as requested","requested":"SINGLE","value":"SINGLE"}
 # PIN: term_streams = "TERMS"
+# BARE: md-exec-accumulate-destinations,
+# BARE: md-exec-assign-streams,
 # MIXED: mixed: relative difference {{.*}} ok
 # DOUBLE: double: relative difference {{.*}} ok
 # DETPIPE: md-exec-accumulate-destinations{{$}}

@@ -3422,6 +3422,21 @@ mdir::driver::Control::resolveTermStreams() const {
   return {termStreams, ""};
 }
 
+llvm::json::Object mdir::driver::Control::termStreamsRecord() const {
+  auto [value, why] = resolveTermStreams();
+  // A rule of the request, the target and the mode (#952). TERMS adds the
+  // forces of the tuples apart from those of the pairs, which changes the
+  // rounding of their sum.
+  return llvm::json::Object{
+      {"requested", termStreams},
+      {"value", value.str()},
+      {"category", "rule"},
+      {"reason", why.empty() ? "as requested" : why.str()},
+      {"inputs", llvm::json::Object{{"target", target == Target::GPU ? "GPU" : "CPU"},
+                                    {"deterministic", deterministic}}},
+      {"changes_rounding", value == "TERMS"}};
+}
+
 StringRef mdir::driver::Control::stepGraphRefusal(size_t constraints) const {
   if (deterministic) return "deterministic execution requires LAUNCH";
   if (target != Target::GPU) return "GRAPH requires the GPU target";

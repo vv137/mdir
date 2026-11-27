@@ -1718,7 +1718,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     if (!towersCellHeight.empty())
       effective["towers_cell_height"] = towersCellHeight;
     resolvedChoices["step_graph"] = std::move(graphChoice);
-    resolvedChoices["term_streams"] = termStreamsChoice(*control);
+    resolvedChoices["term_streams"] = control->termStreamsRecord();
     llvm::json::Object metadata{
         {"build", getManifestBuild()}, {"effective", std::move(effective)},
         {"resolved_choices", std::move(resolvedChoices)},
@@ -2123,7 +2123,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   output.log.print("MDIR: step_graph %s\n", graphReport.c_str());
   output.log.print(
       "MDIR: term_streams %s\n",
-      llvm::formatv("{0}", llvm::json::Value(termStreamsChoice(*control)))
+      llvm::formatv("{0}", llvm::json::Value(control->termStreamsRecord()))
           .str()
           .c_str());
   if (towersShapeReport.getAsObject())

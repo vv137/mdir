@@ -6,8 +6,8 @@ an ordinary step, read from the storage form after the pass.
 VALUE is the resolved term_streams. For TERMS, some block holds a loop over
 tuples marked for the third stream (md_exec.lane = 2) before a loop over
 pairs on the first, and a join after the pair loop, before the loop over
-particles that kicks; no unmarked loop over tuples writes the destination
-of a marked one. For RECIPROCAL, only reciprocal sums are marked. For
+particles that kicks (reads the tuples' destination); no op of the first
+stream uses that destination before the join. For RECIPROCAL, only reciprocal sums are marked. For
 SINGLE, nothing is marked and there is no join. Prints what it found.
 """
 import re
@@ -63,12 +63,22 @@ else:
     for n, (ind, kind, i, attr) in enumerate(marked):
         if kind != "tuple_for" or "md_exec.lane = 2" not in attr:
             continue
+        out = re.search(r"outs\((%[\w#]+)", lines[i])
         rest = [m for m in marked[n + 1:] if m[0] == ind]
         kinds = [m[1] for m in rest]
-        if "pair_for" not in kinds or "join" not in kinds:
+        if not out:
             continue
-        pair, join = kinds.index("pair_for"), kinds.index("join")
-        kick = next((k for k, m in enumerate(rest) if m[1] == "particle_for" and k > join), None)
+        # Without a join the window would reach the end of the block.
+        join = kinds.index("join") if "join" in kinds else len(rest)
+        uses = re.compile(re.escape(out[1]) + r"\b")
+        # No op of the first stream reads or writes the tuples' destination
+        # before the join; loops of the third stream may add to it.
+        early = [m for m in rest[:join] if uses.search(lines[m[2]])
+                 and not (m[1] == "tuple_for" and "md_exec.lane = 2" in m[3])]
+        assert not early, f"{early[0][1]} at line {early[0][2] + 1} uses {out[1]} before the join"
+        kick = next((k for k, m in enumerate(rest) if m[1] == "particle_for"
+                     and k > join and uses.search(lines[m[2]])), None)
+        pair = kinds.index("pair_for") if "pair_for" in kinds else len(rest)
         if pair < join and kick is not None:
             windows += 1
     assert windows, "no marked loop over tuples runs beside a loop over pairs"
