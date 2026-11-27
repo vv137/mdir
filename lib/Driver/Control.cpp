@@ -2461,7 +2461,7 @@ Error Reader::readPME(const toml::table &table) {
   // grid from its bandwidth.
   if (prolate) {
     // The prolate tolerance is ψ₀ᶜ(1), not erfc(β r_c): its own default
-    // (D266), which D[best-defaults] does not change.
+    // (D266), which D[pme-default-tolerance] does not change.
     control.pmeAlphaTolerance = kProlatePMETolerance;
     if (Error error = readCount(table, "continuity", control.pmeContinuity, 0))
       return error;

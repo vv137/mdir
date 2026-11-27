@@ -236,7 +236,7 @@ struct TowersSetup {
 /// in ps, masses in amu, and temperatures in K.
 /// The default `[pme] tolerance` of the Gaussian kernel, erfc(β r_c): at
 /// the default grid (1.2 Å) it gave 0.62 to 0.68 of the force error of
-/// 10⁻⁵ on six systems at the same cost (D[best-defaults], #927). The
+/// 10⁻⁵ on six systems at the same cost (D[pme-default-tolerance], #927). The
 /// prolate kernel's tolerance is ψ₀ᶜ(1) and keeps its default (D266).
 constexpr double kGaussianPMETolerance = 5.0e-5;
 constexpr double kProlatePMETolerance = 1.0e-5;
