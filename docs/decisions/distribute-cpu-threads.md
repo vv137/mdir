@@ -314,3 +314,8 @@ checking the existing Verlet coordinate bounds. It stores each row's
 periodic shift on classification refresh. The ambiguous-neighbor scan
 reads these two values from the same row record and evaluates the original
 binary64 midpoint expression and half-open domain test in neighbor order.
+
+The mixed gather computes the independent derivative products along the
+contiguous stencil axis as SIMD lanes. At a periodic boundary, the
+potential values come from the tail and head of the same mesh row.
+Each component still adds the rounded products in stencil order.

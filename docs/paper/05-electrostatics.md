@@ -1583,3 +1583,8 @@ The midpoint membership filter stages each current unshifted position
 during the Verlet bounds check and retains the row's periodic shift from
 classification. Each ambiguous pair reads the two records to evaluate
 the binary64 midpoint with the original subtraction order.
+
+Mixed interpolation stages the last-axis potential window in stencil
+order across the periodic boundary. The three derivative products for
+each point can then be computed in SIMD lanes before their ordered
+addition to the gradient.

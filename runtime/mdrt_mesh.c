@@ -303,6 +303,14 @@ static void spreadFixed(const struct DomainMesh *local, size_t count,
    rounding of the product separate from the gradient addition. */
 static void gatherMixed(const struct Window *w, struct Subgrid g, int order,
                         const double *potential, double grad[3]) {
+  float wz[8], dwz[8];
+  for (int l = 0; l < order; ++l) {
+    wz[l] = w->w[2][l];
+    dwz[l] = w->dw[2][l];
+  }
+  int firstZ = w->first[2];
+  int contiguous = g.len[2] - firstZ;
+  if (contiguous > order) contiguous = order;
   for (int j = 0; j < order; ++j) {
     int x = wrap(w->first[0] + j, g.len[0]);
     float wx = w->w[0][j], dwx = w->dw[0][j];
@@ -311,12 +319,21 @@ static void gatherMixed(const struct Window *w, struct Subgrid g, int order,
       size_t row = ((size_t)x * g.len[1] + y) * g.len[2];
       float wy = w->w[1][k], dwy = w->dw[1][k];
       float xy = wx * wy, dx = dwx * wy, dy = wx * dwy;
+      float values[8], tx[8], ty[8], tz[8];
+      for (int l = 0; l < contiguous; ++l)
+        values[l] = potential[row + firstZ + l];
+      for (int l = contiguous; l < order; ++l)
+        values[l] = potential[row + l - contiguous];
+      #pragma omp simd
       for (int l = 0; l < order; ++l) {
-        float v = potential[row + wrap(w->first[2] + l, g.len[2])];
-        float wz = w->w[2][l], dwz = w->dw[2][l];
-        float deriv[3] = {dx * wz, dy * wz, xy * dwz};
-        for (int a = 0; a < 3; ++a)
-          grad[a] = (float)(grad[a] + (double)(v * deriv[a]));
+        tx[l] = values[l] * (dx * wz[l]);
+        ty[l] = values[l] * (dy * wz[l]);
+        tz[l] = values[l] * (xy * dwz[l]);
+      }
+      for (int l = 0; l < order; ++l) {
+        grad[0] = (float)(grad[0] + (double)tx[l]);
+        grad[1] = (float)(grad[1] + (double)ty[l]);
+        grad[2] = (float)(grad[2] + (double)tz[l]);
       }
     }
   }
