@@ -13,6 +13,10 @@ llvm::json::Object initialStepGraphChoice(llvm::StringRef request,
                                          llvm::StringRef refusal, size_t particles,
                                           bool given = true,
                                           llvm::StringRef spansRefusal = {});
+/// The record of `[execution] term_streams` (D[concurrent-terms]): the
+/// request, the schedule the compiler gives the force terms, and why the
+/// two differ where they do.
+llvm::json::Object termStreamsChoice(const driver::Control &control);
 llvm::Expected<llvm::json::Object>
 checkTowersShape(const driver::Control &control, const driver::System &system,
                  bool setup, llvm::StringRef checkpointHeight = {},

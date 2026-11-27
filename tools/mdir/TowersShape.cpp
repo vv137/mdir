@@ -733,6 +733,15 @@ void mdir::tool::addSpansChoice(Object &choice, bool onDevice, bool trial) {
   choice["spans"] = on;
 }
 
+llvm::json::Object
+mdir::tool::termStreamsChoice(const driver::Control &control) {
+  auto [value, why] = control.resolveTermStreams();
+  return Object{{"requested", control.termStreams},
+                {"value", value.str()},
+                {"category", why.empty() ? "fixed choice" : "rule"},
+                {"reason", why.empty() ? "fixed choice" : why.str()}};
+}
+
 llvm::json::Object mdir::tool::initialStepGraphChoice(llvm::StringRef request,
     llvm::StringRef refusal, size_t particles, bool given,
     llvm::StringRef spansRefusal) {

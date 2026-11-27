@@ -513,6 +513,10 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
                        "the Python interface; it takes LAUNCH, GRAPH or AUTO");
   if (c.stepGraph != "LAUNCH" && c.stepGraph != "GRAPH" && c.stepGraph != "AUTO")
     return input("step_graph requires LAUNCH, GRAPH or AUTO");
+  c.termStreams = execution.termStreams;
+  if (c.termStreams != "SINGLE" && c.termStreams != "RECIPROCAL" &&
+      c.termStreams != "TERMS")
+    return input("term_streams requires SINGLE, RECIPROCAL or TERMS");
   c.neighborStructure = execution.neighborStructure;
   c.rigidUnits = execution.rigidUnits;
   c.rigidUnitsGiven = execution.rigidUnits != driver::RigidUnits::Auto;
