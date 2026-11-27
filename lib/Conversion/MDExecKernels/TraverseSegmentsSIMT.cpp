@@ -334,12 +334,16 @@ struct Schedule {
   }
 
   /// The particle of member `k` of the unit that a place holds (`held`, the
-  /// slot of its first member or the particle of the rest).
+  /// particle of its first place, or the particle of the rest): the places
+  /// of a copy of a taken kind are consecutive particles (D[water-layout]),
+  /// so member k is at `held` plus the place of frame atom k.
   Value memberParticle(OpBuilder &b, unsigned kind, Value held, unsigned k) {
     if (kind == K)
       return toIndex(b, held);
-    return toIndex(b, load(b, lists.members,
-                           arith::AddIOp::create(b, loc, held, ci(b, k))));
+    int64_t at = type.getKind(kind).getFrame()[k];
+    return toIndex(b, at == 0 ? held
+                              : Value(arith::AddIOp::create(b, loc, held,
+                                                            ci(b, at))));
   }
 
   void addToMembers(OpBuilder &b, unsigned kind, Value held, unsigned out,

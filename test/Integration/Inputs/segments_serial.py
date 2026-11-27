@@ -15,7 +15,8 @@ test/Driver/Inputs/kind_pairs_oracle.py, which reads the topology and the
 coordinates itself.
 
 The list: the units of each kind in groups of 16 places, a place of a taken
-kind holding the position of its unit's first member in `members`; for each
+kind holding the particle of its unit's first place, the places of a unit
+being consecutive particles (D[water-layout]); for each
 segment (f, g), each group of kind f takes every unit of kind g that comes
 after its own (f = g) or every unit (f != g), 64 entries a unit of work,
 with the bit of each place whose unit pairs with the partner. Pairs of the
@@ -74,7 +75,7 @@ def build_list(system, box, periodic):
                 cells[tuple(unit)] = n
                 for p in unit:
                     positions[p] = [moved[p][k] - n[k] * box[k] for k in range(3)]
-    order, members, place_of = [], [], {}
+    order, place_of = [], {}
     groups_of, frame_of = [], {}
     for f in range(K + 1):
         groups = []
@@ -87,9 +88,8 @@ def build_list(system, box, periodic):
                 if f == K:
                     order.append(unit[0])
                 else:
-                    frame = system.frame(system.taken[f])
-                    order.append(len(members))
-                    members += [unit[i] for i in frame]
+                    assert list(unit) == list(range(unit[0], unit[0] + len(unit)))
+                    order.append(unit[0])
             while len(order) % GROUP:
                 order.append(-1)
         groups_of.append(groups)
@@ -138,7 +138,7 @@ def build_list(system, box, periodic):
             segments.append(len(counts))
     lists = {'entries': entries, 'masks': masks, 'counts': counts,
              'units': unit_groups, 'ordinals': ordinals, 'places': order,
-             'shifts': shifts, 'segments': segments, 'members': members or [0]}
+             'shifts': shifts, 'segments': segments}
     straddling = sum(1 for f in range(K) for unit in units[f]
                      if len({tuple(math.floor(positions[p][k] / box[k]) for k in range(3))
                              for p in unit}) > 1)
@@ -236,7 +236,7 @@ def emit(system, program, out, box, periodic, given=None):
         return f'%{name}', f'memref<{shape}>'
 
     order = ['entries', 'masks', 'counts', 'units', 'ordinals', 'places',
-             'shifts', 'segments', 'members']
+             'shifts', 'segments']
     names = [buffer('l_' + key, lists[key]) for key in order]
     positions = buffer('x', stored, 'f64', 3)
     types = buffer('types', system.type_of)

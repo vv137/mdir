@@ -189,6 +189,10 @@ struct RigidUnitsRoute {
     bool nonlinearSites = false;
     size_t offConstraints = 0;
     double largestViolation = 0.0, siteOffset = 0.0;
+    /// The molecules not of consecutive particles in the input (D403's
+    /// count); a kind with any is not taken, and its particles run in the
+    /// rest (D[water-layout]).
+    size_t scattered = 0;
   };
   /// Every rigid kind, in the order of their numbers.
   std::vector<Kind> kinds;

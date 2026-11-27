@@ -15,6 +15,30 @@
 # RUN: %python %S/Inputs/kind_pairs_mixture.py %t/mixture
 # RUN: %mdir_python %S/Inputs/rigid_units_frames.py mixture %t/mixture/system.top %t/mixture/system.gro 3 10 --oracle | tee %t/mixture.txt | FileCheck %s -DS=mixture --check-prefixes=CHECK,ORACLE
 #
+# The same mixture with the site of the waters of four sites listed before
+# their frame (D[water-layout]): a copy is read from its first particle,
+# and its frame atoms are its places 1 to 3. The oracle takes the site at
+# place 3, so the comparison is with the general route alone.
+# RUN: mkdir -p %t/site-first
+# RUN: %python %S/Inputs/kind_pairs_mixture.py %t/site-first site-first
+# RUN: %mdir_python %S/Inputs/rigid_units_frames.py site-first %t/site-first/system.top %t/site-first/system.gro 3 10 | tee %t/site-first.txt | FileCheck %s -DS=site-first
+#
+# The mixture with an ion listed inside each water of four sites: that kind
+# is not of consecutive particles, so ON does not take it and its particles
+# run in the rest (D[water-layout]); the run must still agree with the
+# general route within the same bounds.
+# RUN: mkdir -p %t/scattered
+# RUN: %python %S/Inputs/kind_pairs_mixture.py %t/scattered scattered
+# RUN: %mdir_python %S/Inputs/rigid_units_frames.py scattered %t/scattered/system.top %t/scattered/system.gro 3 10 | tee %t/scattered.txt | FileCheck %s -DS=scattered
+# `mdir run` warns of that kind in its log, as `mdir check` does, and runs
+# the other kinds as units.
+# RUN: printf '[execution]\ntarget = "GPU"\nprecision = "MIXED"\n[performance]\nrigid_units = "ON"\n' >> %t/scattered/run.toml
+# RUN: cd %t/scattered && mdir run run.toml > %t/scattered/run.log 2>&1
+# RUN: FileCheck %s --check-prefix=SCATTERED-LOG < %t/scattered/run.log
+# SCATTERED-LOG: MDIR: rigid units: ON: the units (ON was given)
+# SCATTERED-LOG: MDIR: kind 3: not taken: 2 molecules not of consecutive particles; its particles run in the rest
+# SCATTERED-LOG: MDIR: warning: kind 3: 2 of 2 molecules are not of consecutive particles in the input
+#
 # The anchors of the rest, with PME: alanine dipeptide in OPC under NPT
 # (Amber's extra point, not linear in its frame, so compared from the first
 # step on, where the frame is constrained) and in TIP3P under NVT.

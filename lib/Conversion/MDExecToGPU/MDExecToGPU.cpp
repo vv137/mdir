@@ -195,7 +195,7 @@ struct SegmentedState {
   Value units;
   SmallVector<Value> rankEnd;
   SmallVector<double> extents;
-  Value unitRef, unitValue, unitOfParticle, members;
+  Value unitRef, unitValue, unitOfParticle;
   /// The place where each rank begins, and the end of the places (K + 2),
   /// on the device: the build writes it, and the traversal takes the kind
   /// of a place from it.
@@ -4215,7 +4215,6 @@ LogicalResult Lowering::lowerTraversePairs(md_alg::TraversePairsOp op) {
     lists.groups = slot(GROUPS_RECORD_GROUPS);
     lists.counts = slot(GROUPS_RECORD_COUNTS);
     lists.offsets = slot(GROUPS_SEGMENT_OFFSETS);
-    lists.members = structure.segmented->members;
     lists.rankPlaces = structure.segmented->rankPlaces;
     lists.dual = structure.dual;
     // The frames that the list's refresh left, at these positions and in
@@ -4375,7 +4374,6 @@ Lowering::lowerTraversePairsSerial(md_alg::TraversePairsOp op,
                     slot(GROUPS_RECORD_GROUPS),  toHost(buffers.ordinals),
                     toHost(buffers.shifts)};
     lists.segments = slot(GROUPS_SEGMENT_OFFSETS);
-    lists.members = toHost(structure.segmented->members);
   } else {
     lists.groups = {toHost(buffers.order),   toHost(buffers.counts),
                     toHost(buffers.entries), toHost(buffers.masks),
@@ -6715,24 +6713,23 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
     return toHost(relation);
   };
   SmallVector<Value> tuples, copies;
-  Value takenUnits = zero, takenParticles = zero, memberCount = zero;
-  SmallVector<Value> memberBase;
+  // `copyBase[f]` numbers the copies of kind f after those of the kinds
+  // before it, for the check of the exclusions.
+  Value takenUnits = zero, takenParticles = zero;
+  SmallVector<Value> copyBase;
   for (unsigned f = 0; f < K; ++f) {
     Value relation = op.getKinds()[f];
     Value host = relationOnHost(relation);
     tuples.push_back(host);
     Value c = memref::DimOp::create(builder, loc, relation, zero);
     copies.push_back(c);
+    copyBase.push_back(takenUnits);
     takenUnits = arith::AddIOp::create(builder, loc, takenUnits, c);
     Value places = arith::MulIOp::create(
         builder, loc, c,
         createIndex(builder, loc, type.getKind(f).getSize()));
     takenParticles = arith::AddIOp::create(builder, loc, takenParticles,
                                            places);
-    memberBase.push_back(memberCount);
-    Value members = arith::MulIOp::create(
-        builder, loc, c, createIndex(builder, loc, type.getNumMembers(f)));
-    memberCount = arith::AddIOp::create(builder, loc, memberCount, members);
   }
   // The rest: the particles of no copy of a taken kind (D403's kinds hold
   // each particle once at most).
@@ -6742,9 +6739,6 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
   Value refH = memref::AllocOp::create(builder, loc, hostI32, ValueRange{U});
   Value valueH = memref::AllocOp::create(builder, loc, hostI32, ValueRange{U});
   Value unitOfH = memref::AllocOp::create(builder, loc, hostI32, ValueRange{N});
-  Value membersSize = arith::MaxUIOp::create(builder, loc, memberCount, one);
-  Value membersH =
-      memref::AllocOp::create(builder, loc, hostI32, ValueRange{membersSize});
   Value c0i = arith::ConstantOp::create(builder, loc, narrow,
                                         builder.getI32IntegerAttr(0));
   Value none = arith::ConstantOp::create(builder, loc, narrow,
@@ -6778,7 +6772,7 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
                                               particle);
         memref::StoreOp::create(in, loc, none, unitOfH, ValueRange{at});
         Value copy = arith::IndexCastOp::create(
-            in, loc, narrow, arith::AddIOp::create(in, loc, memberBase[f], c));
+            in, loc, narrow, arith::AddIOp::create(in, loc, copyBase[f], c));
         memref::StoreOp::create(in, loc, copy, copyOfH, ValueRange{at});
       }
       return SmallVector<Value>{};
@@ -6838,7 +6832,8 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
   }
   // The units of the taken kinds by rank, K - 1 first: the reference
   // particle is the anchor, the first frame atom; the value of `order` is
-  // the slot of the first member in `members`.
+  // the particle of the copy's place 0, its places being consecutive
+  // particles (D[water-layout]).
   Neighbors structure;
   structure.segmented = std::make_shared<SegmentedState>();
   SegmentedState &units = *structure.segmented;
@@ -6855,26 +6850,51 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
     ArrayRef<int64_t> frame = kind.getFrame().asArrayRef();
     units.extents.push_back(kind.getExtent().getValueAsDouble());
     Value first = start;
-    loop(copies[f], {}, [&](OpBuilder &in, Value c, ValueRange) {
+    unsigned size = kind.getSize();
+    Value scattered = loop(copies[f], {zero}, [&](OpBuilder &in, Value c,
+                                                 ValueRange carried) {
       Value unit = arith::AddIOp::create(in, loc, first, c);
-      Value slot = arith::AddIOp::create(
-          in, loc, memberBase[f],
-          arith::MulIOp::create(in, loc, c,
-                                createIndex(in, loc, frame.size())));
-      for (unsigned k = 0; k < frame.size(); ++k) {
+      // The places of a copy are consecutive particles from that of its
+      // place 0, which `order` holds (D[water-layout]); a copy whose
+      // places are not stops the run below.
+      Value base = memref::LoadOp::create(
+          in, loc, tuples[f], ValueRange{c, createIndex(in, loc, 0)});
+      Value apart = arith::ConstantOp::create(in, loc, in.getI1Type(),
+                                              in.getBoolAttr(false));
+      for (unsigned p = 1; p < size; ++p) {
         Value particle = memref::LoadOp::create(
-            in, loc, tuples[f], ValueRange{c, createIndex(in, loc, frame[k])});
-        memref::StoreOp::create(
-            in, loc, particle, membersH,
-            ValueRange{arith::AddIOp::create(in, loc, slot,
-                                             createIndex(in, loc, k))});
-        if (k == 0)
-          memref::StoreOp::create(in, loc, particle, refH, ValueRange{unit});
+            in, loc, tuples[f], ValueRange{c, createIndex(in, loc, p)});
+        Value expected = arith::AddIOp::create(
+            in, loc, base,
+            arith::ConstantOp::create(in, loc, narrow,
+                                      in.getI32IntegerAttr(p)));
+        apart = arith::OrIOp::create(
+            in, loc, apart,
+            arith::CmpIOp::create(in, loc, arith::CmpIPredicate::ne, particle,
+                                  expected));
       }
+      memref::StoreOp::create(in, loc, base, valueH, ValueRange{unit});
+      Value next = arith::AddIOp::create(
+          in, loc, carried[0],
+          arith::SelectOp::create(in, loc, apart, one, zero));
+      // The reference particle is the anchor, the first frame atom.
       memref::StoreOp::create(
-          in, loc, arith::IndexCastOp::create(in, loc, narrow, slot), valueH,
-          ValueRange{unit});
-      return SmallVector<Value>{};
+          in, loc,
+          memref::LoadOp::create(
+              in, loc, tuples[f],
+              ValueRange{c, createIndex(in, loc, frame[0])}),
+          refH, ValueRange{unit});
+      return SmallVector<Value>{next};
+    })[0];
+    Value any = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ne,
+                                      scattered, zero);
+    scf::IfOp::create(builder, loc, any, [&](OpBuilder &then, Location) {
+      func::CallOp::create(
+          then, loc,
+          getOrDeclare("mdrtSegmentsStopScattered",
+                       then.getFunctionType({wide}, {})),
+          ValueRange{arith::IndexCastOp::create(then, loc, wide, scattered)});
+      scf::YieldOp::create(then, loc);
     });
     start = arith::AddIOp::create(builder, loc, start, copies[f]);
     units.rankEnd.push_back(start);
@@ -7033,7 +7053,6 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
   units.unitRef = toDevice(refH, U);
   units.unitValue = toDevice(valueH, U);
   units.unitOfParticle = toDevice(unitOfH, N);
-  units.members = toDevice(membersH, membersSize);
   units.rankPlaces = createDeviceBuffer(
       builder, loc, deviceI32, ValueRange{createIndex(builder, loc, K + 2)});
   units.units = U;
@@ -7710,16 +7729,17 @@ Lowering::UnitFrameValues Lowering::emitUnitFrame(
   };
   auto ix = [&](int64_t v) { return createIndex(at, loc, v); };
   UnitFrameValues values;
+  // The places of a copy of a taken kind are consecutive particles from
+  // the one that `held` names (D[water-layout]).
   for (unsigned k = 0; k != m; ++k)
     values.particles.push_back(
         kind == K ? index(held)
-                  : index(memref::LoadOp::create(
-                        at, loc, units.members,
-                        ValueRange{index(arith::AddIOp::create(
-                            at, loc, held,
-                            arith::ConstantOp::create(
-                                at, loc, at.getI32Type(),
-                                at.getI32IntegerAttr(k))))})));
+                  : index(arith::AddIOp::create(
+                        at, loc, held,
+                        arith::ConstantOp::create(
+                            at, loc, at.getI32Type(),
+                            at.getI32IntegerAttr(
+                                type.getKind(kind).getFrame()[k])))));
   Value x0 = loadElement(at, loc, positions, values.particles[0]);
   values.x0 = x0;
   Value shift = emitPlaceShift(
@@ -7936,15 +7956,23 @@ LogicalResult Lowering::lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op) {
     UnitCell cell = getUnitCell(host, loc, structure, box);
     Value reference = structure.reference;
     Value pruned = structure.prunedReference;
-    // A thread for each member of each unit, M = the members of a unit at
-    // most: thread M u + k takes member k of unit u. The thread of the
-    // anchor (k = 0) writes the anchor and tests the reference point; the
-    // thread of member k >= 1 writes its offset and checks its extent. Three
-    // threads to a water hide the latency of the loads that one thread a
-    // unit leaves exposed.
+    // A thread for each member of each place, M = the members of a unit at
+    // most: thread M p + k takes member k of the unit at place p, so that
+    // the frames are written in the order of the places, which the loops
+    // read (D[water-layout]). The thread of the anchor (k = 0) writes the
+    // anchor and tests the reference point; the thread of member k >= 1
+    // writes its offset and checks its extent. Three threads to a water
+    // hide the latency of the loads that one thread a unit leaves exposed.
+    // An empty place is left as the refresh that built the list wrote it.
     unsigned M = frames.maxMembers;
-    Value threads = arith::MulIOp::create(host, loc, units.units,
-                                          createIndex(host, loc, M));
+    Value places = arith::IndexCastOp::create(
+        host, loc, host.getIndexType(),
+        memref::LoadOp::create(host, loc, structure.sizes,
+                               ValueRange{createIndex(host, loc, 0)}));
+    Value threads =
+        arith::MulIOp::create(host, loc, places, createIndex(host, loc, M));
+    Value order =
+        getGroupsBuffer(host, loc, structure.handle, GROUPS_SEGMENT_ORDER);
     launchOver(host, loc, threads, [&](OpBuilder &body, Value thread) {
       auto ci = [&](OpBuilder &b, int64_t v) -> Value {
         return arith::ConstantOp::create(b, loc, i32, b.getI32IntegerAttr(v));
@@ -7962,25 +7990,28 @@ LogicalResult Lowering::lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op) {
       };
       // In 32 bits, where a division by a constant is a multiplication.
       Value thread32 = arith::IndexCastOp::create(body, loc, i32, thread);
-      Value unit = M == 1 ? thread
-                          : index(body, arith::DivUIOp::create(
-                                            body, loc, thread32, ci(body, M)));
+      Value place32 = M == 1 ? thread32
+                             : Value(arith::DivUIOp::create(body, loc, thread32,
+                                                            ci(body, M)));
+      Value place = index(body, place32);
       Value k = M == 1 ? ix(body, 0)
                        : index(body, arith::RemUIOp::create(body, loc, thread32,
                                                             ci(body, M)));
-      // The rank of the unit: the rest first, then kinds K - 1 to 0.
+      // The particle of the unit's first place, or of the particle of the
+      // rest; negative at an empty place.
+      Value held = memref::LoadOp::create(body, loc, order, ValueRange{place});
+      Value holds = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::sge,
+                                          held, ci(body, 0));
+      // The rank of the place's group, from the places where the ranks
+      // begin: the rest rank 0, kind f rank K - f.
       Value rank = ci(body, 0);
       for (unsigned r = 1; r <= K; ++r) {
-        Value past = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::uge,
-                                           unit, units.rankEnd[r - 1]);
+        Value past = arith::CmpIOp::create(
+            body, loc, arith::CmpIPredicate::sge, place32,
+            memref::LoadOp::create(body, loc, units.rankPlaces,
+                                   ValueRange{ix(body, r)}));
         rank = arith::SelectOp::create(body, loc, past, ci(body, r), rank);
       }
-      Value place = arith::IndexCastOp::create(
-          body, loc, body.getIndexType(),
-          memref::LoadOp::create(body, loc, structure.placeOf,
-                                 ValueRange{unit}));
-      Value held =
-          memref::LoadOp::create(body, loc, units.unitValue, ValueRange{unit});
       // The displacement of the reference point x from m ⊙ x_ref, in f32
       // (D80; D419, Section 3): with a = fl(x), t = fl(fl(x_ref) fl(m)), and
       // d = fl(a - t), each component of d is within 8 u (|a_c| + |t_c|) of
@@ -8039,14 +8070,25 @@ LogicalResult Lowering::lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op) {
         if (dual)
           setFlag(b, far(b, a, ref, pruned, scaleInner, zetaInner), 1);
       };
-      // The particle of member `which` of a unit of a taken kind.
-      auto memberOf = [&](OpBuilder &b, Value which) -> Value {
-        return index(b, memref::LoadOp::create(
-                            b, loc, units.members,
-                            ValueRange{index(b, arith::AddIOp::create(
-                                                    b, loc, held,
-                                                    arith::IndexCastOp::create(
-                                                        b, loc, i32, which)))}));
+      // The particle of member `which` of a unit of taken kind `kind`:
+      // `held` plus the place of frame atom `which`, since the places of a
+      // copy are consecutive particles (D[water-layout]).
+      auto memberOf = [&](OpBuilder &b, unsigned kind, Value which) -> Value {
+        ArrayRef<int64_t> frame = type.getKind(kind).getFrame();
+        Value which32 = arith::IndexCastOp::create(b, loc, i32, which);
+        Value place = which32;
+        if (!llvm::all_of(llvm::enumerate(frame), [](auto e) {
+              return e.value() == int64_t(e.index());
+            })) {
+          place = ci(b, frame[0]);
+          for (unsigned j = 1; j < frame.size(); ++j)
+            place = arith::SelectOp::create(
+                b, loc,
+                arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq,
+                                      which32, ci(b, j)),
+                ci(b, frame[j]), place);
+        }
+        return index(b, arith::AddIOp::create(b, loc, held, place));
       };
       auto storeFields = [&](OpBuilder &b, Value particle, Value member) {
         for (auto [source, packed] : llvm::zip(frames.sources, frames.fields))
@@ -8062,8 +8104,10 @@ LogicalResult Lowering::lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op) {
         unsigned m = type.getNumMembers(kind);
         Value is = arith::AndIOp::create(
             body, loc,
-            arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq, rank,
-                                  ci(body, K - kind)),
+            arith::AndIOp::create(
+                body, loc, holds,
+                arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq,
+                                      rank, ci(body, K - kind))),
             arith::CmpIOp::create(body, loc, arith::CmpIPredicate::ult, k,
                                   ix(body, m)));
         scf::IfOp::create(body, loc, is, [&](OpBuilder &at, Location) {
@@ -8082,6 +8126,9 @@ LogicalResult Lowering::lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op) {
                             f32),
                 frames.anchors, place);
             storeFields(at, particle, ix(at, 0));
+            Value unit = index(at, memref::LoadOp::create(
+                                       at, loc, units.unitOfParticle,
+                                       ValueRange{particle}));
             Value ref = index(at, memref::LoadOp::create(
                                       at, loc, units.unitRef, ValueRange{unit}));
             Value own = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::eq,
@@ -8115,7 +8162,7 @@ LogicalResult Lowering::lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op) {
                               [](double w) { return w >= 0.0 && w <= 1.0; }))
               outside.push_back(p);
           }
-          Value x0 = loadElement(at, loc, positions, memberOf(at, ix(at, 0)));
+          Value x0 = loadElement(at, loc, positions, memberOf(at, kind, ix(at, 0)));
           scf::IfOp::create(
               at, loc, isAnchor,
               [&](OpBuilder &anchor, Location) {
@@ -8130,12 +8177,11 @@ LogicalResult Lowering::lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op) {
                                                                shift),
                                          f32),
                              frames.anchors, place);
-                storeFields(anchor, memberOf(anchor, ix(anchor, 0)),
+                storeFields(anchor, memberOf(anchor, kind, ix(anchor, 0)),
                             ix(anchor, 0));
-                tests(anchor, x0,
-                      index(anchor, memref::LoadOp::create(
-                                        anchor, loc, units.unitRef,
-                                        ValueRange{unit})));
+                // The reference point of a copy is its anchor, its first
+                // frame atom.
+                tests(anchor, x0, memberOf(anchor, kind, ix(anchor, 0)));
                 if (!outside.empty()) {
                   SmallVector<Value> h64;
                   for (unsigned j = 1; j < m; ++j)
@@ -8144,7 +8190,7 @@ LogicalResult Lowering::lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op) {
                                       arith::SubFOp::create(
                                           anchor, loc,
                                           loadElement(anchor, loc, positions,
-                                                      memberOf(anchor,
+                                                      memberOf(anchor, kind,
                                                                ix(anchor, j))),
                                           x0),
                                       cell)
@@ -8188,7 +8234,7 @@ LogicalResult Lowering::lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op) {
                 // the anchor, and its distance from the anchor against the
                 // kind's radius, which covers every site whose weights lie
                 // in [0, 1] (the convex rule).
-                Value particle = memberOf(member, k);
+                Value particle = memberOf(member, kind, k);
                 auto [wide, narrow] = emitBondImage(
                     member, loc,
                     arith::SubFOp::create(

@@ -1048,12 +1048,12 @@ of `j` with the sign of its exchange contract (rule A). The region takes
 `r^2` and `d` for each of its `M` site pairs, then for each buffer of
 `ins` its values at the `m_f` members of `i` and the `m_g` of `j`, and
 yields, site pair by site pair, the values of each mask. The buffer
-form adds `segments` (the offsets of each segment's units of work) and
-`members` (the members of each unit of a taken kind, stored whole about
-its anchor) to the buffers of the groups. Over segments a group is the
-row of several segments, so `counts` holds the entries of each unit of
-work, at most 64, and `units` its group; a place of a taken kind holds
-the position in `members` of its unit's first member. `rotate(L)`, in the execution group, is the width of the
+form adds `segments` (the offsets of each segment's units of work) to
+the buffers of the groups. Over segments a group is the row of several
+segments, so `counts` holds the entries of each unit of work, at most
+64, and `units` its group; a place of a taken kind holds the particle of
+its unit's first place, and the unit's places are the particles that
+follow it, stored whole about its anchor (D[water-layout]). `rotate(L)`, in the execution group, is the width of the
 rotation of the partners of the SIMT schedule (R4).
 
 ```mlir

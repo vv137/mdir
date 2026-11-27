@@ -547,6 +547,14 @@ if mode == 'emit':
     if '--join-copies' in flags:
         excluded = np.concatenate([excluded.reshape(-1, 2),
                                    [[int(kinds[0][1][0][0]), int(kinds[0][1][1][0])]]])
+    if '--scatter-copy' in flags:
+        # The first copy of the first kind with its last two places
+        # exchanged: its places are no longer consecutive particles
+        # (D[water-layout]), which the setup must refuse.
+        model, tuples = kinds[0]
+        tuples = np.array(tuples, copy=True)
+        tuples[0][[-1, -2]] = tuples[0][[-2, -1]]
+        kinds[0] = (model, tuples)
     # With --writer, every particle's position: the writer forms the frames
     # of the units from all their members.
     refs = np.arange(N) if '--writer' in flags else np.unique(unit_ref)
@@ -687,16 +695,13 @@ segkind = [(f, g) for f in range(K + 1) for g in range(f + 1)]
 wbits, woff = (5, 16) if TRICLINIC else (4, 4)
 excluded_units = {(min(unit_of_rest[int(a)], unit_of_rest[int(b)]), max(unit_of_rest[int(a)], unit_of_rest[int(b)]))
                   for a, b in excluded if int(a) in unit_of_rest and int(b) in unit_of_rest}
-# The value of `order` of a copy: the slot of its first member in the
-# table of the members, which holds the frame atoms of each copy, kind by
-# kind (empty_segmented_pairs).
+# The value of `order` of a copy: the particle of its first place, the
+# places of a copy being consecutive particles (D[water-layout]).
 slot_of = {}
-base = 0
 for f, (model, tuples) in enumerate(kinds):
-    members = len(MODELS[model]['frame'])
     for c, tup in enumerate(tuples):
-        slot_of[unit_first[int(tup[0])]] = base + members * c
-    base += members * len(tuples)
+        assert [int(t) for t in tup] == list(range(int(tup[0]), int(tup[0]) + len(tup)))
+        slot_of[unit_first[int(tup[0])]] = int(tup[0])
 
 
 def listed(parts, inner, faults):

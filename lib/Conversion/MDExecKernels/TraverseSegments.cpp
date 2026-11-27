@@ -148,13 +148,11 @@ struct Segments {
     if (!type.getKind(kind)) {
       unit.members.push_back(toIndex(at, slot));
     } else {
-      // The place holds the position of the unit's first member in
-      // `members`.
-      for (unsigned k = 0; k != m; ++k)
-        unit.members.push_back(toIndex(
-            at, load(at, lists.members,
-                     toIndex(at, arith::AddIOp::create(at, loc, slot,
-                                                       i32(at, k))))));
+      // The place holds the particle of the copy's first place, and the
+      // places of a copy are consecutive particles (D[water-layout]).
+      for (int64_t p : type.getKind(kind).getFrame().asArrayRef())
+        unit.members.push_back(
+            toIndex(at, arith::AddIOp::create(at, loc, slot, i32(at, p))));
     }
     Value x0 = loadElement(at, loc, lists.positions, unit.members[0]);
     unit.anchor = convertReal(
