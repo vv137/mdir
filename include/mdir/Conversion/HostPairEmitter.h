@@ -31,13 +31,15 @@ namespace kernels {
 ///
 /// `op` satisfies md_exec::hostpairs::checkLanes(op, lanes) and is in the
 /// storage form; `counts`, `index`, `box`, and `inverse` are as for
-/// emitPairKernel.
+/// emitPairKernel. Explicit midpoint images may also have fixed-point rows
+/// in `fixedImages`, with grid spacing `imageQuantum`.
 llvm::SmallVector<mlir::Value>
 emitPairRowLanes(mlir::OpBuilder &builder, md_exec::PairForOp op,
                  mlir::Value counts, mlir::Value index, mlir::Value box,
                  mlir::Value inverse, mlir::Value central, int64_t lanes,
                  mlir::Value imageShifts = {}, mlir::Value imagePositions = {},
-                 mlir::Value privateOut = {}, mlir::Value rowOffset = {});
+                 mlir::Value privateOut = {}, mlir::Value rowOffset = {},
+                 mlir::Value fixedImages = {}, double imageQuantum = 0.0);
 
 } // namespace kernels
 } // namespace mdir

@@ -555,8 +555,12 @@ std::string mdir::compiler::getPipeline(const Control &control,
   os << "md-exec-choose-host-pairs{" << getHostPairsOptions() << "},";
   // On one thread the spreading of PME adds to its grid without atomics
   // (D271).
+  const char *fixedPairImages = control.distribution && !control.deterministic
+      ? std::getenv("MDIR_DIST_FIXED_PAIR_IMAGES") : nullptr;
   os << "md-exec-assign-storage,convert-md-exec-to-loops{kept-tuples=true"
-     << (threaded ? "" : " atomic-grid=false") << "}"
+     << (threaded ? "" : " atomic-grid=false")
+     << (fixedPairImages && StringRef(fixedPairImages) == "1"
+             ? " fixed-pair-images=true" : "") << "}"
      // The procedure of a domain that the matrix pairs outline is called
      // at every step and frees what it allocates at its end
      // (D[distribute-pair-lowering]).

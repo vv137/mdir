@@ -581,6 +581,10 @@ int64_t _mlir_ciface_mdrtDistMatrixRebuild(int64_t matrix, struct Memref2D *x) {
   return 1;
 }
 
+static double midpointBuildReach(const struct DomainMatrix *m) {
+  return m->cutoff + m->skin + 3.e-6*(m->box[0]+m->box[1]+m->box[2]);
+}
+
 /* Packed coordinates already include the halo translation. Within this
    open Cartesian box the common-image shifts and periodic cell searches
    of a full-system list are unnecessary. Only the lower identity can
@@ -592,7 +596,7 @@ void _mlir_ciface_mdrtDistBuildMidpoint(int64_t halo, int64_t matrix, struct Mem
   int64_t n = m->rows, centers = m->centers, d = m->domain, owned = l->rows[d];
   if (!centers) return;
   if (n > INT32_MAX) fail("too many explicit images in a pair list");
-  double reach = m->cutoff + m->skin + 3.e-6*(m->box[0]+m->box[1]+m->box[2]);
+  double reach = midpointBuildReach(m);
   double limit2 = reach*reach;
   int64_t *order = malloc(n*sizeof *order);
   int64_t (*spans)[18] = malloc(centers*sizeof *spans);
@@ -640,6 +644,30 @@ void _mlir_ciface_mdrtDistBuildMidpoint(int64_t halo, int64_t matrix, struct Mem
     mdrtHostMatrixGrow(m->raw,largest);
   }
   free(sites); free(spans); free(order);
+}
+
+int64_t _mlir_ciface_mdrtDistQuantizePairImages(int64_t matrix,
+    struct Memref2D *positions, struct HostBuffer2 *fixed, double scale) {
+  const struct DomainMatrix *m = (const struct DomainMatrix *)(intptr_t)matrix;
+  double reach = midpointBuildReach(m);
+  /* The list was built at reach and each endpoint can move by half the
+     skin. Their quantized difference must fit a signed 32-bit word even
+     when the coordinates themselves cross the wrap point. */
+  if (!(reach + m->skin + 2.0/scale < 0x1p31/scale)) return 0;
+  uint32_t *rows = fixed->aligned;
+  int invalid = 0;
+  #pragma omp parallel for schedule(static) reduction(|:invalid) if(m->rows > 1024)
+  for (int64_t i = 0; i < m->rows; ++i) {
+    for (int c = 0; c < 3; ++c) {
+      double scaled = *at2(positions,i,c)*scale;
+      if (fabs(scaled) < 0x1p51)
+        rows[fixed->offset+i*fixed->strides[0]+c*fixed->strides[1]] =
+            (uint32_t)(int64_t)floor(scaled+0.5);
+      else
+        invalid = 1;
+    }
+  }
+  return !invalid;
 }
 
 void _mlir_ciface_mdrtDistMatrixImages(struct Memref2D *r, int64_t handle, int64_t matrix) {

@@ -1543,7 +1543,16 @@ For distributed mixed pair electrostatics, the precision pass rounds
 pair-only charge fields when it copies them from spatial transport.
 This removes four packed double-to-float conversion sites from the
 Cellulose force kernel. The compiled kernel retains the same 62 packed
-binary32 multiply sites and the same binary64 image subtractions.
+binary32 multiply sites.
+
+The floating-point mixed midpoint kernel can stage each translated position
+on a grid of $2^{-29}$ nm before traversing the pair list. A packed
+32-bit subtraction recovers the signed displacement if the Verlet reach
+and motion bound fit within half the grid's period. Rounding the two
+coordinates changes each displacement component by at most one grid unit
+before its binary32 conversion. Close contacts, pairs near the cutoff,
+and lists outside the supported reach use binary64 image subtraction.
+The deterministic and double paths keep their displacement arithmetic.
 
 The distributed neighbor filter bounds midpoint motion at the coordinate
 extrema. The affine expression contains each coordinate once. A margin

@@ -147,6 +147,8 @@ def ConvertMDExecToLoops
            "fixed-point grid with atomics, for a program whose parallel "
            "loops run on several threads; on one thread a plain addition "
            "gives the same integers (D271)">,
+    Option<"fixedPairImages", "fixed-pair-images", "bool", /*default=*/"false",
+           "Stage eligible mixed midpoint images on a fixed-point grid">,
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",

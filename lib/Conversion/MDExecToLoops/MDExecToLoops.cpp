@@ -89,8 +89,10 @@ struct Neighbors {
 
 class Lowering {
 public:
-  explicit Lowering(ModuleOp module, bool keptTuples, bool atomicGrid)
-      : keptTuples(keptTuples), atomicGrid(atomicGrid), module(module),
+  explicit Lowering(ModuleOp module, bool keptTuples, bool atomicGrid,
+                    bool fixedPairImages)
+      : keptTuples(keptTuples), atomicGrid(atomicGrid),
+        fixedPairImages(fixedPairImages), module(module),
         context(module.getContext()) {
     // A module with a triclinic cell lowers every cell to the vector of six,
     // a_x, b_y, c_z, b_x, c_x, c_y; one without, to the three edges.
@@ -172,6 +174,7 @@ private:
   /// Whether the spreading of PME adds to its grid with atomics: the
   /// program runs its parallel loops on several threads.
   bool atomicGrid;
+  bool fixedPairImages;
   /// The members that the runtime has renumbered.
   llvm::DenseSet<Value> runtimeMembers;
 
@@ -414,6 +417,45 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
     imagePositions = restored;
   }
   Value entries = getMatrixEntries(builder, loc, structure.handle);
+  constexpr double imageScale = 0x1p29;
+  Value fixedImages, useFixedImages;
+  double cutoff = op.getCutoff().convertToDouble();
+  if (fixedPairImages && structure.midpoint && imagePositions && hostLanes &&
+      cutoff >= 0.125 && cutoff < 4.0 &&
+      !module->hasAttr(md_exec::algebra::kDeterministicAttrName)) {
+    auto type = MemRefType::get({ShapedType::kDynamic, 3}, builder.getI32Type());
+    Value rows = createSize(builder, loc, imagePositions);
+    fixedImages = memref::AllocOp::create(builder, loc, type, ValueRange{rows});
+    Type word = builder.getI64Type();
+    Type wide = builder.getF64Type();
+    auto quantize = getOrDeclare("mdrtDistQuantizePairImages",
+        builder.getFunctionType({word, imagePositions.getType(), type, wide}, {word}));
+    quantize->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+    Value usable = func::CallOp::create(builder, loc, quantize, ValueRange{
+        structure.domainMatrix, imagePositions, fixedImages,
+        createReal(builder, loc, wide, imageScale)}).getResult(0);
+    useFixedImages = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ne,
+        usable, arith::ConstantIntOp::create(builder, loc, 0, 64));
+  }
+  auto emitLanes = [&](OpBuilder &at, Value row, Value scratch = {},
+                       Value offset = {}) -> SmallVector<Value> {
+    auto emit = [&](OpBuilder &body, Value fixed) {
+      return emitPairRowLanes(body, op, structure.counts, entries, box, inverse,
+          row, *hostLanes, imageShifts, imagePositions, scratch, offset, fixed,
+          1.0/imageScale);
+    };
+    if (!useFixedImages) return emit(at, {});
+    auto paths = scf::IfOp::create(at, loc, TypeRange(op.getReduce()), useFixedImages, true);
+    OpBuilder then = paths.getThenBodyBuilder();
+    auto fixedValues = emit(then, fixedImages);
+    OpBuilder otherwise = paths.getElseBodyBuilder();
+    auto originalValues = emit(otherwise, {});
+    if (!op.getReduce().empty()) {
+      scf::YieldOp::create(then, loc, fixedValues);
+      scf::YieldOp::create(otherwise, loc, originalValues);
+    }
+    return SmallVector<Value>(paths.getResults());
+  };
   Value zero = createIndex(builder, loc, 0);
   Value one = createIndex(builder, loc, 1);
   // Owned centers and explicit ghosts occupy consecutive ranges with very
@@ -483,9 +525,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
           Value end = bound(arith::AddIOp::create(at, loc, ivs[0], one));
           auto local = scf::ForOp::create(at, loc, begin, end, one, zeros,
               [&](OpBuilder &body, Location, Value row, ValueRange accum) {
-                auto values = emitPairRowLanes(body, op, structure.counts, entries,
-                    box, inverse, centerRow(body, row), *hostLanes, imageShifts,
-                    imagePositions, scratch, offset);
+                auto values = emitLanes(body, centerRow(body, row), scratch, offset);
                 for (auto [i, value] : llvm::enumerate(values))
                   values[i] = arith::AddFOp::create(body, loc, accum[i], value);
                 scf::YieldOp::create(body, loc, values);
@@ -506,6 +546,8 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
           storeElement(at, loc, sum.getResult(0), out, ivs[0]);
         });
     memref::DeallocOp::create(builder, loc, scratch);
+    if (fixedImages)
+      memref::DeallocOp::create(builder, loc, fixedImages);
     op.replaceAllUsesWith(partials.getResults());
     return success();
   }
@@ -515,8 +557,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
         Value row = centerRow(body, ivs[0]);
         auto emitRow = [&](OpBuilder &at) {
           if (hostLanes)
-            return emitPairRowLanes(at, op, structure.counts, entries, box,
-                                    inverse, row, *hostLanes, imageShifts, imagePositions);
+            return emitLanes(at, row);
           IRMapping local;
           return emitPairKernel(at, op, structure.counts, entries, box,
                                 inverse, row, local, nullptr, nullptr, nullptr, nullptr, imageShifts, imagePositions);
@@ -559,6 +600,8 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
           createReduction(body, loc, contributions, /*isSum=*/true);
       });
 
+  if (fixedImages)
+    memref::DeallocOp::create(builder, loc, fixedImages);
   if (imageShifts) {
     memref::DeallocOp::create(builder, loc, imagePositions);
     memref::DeallocOp::create(builder, loc, imageShifts);
@@ -1831,7 +1874,7 @@ public:
     });
     if (!stated)
       return signalPassFailure();
-    Lowering lowering(getOperation(), keptTuples, atomicGrid);
+    Lowering lowering(getOperation(), keptTuples, atomicGrid, fixedPairImages);
     if (failed(lowering.run()))
       return signalPassFailure();
     // The ops whose algebras the mark of the deterministic mode verifies

@@ -34,8 +34,10 @@ namespace {
 /// mdrtDistMatrixRebuild (runtime/mdrt_dist.c) compares the positions with
 /// the reference positions of its matrix and copies them there. The midpoint
 /// filter reads current positions while emitting selected row indices.
+/// Pair image quantization reads those positions into a separate buffer.
 static bool usesOnlyDuringCall(StringRef name) {
-  return name == "mdrtDistMatrixRebuild" || name == "mdrtDistBuildMidpoint" || name == "mdrtDistFilterMatrix";
+  return name == "mdrtDistMatrixRebuild" || name == "mdrtDistBuildMidpoint" ||
+         name == "mdrtDistFilterMatrix" || name == "mdrtDistQuantizePairImages";
 }
 
 class Release {

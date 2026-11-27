@@ -267,7 +267,8 @@ SmallVector<Value> kernels::emitPairRowLanes(OpBuilder &builder,
                                              Value counts, Value index,
                                              Value box, Value inverse,
                                              Value central, int64_t width, Value imageShifts, Value imagePositions,
-                                             Value privateOut, Value rowOffset) {
+                                             Value privateOut, Value rowOffset,
+                                             Value fixedImages, double imageQuantum) {
   Location loc = op.getLoc();
   Value positions = op.getPositions();
   SmallVector<Value> insBuffers(op.getIns().begin(), op.getIns().end());
@@ -307,6 +308,9 @@ SmallVector<Value> kernels::emitPairRowLanes(OpBuilder &builder,
   if (imagePositions)
     centralPosition = loadElement(builder, loc, imagePositions, central);
   SmallVector<Value> centralParts = splatComponents(centralPosition);
+  SmallVector<Value> fixedCenter;
+  if (fixedImages)
+    fixedCenter = splatComponents(loadElement(builder, loc, fixedImages, central));
   SmallVector<Value> centralValues;
   for (Value buffer : insBuffers)
     centralValues.push_back(loadElement(builder, loc, buffer, central));
@@ -362,38 +366,85 @@ SmallVector<Value> kernels::emitPairRowLanes(OpBuilder &builder,
     SmallVector<Value> other;
     for (int64_t lane = 0; lane != width; ++lane)
       other.push_back(vector::ExtractOp::create(b, loc, others, lane));
-    auto gather = [&](Value buffer) {
+    auto gather = [&](OpBuilder &at, Value buffer) {
+      Lanes lanes(at, loc, width);
       SmallVector<Value> perLane;
-      for (Value at : other)
-        perLane.push_back(loadElement(b, loc, buffer, at));
-      return values.fromLanes(perLane, perLane.front().getType());
+      for (Value row : other)
+        perLane.push_back(loadElement(at, loc, buffer, row));
+      return lanes.fromLanes(perLane, perLane.front().getType());
     };
 
     // The minimum-image displacement [AllenTildesley2017] and its squared
     // length, (d_x^2 + d_y^2) + d_z^2: the scalar row's `vector.reduction`
     // adds in this order from +0, and +0 + d_x^2 is d_x^2 (a square is not
     // -0).
-    SmallVector<Value> otherPosition = gather(imagePositions ? imagePositions : positions);
-    SmallVector<Value> otherImages, d;
-    if (imageShifts)
-      otherImages = gather(imageShifts);
-    for (int64_t k = 0; k != 3; ++k)
-      d.push_back(pairDifference(b, loc, centralParts[k], otherPosition[k], computed,
-                                 imageShifts ? otherImages[k] : Value()));
-    if (op.getImages() != md_exec::Images::Explicit)
-      emitLaneMinimumImage(b, loc, d, boxParts, inverseParts);
+    auto explicitDifference = [&](OpBuilder &at) {
+      auto otherPosition = gather(at, imagePositions ? imagePositions : positions);
+      SmallVector<Value> otherImages, delta;
+      if (imageShifts)
+        otherImages = gather(at, imageShifts);
+      for (int64_t k = 0; k != 3; ++k)
+        delta.push_back(pairDifference(at, loc, centralParts[k], otherPosition[k],
+                                       computed, imageShifts ? otherImages[k] : Value()));
+      if (op.getImages() != md_exec::Images::Explicit)
+        emitLaneMinimumImage(at, loc, delta, boxParts, inverseParts);
+      return delta;
+    };
+    auto squaredLength = [&](OpBuilder &at, ArrayRef<Value> delta) -> Value {
+      Value x2 = arith::MulFOp::create(at, loc, delta[0], delta[0]);
+      Value y2 = arith::MulFOp::create(at, loc, delta[1], delta[1]);
+      Value z2 = arith::MulFOp::create(at, loc, delta[2], delta[2]);
+      return arith::AddFOp::create(at, loc,
+          arith::AddFOp::create(at, loc, x2, y2), z2);
+    };
+    SmallVector<Value> d;
     Value r2;
-    for (int64_t k = 0; k != 3; ++k) {
-      Value square = arith::MulFOp::create(b, loc, d[k], d[k]);
-      r2 = r2 ? arith::AddFOp::create(b, loc, r2, square).getResult()
-              : square;
+    if (fixedImages) {
+      auto fixedOther = gather(b, fixedImages);
+      Type laneType = values.getLaneType(computed);
+      auto constant = [&](double x) {
+        return values.splat(createReal(b, loc, computed, x));
+      };
+      Value quantum = constant(imageQuantum);
+      for (int64_t k = 0; k != 3; ++k) {
+        Value bits = arith::SubIOp::create(b, loc, fixedCenter[k], fixedOther[k]);
+        Value units = arith::SIToFPOp::create(b, loc, laneType, bits);
+        d.push_back(arith::MulFOp::create(b, loc, units, quantum));
+      }
+      r2 = squaredLength(b, d);
+      // Keep close contacts and the cutoff decision on the binary64
+      // displacement. The shell allows for rounding in both squared
+      // lengths and the displacement error of one grid unit per axis.
+      double cutoff = op.getCutoff().convertToDouble();
+      Value shell = constant(cutoff*cutoff*0x1p-19 + 8*cutoff*imageQuantum);
+      Value cutoffGap = math::AbsFOp::create(b, loc,
+          arith::SubFOp::create(b, loc, r2, cutoff2Lanes));
+      Value nearCutoff = arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLE,
+                                              cutoffGap, shell);
+      Value close = arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT,
+                                         r2, constant(0x1p-14));
+      Value exceptional = arith::OrIOp::create(b, loc, nearCutoff, close);
+      Value any = vector::ReductionOp::create(b, loc, vector::CombiningKind::OR,
+                                              exceptional);
+      auto exact = scf::IfOp::create(b, loc, SmallVector<Type>(4, laneType), any, true);
+      OpBuilder then = exact.getThenBodyBuilder();
+      auto delta = explicitDifference(then);
+      delta.push_back(squaredLength(then, delta));
+      scf::YieldOp::create(then, loc, delta);
+      OpBuilder otherwise = exact.getElseBodyBuilder();
+      scf::YieldOp::create(otherwise, loc, ValueRange{d[0], d[1], d[2], r2});
+      d.assign(exact.getResults().begin(), exact.getResults().begin()+3);
+      r2 = exact.getResult(3);
+    } else {
+      d = explicitDifference(b);
+      r2 = squaredLength(b, d);
     }
 
     values.mapLanes(kernel.getArgument(0), r2);
     values.mapLanes(kernel.getArgument(1), d);
     for (unsigned i = 0; i != numIns; ++i) {
       values.mapUniform(kernel.getArgument(2 + 2 * i), centralValues[i]);
-      values.mapLanes(kernel.getArgument(3 + 2 * i), gather(insBuffers[i]));
+      values.mapLanes(kernel.getArgument(3 + 2 * i), gather(b, insBuffers[i]));
     }
     for (Operation &nested : kernel.without_terminator())
       values.emit(nested);
