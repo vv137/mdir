@@ -94,6 +94,8 @@ schedule. Each rank posts receives and sends before copying local ghosts.
 For a force transpose, it sums destinations with only local contributions
 during transfer and completes the other destinations after the wait. Each
 destination retains the original order of its contributions.
+For comparison, `MDIR_DIST_HALO_OVERLAP=0` waits immediately after
+posting the same peer streams, then visits the same two sets of rows.
 
 The MPI lowering packs consecutive forward copies of the same halo into
 one peer message. An intervening distribution can produce the next field.

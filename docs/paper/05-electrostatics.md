@@ -1308,7 +1308,11 @@ The inverse transform in this convention is unnormalized. The
 strain derivative at fixed fractional coordinates differentiates the
 volume and wave vectors in $G$, giving the mode virial of Section 5.
 The direct potential and excluded-pair correction use the same splitting
-density as $G$.
+density as $G$. Particle halo messages are posted before processing
+rank-local copies. In the transpose, each force row whose contributions
+are all rank-local can be summed while peer messages are pending. The
+other rows wait for the corresponding buffers and sum in the original
+halo order.
 
 Partition the columns of $S$ by particle owner. Each local assignment
 extends over the window support across domain boundaries. Summing the

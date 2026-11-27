@@ -324,3 +324,5 @@ The MPI driver uses rank-local migration schedules, explicit halo requests and p
 
 D[distribute-cpu-threads] carries the native integration state in compact
 identity intervals and projects exclusion membership onto each halo.
+The particle-halo runtime can wait immediately after posting messages
+to measure the effect of overlapping independent rows.

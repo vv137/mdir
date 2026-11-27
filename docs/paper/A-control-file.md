@@ -63,7 +63,9 @@ or output format, or overwrite behavior.
 
 D308 adds `mdir-opt --md-dist-print-schedule`, a compiler
 inspection pass over distributed halo dependencies. It adds no control-file
-key and changes no output file or overwrite behavior. Distributed execution
+key and changes no output file or overwrite behavior. The diagnostic
+environment setting `MDIR_DIST_HALO_OVERLAP=0` makes MPI particle halo waits
+immediate. Distributed execution
 continues to use the synchronous in-process transport.
 
 D310 adds the opt-in compiler pass option

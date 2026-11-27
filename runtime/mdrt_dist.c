@@ -3659,20 +3659,26 @@ static void exchangeHalo(struct Halo *h, struct HaloField *fields, int64_t field
   void *send = malloc((size_t)(sendSize ? sendSize : 1) * bytes);
   void *recv = malloc((size_t)(recvSize ? recvSize : 1) * bytes);
   if (!send || !recv) mdrtMPIAbort("out of memory packing halo rows");
+  const char *setting = getenv("MDIR_DIST_HALO_OVERLAP");
+  const int overlap = !setting || strcmp(setting, "0") != 0;
   struct HaloRequests *pending = NULL;
   for (int pass = 0; pass < 4; ++pass) {
     if (pass == 1) {
       pending = mdrtMPIStartHalo(send, ns, os, recv, nr, or, words, transpose);
+      if (!overlap) {
+        mdrtMPIWaitHalo(pending);
+        pending = NULL;
+      }
       if (transpose) {
         int64_t first = mdrtMPIDomainBound(h->layout->domains,0);
         int64_t past = mdrtMPIDomainBound(h->layout->domains,1);
         gatherHalo(h,first,past,plan->receive,plan->receives,recv,fields,fieldCount,components,words,0);
-        mdrtMPIWaitHalo(pending);
+        if (pending) mdrtMPIWaitHalo(pending);
         gatherHalo(h,first,past,plan->receive,plan->receives,recv,fields,fieldCount,components,words,1);
         break;
       }
     }
-    if (pass == 2) mdrtMPIWaitHalo(pending);
+    if (pass == 2 && pending) mdrtMPIWaitHalo(pending);
     size_t first = pass == 3 ? plan->onNode : 0;
     size_t length = pass == 0 ? plan->sends : pass == 1 ? plan->locals :
                     pass == 2 ? plan->onNode : plan->receives;
