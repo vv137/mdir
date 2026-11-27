@@ -6,6 +6,17 @@
 enum DistPhase { DistPairs = 1, DistOther, DistCopy, DistSum, DistReduce,
                  DistMigration, DistWait, DistList, DistPack, DistIntra, DistInter,
                  DistIntegrate, DistOutput, DistState, DistHaloBuild, DistSpread, DistOverlap, DistFFT, DistTranspose, DistSolve, DistGather, DistPhaseCount, DistStep };
+/* The quantities of the fixed-point words of the deterministic mode
+   (D[distribute-driver]); a range error names its quantity. */
+enum DistQuantity {
+  DistPairEnergy,
+  DistPairForce,
+  DistParticleSum,
+  DistKinetic,
+  DistMomentum,
+  DistForceSquare,
+  DistQuantityCount
+};
 enum DistMeshTraffic { DistOverlapBytes, DistTransposeBytes, DistMeshTrafficCount };
 #ifdef __cplusplus
 extern "C" {

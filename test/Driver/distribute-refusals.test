@@ -70,10 +70,13 @@
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/amber.test | sed '1d;$d' > base.toml
 # RUN: printf '\n[execution]\ntarget = "CPU"\nprecision = "DOUBLE"\n[distribute]\ndomains = [2, 1, 1]\n' >> base.toml
 # RUN: sed 's/"CUTOFF"/"PME"/' base.toml > pme.toml
+# The distributed mesh (D[distribute-pme-mesh]) takes electrostatic PME
+# over a unique or midpoint traversal only.
 # RUN: not mdir run pme.toml 2>&1 | FileCheck %s --check-prefix=MESH
+# MESH: distributed PME exclusion tuples require unique or midpoint traversal
 # RUN: sed 's/^electrostatics = "CUTOFF"/&\nlennard_jones = "PME"/' base.toml > ljpme.toml
-# RUN: not mdir run ljpme.toml 2>&1 | FileCheck %s --check-prefix=MESH
-# MESH: reciprocal sums require a distributed mesh
+# RUN: not mdir run ljpme.toml 2>&1 | FileCheck %s --check-prefix=LJMESH
+# LJMESH: distributed mesh supports electrostatic PME only
 # The builder: constraints, whose partners may lie in other domains.
 # RUN: sed -e 's/^\[boundary\]/[constraints]\nrigid_water = true\n&/' \
 # RUN:     -e '/^\[output\]/a log = "rigid.log"\nmanifest = "rigid.jsonl"' base.toml > rigid.toml

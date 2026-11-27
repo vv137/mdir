@@ -3102,7 +3102,8 @@ Error Reader::readExecution(const toml::table &table) {
 
 Error Reader::readDistribute(const toml::table &table) {
   if (Error error = checkKeywords(table, "distribute",
-                                  {"domains", "transport", "traversal"}))
+                                  {"domains", "transport", "traversal",
+                                   "pme_ranks", "pme_decomposition"}))
     return error;
   auto &dist = control.distribution.emplace();
   dist.gridGiven = table.contains("domains");
@@ -3150,8 +3151,39 @@ Error Reader::readDistribute(const toml::table &table) {
                 "distributed state requires mixed or double position storage");
   if (control.target != Target::CPU)
     return fail(table, "distributed execution requires a CPU target");
-  if (control.pme || control.ljpme)
-    return fail(table, "reciprocal sums require a distributed mesh");
+  if (control.ljpme)
+    return fail(table, "distributed mesh supports electrostatic PME only");
+  if (control.pme && dist.traversal == "directed")
+    return fail(table, "distributed PME exclusion tuples require unique or "
+                       "midpoint traversal");
+  if (control.pme && control.pmeInfluence == PMEInfluence::P3M)
+    return fail(table, "distributed PME does not implement the P3M influence");
+  if (!control.pme &&
+      (table.contains("pme_ranks") || table.contains("pme_decomposition")))
+    return fail(table, "PME rank choices require electrostatic PME");
+  if (const auto *node = table.get("pme_ranks")) {
+    if (!node->is_integer() || node->as_integer()->get() < 1 ||
+        node->as_integer()->get() > INT32_MAX)
+      return fail(*node, "pme_ranks requires a positive MPI rank count");
+    dist.pmeRanks = node->as_integer()->get();
+  }
+  if (const auto *node = table.get("pme_decomposition")) {
+    auto *shape = node->as_array();
+    if (!shape || shape->size() != 2)
+      return fail(*node, "pme_decomposition requires two positive integers");
+    for (int a = 0; a < 2; ++a) {
+      auto *n = (*shape)[a].as_integer();
+      if (!n || n->get() < 1 || n->get() > INT32_MAX)
+        return fail(*node, "pme_decomposition requires two positive MPI rank "
+                           "dimensions");
+      dist.pmeDecomposition[a] = n->get();
+    }
+    int64_t count = dist.pmeDecomposition[0] * dist.pmeDecomposition[1];
+    if (count > INT32_MAX || (dist.pmeRanks && count != dist.pmeRanks))
+      return fail(*node, "pme_decomposition product must fit the rank count "
+                         "and agree with pme_ranks");
+    dist.pmeRanks = count;
+  }
   if (!control.periodic || control.barostat)
     return fail(table, "distributed execution requires a fixed periodic cell");
   bool supportedBath =
@@ -3380,64 +3412,11 @@ Error Reader::read(const toml::table &root) {
 
   if (Error error = getTable("distribute", false, table))
     return error;
-  if (table) {
-    if (Error error = checkKeywords(*table, "distribute",
-                                    {"domains", "transport", "traversal", "pme_ranks", "pme_decomposition"}))
+  if (table)
+    if (Error error = readDistribute(*table)) {
+      distributionRefused = true;
       return error;
     }
-    if (Error err = readChoice<std::string>(*table, "transport", dist.transport,
-                                             {{"local", "local"}, {"mpi", "mpi"}}))
-      return err;
-#if !MDIR_ENABLE_MPI
-    if (dist.transport == "mpi")
-      return fail(*table, "MPI transport requires a build with MDIR_ENABLE_MPI=ON");
-#endif
-    if (Error err = readChoice<std::string>(*table, "traversal", dist.traversal,
-                     {{"directed", "directed"}, {"unique", "unique"}, {"midpoint", "midpoint"}}))
-      return err;
-    if (control.pairlistDistance <= control.cutoffDistance)
-      return fail(*table, "distributed halo coverage requires a positive skin");
-    if (control.precision == Precision::Single)
-      return fail(*table, "distributed state requires mixed or double position storage");
-    if (control.target != Target::CPU)
-      return fail(*table, "distributed execution requires a CPU target");
-    if (control.ljpme)
-      return fail(*table, "distributed mesh supports electrostatic PME only");
-    if (control.pme && dist.traversal == "directed")
-      return fail(*table, "distributed PME exclusion tuples require unique or midpoint traversal");
-    if (control.pme && control.pmeInfluence == PMEInfluence::P3M)
-      return fail(*table, "distributed PME does not implement the P3M influence");
-    if (!control.pme && (table->contains("pme_ranks") || table->contains("pme_decomposition")))
-      return fail(*table, "PME rank choices require electrostatic PME");
-    if (const auto *node = table->get("pme_ranks")) {
-      if (!node->is_integer() || node->as_integer()->get() < 1 || node->as_integer()->get() > INT32_MAX)
-        return fail(*node, "pme_ranks requires a positive MPI rank count");
-      dist.pmeRanks = node->as_integer()->get();
-    }
-    if (const auto *node = table->get("pme_decomposition")) {
-      auto *shape = node->as_array();
-      if (!shape || shape->size() != 2)
-        return fail(*node, "pme_decomposition requires two positive integers");
-      for (int a=0; a<2; ++a) {
-        auto *n = (*shape)[a].as_integer();
-        if (!n || n->get() < 1 || n->get() > INT32_MAX)
-          return fail(*node, "pme_decomposition requires two positive MPI rank dimensions");
-        dist.pmeDecomposition[a] = n->get();
-      }
-      int64_t count = dist.pmeDecomposition[0] * dist.pmeDecomposition[1];
-      if (count > INT32_MAX || (dist.pmeRanks && count != dist.pmeRanks))
-        return fail(*node, "pme_decomposition product must fit the rank count and agree with pme_ranks");
-      dist.pmeRanks = count;
-    }
-    if (!control.periodic || control.barostat)
-      return fail(*table, "distributed execution requires a fixed periodic cell");
-    bool supportedBath = !control.thermostat ||
-        (control.hasTopology() && dist.traversal != "directed" &&
-         control.thermostatMethod == ThermostatMethod::VRescale);
-    if (control.minimize || !supportedBath ||
-        control.integrator != Integrator::VelocityVerlet)
-      return fail(*table, "distributed dynamics requires NVE velocity Verlet or, for a topology with unique or midpoint traversal, V-rescale NVT");
-  }
 
   // Execution choices of the "same accuracy" class (#790). The rigid
   // units (D424): `ON` is refused where the route cannot

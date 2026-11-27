@@ -1,4 +1,3 @@
-#include "../../../runtime/mdrt_dist_stats.h"
 // The executors of md_dist: every domain in one process.
 //
 // See docs/distributed-ml2.md, Sections 6 and 7 (D275, D290). Every

@@ -1090,7 +1090,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     return refuse(*control, std::move(error));
   auto program = buildProgram(*control, *system);
   if (!program)
-    return control->distribution ? refuse(*control, program.takeError()) : fail(program.takeError());
+    return fail(program.takeError());
   if (control->distribution && program->pme) {
     auto &dist = *control->distribution;
     int64_t count = dist.pmeRanks ? dist.pmeRanks : ranks;

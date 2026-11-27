@@ -240,23 +240,6 @@ struct TowersSetup {
 /// What a control file says. Lengths are in Å, energies in kcal/mol, times
 /// in ps, masses in amu, and temperatures in K.
 struct Control {
-  struct Distribution {
-    std::array<int64_t, 3> grid{1, 1, 1};
-    bool gridGiven = false, transportGiven = false, traversalGiven = false;
-    // Setup transport for the topology-wide, cell-independent charge sums.
-    bool ownsPmeConstants = true;
-    void (*broadcastPmeConstants)(double *, int64_t, int) = nullptr;
-    int64_t pmeRanks = 0;
-    std::array<int64_t, 2> pmeDecomposition{};
-    int64_t domains = 0; // Nonzero when the cell chooses the factorization.
-    std::string traversal = "directed";
-    std::string transport = "local";
-  };
-  std::optional<Distribution> distribution;
-  double getDistributionReach() const {
-    return distribution && distribution->traversal == "midpoint"
-               ? pairlistDistance - 0.5 * cutoffDistance : pairlistDistance;
-  }
   // [input]
   std::string pdbFile;
   /// A topology and the coordinates of Amber, in place of `pdbFile` and the
@@ -874,6 +857,13 @@ struct Control {
     std::array<int64_t, 3> grid{1, 1, 1};
     /// Which keys the file gives, for the sources the log reports.
     bool gridGiven = false, transportGiven = false, traversalGiven = false;
+    /// The setup transport of the topology-wide, cell-independent charge
+    /// sums of PME.
+    bool ownsPmeConstants = true;
+    void (*broadcastPmeConstants)(double *, int64_t, int) = nullptr;
+    /// The ranks of the PME mesh and their pencil decomposition, or 0.
+    int64_t pmeRanks = 0;
+    std::array<int64_t, 2> pmeDecomposition{};
     /// A count of domains whose factor grid the cell chooses, or 0.
     int64_t domains = 0;
     std::string traversal = "directed";
