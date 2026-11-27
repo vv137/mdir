@@ -574,11 +574,32 @@ static void polynomial(double k, const double *value, const double *slope,
   *v = sn * a + cs * b;
   *kdv = k * (cs * a - sn * b) + (sn * da + cs * db);
 }
+/* The Gaussian influence factor separates by axis. Round the factors
+   at the same point as the ordinary mixed influence calculation. */
+struct MixedMode {
+  double wave;
+  float square, factor;
+};
+
 static void spectrum(const int n[3], const double box[3], struct PmeBox b,
                      double *fft, struct Table *t, double beta, double coulomb,
                      int fixed, int mixed, int threaded, double *sums, __int128 words[10]) {
   const double pi = acos(-1),
                pref = coulomb / (pi * (box[0] * box[1] * box[2]));
+  const double exponent = pi * pi / (beta * beta);
+  struct MixedMode *axisModes[3] = {NULL, NULL, NULL};
+  int mixedGaussian = mixed && t->n[0] == 3;
+  if (mixedGaussian)
+    for (int a = 0; a < 3; ++a) {
+      axisModes[a] = alloc(b.hi[a]-b.lo[a], sizeof *axisModes[a]);
+      for (int k = b.lo[a]; k < b.hi[a]; ++k) {
+        double wave = (a != 2 && k > n[a]/2 ? k-n[a] : k) / box[a];
+        double square = wave * wave;
+        double factor = exp(-exponent * square) * table(t, a)[k];
+        axisModes[a][k-b.lo[a]] = (struct MixedMode){
+            wave, (float)square, (float)(a == 0 ? factor * pref : factor)};
+      }
+    }
   size_t planes = b.hi[0]-b.lo[0];
   double (*planeSums)[10] = fixed ? NULL : alloc(planes,sizeof *planeSums);
   __int128 (*planeWords)[10] = fixed ? alloc(planes,sizeof *planeWords) : NULL;
@@ -588,11 +609,27 @@ static void spectrum(const int n[3], const double box[3], struct PmeBox b,
     size_t i = 2*(size_t)plane*(b.hi[1]-b.lo[1])*(b.hi[2]-b.lo[2]);
     for (int y = b.lo[1]; y < b.hi[1]; ++y)
       for (int z = b.lo[2]; z < b.hi[2]; ++z, i += 2) {
-        double m[3] = {(x > n[0] / 2 ? x - n[0] : x) / box[0],
-                       (y > n[1] / 2 ? y - n[1] : y) / box[1], z / box[2]};
-        double s = m[0] * m[0] + m[1] * m[1] + m[2] * m[2];
+        struct MixedMode mx, my, mz;
+        double m[3];
+        if (mixedGaussian) {
+          mx = axisModes[0][plane];
+          my = axisModes[1][y-b.lo[1]];
+          mz = axisModes[2][z-b.lo[2]];
+          m[0] = mx.wave;
+          m[1] = my.wave;
+          m[2] = mz.wave;
+        } else {
+          m[0] = (x > n[0]/2 ? x-n[0] : x) / box[0];
+          m[1] = (y > n[1]/2 ? y-n[1] : y) / box[1];
+          m[2] = z / box[2];
+        }
+        double s = m[0]*m[0] + m[1]*m[1] + m[2]*m[2];
         double g = 0, dg = 0;
-        if (s > 0) {
+        if (s > 0 && mixedGaussian) {
+          float inverse = 1.0f / (mx.square + my.square + mz.square);
+          g = ((mx.factor * my.factor) * mz.factor) * inverse;
+          dg = -2 * g * (inverse + (float)exponent);
+        } else if (s > 0) {
           double mods = table(t, 0)[x] * table(t, 1)[y] * table(t, 2)[z];
           double scale = pref * mods / s;
           if (t->n[0] == 5) {
@@ -613,31 +650,16 @@ static void spectrum(const int n[3], const double box[3], struct PmeBox b,
               dg = (scale * derivative - 2 * g) / s;
             }
           } else {
-            double a = pi * pi / (beta * beta);
-            g = scale * exp(-a * s);
-            dg = -2 * g * (1 / s + a);
+            g = scale * exp(-exponent * s);
+            dg = -2 * g * (1 / s + exponent);
           }
-        }
-        if (mixed && t->n[0] == 3 && s > 0) {
-          int point[3] = {x, y, z};
-          float factor[3], square[3];
-          double exponent = pi * pi / (beta * beta);
-          for (int a = 0; a < 3; ++a) {
-            double m2 = m[a] * m[a];
-            square[a] = m2;
-            double axis = exp(-exponent * m2) * table(t, a)[point[a]];
-            factor[a] = a == 0 ? axis * pref : axis;
-          }
-          float inverse = 1.0f / (square[0] + square[1] + square[2]);
-          g = (factor[0] * factor[1] * factor[2]) * inverse;
-          dg = -2 * g * (inverse + (float)exponent);
         }
         g = precision(g, mixed);
         double re = fft[i], im = fft[i + 1];
         double power =
             (z == 0 || 2 * z == n[2] ? 0.5 : 1) * (re * re + im * im);
-        fft[i] = precision(re * g, mixed);
-        fft[i + 1] = precision(im * g, mixed);
+        fft[i] = mixed ? (float)re * (float)g : re * g;
+        fft[i + 1] = mixed ? (float)im * (float)g : im * g;
         double term[10] = {power * g};
         for (int a = 0; a < 3; ++a)
           for (int d = 0; d < 3; ++d)
@@ -657,6 +679,8 @@ static void spectrum(const int n[3], const double box[3], struct PmeBox b,
     }
   free(planeWords);
   free(planeSums);
+  for (int a = 0; a < 3; ++a)
+    free(axisModes[a]);
 }
 void _mlir_ciface_mdrtDistSpatialPME(struct Rows *rows, int64_t first, int64_t past,
                               struct Field *x, struct Field *q, struct Table *t,

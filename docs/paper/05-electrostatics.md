@@ -1588,3 +1588,9 @@ Mixed interpolation stages the last-axis potential window in stencil
 order across the periodic boundary. The three derivative products for
 each point can then be computed in SIMD lanes before their ordered
 addition to the gradient.
+
+For mixed Gaussian PME, the influence factor separates into three
+one-dimensional factors and the inverse squared wave number. The rank
+evaluates each axis factor once per local index, then multiplies the
+rounded factors and the complex spectrum in binary32. Squared spectrum
+magnitudes and virial terms retain the original binary64 arithmetic.

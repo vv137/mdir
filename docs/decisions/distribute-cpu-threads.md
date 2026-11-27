@@ -319,3 +319,9 @@ The mixed gather computes the independent derivative products along the
 contiguous stencil axis as SIMD lanes. At a periodic boundary, the
 potential values come from the tail and head of the same mesh row.
 Each component still adds the rounded products in stencil order.
+
+The mixed Gaussian spectrum forms each axis factor once per local mode
+index and combines the rounded factors in binary32. The complex
+influence multiplication also uses binary32 inputs. Mode powers,
+virial terms, and the ordered plane sums keep their existing precision.
+The prolate radial factor still depends on the full wave vector.
