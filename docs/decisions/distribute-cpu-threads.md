@@ -308,3 +308,9 @@ subdivides the physical x and y grid, assign each column of physical z
 ranks the real pencils inside its x/y tile. Apply the same rank
 permutation to all three FFT layouts. Partly occupied or incompatible
 pencil grids keep their original assignment.
+
+The midpoint membership filter copies current unshifted positions while
+checking the existing Verlet coordinate bounds. It stores each row's
+periodic shift on classification refresh. The ambiguous-neighbor scan
+reads these two values from the same row record and evaluates the original
+binary64 midpoint expression and half-open domain test in neighbor order.
