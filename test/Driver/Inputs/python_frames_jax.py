@@ -115,8 +115,9 @@ def dipeptide(restrained=False, smooth=False):
     system.electrostatics = mdir.Electrostatics.PME
     system.truncation, system.switch_distance = mdir.Truncation.Switch, 0.7
     system.dispersion = mdir.DispersionCorrection.None_
-    if smooth:
-        system.pme_tolerance = 1e-10
+    # Unless smooth, the tolerance of before D[pme-default-tolerance], at
+    # which the bounds on mixed against double were set.
+    system.pme_tolerance = 1e-10 if smooth else 1e-5
     if restrained:
         system.restraints = [mdir.Restraint("!:WAT & !@H*", 500.0)]
     tunables(system)
