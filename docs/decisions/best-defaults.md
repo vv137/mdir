@@ -41,9 +41,11 @@ setup of `mdir run`.
 
 TOWERS taken by AUTO uses the derived launch of the preflight, untimed,
 or the winner of an earlier trial cached for the same grid. The timed
-trial of D432 compiled 48 candidates and took 82 to 90 s of setup on each
-input below, and its launch was 0 to 7% faster than the derived one
-(table). An explicit `neighbor_structure = "TOWERS"` keeps the trial.
+trial of D432 compiled 48 candidates and took 62 to 72 s of setup
+(`trial_cost_ms`) on each input below. In NVT and NVE its launch was 0 to
+4.7% faster than the derived one (3.5% on JAC NVT, 4.0% on JAC NVE, 4.7%
+on the box of 3,072 atoms); with the virial it was 1.5% faster on JAC NPT
+and 3 to 5% slower on Factor IX and Cellulose NPT (tables). An explicit `neighbor_structure = "TOWERS"` keeps the trial.
 At a fixed cell height every launch gives the same force and energy words
 (D428), so the choice changes speed only.
 

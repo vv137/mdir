@@ -1487,8 +1487,9 @@ trial, TOWERS took 0.96 to 0.97 of the matrix's rate on a TIP3P box of
 3,072 atoms and 1.04 to 1.25 times the rate of the structure of Section
 4.4 or the matrix from 4,608 atoms to Cellulose (408,609 atoms), at 2 fs
 in NVT. The entry therefore begins at 4,608 particles. The timed trial
-gave launches 0 to 7% faster than the derived one at a setup cost of 82 to
-90 s; at a fixed height both give the same words, so AUTO takes the
+gave launches up to 4.7% faster than the derived one in NVT and NVE, and
+3 to 5% slower on two systems in NPT, at a setup cost of 62 to 72 s; at a
+fixed height both give the same words, so AUTO takes the
 derived launch, or a trial's winner cached for the grid. Inputs that
 TOWERS does not take, or that name a key of the lists, keep the rule of
 Section 4.4, and so does the continuation of a checkpoint that a list
