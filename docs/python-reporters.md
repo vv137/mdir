@@ -141,29 +141,25 @@ intervals:
 | | Double, CPU | Double, GPU | Mixed, CPU | Mixed, GPU |
 |---|---|---|---|---|
 | NVE, energy file and DCD/XTC | byte for byte | byte for byte | byte for byte | byte for byte |
-| NVT (V-rescale every 10 steps), energy file and DCD/XTC | byte for byte | byte for byte | see below | see below |
+| NVT (V-rescale every 10 steps), energy file and DCD/XTC | byte for byte | byte for byte | byte for byte | byte for byte |
 
-In NVT and mixed precision the program of segments and that of `mdir run`
-round differently in single precision (loops of another shape; #105), and
-the trajectories part. The first row is equal to the byte; the kinetic
-energy, the temperature, and the DCD frames agree within 3 E, three times
-the difference of `mdir run` in mixed and in double, with a floor of
-$10^{-5}$ of each value (and $10^{-5}$ Å for the frames); a row of the
-interval before is rejected at every row. The potential, the total, the
-virial, the pressure, and the conserved energy are not compared after the
-first row (#992): under the plain cutoff of the Coulomb energy, a pair of
-charges within the cutoff in one trajectory and beyond it in the other
-moves the potential by $332.06\,q_iq_j/r_c$, 7.218 kcal/mol for two
-hydrogens of TIP3P at $r_c = 8$ Å and 14.44 for an oxygen and a hydrogen.
-About $N^2/2\cdot4\pi r_c^2/V = 2.7\times10^4$ pairs lie within 1 Å of the
-cutoff in this cell, so once the trajectories are some $4\times10^{-5}$ Å
-apart one such pair is expected, and the rows then differ by whole steps
-of this size, which no bound from the rounding holds. Measured: on a V100
-the rows at step 60 differ by 7.218 kcal/mol between the two programs,
-against $1.6\times10^{-3}$ between `mdir run` in mixed and in double; on
-an RTX 4090 by 14.47 kcal/mol at step 100, within 3 E there only because
-`mdir run` in mixed and in double were 16.2 kcal/mol apart by such steps
-too. The kinetic energy and the temperature do not jump at such a crossing, but their gap grows by kicks: the pair differs in force by $332.06\,q_iq_j/r_c^2$, 0.90 kcal/mol/Å for two hydrogens, while it is on opposite sides, and 3 E holds as long as the baseline takes kicks of the same kind. Measured at the worst row (step 80 of NVT): the kinetic energy at 0.75 of its bound on a V100, 0.65 on an RTX 4090, and 0.01 on the CPU; the frames at 0.18, 0.17, and below 0.001. The double-precision rows check every column, byte for byte.
+Both sides remove the motion of the center of mass with the thermostat,
+the default of D248 in the model and in the control file. Before #992 the
+test turned it off on the Python side alone (`com_period = 0`, the default
+of before D248). The two NVT runs then differed from the first step by the
+velocity of the center of mass (2.6e-6 nm/ps, the same for every particle
+to 4e-15), below the digits of the rows in double precision. In mixed
+precision that shift moved the rounding of single precision, the
+trajectories parted, and under the plain cutoff of the Coulomb energy a
+pair of charges inside the cutoff in one run and beyond it in the other
+moved the potential by $332.06\,q_iq_j/r_c$: 7.218 kcal/mol at step 60 on
+a V100, for two hydrogens of TIP3P. A bound from the rounding (3 E, three
+times the difference of `mdir run` in mixed and in double) had covered
+this on other devices only where `mdir run` in mixed and in double were
+apart by such steps too. With the same settings on both sides, the files
+are equal to the byte in mixed precision on the CPU, an RTX 4090, and a
+V100, and the test requires it; with `com_period = 0` on the Python side
+it fails at step 20 of NVT in mixed precision.
 
 With SHAKE and
 SETTLE, where the rows take the optimal temperature from the half steps
