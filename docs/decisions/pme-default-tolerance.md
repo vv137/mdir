@@ -31,6 +31,11 @@ $10^{-9}$ ps:
 | Cellulose, 8 Å | 224×108×108 | 1.228e-3 | 7.74e-4 | 0.63 | 6.90e-4 | 4.15e-4 |
 | STMV, 8 Å | 192³ | 1.267e-3 | 7.92e-4 | 0.63 | — | 4.14e-4 |
 
+In double precision, on the GPU and on the CPU, the errors of TIP3P 10k
+and JAC are those of mixed precision to three digits: $7.32\times10^{-4}$
+to $4.99\times10^{-4}$ and $1.311\times10^{-3}$ to $8.24\times10^{-4}$;
+at these errors the mesh, not the arithmetic, sets them.
+
 A spacing of 1.0 Å halves the error again but has 1.6 to 1.7 times the
 points. Under TOWERS on the RTX 4090 it ran 7% slower on TIP3P 10k, 2%
 slower on TIP3P 20k, 4% faster on JAC and 5% slower on Cellulose, and on
