@@ -68,16 +68,31 @@ The chunk graphs are keyed by their banks and buffers (D439). The barostat does 
 
 `test/Driver/step-graph-npt-gpu.test` (`Inputs/check_step_graph_npt.py`) runs the dipeptide in water (1,168 particles, PME, SHAKE and SETTLE, V-rescale and C-rescale every 10 steps, 1 fs). The barostat targets 500 bar with a time constant of 0.1 ps, so the volume falls by about 6% in 200 steps. TOWERS has no deterministic mode. The oracle is LAUNCH, with the bound of D448 for GROUPS: the relative L2 difference of the positions and velocities of GRAPH from LAUNCH is at most ten times that of two LAUNCH runs, with a floor of $10^{-5}$. The edges differ by at most ten times the LAUNCH spread, with a floor of $10^{-6}$ nm. Every row has the same step and time, and its values differ by at most ten times the LAUNCH spread plus $0.05 + 10^{-4}\lvert x\rvert$.
 
-| Case | Quantity | GRAPH − LAUNCH | LAUNCH − LAUNCH | Bound |
-|---|---|---:|---:|---:|
-| Isotropic, 200 steps | positions / velocities | (filled at the final head) | | |
+| Case | Positions: GRAPH, LAUNCH spread | Velocities: GRAPH, LAUNCH spread |
+|---|---|---|
+| Isotropic, 200 steps, a row every period | 1.1e-7, 9.8e-8 | 9.3e-6, 8.2e-6 |
+| Isotropic, 400 steps, a row every 5 periods | 2.2e-5, 1.9e-5 | 1.1e-3, 9.3e-4 |
+| Continuation, 100 steps | 1.5e-8, 1.4e-8 | 2.1e-6, 3.1e-6 |
+| Semi-isotropic, 100 steps | 5.3e-8, 1.7e-8 | 3.1e-6, 2.4e-6 |
+| Anisotropic, 100 steps | 1.5e-8, 1.6e-8 | 1.9e-6, 2.6e-6 |
+| Triclinic, 100 steps | 5.2e-8, 5.2e-8 | 2.6e-6, 1.8e-6 |
+| Stale cell (fault), 200 steps | 3.6e-3 | 2.4e-1 |
+
+Relative L2 differences from the first LAUNCH run. The bound is the larger of ten times the spread and $10^{-5}$.
 
 - **A stale cell.** With `MDRT_STEP_MIRROR_FAULT=1` the runtime writes the mirror once, as a graph that took the cell by value would behave. The test requires that run to differ from LAUNCH by more than 100 times the bound. It does, by four orders of magnitude.
 - **A continuation** from the GRAPH checkpoint at step 200, 100 steps more with a row every 20 steps: the same bound against two LAUNCH continuations, and the rows at steps 220 to 300. (A row interval that does not divide the restart step is the subject of #1014.)
 - **Semi-isotropic and anisotropic coupling, and a triclinic cell** (the dipeptide's cell tilted to γ = 88°), 100 steps each, with the same bound.
 - **A crushed cell** (50,000 bar): LAUNCH and GRAPH stop at the same kernel after the same rows.
 - **Refusals.** No barostat case remains refused. `test/Driver/step-graph.test` (`check_step_graph_scope.py`) checks that `mdir check` keeps GRAPH, and leaves AUTO to its trial, in the three couplings.
-- **The suite's inputs** (one-off, not in the suite): JAC, Factor IX and TIP3P 10k NPT with the launch shapes of the timing below cover tower heights FULL and HALF, split 2 and two blocks per SM. In 100 steps with a row at every scaling, GRAPH stayed within the LAUNCH spread in every row (filled at the final head).
+- **The suite's inputs** (one-off, not in the suite): JAC, Factor IX and TIP3P 10k NPT with the launch shapes of Section 6 cover tower heights FULL and HALF, split 2 and two blocks per SM. In 100 steps with a row at every scaling, against two LAUNCH runs:
+
+| Input | Positions: GRAPH, spread, stale | Velocities: GRAPH, spread, stale | Edges, GRAPH − LAUNCH | Largest row difference / row bound |
+|---|---|---|---:|---:|
+| JAC | 6.0e-8, 6.2e-8, 4.6e-4 | 4.0e-5, 3.9e-5, 8.3e-2 | 0 | 0.067 |
+| Factor IX | 4.2e-8, 4.2e-8, 9.7e-4 | 4.6e-5, 4.6e-5, 3.2e-1 | 0 | 0.042 |
+| TIP3P 10k | 8.0e-8, 9.9e-8, 5.1e-4 | 2.1e-5, 2.3e-5, 7.3e-2 | 0 | 0.038 |
+
 
 ## 6. Throughput
 
