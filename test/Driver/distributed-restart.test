@@ -1,4 +1,4 @@
 # REQUIRES: hdf5, h5py
 # RUN: rm -rf %t %t.charged
-# RUN: %h5md_python %S/Inputs/distributed_restart.py %t %S/../../examples/argon
-# RUN: %h5md_python %S/Inputs/distributed_restart.py %t.charged %S/charged.toml
+# RUN: %h5md_python %S/Inputs/distributed_restart.py %t %S/../../examples/argon mdir
+# RUN: %h5md_python %S/Inputs/distributed_restart.py %t.charged %S/charged.toml mdir

@@ -11,7 +11,8 @@ import h5py
 
 root = Path(sys.argv[1]).resolve()
 example = Path(sys.argv[2]).resolve()
-mpi = sys.argv[3:]
+program = shutil.which(sys.argv[3]) or sys.argv[3]
+mpi = sys.argv[4:]
 root.mkdir(parents=True, exist_ok=True)
 if example.is_dir():
     control_file = example / "argon.toml"
@@ -60,7 +61,7 @@ def run(name, domains, ranks, *, stop=False, resume=False, trace=False):
     control = base + f'domains = {domains}\ntransport = "{transport}"\n'
     (path / "run.toml").write_text(control)
     cmd = [*mpi, "-n", str(ranks)] if transport == "mpi" else []
-    cmd.extend(["mdir", "run"])
+    cmd.extend([program, "run"])
     if resume or stop:
         cmd.append("--continue")
     if stop:
