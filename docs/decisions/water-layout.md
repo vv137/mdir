@@ -119,6 +119,7 @@ RTX 4090, at this decision's head and `main` at 03506508.
 | alanine dipeptide, TIP3P, PME | 0.667 |
 | rhombic dodecahedron, plain cutoffs | 0.860 |
 | rhombic dodecahedron, PME | 0.186 |
+| the mixture with an ion inside each water of four sites (those waters in the rest) | 0.867 |
 
 A mutation that ignores the places of the frame atoms (member $k$ at the first particle plus $k$) takes the case with the site listed first to 6.6e5 times its bound, while the others still pass. It was tried once and reverted.
 
