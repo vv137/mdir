@@ -1478,3 +1478,11 @@ the tuple kernels lets the projections share input fields. In the
 Cellulose mixed-precision driver the number of emitted identity-to-owned
 shard transfers fell from 44 to 28. The order in which the driver adds
 the corrections to the trajectory remains the same.
+
+On one node the distributed Cellulose PME spread and gather took 4.01
+and 2.47 ms per mixed step, respectively, versus 3.75 and 1.26 ms in
+double precision. The original mixed stencil repeatedly multiplied in
+binary64 and converted the result. The mixed stencil now uses binary32
+products on rounded inputs, including the three directional derivatives
+of each interpolated grid point. Integer charge accumulation and the
+order of the gradient sum are preserved.

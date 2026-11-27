@@ -227,3 +227,9 @@ Disjoint constraint sets read the same uncorrected particle field at
 their own members. The distributed driver applies D83 while the native
 tuple operations still carry the union proof. This lets multiple group
 projections read a single distributed copy of the input.
+
+Mixed PME spread multiplies the rounded charge weights along the second
+and third stencil axes in binary32. Mixed interpolation uses binary32
+products of inverse grid points, weights, and derivatives. The rounded
+product enters the component sum in stencil order. The final reciprocal
+force still uses the original charge and box scale.

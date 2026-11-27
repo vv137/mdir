@@ -239,10 +239,10 @@ static inline void spreadFixedPlane(const struct DomainMesh *local,
       for (int k = 0; k < order; ++k) {
         int y = wrap((int64_t)atom->first[1] + k, ny);
         size_t row = ((size_t)x * ny + y) * nz;
-        double qxy = precision(qx * w[order + k], mixed);
+        double qxy = mixed ? (float)qx * (float)w[order + k] : qx * w[order + k];
         for (int l = 0; l < order; ++l) {
           size_t at = row + wrap((int64_t)atom->first[2] + l, nz);
-          double v = precision(qxy * w[2 * order + l], mixed);
+          double v = mixed ? (float)qxy * (float)w[2 * order + l] : qxy * w[2 * order + l];
           double word = nearbyint(v);
           if (!(word >= -0x1p63 && word < 0x1p63))
             fail("PME assignment outside signed Q40 range");
@@ -298,23 +298,45 @@ static void spreadFixed(const struct DomainMesh *local, size_t count,
   free(offset);
   free(ids);
 }
+/* Mixed inverse grid values, weights and derivatives are already rounded
+   to binary32. Multiply them directly at that precision. Keep the explicit
+   rounding of the product separate from the gradient addition. */
+static void gatherMixed(const struct Window *w, struct Subgrid g, int order,
+                        const double *potential, double grad[3]) {
+  for (int j = 0; j < order; ++j) {
+    int x = wrap(w->first[0] + j, g.len[0]);
+    float wx = w->w[0][j], dwx = w->dw[0][j];
+    for (int k = 0; k < order; ++k) {
+      int y = wrap(w->first[1] + k, g.len[1]);
+      size_t row = ((size_t)x * g.len[1] + y) * g.len[2];
+      float wy = w->w[1][k], dwy = w->dw[1][k];
+      float xy = wx * wy, dx = dwx * wy, dy = wx * dwy;
+      for (int l = 0; l < order; ++l) {
+        float v = potential[row + wrap(w->first[2] + l, g.len[2])];
+        float wz = w->w[2][l], dwz = w->dw[2][l];
+        float deriv[3] = {dx * wz, dy * wz, xy * dwz};
+        for (int a = 0; a < 3; ++a)
+          grad[a] = (float)(grad[a] + (double)(v * deriv[a]));
+      }
+    }
+  }
+}
+
 static void gather(const struct Window *w, struct Subgrid g, int order,
-                   const double *potential, int mixed, double grad[3]) {
+                   const double *potential, double grad[3]) {
   for (int j = 0; j < order; ++j) {
     int x = wrap((int64_t)w->first[0] + j, g.len[0]);
     for (int k = 0; k < order; ++k) {
       int y = wrap((int64_t)w->first[1] + k, g.len[1]);
       size_t row = ((size_t)x * g.len[1] + y) * g.len[2];
-      double xy = precision(w->w[0][j] * w->w[1][k], mixed);
-      double dx = precision(w->dw[0][j] * w->w[1][k], mixed);
-      double dy = precision(w->w[0][j] * w->dw[1][k], mixed);
+      double xy = w->w[0][j] * w->w[1][k];
+      double dx = w->dw[0][j] * w->w[1][k];
+      double dy = w->w[0][j] * w->dw[1][k];
       for (int l = 0; l < order; ++l) {
         double v = potential[row + wrap((int64_t)w->first[2] + l, g.len[2])];
         double deriv[3] = {dx * w->w[2][l], dy * w->w[2][l], xy * w->dw[2][l]};
         for (int a = 0; a < 3; ++a)
-          grad[a] = precision(
-              grad[a] + precision(v * precision(deriv[a], mixed), mixed),
-              mixed);
+          grad[a] += v * deriv[a];
       }
     }
   }
@@ -775,7 +797,10 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
       double grad[3] = {0};
       if (p->q) {
         struct Window w = particleWindow(domains + d, r, order);
-        gather(&w, domains[d].box, order, domains[d].points, mixed, grad);
+        if (mixed)
+          gatherMixed(&w, domains[d].box, order, domains[d].points, grad);
+        else
+          gather(&w, domains[d].box, order, domains[d].points, grad);
       }
       for (int a = 0; a < 3; ++a) {
         double v = precision((-p->q * (n[a] / box[a])) * grad[a], mixed);
