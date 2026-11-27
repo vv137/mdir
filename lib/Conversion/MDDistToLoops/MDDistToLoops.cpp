@@ -989,6 +989,11 @@ LogicalResult Lowering::lowerMesh(MeshOp op) {
   if (mpi)
     for (int64_t n : decomposition.getGrid())
       args.push_back(index(b, n));
+  bool needsEnergy = !op.getEnergy().use_empty();
+  bool needsVirial = !op.getVirial().use_empty();
+  // The mesh call is collective. Its static result uses give every rank
+  // the same observable count, including on the split start/finish path.
+  args.push_back(index(b, needsVirial ? 10 : needsEnergy ? 1 : 0));
   // A dedicated mesh rank can finish its pencil solve while particle
   // ranks evaluate the next local force rows. Keep the join before the
   // first mesh consumer, and before subsequent halo collectives.
@@ -1015,12 +1020,17 @@ LogicalResult Lowering::lowerMesh(MeshOp op) {
     func::CallOp::create(b, loc, finish, finishArgs);
   }
   storage[op.getForces()].buffer = forces;
-  op.getEnergy().replaceAllUsesWith(memref::LoadOp::create(b,loc,sums,ValueRange{index(b,0)}));
-  SmallVector<Value> virial;
-  for (int i=1; i<=9; ++i)
-    virial.push_back(memref::LoadOp::create(b,loc,sums,ValueRange{index(b,i)}));
-  op.getVirial().replaceAllUsesWith(vector::FromElementsOp::create(b,loc,
-      op.getVirial().getType(), virial));
+  if (needsEnergy)
+    op.getEnergy().replaceAllUsesWith(
+        memref::LoadOp::create(b, loc, sums, ValueRange{index(b, 0)}));
+  if (needsVirial) {
+    SmallVector<Value> virial;
+    for (int i = 1; i <= 9; ++i)
+      virial.push_back(
+          memref::LoadOp::create(b, loc, sums, ValueRange{index(b, i)}));
+    op.getVirial().replaceAllUsesWith(vector::FromElementsOp::create(
+        b, loc, op.getVirial().getType(), virial));
+  }
   return success();
 }
 

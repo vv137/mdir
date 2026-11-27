@@ -1616,3 +1616,12 @@ charge exchange, the particle ranks evaluate those forces while the
 reciprocal ranks perform the FFTs and convolution. The shared
 transport joins the two paths for the potential exchange and reduces
 reciprocal observables in rank order (D[distribute-pme-pair-overlap]).
+
+In the discrete mesh quadratic form, applying the influence to the
+complex charge coefficients supplies the potential used by the force
+gather. Forming the half-spectrum power is required for the energy inner
+product and the virial derivative. When neither observable has a
+consumer, the compiler requests the influence multiplication alone and
+omits the observable reduction. An energy-only consumer requests the
+scalar inner product. A virial consumer retains the complete ordered
+fold (D[distribute-pme-observable-uses]).

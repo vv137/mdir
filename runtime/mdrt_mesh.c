@@ -587,7 +587,8 @@ struct MixedMode {
 
 static void spectrum(const int n[3], const double box[3], struct PmeBox b,
                      double *fft, struct Table *t, double beta, double coulomb,
-                     int fixed, int mixed, int threaded, double *sums, __int128 words[10]) {
+                     int fixed, int mixed, int threaded, int observableCount,
+                     double *sums, __int128 words[10]) {
   const double pi = acos(-1),
                pref = coulomb / (pi * (box[0] * box[1] * box[2]));
   const double exponent = pi * pi / (beta * beta);
@@ -605,8 +606,10 @@ static void spectrum(const int n[3], const double box[3], struct PmeBox b,
       }
     }
   size_t planes = b.hi[0]-b.lo[0];
-  double (*planeSums)[10] = fixed ? NULL : alloc(planes,sizeof *planeSums);
-  __int128 (*planeWords)[10] = fixed ? alloc(planes,sizeof *planeWords) : NULL;
+  double (*planeSums)[10] = observableCount && !fixed
+      ? alloc(planes, sizeof *planeSums) : NULL;
+  __int128 (*planeWords)[10] = observableCount && fixed
+      ? alloc(planes, sizeof *planeWords) : NULL;
   #pragma omp parallel for schedule(static) if(threaded && boxSize(b) >= 1024)
   for (int x = b.lo[0]; x < b.hi[0]; ++x) {
     int plane = x-b.lo[0];
@@ -632,7 +635,8 @@ static void spectrum(const int n[3], const double box[3], struct PmeBox b,
         if (s > 0 && mixedGaussian) {
           float inverse = 1.0f / (mx.square + my.square + mz.square);
           g = ((mx.factor * my.factor) * mz.factor) * inverse;
-          dg = -2 * g * (inverse + (float)exponent);
+          if (observableCount > 1)
+            dg = -2 * g * (inverse + (float)exponent);
         } else if (s > 0) {
           double mods = table(t, 0)[x] * table(t, 1)[y] * table(t, 2)[z];
           double scale = pref * mods / s;
@@ -651,24 +655,28 @@ static void spectrum(const int n[3], const double box[3], struct PmeBox b,
                 derivative = series(radial + 4 + terms, terms, v);
               }
               g = scale * kernel;
-              dg = (scale * derivative - 2 * g) / s;
+              if (observableCount > 1)
+                dg = (scale * derivative - 2 * g) / s;
             }
           } else {
             g = scale * exp(-exponent * s);
-            dg = -2 * g * (1 / s + exponent);
+            if (observableCount > 1)
+              dg = -2 * g * (1 / s + exponent);
           }
         }
         g = precision(g, mixed);
         double re = fft[i], im = fft[i + 1];
-        double power =
-            (z == 0 || 2 * z == n[2] ? 0.5 : 1) * (re * re + im * im);
         fft[i] = mixed ? (float)re * (float)g : re * g;
         fft[i + 1] = mixed ? (float)im * (float)g : im * g;
+        if (!observableCount) continue;
+        double power =
+            (z == 0 || 2 * z == n[2] ? 0.5 : 1) * (re * re + im * im);
         double term[10] = {power * g};
-        for (int a = 0; a < 3; ++a)
-          for (int d = 0; d < 3; ++d)
-            term[1 + 3 * a + d] = power * ((a == d ? g : 0) + dg * m[a] * m[d]);
-        for (int k = 0; k < 10; ++k) {
+        if (observableCount > 1)
+          for (int a = 0; a < 3; ++a)
+            for (int d = 0; d < 3; ++d)
+              term[1 + 3 * a + d] = power * ((a == d ? g : 0) + dg * m[a] * m[d]);
+        for (int k = 0; k < observableCount; ++k) {
           if (fixed)
             planeWords[plane][k] += mdrtDistWord(term[k], 0x1p32, DistPairEnergy);
           else
@@ -677,7 +685,7 @@ static void spectrum(const int n[3], const double box[3], struct PmeBox b,
       }
   }
   for (size_t plane = 0; plane < planes; ++plane)
-    for (int k = 0; k < 10; ++k) {
+    for (int k = 0; k < observableCount; ++k) {
       if (fixed) words[k] += planeWords[plane][k];
       else sums[k] += planeSums[plane][k];
     }
@@ -689,6 +697,7 @@ static void spectrum(const int n[3], const double box[3], struct PmeBox b,
 /* Keep the reciprocal state until the particle ranks finish their pairs. */
 struct SpatialPME {
   int n[3], peers, rank, fixed, mixed, threaded, order, inverseReady;
+  int observableCount;
   int64_t first, past;
   double box[3], sums[10], *fft, *real;
   __int128 words[10];
@@ -707,7 +716,9 @@ static void beginSpatialPME(struct SpatialPME *work, struct Rows *rows,
                               int64_t nz, int64_t order, int64_t px, int64_t py,
                               int64_t mpi, int64_t fixed, int64_t mixed,
                             int64_t threaded, int64_t gx, int64_t gy, int64_t gz,
-                            int overlap) {
+                            int64_t observableCount, int overlap) {
+  if (observableCount != 0 && observableCount != 1 && observableCount != 10)
+    fail("unsupported PME observable count");
   if (nx < 1 || ny < 1 || nz < 1 || nx > INT_MAX || ny > INT_MAX ||
       nz > INT_MAX || nx * ny > INT64_MAX / nz || order < 3 || order > 8)
     fail("unsupported PME mesh size or assignment order");
@@ -800,11 +811,12 @@ static void beginSpatialPME(struct SpatialPME *work, struct Rows *rows,
   *work = (struct SpatialPME){
       .n = {nx, ny, nz}, .peers = peers, .rank = rank,
       .fixed = fixed, .mixed = mixed, .threaded = threaded, .order = order,
+      .observableCount = observableCount,
       .first = first, .past = past, .box = {lx, ly, lz}, .fft = fft, .real = real,
       .mesh = mesh, .realBox = realBox, .domains = domains,
       .exchange = e, .send = send, .recv = recv};
   spectrum(n, box, modes, fft, t, beta, coulomb, fixed, mixed, threaded,
-           work->sums, work->words);
+           observableCount, work->sums, work->words);
   if (overlap && rankBase) {
     mdrtDistPhase(-DistSolve);
     mdrtDistPhase(DistFFT);
@@ -820,6 +832,7 @@ static void finishSpatialPME(struct SpatialPME *work, struct Rows *rows,
   const double *box = work->box;
   const int64_t first = work->first, past = work->past;
   const int peers = work->peers, rank = work->rank, fixed = work->fixed;
+  const int observableCount = work->observableCount;
   const int mixed = work->mixed, threaded = work->threaded, order = work->order;
   double *sums = work->sums, *real = work->real;
   __int128 *words = work->words;
@@ -829,30 +842,30 @@ static void finishSpatialPME(struct SpatialPME *work, struct Rows *rows,
   struct Exchange e = work->exchange;
   if (work->inverseReady) mdrtDistPhase(DistSolve);
 #ifdef MDIR_ENABLE_MPI
-  if (peers > 1) {
+  if (peers > 1 && observableCount) {
     int *counts = alloc(peers, 2 * sizeof(int)), *offsets = counts + peers;
     size_t width = fixed ? sizeof(__int128) : sizeof(double);
-    char *all = alloc(peers, 10 * width);
+    char *all = alloc(peers, observableCount * width);
     for (int r = 0; r < peers; ++r) {
-      counts[r] = 10;
-      offsets[r] = r * 10;
+      counts[r] = observableCount;
+      offsets[r] = r * observableCount;
     }
-    memcpy(all + rank * 10 * width, fixed ? (void *)words : (void *)sums,
-           10 * width);
+    memcpy(all + offsets[rank] * width, fixed ? (void *)words : (void *)sums,
+           observableCount * width);
     mdrtMPIShareBlocks(all, counts, offsets, fixed);
     memset(sums, 0, sizeof work->sums);
     memset(words, 0, sizeof work->words);
     for (int r = 0; r < peers; ++r)
-      for (int k = 0; k < 10; ++k)
+      for (int k = 0; k < observableCount; ++k)
         if (fixed)
-          words[k] += ((__int128 *)all)[r * 10 + k];
+          words[k] += ((__int128 *)all)[offsets[r] + k];
         else
-          sums[k] += ((double *)all)[r * 10 + k];
+          sums[k] += ((double *)all)[offsets[r] + k];
     free(all);
     free(counts);
   }
 #endif
-  for (int k = 0; k < 10; ++k)
+  for (int k = 0; k < observableCount; ++k)
     result->data[result->offset + k * result->s] =
         fixed ? mdrtDistNarrowWord(words[k], DistPairEnergy) * 0x1p-32 : sums[k];
   mdrtDistPhase(-DistSolve);
@@ -924,10 +937,12 @@ void _mlir_ciface_mdrtDistSpatialPME(struct Rows *rows, int64_t first, int64_t p
                               double coulomb, int64_t nx, int64_t ny,
                               int64_t nz, int64_t order, int64_t px, int64_t py,
                               int64_t mpi, int64_t fixed, int64_t mixed,
-                              int64_t threaded, int64_t gx, int64_t gy, int64_t gz) {
+                              int64_t threaded, int64_t gx, int64_t gy, int64_t gz,
+                              int64_t observableCount) {
   struct SpatialPME work;
   beginSpatialPME(&work, rows, first, past, x, q, t, lx, ly, lz, beta, coulomb,
-      nx, ny, nz, order, px, py, mpi, fixed, mixed, threaded, gx, gy, gz, 0);
+      nx, ny, nz, order, px, py, mpi, fixed, mixed, threaded, gx, gy, gz,
+      observableCount, 0);
   finishSpatialPME(&work, rows, f, result);
 }
 
@@ -938,18 +953,20 @@ int64_t _mlir_ciface_mdrtDistStartSpatialPME(struct Rows *rows, int64_t first, i
                               double coulomb, int64_t nx, int64_t ny,
                               int64_t nz, int64_t order, int64_t px, int64_t py,
                               int64_t mpi, int64_t fixed, int64_t mixed,
-                              int64_t threaded, int64_t gx, int64_t gy, int64_t gz) {
+                              int64_t threaded, int64_t gx, int64_t gy, int64_t gz,
+                              int64_t observableCount) {
 #ifdef MDIR_ENABLE_MPI
   if (mpi && rows->size < mdrtMPISize()) {
     struct SpatialPME *work = alloc(1, sizeof *work);
     beginSpatialPME(work, rows, first, past, x, q, t, lx, ly, lz, beta, coulomb,
-        nx, ny, nz, order, px, py, mpi, fixed, mixed, threaded, gx, gy, gz, 1);
+        nx, ny, nz, order, px, py, mpi, fixed, mixed, threaded, gx, gy, gz,
+        observableCount, 1);
     return (intptr_t)work;
   }
 #endif
   _mlir_ciface_mdrtDistSpatialPME(rows, first, past, x, q, t, f, result,
       lx, ly, lz, beta, coulomb, nx, ny, nz, order, px, py, mpi, fixed, mixed,
-      threaded, gx, gy, gz);
+      threaded, gx, gy, gz, observableCount);
   return 0;
 }
 
@@ -970,7 +987,8 @@ void _mlir_ciface_mdrtDistPME(struct Rows *rows, int64_t first, int64_t past,
                               double coulomb, int64_t nx, int64_t ny,
                               int64_t nz, int64_t order, int64_t px, int64_t py,
                               int64_t mpi, int64_t fixed, int64_t mixed,
-                              int64_t threaded) {
+                              int64_t threaded, int64_t observableCount) {
   _mlir_ciface_mdrtDistSpatialPME(rows, first, past, x, q, t, f, result, lx, ly, lz,
-      beta, coulomb, nx, ny, nz, order, px, py, mpi, fixed, mixed, threaded, 0, 0, 0);
+      beta, coulomb, nx, ny, nz, order, px, py, mpi, fixed, mixed, threaded,
+      0, 0, 0, observableCount);
 }

@@ -633,6 +633,9 @@ and reciprocal roles (D[distribute-pme-rank-groups]).
 The driver can overlap the reciprocal solve with the local midpoint
 force loop when those operations are independent
 (D[distribute-pme-pair-overlap]).
+The mesh compiler selects the reciprocal observable work automatically
+from each evaluation's energy and virial consumers
+(D[distribute-pme-observable-uses]).
 
 For MPI transport, the driver assembles native output fields in particle identity order from distributed ranges (D[distribute-cpu-threads]).
 

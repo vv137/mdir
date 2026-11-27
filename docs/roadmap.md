@@ -343,3 +343,5 @@ compensated binary32 evaluation of floating mixed midpoint pairs.
 
 D[distribute-pme-pair-overlap] runs the local midpoint force loop and
 reciprocal solve concurrently on disjoint ranks.
+D[distribute-pme-observable-uses] skips the reciprocal observable fold and
+exchange for force-only calls and reduces one value for energy-only calls.

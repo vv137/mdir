@@ -1695,6 +1695,13 @@ reciprocal FFTs and convolution while particle ranks evaluate local
 midpoint force rows. The full-transport potential exchange and
 observable reduction join the phases (D[distribute-pme-pair-overlap]).
 
+The compiler derives the reciprocal observable work from the energy and
+virial uses at each mesh call. A force-only call scales the spectrum
+and skips the observable exchange. An energy-only call reduces one sum.
+A call with a virial consumer reduces all ten components in rank order.
+This applies to both shared and disjoint pencils
+(D[distribute-pme-observable-uses]).
+
 Floating mixed midpoint pairs stage each explicit-image coordinate as
 two binary32 parts. The pair loop corrects the leading subtraction
 with both residual parts before squaring [Higham2002](references.md#higham2002)

@@ -2,13 +2,26 @@
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: sed -n '/^#--- control/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
 # RUN: cp %S/../../examples/ala3/ala3.prmtop %S/../../examples/ala3/ala3.inpcrd %t
-# RUN: cd %t && mdir emit run.toml --stage=lowered | FileCheck %s
+# RUN: cd %t && mdir emit run.toml --stage=lowered > lowered.mlir
+# RUN: FileCheck %s < %t/lowered.mlir
+# RUN: FileCheck %s --check-prefix=SPECTRUM < %t/lowered.mlir
 #
 # The coupling loop has zero iterations because the energy interval and
 # the thermostat interval coincide. The active plain and reporting steps
 # must pass the same epoch handle to the partition runtime.
 # CHECK: llvm.call @mdrtDistShardEpochPartition({{.*}}, [[EPOCH:%[0-9]+]], {{%[a-z0-9]+}}, {{%[a-z0-9]+}}, {{%[a-z0-9]+}})
 # CHECK: llvm.call @mdrtDistShardEpochPartition({{.*}}, [[EPOCH]], {{%[a-z0-9]+}}, {{%[a-z0-9]+}}, {{%[a-z0-9]+}})
+#
+# The lowered PME calls request the full energy and virial, energy
+# alone, or just forces according to their SSA consumers.
+# SPECTRUM-LABEL: llvm.func @mdir_run(
+# SPECTRUM-DAG: [[ENERGY:%[0-9]+]] = llvm.mlir.constant(1 : index) : i64
+# SPECTRUM-DAG: [[FORCE:%[0-9]+]] = llvm.mlir.constant(0 : index) : i64
+# SPECTRUM-DAG: [[VIRIAL:%[0-9]+]] = llvm.mlir.constant(10 : index) : i64
+# SPECTRUM: llvm.call @mdrtDistSpatialPME({{.*}}, [[VIRIAL]]) :
+# SPECTRUM: llvm.call @mdrtDistSpatialPME({{.*}}, [[ENERGY]]) :
+# SPECTRUM: [[HANDLE:%[0-9]+]] = llvm.call @mdrtDistStartSpatialPME({{.*}}, [[FORCE]]) :
+# SPECTRUM: llvm.call @mdrtDistFinishSpatialPME([[HANDLE]],
 #
 #--- control
 [input]

@@ -1837,3 +1837,6 @@ The setup log gives the resolved pencil decomposition. The phase log
 times `pme_spread`, `pme_overlap` (outgoing charge and returning
 potential), `pme_fft` (local transforms), `pme_transpose`,
 `pme_solve` and `pme_gather`. Direct-space pairs use `pairs`.
+The compiler uses each PME evaluation's observable consumers to
+select the reciprocal reduction. Force-only evaluations skip it, and
+energy-only evaluations reduce one value (D[distribute-pme-observable-uses]).
