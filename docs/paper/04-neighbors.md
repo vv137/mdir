@@ -1223,7 +1223,8 @@ checked; which sites need it follows from the kind at compile time.
 **The route and the radius at the input** (D424). The key
 `[performance] rigid_units` takes the units: `ON` takes the two most
 numerous rigid kinds of two or more particles whose molecules exclude all
-their own pairs and none outside them (a unit of one particle gives the
+their own pairs and none outside them, and whose particles are consecutive
+in the input (a unit of one particle gives the
 segments nothing that the rest does not), `OFF` and `AUTO`, until its rule
 is measured, the general route. The theorem above needs every place within
 its radius at every evaluation, the first one included, which reads the
@@ -1249,10 +1250,19 @@ evaluation of the units differs from the general route's (by 0.32 kJ/mol on
 alanine dipeptide in OPC); `ON` warns there, with the largest violation and
 how far the sites move.
 
+**The layout by molecule** (D[water-layout]). The order of the state keeps
+the particles of each copy of a rigid kind consecutive (Section 4.2), so
+a list of units holds no table of members: the place of a copy names the
+particle of the copy's place 0, and its place $p$ is the particle $p$ after
+it. The writer and the traversal form every member's index from that one
+number, and the forces of a unit's places reach its frame atoms there. A run whose
+copy is not consecutive stops at the setup, and a kind whose molecules are
+not of consecutive particles in the input is not taken.
+
 **The writer** (D422). After the last op of a step
 that writes the positions (the constraints, and a barostat's scaling), one
-kernel, a thread for each member of each unit, writes the frames that the
-loops read (the anchor moved into the frame of its place in f64 and
+kernel, a thread for each member of the unit at each place, in the order
+of the places, writes the frames that the loops read (the anchor moved into the frame of its place in f64 and
 narrowed, and each offset $\mathbf h_k$ formed in f64 as the image of its
 bond nearest the anchor and narrowed), checks every place against its radius
 as above, and tests each reference point. Its three results are flags that
