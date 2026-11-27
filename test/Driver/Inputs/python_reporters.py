@@ -123,26 +123,42 @@ for kind in ("NVE", "NVT"):
                 continue
             assert precision == "Mixed", name
             double_rows, double_file = cli_double[kind, fmt]
-            assert len(mine) == len(theirs)
-            worst = 0.0
-            for a, b, d in zip(mine, theirs, double_rows):
-                a, b, d = (np.array([float(x) for x in r.split()]) for r in (a, b, d))
+            assert len(mine) == len(theirs) and mine[0] == theirs[0], (mine[0], theirs[0])
+            # The potential, the total, the virial, the pressure, and the
+            # conserved energy (columns 2, 3, 6, 7, 8) are not compared
+            # after the start. Under the plain cutoff of the Coulomb energy
+            # a pair of charges that is within 8 A in one trajectory and
+            # beyond it in the other moves the potential by
+            # 332.06 q_i q_j / (8 A): 7.218 kcal/mol for two hydrogens of
+            # TIP3P, 14.44 for an oxygen and a hydrogen. About
+            # N^2/2 * 4 pi r_c^2 / V = 2.7e4 pairs lie per A of distance at
+            # the cutoff here, so once the two programs' rounding (#105)
+            # has moved the trajectories some 4e-5 A apart one pair is
+            # expected on either side, and a row differs by whole such
+            # steps, which no bound from the rounding holds (#992: 7.218
+            # kcal/mol at step 60 of NVT on a V100, against 1.6e-3 between
+            # `mdir run` in mixed and in double; 14.47 at step 100 on an
+            # RTX 4090, within 3 E there only because `mdir run` in mixed
+            # and in double were 16.2 apart by such steps too). In double
+            # precision every column is compared above, byte for byte.
+            # The kinetic energy and the temperature (columns 4 and 5) are
+            # continuous along a trajectory and are compared within 3 E.
+            worst, shifted = 0.0, 0
+            for i, (a, b, d) in enumerate(zip(mine, theirs, double_rows)):
+                a, b, d = (np.array([float(x) for x in r.split()])[[0, 1, 4, 5]]
+                           for r in (a, b, d))
                 # A floor of 1e-5 of each value: where the runs of `mdir run`
                 # in mixed and in double happen to agree closely, three
-                # times their difference bounds nothing (at step 70 of NVT,
-                # 6.7e-4 kcal/mol of a potential energy of 3719, against
-                # 1.1e-2 between the two programs in mixed precision, whose
-                # thermostat takes the half steps measured with the
-                # constraints, D263).
+                # times their difference bounds nothing.
                 bound = 1e-6 + 3 * np.abs(b - d) + 1e-5 * np.abs(b)
-                # The virial (column 6) is that of the groups, the virial of
-                # the forces less that within the rigid groups
-                # (D264): a difference of sums larger
-                # than it, whose rounding in mixed precision the two
-                # programs make apart, up to 1e-4 of it.
-                bound[6] += 1e-4 * abs(b[6])
                 assert np.all(np.abs(a - b) <= bound), (a, b, d)
                 worst = max(worst, float(np.max(np.abs(a - b) / np.maximum(np.abs(b), 1e-300))))
+                # What the bound rejects: the row of the report interval
+                # before (a row written one interval late).
+                if i > 0:
+                    late = np.array([float(x) for x in mine[i - 1].split()])[[4, 5]]
+                    shifted += bool(np.any(np.abs(late - b[2:]) > bound[2:]))
+            assert shifted == len(mine) - 1, shifted
             if fmt == "dcd":
                 x, y, z = dcd_frames(ours), dcd_frames(cli_file), dcd_frames(double_file)
                 assert x.shape == y.shape
@@ -151,8 +167,10 @@ for kind in ("NVE", "NVT"):
                 frames = f"{x.shape[0] // 3} frames within {gap:.1e} A (3 E: {bound:.1e} A)"
             else:
                 frames = "XTC frames: " + str(ours.read_bytes().count(bytes([0, 0, 7, 203])))
-            print(f"{target_name} {kind} {precision} {fmt}: {len(mine)} rows within 3 E "
-                  f"(largest relative difference {worst:.1e}); {frames}")
+            print(f"{target_name} {kind} {precision} {fmt}: {len(mine)} rows, the first equal "
+                  f"and the kinetic energy and the temperature within 3 E (largest relative "
+                  f"difference {worst:.1e}), the rows one interval late rejected "
+                  f"({shifted} of {len(mine) - 1}); {frames}")
 
 # With SHAKE and SETTLE the steps of the rows measure K_half from the half
 # steps and the temperature is the optimal estimate (D203); the steps of
