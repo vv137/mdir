@@ -19,7 +19,7 @@ coordinates = "{inputs}/dipeptide.inpcrd"
 
 [output]
 manifest = "choices.jsonl"
-energy_interval = 25
+energy_interval = 20
 checkpoint = "state.h5"
 checkpoint_interval = {steps}
 
@@ -90,7 +90,8 @@ def run(name, mode, precision="MIXED", structure="MATRIX", deterministic=True,
     start = json.loads((directory / "choices.jsonl").read_text().splitlines()[0])
     choice = start["resolved_choices"]["step_graph"]
     spans = re.search(r"^MDIR: spans: (\d+) issued as CUDA graphs and (\d+) as recorded, "
-                      r"(\d+) graphs made", log.stdout, re.M)
+                      r"(\d+) graphs made, (\d+) captures refused, (\d+) graphs released, "
+                      r"(\d+) kernel nodes updated", log.stdout, re.M)
     with h5py.File(directory / "state.h5") as f:
         state = {k: f["particles/all/" + k][()] for k in
                  ("position/value", "velocity/value", "force/value", "box/edges/value")
@@ -106,18 +107,12 @@ def bitwise(a, b, what):
     assert a["rows"] == b["rows"], what
 
 
-def close(a, b, what):
-    for key in ("position/value", "velocity/value"):
-        x, y = a["state"][key], b["state"][key]
-        error = np.linalg.norm(x - y) / np.linalg.norm(x)
-        assert error < 1e-3, (what, key, error)
-
-
 # The default is SPANS on the GPU, a rule of the target.
 default = run("default", None)
 assert default["choice"]["requested"] == "SPANS", default["choice"]
 assert default["choice"]["value"] == "SPANS" and default["choice"]["category"] == "rule"
-graphs, recorded, made = default["spans"]
+graphs, recorded, made, refused, released, updated = default["spans"]
+assert refused == 0 and released == 0, default["spans"]
 assert graphs > 0 and made > 0, default["spans"]
 # Most of the work of the steps goes out as graphs.
 assert graphs > recorded, default["spans"]
@@ -132,18 +127,35 @@ for precision in ("MIXED", "DOUBLE"):
         assert launch["spans"] is None, launch["spans"]
         spans = run(f"spans-{tag}", "SPANS", precision, ensemble=ensemble)
         assert spans["choice"]["value"] == "SPANS" and spans["spans"][2] > 0
+        # Graphs that took the arguments of another span of their shape.
+        assert spans["spans"][5] > 0, spans["spans"]
         bitwise(launch, spans, tag)
         print(f"{tag}: bitwise, {spans['spans'][0]} graph launches")
+
+# A cache of four graphs releases graphs as it goes, and the results stay
+# bitwise.
+small = run("small-cache", "SPANS", env={"MDRT_SPANS_CACHE": "4"})
+assert small["spans"][4] > 0, small["spans"]
+bitwise(default, small, "small cache")
+print(f"small cache: bitwise, {small['spans'][4]} graphs released")
 
 # MDRT_SPANS=0 overrides the key; nothing is recorded.
 off = run("override-off", "SPANS", env={"MDRT_SPANS": "0"})
 assert off["spans"] is None, off["spans"]
 bitwise(default, off, "override")
 
-# The groups with a dual list are not deterministic: within the spread of
-# two LAUNCH runs' tolerance.
-launch = run("launch-groups", "LAUNCH", structure="GROUPS", deterministic=False)
-spans = run("spans-groups", "SPANS", structure="GROUPS", deterministic=False)
-assert spans["spans"][2] > 0
-close(launch, spans, "groups")
+# The groups with a dual list are not deterministic, so two runs of LAUNCH
+# differ too: over 20 steps the difference of SPANS from LAUNCH stays within
+# ten times that of two LAUNCH runs (and 1e-5 relative).
+def difference(a, b):
+    return max(np.linalg.norm(a["state"][k] - b["state"][k]) / np.linalg.norm(a["state"][k])
+               for k in ("position/value", "velocity/value"))
+
+
+launch = run("launch-groups", "LAUNCH", structure="GROUPS", deterministic=False, steps=20)
+again = run("launch-groups-again", "LAUNCH", structure="GROUPS", deterministic=False, steps=20)
+spans = run("spans-groups", "SPANS", structure="GROUPS", deterministic=False, steps=20)
+assert spans["spans"][2] > 0, spans["spans"]
+bound = max(10 * difference(launch, again), 1e-5)
+assert difference(launch, spans) <= bound, (difference(launch, spans), bound)
 print("groups: close")

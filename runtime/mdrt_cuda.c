@@ -534,6 +534,8 @@ static void launchKernel(CUfunction function, intptr_t gridX, intptr_t gridY,
                    sharedMemory, stream, parameters, extra, cooperative,
                    clusterX, clusterY, clusterZ))
     return;
+  /* A launch that is not recorded follows what was. */
+  mdrtSpansFlush();
   enter();
   double start = begin();
   static long traceCount = 0;
@@ -768,7 +770,7 @@ struct Span {
   uint64_t lastUse;
 };
 
-enum { SPAN_CACHE = 1024, SPAN_INDEX = 4096, SPAN_SEEN = 16384, SPAN_VARIANTS = 4,
+enum { SPAN_CACHE = 1024, SPAN_INDEX = 4096, SPAN_SEEN = 16384, SPAN_VARIANTS = 16,
        LAYOUTS = 4096 };
 static int spansOn = 0;
 static int spansSuspended = 0;
@@ -1015,6 +1017,19 @@ static uint64_t hashShape(void) {
   return h;
 }
 
+/* Whether graph `s` has the shape of the record: its ops equal but for
+   their grids (the hash of the shape may collide). */
+static int sameShape(const struct Span *s) {
+  for (int i = 0; i != numSpanOps; ++i) {
+    struct SpanOp a = s->ops[i], b = spanOps[i];
+    memset(a.grid, 0, sizeof a.grid);
+    memset(b.grid, 0, sizeof b.grid);
+    if (memcmp(&a, &b, sizeof a))
+      return 0;
+  }
+  return 1;
+}
+
 /* The kernel nodes of a captured graph in the order of the record's
    kernels: the graph of one stream is a chain, whose kernels are those of
    the record and those of cuFFT, which have other functions. */
@@ -1165,8 +1180,20 @@ static void indexSpan(int i) {
 
 /* A place in the cache, the graph used least recently giving its own
    once the device has run what was issued from it. */
+/* MDRT_SPANS_CACHE=<n>, for the tests: at most n graphs, fewer than
+   SPAN_CACHE, so that the cache releases graphs. */
+static int getSpanRoom(void) {
+  static int room = 0;
+  if (!room) {
+    const char *value = getenv("MDRT_SPANS_CACHE");
+    long n = value && *value ? strtol(value, NULL, 10) : SPAN_CACHE;
+    room = n > 0 && n < SPAN_CACHE ? (int)n : SPAN_CACHE;
+  }
+  return room;
+}
+
 static struct Span *takeSpan(void) {
-  if (numSpans == SPAN_CACHE) {
+  if (numSpans >= getSpanRoom()) {
     int oldest = 0;
     for (int i = 1; i != numSpans; ++i)
       if (spanCache[i].lastUse < spanCache[oldest].lastUse)
@@ -1283,7 +1310,8 @@ static void flushSpan(void) {
         for (int k = 0; k != numVariants; ++k)
           seen |= variants[k] == s;
         if (!seen && s->shape == shape && s->numOps == numSpanOps &&
-            s->numBytes == numSpanBytes && numVariants != SPAN_VARIANTS)
+            s->numBytes == numSpanBytes && numVariants != SPAN_VARIANTS &&
+            sameShape(s))
           variants[numVariants++] = s;
       }
       uint64_t *seen = &spanSeen[shape % SPAN_SEEN];
