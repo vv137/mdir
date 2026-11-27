@@ -321,6 +321,8 @@ D[distribute-pme] extends fixed-cell CPU domain decomposition to
 electrostatic PME with a separate mesh-rank grid and pencil transforms.
 
 The MPI driver uses rank-local migration schedules, explicit halo requests and partitioned tuple geometry for CPU execution (D[distribute-cpu-threads]).
+Distributed tuple kernels bypass periodic reduction for displacements
+inside the quarter-cell bound (D[distribute-cpu-threads]).
 Ambiguous midpoint members use staged unshifted coordinates and image
 shifts. Mixed PME uses last-axis SIMD stencil products and reuses the
 separable Gaussian influence factors on each rank.

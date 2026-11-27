@@ -618,6 +618,8 @@ zero owns the merged log. Other ranks write only their requested traces.
 D[distribute-pair-lowering] uses the existing pair-list distance and CPU
 thread count inside each domain. Default precision follows the host pair
 policy. Deterministic distribution retains its cross-grid word reductions.
+Distributed bonded tuples use the minimum image in the fixed periodic cell
+(D[distribute-cpu-threads]).
 
 For electrostatic PME, `pme_ranks` in `[distribute]` selects a positive
 number of mesh ranks, defaulting to the communicator size.

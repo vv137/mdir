@@ -1428,6 +1428,9 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
     return failure();
   auto vec = VectorType::get({3}, b.getF64Type());
   Value edges = vector::FromElementsOp::create(b, loc, vec, ValueRange(edge));
+  Value quarter = arith::ConstantOp::create(
+      b, loc, DenseElementsAttr::get(vec, b.getF64FloatAttr(0.25)));
+  Value interior = arith::MulFOp::create(b, loc, edges, quarter);
   auto coordinates = md::getCoordinates(op.getCoordinateKinds(), op.getCoordinateMembers());
   int64_t arity = op.getRows().getType().getDimSize(1) - 1;
   bool reduce = isa<PartialType>(op.getResult(0).getType());
@@ -1541,9 +1544,26 @@ LogicalResult Lowering::lowerTupleKernel(TupleKernelOp op) {
             for (auto displacement : md::getDisplacements(coordinate)) {
               auto m = displacement.members;
               Value raw = arith::SubFOp::create(k, loc, positions[m[0]], positions[m[1]]);
-              Value image = math::FloorOp::create(k, loc, arith::AddFOp::create(k, loc, half,
-                                                         arith::DivFOp::create(k, loc, raw, edges)));
-              values.push_back(arith::SubFOp::create(k, loc, raw, arith::MulFOp::create(k, loc, image, edges)));
+              // For positive finite edges, this interior has a zero image
+              // even after rounding the quotient and adding one half.
+              Value magnitude = math::AbsFOp::create(k, loc, raw);
+              Value inside = arith::CmpFOp::create(
+                  k, loc, arith::CmpFPredicate::OLT, magnitude, interior);
+              Value unwrapped = vector::ReductionOp::create(
+                  k, loc, vector::CombiningKind::AND, inside);
+              auto delta = scf::IfOp::create(k, loc, unwrapped,
+                  [&](OpBuilder &yes, Location) {
+                    scf::YieldOp::create(yes, loc, raw);
+                  },
+                  [&](OpBuilder &no, Location) {
+                    Value units = arith::DivFOp::create(no, loc, raw, edges);
+                    Value image = math::FloorOp::create(
+                        no, loc, arith::AddFOp::create(no, loc, half, units));
+                    Value shift = arith::MulFOp::create(no, loc, image, edges);
+                    scf::YieldOp::create(
+                        no, loc, arith::SubFOp::create(no, loc, raw, shift).getResult());
+                  });
+              values.push_back(delta.getResult(0));
             }
             args.push_back(md::emitCoordinate(k, loc, coordinate.kind, values));
           }

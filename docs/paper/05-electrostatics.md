@@ -1419,6 +1419,12 @@ coordinates, and halo. Computing a new observable at that configuration
 requires its own force-law arithmetic but no second exchange to locate
 the same members.
 
+In the tuple kernel, if each absolute displacement component is less
+than one quarter of the corresponding cell edge, the rounded quotient
+plus one half has floor zero. The raw displacement can then enter the
+bonded coordinate calculation directly. Other displacements use the
+full periodic reduction.
+
 The final step of a reporting interval can use the same reference positions
 and candidate matrix as the preceding plain steps. With thermostat
 subperiods, the reporting step selects the nearest compatible epoch

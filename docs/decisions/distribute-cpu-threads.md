@@ -328,3 +328,9 @@ index and combines the rounded factors in binary32. The complex
 influence multiplication also uses binary32 inputs. Mode powers,
 virial terms, and the ordered plane sums keep their existing precision.
 The prolate radial factor still depends on the full wave vector.
+
+Distributed tuple kernels reuse the raw displacement when every component
+lies within a quarter of its positive periodic edge. This bound ensures
+that the rounded fractional displacement plus one half has floor zero.
+The full minimum-image calculation handles other displacements, including
+ones near a half-cell face.
