@@ -40,6 +40,12 @@ coordinates = "opc.inpcrd"
 
 [output]
 energy_interval = 50
+
+# The energies of this test were pinned at this tolerance (the default
+# before D[pme-default-tolerance]).
+[pme]
+tolerance = 1.0e-5
+
 [energy]
 cutoff        = 9.0
 pairlist_distance = 10.0
@@ -60,4 +66,5 @@ rigid_water = true
 
 [boundary]
 type = "PERIODIC"
+
 #--- end

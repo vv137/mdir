@@ -17,7 +17,9 @@ CPU and on a device, and on a device only the groups of 16 particles that
 share a list, each pair once (D89, [neighbor-groups.md](neighbor-groups.md)), with an
 optional dual list (D114). `neighbor_structure = "AUTO"`, the default,
 takes the groups on a GPU for large systems and the matrix elsewhere
-(D261). The test of validity (Section 3), the order of the particles
+(D261); in `mdir run` it takes the tower traversal of D428 instead where
+the device's entry of the traversal table admits the input
+(D[best-defaults], on an RTX 4090 from 4,608 particles). The test of validity (Section 3), the order of the particles
 (Section 5), and the choice of the skins (Section 6) serve both.
 
 The neighbor matrix holds for each particle a row of the

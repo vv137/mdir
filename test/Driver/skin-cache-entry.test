@@ -11,8 +11,9 @@
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %python %S/Inputs/argon_lattice.py 40 %t/big.pdb
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/neighbor-auto.test | sed '1d;$d' \
-# RUN:     | sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = "AUTO"\npruned_distance = "AUTO"|' > %t/auto.toml
-# RUN: sed -e 's|^target = "GPU"|target = "CPU"|' %t/auto.toml > %t/cpu.toml
+# RUN:     | sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = "AUTO"\npruned_distance = "AUTO"|' \
+# RUN:           -e 's|^precision = "MIXED"|precision = "MIXED"\nneighbor_structure = "GROUPS"|' > %t/auto.toml
+# RUN: sed -e 's|^target = "GPU"|target = "CPU"|' -e '/^neighbor_structure/d' %t/auto.toml > %t/cpu.toml
 # RUN: cd %t && mdir check --json auto.toml > key.json
 # RUN: cd %t && mdir check --json cpu.toml | %python -c "import json, sys; s = json.load(sys.stdin)['run']['skins']; print(s['cache_key'], s['cache_key_reason'])" | FileCheck %s --check-prefix=CPU
 # RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache whole

@@ -94,6 +94,11 @@ coordinates = "ff19.inpcrd"
 checkpoint = "min.h5"
 energy_interval = 50
 
+# The energies of this test were pinned at this tolerance (the default
+# before D[pme-default-tolerance]).
+[pme]
+tolerance = 1.0e-5
+
 [energy]
 cutoff        = 9.0
 pairlist_distance = 10.0
@@ -113,6 +118,7 @@ type = "PERIODIC"
 [[restraints]]
 selection      = "SELECTION"
 force_constant = 10.0
+
 #--- end
 #--- run.toml
 [input]
@@ -122,6 +128,12 @@ checkpoint = "min.h5"
 
 [output]
 energy_interval = 250
+
+# The energies of this test were pinned at this tolerance (the default
+# before D[pme-default-tolerance]).
+[pme]
+tolerance = 1.0e-5
+
 [energy]
 cutoff        = 9.0
 pairlist_distance = 10.0
@@ -145,4 +157,5 @@ type = "PERIODIC"
 [[restraints]]
 selection      = "!:WAT & !@H*"
 force_constant = 10.0
+
 #--- end

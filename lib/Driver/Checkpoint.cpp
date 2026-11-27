@@ -111,6 +111,10 @@ std::string getFingerprintText(const Fingerprint &fingerprint,
 }
 
 const char *const fingerprintGroups[] = {"physics", "coupling", "execution"};
+/// The values that the run resolved from its keys and defaults
+/// (D[pme-default-tolerance]): written, hashed, and read only where present,
+/// so that a checkpoint without them reads and verifies as before.
+const char *const resolvedGroup = "resolved";
 
 /// SHA-256 of everything that a checkpoint holds, in a fixed order
 /// (D173).
@@ -161,6 +165,9 @@ std::string hashState(const Checkpoint &state) {
   numbers(state.thermostatState);
   for (const char *group : fingerprintGroups)
     text(getFingerprintText(state.fingerprint, group));
+  if (std::string resolved = getFingerprintText(state.fingerprint, resolvedGroup);
+      !resolved.empty())
+    text(resolved);
   std::array<uint8_t, 32> digest = hash.final();
   return llvm::toHex(digest, /*LowerCase=*/true);
 }
@@ -625,6 +632,10 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
         writer.writeTextDataset(
             fingerprint, group,
             getFingerprintText(checkpoint.fingerprint, group));
+      if (std::string resolved =
+              getFingerprintText(checkpoint.fingerprint, resolvedGroup);
+          !resolved.empty())
+        writer.writeTextDataset(fingerprint, resolvedGroup, resolved);
       // The additional entries (D223).
       if (checkpoint.hasExtras()) {
         writer.writeText(mdir, "extras_sha256", extrasHash);
@@ -830,10 +841,13 @@ mdir::driver::readCheckpoint(const std::string &path) {
                        reader.getSize("/parameters/mdir/thermostat_state"),
                        checkpoint.thermostatState);
   // What defined the run (D172).
-  for (const char *group : fingerprintGroups) {
+  for (const char *group : {fingerprintGroups[0], fingerprintGroups[1],
+                            fingerprintGroups[2], resolvedGroup}) {
+    std::string path = "/parameters/mdir/fingerprint/" + std::string(group);
+    if (group == resolvedGroup && !reader.has(path.c_str()))
+      continue;
     std::string text;
-    reader.readTextDataset(
-        ("/parameters/mdir/fingerprint/" + std::string(group)).c_str(), text);
+    reader.readTextDataset(path.c_str(), text);
     llvm::SmallVector<llvm::StringRef, 16> lines;
     llvm::StringRef(text).split(lines, '\n', -1, /*KeepEmpty=*/false);
     for (llvm::StringRef line : lines) {

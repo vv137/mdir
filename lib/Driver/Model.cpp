@@ -339,6 +339,8 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.pmeBandwidth = s.pmeBandwidth;
   c.pmeWindowBandwidth = s.pmeWindowBandwidth;
   if (prolate && !s.pmeSpacingGiven) c.pmeMaxSpacing = 0.0;
+  // The prolate kernel keeps its own default tolerance (D266).
+  if (prolate && !s.pmeToleranceGiven) c.pmeAlphaTolerance = driver::kProlatePMETolerance;
   c.pmeInfluence = s.pmeInfluence == PMEInfluence::Optimal ? driver::PMEInfluence::Optimal
                    : s.pmeInfluence == PMEInfluence::P3M   ? driver::PMEInfluence::P3M
                                                            : driver::PMEInfluence::SPME;

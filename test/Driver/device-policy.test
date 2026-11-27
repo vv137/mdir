@@ -45,11 +45,16 @@
 # were not measured on it. The schedule of a list of units was measured on
 # sm_89 alone, so sm_120 takes its entry as a fallback. The groups' build
 # takes 96 particles a column on sm_89, an entry measured there; every other
-# architecture, and none, takes D89's 64, a default measured on none.
+# architecture, and none, takes D89's 64, a default measured on none. The
+# traversal of AUTO, a performance threshold, is keyed by the device model:
+# TOWERS from 4,608 particles on the RTX 4090 alone (D[best-defaults]);
+# another model of sm_89 (L40) and every other device keep D261.
 # RUN: mdir-device-policy-test sm_120 | FileCheck %s --check-prefix=T120
 # RUN: mdir-device-policy-test sm_120a | FileCheck %s --check-prefix=T120
 # RUN: mdir-device-policy-test sm_121a | FileCheck %s --check-prefix=T121
 # RUN: mdir-device-policy-test sm_89 | FileCheck %s --check-prefix=T89
+# RUN: mdir-device-policy-test sm_89 "RTX 4090" | grep traversal | FileCheck %s --check-prefix=T4090
+# RUN: mdir-device-policy-test sm_89 "L40" | grep traversal | FileCheck %s --check-prefix=TL40
 # RUN: mdir-device-policy-test sm_80 | FileCheck %s --check-prefix=T80
 # RUN: mdir-device-policy-test sm_86 | FileCheck %s --check-prefix=T86
 # RUN: mdir-device-policy-test "" | FileCheck %s --check-prefix=T80
@@ -58,6 +63,7 @@
 # T120-NEXT: launch block-size=128 row-lanes=16 stage-block-size=256 block-memory=49152 gather-lanes=4,8,8 fallback=1
 # T120-NEXT: segments block-size=128 rotation=16 column-units=128 fallback=1
 # T120-NEXT: groups column-particles=64 fallback=1 (D89)
+# T120-NEXT: traversal towers-least=-1 fallback=1 (D261)
 # T121: pruning fused-groups=20480 fallback=1 (D284)
 # T121-NEXT: scatter tile-min-points=500000 {{.*}} fallback=1
 # T89: pruning fused-groups=4096 fallback=0 (D284)
@@ -65,12 +71,18 @@
 # T89-NEXT: launch block-size=128 row-lanes=16 stage-block-size=256 block-memory=49152 gather-lanes=4,8,8 fallback=1
 # T89-NEXT: segments block-size=128 rotation=16 column-units=128 fallback=0
 # T89-NEXT: groups column-particles=96 fallback=0 (D423)
+# T89-NEXT: traversal towers-least=-1 fallback=1 (D261)
+# T4090: traversal towers-least=4608 fallback=0 (D[best-defaults])
+# TL40: traversal towers-least=-1 fallback=1 (D261)
 # T80: pruning fused-groups=4096 fallback=1 (D284)
 # T80-NEXT: scatter tile-min-points=500000 {{.*}} fallback=1
 # T80: segments block-size=128 rotation=16 column-units=128 fallback=1
 # T80-NEXT: groups column-particles=64 fallback=1 (D89)
+# T80-NEXT: traversal towers-least=-1 fallback=1 (D261)
 # T121: groups column-particles=64 fallback=1 (D89)
+# T121-NEXT: traversal towers-least=-1 fallback=1 (D261)
 # T86: groups column-particles=64 fallback=1 (D89)
+# T86-NEXT: traversal towers-least=-1 fallback=1 (D261)
 
 # SM120: md-exec-choose-scatter{arch=sm_120 }
 # SM120-SAME: convert-md-exec-to-gpu{arch=sm_120 {{.*}}fuse-pruning=true fuse-pruning-groups=20480 

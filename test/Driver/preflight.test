@@ -23,7 +23,7 @@
 # AMBER: barostat: C-RESCALE, ISOTROPIC, 1 atm
 # AMBER: electrostatics: PME
 # AMBER-NEXT: PME grid: automatic, max spacing 1.2 Ang, order 4
-# AMBER-NEXT: PME beta: automatic, tolerance 1e-05
+# AMBER-NEXT: PME beta: automatic, tolerance 5e-05
 # AMBER: constraints: {{[0-9]+}} distances; hydrogen bonds yes, rigid water yes
 # AMBER-NEXT: target: gpu, mixed precision
 # AMBER: log: stdout and {{.*}}run.log (text), every 5000 steps, 101 rows

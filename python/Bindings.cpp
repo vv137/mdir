@@ -2,6 +2,7 @@
 #include "mdir/Compiler/Compile.h"
 #include "mdir/Compiler/Simulation.h"
 #include "mdir/Compiler/Skins.h"
+#include "mdir/Driver/Fingerprint.h"
 #include "mdir/Driver/H5MD.h"
 #include "mdir/Driver/ModelTerm.h"
 #include <pybind11/pybind11.h>
@@ -979,6 +980,7 @@ PYBIND11_MODULE(_core, m) {
     }
     system->value.pmeOrderGiven = system->given.count("pme_order") != 0;
     system->value.pmeSpacingGiven = system->given.count("pme_spacing") != 0;
+    system->value.pmeToleranceGiven = system->given.count("pme_tolerance") != 0;
     auto prepared = unwrap(model::prepare(system->value, state->value, integrator->value,
                                           ensemble->value, execution->value, schedule->value));
     // The reaches that are `mdir.Auto` (D281): the defaults or the
@@ -1002,6 +1004,11 @@ PYBIND11_MODULE(_core, m) {
     // Built, not lowered: a simulation lowers programs of its own, and
     // `lowered_ir` lowers on its first read (D224, #151).
     result.compiled = unwrap(compiler::plan(prepared, cache));
+    // And what it resolved, as `mdir run` records it
+    // (D[pme-default-tolerance]).
+    for (driver::FingerprintEntry &entry : driver::getResolvedFingerprint(
+             prepared.control, result.compiled.program))
+      prepared.fingerprint.push_back(std::move(entry));
     result.cache = cache;
     result.prepared = std::make_shared<const model::PreparedModel>(std::move(prepared));
     result.track(system); result.track(state); result.track(integrator);

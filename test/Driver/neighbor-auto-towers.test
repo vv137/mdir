@@ -1,0 +1,98 @@
+# `neighbor_structure = "AUTO"` and TOWERS (D[best-defaults]): `mdir check`
+# states on a line of its own why AUTO took TOWERS or not. Each input that
+# the rule keeps on the structures of D261 names its reason, which comes
+# before the device is asked; without a visible device the rule stops at
+# the device. The structure of D261 and its reason are those of before.
+# A structure that was given is not ruled on.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/argon_lattice.py 20 %t/small.pdb
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: sed -e 's|^target = "GPU"|target = "CPU"|' %t/run.toml > %t/cpu.toml
+# RUN: sed -e 's|^precision = "MIXED"|precision = "DOUBLE"|' %t/run.toml > %t/double.toml
+# RUN: sed -e 's|^precision = "MIXED"|precision = "SINGLE"|' %t/run.toml > %t/single.toml
+# RUN: sed -e 's|^target = "GPU"|target = "GPU"\ndeterministic = true|' %t/run.toml > %t/deterministic.toml
+# RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\nrebuild_interval = 10|' %t/run.toml > %t/interval.toml
+# RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = 11.0|' %t/run.toml > %t/outer.toml
+# RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npruned_distance = 9.3|' %t/run.toml > %t/inner.toml
+# RUN: sed -e 's|^type = "PERIODIC"|type = "NONE"|' -e '/^box /d' %t/run.toml > %t/open.toml
+# RUN: sed -e '/^\[dynamics\]/,/^steps/d' -e '/^\[ensemble\]/,/^temperature/d' -e '/^\[thermostat\]/,/^time_constant/d' %t/run.toml > %t/minimize.toml
+# RUN: printf '[minimize]\nmethod = "STEEPEST_DESCENT"\nsteps = 10\n' >> %t/minimize.toml
+# RUN: sed -e 's|^target = "GPU"|target = "GPU"\nneighbor_structure = "MATRIX"|' %t/run.toml > %t/matrix.toml
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check run.toml | FileCheck %s --check-prefix=NODEVICE
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check cpu.toml | FileCheck %s --check-prefix=CPU
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check double.toml | FileCheck %s --check-prefix=PRECISION
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check single.toml | FileCheck %s --check-prefix=PRECISION
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check deterministic.toml | FileCheck %s --check-prefix=DETERMINISTIC
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check interval.toml 2> /dev/null | FileCheck %s --check-prefix=INTERVAL
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check outer.toml | FileCheck %s --check-prefix=REACH
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check inner.toml | FileCheck %s --check-prefix=REACH
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check open.toml | FileCheck %s --check-prefix=OPEN
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check minimize.toml | FileCheck %s --check-prefix=MINIMIZE
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check matrix.toml | FileCheck %s --check-prefix=GIVEN --implicit-check-not='AUTO traversal'
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check --json run.toml | %python -c "import json, sys; n = json.load(sys.stdin)['run']['neighbors']; print(n['structure'], '|', n['reason'], '|', n['towers_auto'])" | FileCheck %s --check-prefix=JSON
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check --json matrix.toml | %python -c "import json, sys; print(json.load(sys.stdin)['run']['neighbors']['towers_auto'])" | FileCheck %s --check-prefix=JSONGIVEN
+#
+# rigid_units = "ON" takes lists of units: a water box.
+# RUN: sed -e 's|^coordinates = "small.pdb"|format = "AMBER"\ntopology = "%S/Inputs/opc/opc.prmtop"\ncoordinates = "%S/Inputs/opc/opc.inpcrd"|' \
+# RUN:     -e '/^\[\[energy.pair\]\]/,/^sigma/d' -e '/^box /d' -e 's|^cutoff = 9.0|cutoff = 6.0\nelectrostatics = "PME"|' %t/run.toml > %t/water.toml
+# RUN: printf '\n[constraints]\nhydrogen_bonds = true\nrigid_water = true\n\n[performance]\nrigid_units = "ON"\n' >> %t/water.toml
+# RUN: cd %t && env CUDA_VISIBLE_DEVICES= mdir check water.toml | FileCheck %s --check-prefix=UNITS
+
+# NODEVICE: neighbors: matrix, reach 10.5 Ang (AUTO: 8000 particles, fewer than {{[0-9]+}})
+# NODEVICE: AUTO traversal: TOWERS not taken: no visible CUDA device
+# CPU: AUTO traversal: TOWERS not taken: the target is the CPU
+# PRECISION: AUTO traversal: TOWERS not taken: TOWERS takes mixed precision
+# DETERMINISTIC: AUTO traversal: TOWERS not taken: the deterministic mode
+# INTERVAL: AUTO traversal: TOWERS not taken: 'rebuild_interval' is given
+# REACH: AUTO traversal: TOWERS not taken: a list reach is given, which TOWERS does not use
+# OPEN: AUTO traversal: TOWERS not taken: the cell is not periodic
+# MINIMIZE: AUTO traversal: TOWERS not taken: a minimization
+# GIVEN: neighbors: matrix, reach 10.5 Ang{{$}}
+# JSON: matrix | 8000 particles, fewer than {{[0-9]+}} | not taken: no visible CUDA device
+# JSONGIVEN: None
+# UNITS: AUTO traversal: TOWERS not taken: 'rigid_units = "ON"' takes lists of units
+
+#--- run.toml
+[input]
+coordinates = "small.pdb"
+
+[output]
+energy_interval = 10
+
+[energy]
+cutoff = 9.0
+
+[[energy.pair]]
+name       = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+mixing     = "lorentz-berthelot"
+
+[[energy.type]]
+name    = "AR"
+mass    = 39.95
+epsilon = 0.238465
+sigma   = 3.4
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step = 0.002
+steps = 20
+
+[ensemble]
+ensemble    = "NVT"
+temperature = 100.0
+
+[thermostat]
+method = "V-RESCALE"
+interval = 10
+time_constant = 0.5
+
+[boundary]
+type = "PERIODIC"
+box  = [76.0, 76.0, 76.0]
+
+[execution]
+target = "GPU"
+precision = "MIXED"
+#--- end

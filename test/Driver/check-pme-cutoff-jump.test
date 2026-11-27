@@ -13,8 +13,9 @@
 # kJ/mol/nm, with 0.0318 pairs a frame in the shell of 3.54e-7 nm (the
 # pull-in of the f32 cutoff of D159 and a unit in the last place of the
 # largest edge in f32); at 9 A and tolerance = 1e-3 it is 4.0176 kJ/mol/nm.
-# The tolerance of 1e-5, the default, gives 0.0678 at 9 A and 0.271 at 4.5 A,
-# and no warning.
+# The tolerance of 1e-5 gives 0.0678 at 9 A and 0.271 at 4.5 A. The default
+# of 5e-5 (D[pme-default-tolerance]) gives 0.290 at 9 A, no warning, and
+# 1.16 at 4.5 A (beta 0.63728 A^-1), a warning.
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
@@ -24,20 +25,25 @@
 # RUN: sed -e 's|^\[pme\]|[pme]\ntolerance = 1e-3|' %t/default.toml > %t/loose.toml
 #
 # RUN: cd %t && mdir check beta.toml 2>&1 >/dev/null | FileCheck %s --check-prefix=BETA
-# BETA: mdir: warning: PME with beta = 0.34705 Ang^-1 at the cutoff of 4.50 Ang has erfc(beta r_c) = 2.72E-02: the force of a pair of charges with |q_i q_j| = 1.8449 e^2 jumps by 229.06 kJ/mol/nm where it crosses the cutoff, more than 1 kJ/mol/nm. About 0.03 pairs of charged particles a frame lie within 3.5E-07 nm of the cutoff (from their mean density), where mixed precision may decide them differently from double, each changing the forces by up to the jump; the jump also degrades the conservation of energy in either precision. To derive beta from the cutoff, remove 'beta' of [pme], so that 'tolerance' (10^-5 by default) sets erfc(beta r_c)
+# BETA: mdir: warning: PME with beta = 0.34705 Ang^-1 at the cutoff of 4.50 Ang has erfc(beta r_c) = 2.72E-02: the force of a pair of charges with |q_i q_j| = 1.8449 e^2 jumps by 229.06 kJ/mol/nm where it crosses the cutoff, more than 1 kJ/mol/nm. About 0.03 pairs of charged particles a frame lie within 3.5E-07 nm of the cutoff (from their mean density), where mixed precision may decide them differently from double, each changing the forces by up to the jump; the jump also degrades the conservation of energy in either precision. To derive beta from the cutoff, remove 'beta' of [pme], so that 'tolerance' (5x10^-5 by default) sets erfc(beta r_c)
 #
 # RUN: cd %t && mdir check --json beta.toml | FileCheck %s --check-prefix=JSON
 # JSON: "code": "pme_cutoff_jump"
 #
 # RUN: cd %t && mdir check loose.toml 2>&1 >/dev/null | FileCheck %s --check-prefix=LOOSE
 # LOOSE: at the cutoff of 9.00 Ang has erfc(beta r_c) = 1.00E-03: the force of a pair of charges with |q_i q_j| = 1.8449 e^2 jumps by 4.02 kJ/mol/nm
-# LOOSE-SAME: To derive beta from the cutoff, set 'tolerance' of [pme] to 10^-5 (the default) or less
+# LOOSE-SAME: To derive beta from the cutoff, set 'tolerance' of [pme] to 10^-5 or less (5x10^-5 by default)
 #
-# The defaults: no warning, at 9 A and at 4.5 A.
+# The default: no warning at 9 A; at 4.5 A a warning, and none with a
+# tolerance of 1e-5.
+# RUN: sed -e 's|^\[pme\]|[pme]\ntolerance = 1e-5|' %t/short.toml > %t/short-tight.toml
 # RUN: cd %t && mdir check default.toml 2>&1 >/dev/null | FileCheck %s --check-prefix=NONE --allow-empty
-# RUN: cd %t && mdir check short.toml 2>&1 >/dev/null | FileCheck %s --check-prefix=NONE --allow-empty
+# RUN: cd %t && mdir check short-tight.toml 2>&1 >/dev/null | FileCheck %s --check-prefix=NONE --allow-empty
+# RUN: cd %t && mdir check short.toml 2>&1 >/dev/null | FileCheck %s --check-prefix=SHORT
 # NONE-NOT: pme_cutoff_jump
 # NONE-NOT: jumps by
+# SHORT: PME with beta = 0.63728 Ang^-1 at the cutoff of 4.50 Ang has erfc(beta r_c) = 5.00E-05: the force of a pair of charges with |q_i q_j| = 1.8449 e^2 jumps by 1.16 kJ/mol/nm
+# SHORT-SAME: set 'tolerance' of [pme] to 10^-5 or less (5x10^-5 by default)
 #
 # The run itself is unchanged: `mdir run` does not print it.
 # RUN: cd %t && mdir run beta.toml 2>&1 | FileCheck %s --check-prefix=LOG

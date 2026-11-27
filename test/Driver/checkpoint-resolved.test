@@ -1,0 +1,84 @@
+# The resolved values of a run are part of its checkpoint's fingerprint
+# (D[pme-default-tolerance]): the Gaussian PME tolerance, beta and grid that
+# the keys and the defaults gave, and the traversal. A continuation whose
+# resolved values differ from the checkpoint's runs with its own and says
+# so in the log and the manifest; it is not refused. A checkpoint that
+# records none (written as builds before them did, MDIR_CHECKPOINT_UNRESOLVED)
+# took the defaults of its time, 10^-5, where its keys gave no tolerance and
+# no beta: continued under the default of 5 x 10^-5 it gets the note, and
+# so does one written with `tolerance = 1e-5` given and continued without
+# the key. A continuation with the same resolved values gets no note.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: sed -e 's|^\[energy\]|[pme]\ntolerance = 1.0e-5\n\n[energy]|' %t/run.toml > %t/tight.toml
+#
+# A checkpoint as main wrote it, continued with --continue: a note, the old
+# beta and the new one, and the same in the manifest.
+# RUN: cd %t && env MDIR_CHECKPOINT_UNRESOLVED=1 mdir run run.toml > old.log
+# RUN: cd %t && sed -e 's|^steps *= 10|steps = 20|' run.toml > more.toml
+# RUN: cd %t && mdir run --continue more.toml > continued.log
+# RUN: FileCheck %s --check-prefix=OLD < %t/continued.log
+# RUN: %python -c "import json; e = [json.loads(l) for l in open('%t/run.jsonl')][-2]['effective']; print(sorted((c['name'], c['checkpoint'], c['run'], c['inferred']) for c in e['resolved_changes']))" | FileCheck %s --check-prefix=OLDJSON
+#
+# RUN: %python %S/Inputs/manifest_schema.py %S/../../docs/run-manifest.schema.json %t/run.jsonl | FileCheck %s --check-prefix=SCHEMA
+#
+# A checkpoint of this build without keys, continued the same way: no note.
+# RUN: cd %t && rm -f state.h5 state.h5.prev run.jsonl && mdir run run.toml > new.log
+# RUN: cd %t && mdir run --continue more.toml > same.log
+# RUN: FileCheck %s --check-prefix=SAME --implicit-check-not='resolves other values' < %t/same.log
+#
+# A checkpoint written with the tolerance given, continued as the input of
+# another run without it: the physics note of D172, and the resolved note.
+# RUN: cd %t && rm -f state.h5 state.h5.prev run.jsonl && mdir run tight.toml > tight.log
+# RUN: cd %t && sed -e 's|^coordinates = "opc.inpcrd"|coordinates = "opc.inpcrd"\ncheckpoint = "state.h5"|' -e 's|^checkpoint = "state.h5"$|checkpoint = "next.h5"|' -e 's|^manifest = "run.jsonl"|manifest = "next.jsonl"|' run.toml > next.toml
+# RUN: cd %t && mdir run next.toml > next.log
+# RUN: FileCheck %s --check-prefix=GIVEN < %t/next.log
+
+# OLD: MDIR: note: the run resolves other values than 'state.h5' (a checkpoint that records none: those of the defaults of its time); it runs with its own (checkpoint -> this run):
+# OLD-NEXT: [pme] tolerance: 1e-05 -> 5e-05
+# OLD-NEXT: [pme] beta: 0.347045919 -> 0.318640149
+# OLDJSON: [('[pme] beta', '0.347045919', '0.318640149', True), ('[pme] tolerance', '1e-05', '5e-05', True)]
+# SCHEMA: valid
+# SAME: INFO:
+# GIVEN: physics or coupling
+# GIVEN: MDIR: note: the run resolves other values than 'state.h5'; it runs with its own (checkpoint -> this run):
+# GIVEN-NEXT: [pme] tolerance: 1e-05 -> 5e-05
+# GIVEN-NEXT: [pme] beta: 0.347045919 -> 0.318640149
+
+#--- run.toml
+[input]
+topology   = "opc.prmtop"
+coordinates = "opc.inpcrd"
+
+[output]
+energy_interval = 5
+checkpoint = "state.h5"
+checkpoint_interval = 10
+manifest = "run.jsonl"
+
+[energy]
+cutoff        = 9.0
+pairlist_distance = 10.0
+electrostatics = "PME"
+
+[dynamics]
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.001
+steps         = 10
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[constraints]
+rigid_water = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target = "CPU"
+threads = 4
+#--- end

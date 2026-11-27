@@ -154,7 +154,7 @@ struct System {
   /// not; without a periodic cell the default is off.
   driver::DispersionCorrection dispersion = driver::DispersionCorrection::EnergyPressure;
   bool dispersionGiven = false;
-  double pmeAlpha = 0, pmeTolerance = 1.e-5, pmeSpacing = 0.12;
+  double pmeAlpha = 0, pmeTolerance = driver::kGaussianPMETolerance, pmeSpacing = 0.12;
   std::array<int64_t, 3> pmeGrid = {0,0,0};
   /// The order of the B-splines: 4, 6, or 8, as `[pme] order`.
   int64_t pmeOrder = 4;
@@ -170,7 +170,7 @@ struct System {
   /// bandwidth where they were not, as the control file does.
   driver::PMEKernel pmeKernel = driver::PMEKernel::Gaussian;
   double pmeBandwidth = 0, pmeWindowBandwidth = 0;
-  bool pmeOrderGiven = false, pmeSpacingGiven = false;
+  bool pmeOrderGiven = false, pmeSpacingGiven = false, pmeToleranceGiven = false;
   /// `[constraints] analytic_bonds`: a group of SHAKE of one bond is
   /// projected in closed form (D246).
   bool analyticBonds = false;

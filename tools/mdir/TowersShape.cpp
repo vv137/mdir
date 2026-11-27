@@ -6,6 +6,7 @@
 #include "TowersTrial.h"
 #include "TowersTrialRecord.h"
 #include "mdir/Compiler/CompileCache.h"
+#include "mdir/Dialect/MDExec/DevicePolicy.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/DynamicLibrary.h"
@@ -36,6 +37,10 @@ llvm::Error refusal(llvm::StringRef reason) {
 }
 struct Limits {
   bool supportsMma;
+  int major, minor;
+  /// The device model, the name of the driver without the vendor and the
+  /// product line ("RTX 4090"), which keys performance thresholds.
+  std::string model;
   std::string uuid;
   int driver;
   int device, blockBytes, smBytes, reserved, threads, smThreads, blocks;
@@ -61,6 +66,8 @@ llvm::Expected<std::optional<Limits>> deviceLimits(bool requireMma) {
               CUDA_SUCCESS)
         return refusal("could not query CUDA compute capability");
       Limits l{};
+      l.major = major;
+      l.minor = minor;
       l.supportsMma = major > 7 || (major == 7 && minor >= 5);
       if (requireMma && !l.supportsMma)
         return refusal("screen MMA requires mma.sync m16n8k8 f16 (sm_75 or newer)");
@@ -85,6 +92,15 @@ llvm::Expected<std::optional<Limits>> deviceLimits(bool requireMma) {
           version(&l.driver) != CUDA_SUCCESS)
         return refusal("could not query CUDA device identity");
       l.uuid = llvm::toHex(llvm::StringRef(uuid.bytes, sizeof(uuid.bytes)));
+      auto name = reinterpret_cast<decltype(&cuDeviceGetName)>(
+          lib.getAddressOfSymbol("cuDeviceGetName"));
+      char text[256] = {};
+      if (name && name(text, sizeof(text) - 1, device) == CUDA_SUCCESS) {
+        llvm::StringRef model(text);
+        model.consume_front("NVIDIA ");
+        model.consume_front("GeForce ");
+        l.model = model.trim().str();
+      }
       l.device = device;
       return l;
     }
@@ -359,7 +375,8 @@ llvm::Expected<TowersShape>
 timeCandidates(const Control &control, const System &system,
                const Limits &limits, const FrameSpans &spans,
                const mdir::tool::TowersEmitter &emit,
-               std::vector<TowersShape> &candidates, Object &report) {
+               std::vector<TowersShape> &candidates, Object &report,
+               const TowersShape *untimed = nullptr) {
   using namespace mdir;
   using namespace mdir::tool;
   auto start = std::chrono::steady_clock::now();
@@ -438,6 +455,20 @@ timeCandidates(const Control &control, const System &system,
         }
       }
     }
+  }
+  // TOWERS taken by `neighbor_structure = "AUTO"` without a cached trial
+  // (D[best-defaults]): the derived launch, untimed. The trial costs about
+  // a second for each candidate it compiles, tens of seconds for a system,
+  // against a gain of about a microsecond a step (D432).
+  if (untimed) {
+    TowersShape shape = *untimed;
+    shape.pack = pack;
+    report["selection"] = "derived (AUTO structure, no cached trial)";
+    report["winner"] = fields(shape, false);
+    report["margin_us"] = nullptr;
+    report["below_noise"] = nullptr;
+    report["trial_cost_ms"] = 0.0;
+    return shape;
   }
 
   struct Candidate {
@@ -580,7 +611,7 @@ timeCandidates(const Control &control, const System &system,
 llvm::Expected<Object>
 mdir::tool::checkTowersShape(const Control &control, const System &system,
                              bool setup, llvm::StringRef checkpointHeight,
-                             TowersSetup *resolved) {
+                             TowersSetup *resolved, bool untimed) {
   if (!control.periodic)
     return refusal("cell height requires a periodic box");
   TowersCell geometry(system);
@@ -682,8 +713,9 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
     result["force_kernel"] =
         control.barostat ? "towers_force_virial" : "towers_force";
     if (setup) {
+      TowersShape derived = *shape;
       shape = timeCandidates(control, system, **limits, *maximum, *emit,
-                             candidates, result);
+                             candidates, result, untimed ? &derived : nullptr);
       if (!shape)
         return shape.takeError();
     } else {
@@ -708,6 +740,91 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
   }
 #endif
   result["effective"] = fields(*shape, false);
+  return result;
+}
+
+mdir::tool::AutoTowers
+mdir::tool::resolveAutoTowers(const Control &control, const System &system) {
+  AutoTowers result;
+  auto no = [&](std::string why) {
+    result.reason = std::move(why);
+    return result;
+  };
+  if (control.neighborStructureRequested != NeighborStructure::Auto)
+    return no("the structure was given");
+  // TOWERS's own requirements (D428), and the inputs whose loops or
+  // keys belong to the structures of D261: these keep that rule.
+  if (control.target != Target::GPU)
+    return no("the target is the CPU");
+  if (control.precision != Precision::Mixed)
+    return no("TOWERS takes mixed precision");
+  if (control.deterministic)
+    return no("the deterministic mode");
+  if (!control.periodic)
+    return no("the cell is not periodic");
+  if (system.tilt[0] != 0.0 || system.tilt[1] != 0.0 || system.tilt[2] != 0.0)
+    return no("a triclinic cell, not measured with TOWERS");
+  if (control.minimize)
+    return no("a minimization");
+  if (control.frames || control.segments)
+    return no("a program of frames or segments");
+  if (!control.stagedModels.empty() || !control.models.empty() ||
+      !control.externalTerms.empty())
+    return no("a model or external term");
+  if (control.implicitSolvent != Control::ImplicitSolvent::None)
+    return no("implicit solvent");
+  if (control.tunableGradient)
+    return no("the derivative in the tunables");
+  if (control.rebuildPeriod > 0)
+    return no("'rebuild_interval' is given");
+  if (control.pairlistDistanceGiven || control.prunedDistanceGiven)
+    return no("a list reach is given, which TOWERS does not use");
+  if (control.rigidUnits == RigidUnits::On)
+    return no("'rigid_units = \"ON\"' takes lists of units");
+  auto limits = deviceLimits(/*requireMma=*/false);
+  if (!limits) {
+    std::string message = llvm::toString(limits.takeError());
+    return no("the device query failed: " + message);
+  }
+  if (!*limits)
+    return no("no visible CUDA device");
+  std::string arch = "sm_" + std::to_string((**limits).major) +
+                     std::to_string((**limits).minor);
+  // The TOWERS threshold is a performance rule, keyed by the device model
+  // (the maintainer's ruling of 2026-11-27, D[best-defaults]): a model
+  // without an entry of its own does not borrow another's, and keeps the
+  // rule of D261. MDIR_DEVICE_MODEL names another model, for the tests.
+  std::string model = (**limits).model;
+  if (const char *given = std::getenv("MDIR_DEVICE_MODEL"); given && *given)
+    model = given;
+  auto policy = md_exec::policy::getDevicePolicy(arch, model);
+  int64_t least = policy.traversal.towersLeast;
+  bool unmeasured = least < 0 || policy.traversalFallback;
+  result.record = Object{
+      {"rule", "towers_least"},
+      {"device_architecture", arch},
+      {"device_model", model},
+      {"towers_least", unmeasured ? Value(nullptr) : Value(least)},
+      {"fallback", unmeasured},
+      {"basis", Object{{"decision", policy.traversalBasis.decision},
+                       {"measured", policy.traversalBasis.measured},
+                       {"date", policy.traversalBasis.date}}}};
+  size_t count = system.getNumParticles();
+  if (unmeasured) {
+    result.unmeasured = true;
+    return no("unmeasured device: " + model + " (" + arch +
+              ") has no measured TOWERS threshold; the rule of D261 applies "
+              "(`mdir tune`, #790, or a setup trial would measure one)");
+  }
+  if (count < size_t(least))
+    return no(llvm::formatv("{0} particles, fewer than {1} on the {2}", count,
+                            least, model)
+                  .str());
+  result.take = true;
+  result.reason = llvm::formatv("{0} particles, at least {1} on the {2} ({3})",
+                                count, least, model,
+                                policy.traversalBasis.decision)
+                      .str();
   return result;
 }
 

@@ -11,7 +11,8 @@
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %python %S/Inputs/argon_lattice.py 40 %t/big.pdb
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/neighbor-auto.test | sed '1d;$d' \
-# RUN:     | sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = "AUTO"|' > %t/auto.toml
+# RUN:     | sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = "AUTO"|' \
+# RUN:           -e 's|^precision = "MIXED"|precision = "MIXED"\nneighbor_structure = "GROUPS"|' > %t/auto.toml
 # RUN: cd %t && env MDIR_SKIN_SALT_DIRTY_OVERRIDE=no mdir check --json auto.toml > clean.json
 # RUN: cd %t && env MDIR_SKIN_SALT_DIRTY_OVERRIDE=no mdir check --json auto.toml -nvptx-prec-divf32=0 > option.json
 # RUN: cd %t && env MDIR_SKIN_SALT_DIRTY_OVERRIDE=yes mdir check --json auto.toml > dirty.json

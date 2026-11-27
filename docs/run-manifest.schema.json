@@ -138,6 +138,7 @@
         "resolved_choices": {
           "type": "object",
           "properties": {
+            "neighbor_structure": {"type": "object", "required": ["category", "requested", "value", "reason", "towers", "override"], "properties": {"category": {"enum": ["rule", "fallback"]}, "requested": {"const": "AUTO"}, "value": {"enum": ["matrix", "groups", "towers"]}, "reason": {"type": "string"}, "towers": {"type": "string"}, "towers_refusal": {"type": "string"}, "override": {"type": "string"}, "towers_rule": {"type": "object"}}, "additionalProperties": false},
             "step_graph": {
               "type": "object",
               "required": [
@@ -365,6 +366,7 @@
         "effective": {
           "type": "object",
           "properties": {
+            "resolved_changes": {"type": "array", "items": {"type": "object", "required": ["name", "checkpoint", "run", "inferred"], "properties": {"name": {"type": "string"}, "checkpoint": {"type": "string"}, "run": {"type": "string"}, "inferred": {"type": "boolean"}}, "additionalProperties": false}},
             "seed": {
               "type": "string",
               "pattern": "^[0-9]+$"

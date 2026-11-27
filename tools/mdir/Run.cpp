@@ -563,8 +563,51 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   for (const auto &[code, message] : system->warnings)
     warn(message);
   // `neighbor_structure = "AUTO"` is resolved for the system before
-  // anything is built from it (D261).
+  // anything is built from it (D261): TOWERS where the device's entry of
+  // the traversal table admits the input (D[best-defaults]), else the
+  // rule of D261. The rule's result is kept, so that a refusal of the
+  // TOWERS preflight below falls back to it with the reason.
+  double givenPairlist = control->pairlistDistance;
+  double givenPruned = control->prunedDistance;
   resolveNeighborStructure(*control, *system);
+  struct {
+    NeighborStructure structure;
+    double pairlist, pruned;
+    std::string reason;
+  } listRule{control->neighborStructure, control->pairlistDistance,
+             control->prunedDistance, control->neighborStructureReason};
+  llvm::json::Object traversalChoice;
+  bool autoTowers = false;
+  if (control->neighborStructureRequested == NeighborStructure::Auto) {
+    AutoTowers rule = options.segments
+                          ? AutoTowers{false, false, "segmented execution", {}}
+                          : resolveAutoTowers(*control, *system);
+    traversalChoice = llvm::json::Object{{"category", rule.unmeasured ? "fallback" : "rule"},
+                             {"requested", "AUTO"},
+                             {"towers_rule", std::move(rule.record)}};
+    if (rule.take) {
+      autoTowers = true;
+      control->neighborStructure = NeighborStructure::Towers;
+      control->pairlistDistance = givenPairlist;
+      control->prunedDistance = givenPruned;
+      control->neighborStructureReason = rule.reason;
+      control->towersAutoReason = "taken: " + rule.reason;
+    } else {
+      control->towersAutoReason = "not taken: " + rule.reason;
+    }
+  }
+  // Back to the rule of D261 where the TOWERS preflight refuses an input
+  // that AUTO took for it.
+  auto fallBackFromTowers = [&](std::string why,
+                                StringRef stage = "refused at preflight: ") {
+    control->neighborStructure = listRule.structure;
+    control->pairlistDistance = listRule.pairlist;
+    control->prunedDistance = listRule.pruned;
+    control->neighborStructureReason = listRule.reason;
+    control->towersAutoReason = (stage + why).str();
+    traversalChoice["towers_refusal"] = std::move(why);
+    autoTowers = false;
+  };
 
   auto graphRefusal = control->stepGraphRefusal(system->numConstraints);
   if (options.segments) graphRefusal = "GRAPH does not support segmented execution";
@@ -749,6 +792,18 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   }
   StringRef previousTowersHeight =
       isRestart ? StringRef(checkpoint->towersCellHeight) : StringRef();
+  // A checkpoint that a list structure wrote is continued on that rule:
+  // the run keeps its stored forces and barostat state, as before
+  // (D[best-defaults]).
+  if (autoTowers && isRestart && previousTowersHeight.empty()) {
+    fallBackFromTowers("the checkpoint was written by a list structure",
+                       "not taken: ");
+    graphRefusal = control->stepGraphRefusal(system->numConstraints);
+    if (options.segments)
+      graphRefusal = "GRAPH does not support segmented execution";
+    if (control->stepGraph == "GRAPH" && !graphRefusal.empty())
+      return fail("step_graph: " + graphRefusal);
+  }
   bool usesTowers = control->neighborStructure == NeighborStructure::Towers;
   llvm::json::Object resolvedChoices;
   llvm::json::Value towersShapeReport = nullptr;
@@ -760,14 +815,34 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     auto shape =
         checkTowersShape(*control, *system, /*setup=*/true,
                          usesTowers ? previousTowersHeight : StringRef(),
-                         usesTowers ? &control->towersSetup : nullptr);
-    if (!shape)
-      return fail(shape.takeError());
-    if (usesTowers)
-      towersCellHeight =
-          shape->getObject("effective")->getString("cell_height")->str();
-    if (usesTowers) resolvedChoices["towers_shape"] = llvm::json::Object(*shape->getObject("effective"));
-    towersShapeReport = std::move(*shape);
+                         usesTowers ? &control->towersSetup : nullptr,
+                         /*untimed=*/autoTowers && !control->towersShapeTable);
+    // A refusal of the preflight where AUTO took TOWERS is not an error
+    // of the input: the run takes the rule of D261 and says why.
+    bool fellBack = false;
+    if (!shape && autoTowers) {
+      fallBackFromTowers(llvm::toString(shape.takeError()));
+      fellBack = true;
+      usesTowers = false;
+      graphRefusal = control->stepGraphRefusal(system->numConstraints);
+      if (options.segments)
+        graphRefusal = "GRAPH does not support segmented execution";
+      if (control->stepGraph == "GRAPH" && !graphRefusal.empty())
+        return fail("step_graph: " + graphRefusal);
+      if (control->towersShapeGiven)
+        shape = checkTowersShape(*control, *system, /*setup=*/true);
+    }
+    if (!fellBack || control->towersShapeGiven) {
+      if (!shape)
+        return fail(shape.takeError());
+      if (usesTowers)
+        towersCellHeight =
+            shape->getObject("effective")->getString("cell_height")->str();
+      if (usesTowers)
+        resolvedChoices["towers_shape"] =
+            llvm::json::Object(*shape->getObject("effective"));
+      towersShapeReport = std::move(*shape);
+    }
   }
   auto graphChoice = initialStepGraphChoice(control->stepGraph, graphRefusal,
                                             system->getNumParticles());
@@ -934,6 +1009,73 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   auto program = buildProgram(*control, *system);
   if (!program)
     return fail(program.takeError());
+  // What the run resolved from its keys and defaults, which its
+  // checkpoints record (D[pme-default-tolerance]): the tolerance, beta and
+  // grid of Gaussian PME, and the traversal. A continuation whose resolved
+  // values differ from the checkpoint's runs on its own and says so: a
+  // default may change between builds while the keys of the control file,
+  // and so the rest of the fingerprint, stay the same.
+  llvm::json::Array resolvedChanges;
+  {
+    Fingerprint resolved = getResolvedFingerprint(*control, *program);
+    bool gaussian = program->pme && !program->pmeProlate;
+    auto printed = [](double value, int digits) {
+      char text[64];
+      std::snprintf(text, sizeof(text), "%.*g", digits, value);
+      return std::string(text);
+    };
+    const Checkpoint *stored =
+        own ? &*own : (isRestart && checkpoint ? &*checkpoint : nullptr);
+    if (stored && !fingerprint.empty()) {
+      Fingerprint before;
+      for (const FingerprintEntry &entry : stored->fingerprint)
+        if (entry.group == "resolved")
+          before.push_back(entry);
+      // A checkpoint written before these entries were recorded: its PME
+      // took the default tolerance of that build, 10^-5, where its keys
+      // gave neither a tolerance nor beta.
+      bool inferred = before.empty();
+      if (inferred && gaussian && control->pmeAlpha == 0.0 &&
+          llvm::none_of(stored->fingerprint, [](const FingerprintEntry &entry) {
+            return entry.name == "[pme] tolerance" || entry.name == "[pme] beta";
+          })) {
+        double rc = control->cutoffDistance, tolerance = 1.0e-5;
+        double low = 0.0, high = 1.0;
+        while (std::erfc(high * rc) > tolerance)
+          high *= 2.0;
+        for (int i = 0; i != 100; ++i) {
+          double middle = 0.5 * (low + high);
+          (std::erfc(middle * rc) > tolerance ? low : high) = middle;
+        }
+        before.push_back({"resolved", "[pme] tolerance", "1e-05"});
+        before.push_back({"resolved", "[pme] beta",
+                          printed(0.5 * (low + high), 9)});
+      }
+      std::string text;
+      for (const FingerprintEntry &now : resolved)
+        for (const FingerprintEntry &then : before)
+          if (then.name == now.name && then.value != now.value) {
+            text += "\n  " + now.name + ": " + then.value + " -> " + now.value;
+            resolvedChanges.push_back(llvm::json::Object{
+                {"name", now.name}, {"checkpoint", then.value},
+                {"run", now.value}, {"inferred", inferred}});
+          }
+      if (!text.empty())
+        notes.push_back("the run resolves other values than '" +
+                        (own ? control->restartOutput : control->restartInput) +
+                        "'" +
+                        (inferred ? " (a checkpoint that records none: those "
+                                    "of the defaults of its time)"
+                                  : "") +
+                        "; it runs with its own (checkpoint -> this run):" +
+                        text);
+    }
+    // MDIR_CHECKPOINT_UNRESOLVED writes checkpoints without these entries,
+    // as builds before them did, for the tests of the continuation.
+    const char *unresolved = std::getenv("MDIR_CHECKPOINT_UNRESOLVED");
+    if (!unresolved || !*unresolved)
+      fingerprint.insert(fingerprint.end(), resolved.begin(), resolved.end());
+  }
   if (emit == Emit::Module) {
     llvm::outs() << printModuleForReading(*program);
     // The profile map is of the lowered program (D398).
@@ -1522,9 +1664,23 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     }
     if (towersShapeReport.getAsObject())
       effective["towers_shape"] = towersShapeReport;
+    // The resolved values that differ from those of the checkpoint the run
+    // continues (D[pme-default-tolerance]).
+    if (!resolvedChanges.empty())
+      effective["resolved_changes"] = std::move(resolvedChanges);
     if (!towersCellHeight.empty())
       effective["towers_cell_height"] = towersCellHeight;
     resolvedChoices["step_graph"] = std::move(graphChoice);
+    // The traversal of AUTO, a rule (#952): what it chose and why, and
+    // the lookup of the traversal table behind it (D[best-defaults]).
+    if (control->neighborStructureRequested == NeighborStructure::Auto) {
+      traversalChoice["value"] =
+          getNeighborStructureName(control->neighborStructure);
+      traversalChoice["reason"] = control->neighborStructureReason;
+      traversalChoice["towers"] = control->towersAutoReason;
+      traversalChoice["override"] = "[execution] neighbor_structure";
+      resolvedChoices["neighbor_structure"] = std::move(traversalChoice);
+    }
     llvm::json::Object metadata{
         {"build", getManifestBuild()}, {"effective", std::move(effective)},
         {"resolved_choices", std::move(resolvedChoices)},
@@ -1913,7 +2069,15 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     output.log.print("MDIR: note: %s\n", note.c_str());
   // The structure that `AUTO` took, and why (D261); a
   // structure that was given is not repeated.
-  if (control->neighborStructureRequested == NeighborStructure::Auto) {
+  // Why AUTO took TOWERS or not (D[best-defaults]), a line of its own.
+  if (!control->towersAutoReason.empty())
+    output.log.print("MDIR: AUTO traversal: TOWERS %s\n",
+                     control->towersAutoReason.c_str());
+  if (control->neighborStructureRequested == NeighborStructure::Auto &&
+      control->neighborStructure == NeighborStructure::Towers) {
+    output.log.print("MDIR: neighbor structure: TOWERS (AUTO: %s)\n",
+                     control->neighborStructureReason.c_str());
+  } else if (control->neighborStructureRequested == NeighborStructure::Auto) {
     if (control->neighborStructure == NeighborStructure::Groups)
       output.log.print("MDIR: neighbor structure: groups of 16 with the "
                        "reach %g Ang", control->pairlistDistance);

@@ -215,6 +215,39 @@ static const Entry<GroupsPolicy> kGroupsTable[] = {
 };
 
 //===----------------------------------------------------------------------===//
+// The traversal of AUTO (D[best-defaults])
+//===----------------------------------------------------------------------===//
+
+// The default keeps the rule of D261 (MATRIX or GROUPS by size): TOWERS
+// was not measured against them as a default on the architecture.
+const TraversalPolicy mdir::md_exec::policy::kDefaultTraversal = {
+    /*towersLeast=*/-1};
+static const Measurement kTraversalDefaultBasis = {
+    "D261", "not measured as a choice of AUTO: the rule of D261 is kept",
+    "2026-10-13"};
+static const ArrayRef<Measured> kTraversalDefaultMeasured = {};
+
+// On sm_89 TOWERS with its derived launch took less time a step than the
+// structure of D261 from 4,608 atoms on (D[best-defaults], RTX 4090,
+// mixed precision, 2 fs, two jobs in opposite orders): TIP3P boxes of
+// 4,608, 6,912, 9,989 and 19,880 atoms, JAC, Factor IX, Cellulose and STMV.
+// A box of 3,072 atoms ran 3% slower than the matrix, so the entry starts
+// at the smallest box measured faster.
+static const Measured kTraversal89Measured[] = {{8, 9}};
+// The entry is keyed by the device model, not the architecture alone: a
+// performance threshold of one model is not borrowed by another of the same
+// compute capability (L4, L40), which keeps the default.
+static const Entry<TraversalPolicy> kTraversalTable[] = {
+    {{8, 9, "RTX 4090"},
+     {/*towersLeast=*/4608},
+     {"D[best-defaults]",
+      "main 03506508 and the branch at c0c015d8: TIP3P boxes of 3,072 to "
+      "19,880 atoms, JAC, Factor IX, Cellulose and STMV, RTX 4090",
+      "2026-11-27"},
+     kTraversal89Measured},
+};
+
+//===----------------------------------------------------------------------===//
 // Selection
 //===----------------------------------------------------------------------===//
 
@@ -296,6 +329,15 @@ DevicePolicy mdir::md_exec::policy::getDevicePolicy(StringRef arch,
     policy.groups = entry->values;
     policy.groupsBasis = entry->basis;
     policy.groupsFallback = !covers(entry->measured, key);
+  }
+
+  policy.traversal = kDefaultTraversal;
+  policy.traversalBasis = kTraversalDefaultBasis;
+  policy.traversalFallback = !covers(kTraversalDefaultMeasured, key);
+  if (const auto *entry = find<TraversalPolicy>(kTraversalTable, key)) {
+    policy.traversal = entry->values;
+    policy.traversalBasis = entry->basis;
+    policy.traversalFallback = !covers(entry->measured, key);
   }
   return policy;
 }

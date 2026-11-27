@@ -60,14 +60,24 @@ virial is $3E_Q$, which makes its pressure $E_Q/V$, and its value at the
 volume of the step is $E_Q(V_0)\,V_0/V$.
 
 **Parameters** (D71). $\beta$ is given, or found by bisection such that
-$\mathrm{erfc}(\beta r_c)$ equals a tolerance, $10^{-5}$ by default:
-100 halvings of $[0, h]$, $h$ doubled from 1 nm⁻¹ until
+$\mathrm{erfc}(\beta r_c)$ equals a tolerance, $5\times10^{-5}$ by
+default ($10^{-5}$ before D[pme-default-tolerance]): 100 halvings of $[0, h]$, $h$ doubled from 1 nm⁻¹ until
 $\mathrm{erfc}(h r_c)$ is below the tolerance. The grid has $K_a$
 points along axis $a$, the smallest even number of at least
 $L_a/h_\text{max}$ whose prime factors are 2, 3, 5, and 7, with
 $h_\text{max} = 1.2$ Å; or it is given. The order $n$ of the B-splines is
 4, 6, or 8 (4 by default), and the grid needs at least $2n$ points along
-each axis. A charge of 100 e or more is rejected, since the deterministic
+each axis. The default tolerance follows from the error of the forces at
+the default grid. The relative RMS force error $\Delta$ is the sum of a
+direct part, which grows with $\mathrm{erfc}(\beta r_c)$, and a
+reciprocal part, which falls as $\beta$ falls at fixed $h_\text{max}$ and
+$n$. At $h_\text{max} = 1.2$ Å and $n = 4$ the reciprocal part dominates:
+raising the tolerance from $10^{-5}$ to $5\times10^{-5}$ lowers $\beta$
+from 0.390 to 0.358 Å⁻¹ at 8 Å, and the measured $\Delta$ in mixed
+precision falls to 0.62 to 0.68 of its value on six systems (TIP3P
+boxes of 9,989 and 19,880 atoms, JAC, Factor IX, Cellulose and STMV;
+$5.0\times10^{-4}$ to $8.9\times10^{-4}$), at the same grid and so at the
+same cost. A charge of 100 e or more is rejected, since the deterministic
 mode adds the grid in fixed point at the scale $2^{40}$.
 
 ## 5.2 The reciprocal sum

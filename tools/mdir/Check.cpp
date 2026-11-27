@@ -572,9 +572,10 @@ static void checkCutoffJump(const Control &control, const System &system,
                                  : 0.0;
   std::string advice =
       control.pmeAlpha > 0.0
-          ? "remove 'beta' of [pme], so that 'tolerance' (10^-5 by "
+          ? "remove 'beta' of [pme], so that 'tolerance' (5x10^-5 by "
             "default) sets erfc(beta r_c)"
-          : "set 'tolerance' of [pme] to 10^-5 (the default) or less";
+          : "set 'tolerance' of [pme] to 10^-5 or less (5x10^-5 by "
+            "default)";
   warnings.push_back(
       {"pme_cutoff_jump",
        llvm::formatv(
@@ -684,6 +685,9 @@ static void describeRun(const Control &control, const System &system,
   if (control.isSkinAuto())
     std::printf("skins:              %s (%s)\n", control.skinSource.c_str(),
                 control.skinReason.c_str());
+  if (!control.towersAutoReason.empty())
+    std::printf("AUTO traversal:     TOWERS %s\n",
+                control.towersAutoReason.c_str());
   if (!control.restartInput.empty())
     std::printf("input checkpoint:   %s (not loaded by check)\n",
                 control.restartInput.c_str());
@@ -813,6 +817,9 @@ static llvm::json::Object makeJSON(const Control &control, const System &system,
                getNeighborStructureName(control.neighborStructureRequested)},
               {"structure", getNeighborStructureName(control.neighborStructure)},
               {"reason", control.neighborStructureReason},
+              {"towers_auto", control.towersAutoReason.empty()
+                                  ? Value(nullptr)
+                                  : Value(control.towersAutoReason)},
               {"pairlist_distance_angstrom", control.pairlistDistance},
               {"pruned_distance_angstrom",
                control.prunedDistance != 0.0 ? Value(control.prunedDistance)
@@ -875,21 +882,57 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
   auto system = readSystem(*control);
   if (!system)
     return fail(system.takeError(), json);
-  // As `mdir run` resolves it (D261).
+  // As `mdir run` resolves it (D261, D[best-defaults]): TOWERS where
+  // the rule admits the input and the preflight, without the setup
+  // trial, accepts it; the rule of D261 otherwise, with the reason.
+  double givenPairlist = control->pairlistDistance;
+  double givenPruned = control->prunedDistance;
   resolveNeighborStructure(*control, *system);
+  bool autoTowers = false;
+  NeighborStructure listStructure = control->neighborStructure;
+  double listPairlist = control->pairlistDistance;
+  double listPruned = control->prunedDistance;
+  std::string listReason = control->neighborStructureReason;
+  if (control->neighborStructureRequested == NeighborStructure::Auto) {
+    AutoTowers rule = resolveAutoTowers(*control, *system);
+    if (rule.take) {
+      autoTowers = true;
+      control->neighborStructure = NeighborStructure::Towers;
+      control->pairlistDistance = givenPairlist;
+      control->prunedDistance = givenPruned;
+      control->neighborStructureReason = rule.reason;
+      control->towersAutoReason = "taken: " + rule.reason;
+    } else {
+      control->towersAutoReason = "not taken: " + rule.reason;
+    }
+  }
+  std::optional<llvm::json::Object> towers;
+  if (control->towersShapeGiven || control->neighborStructure == NeighborStructure::Towers) {
+    auto shape = checkTowersShape(*control, *system, /*setup=*/false);
+    if (!shape && autoTowers) {
+      std::string why = llvm::toString(shape.takeError());
+      control->neighborStructure = listStructure;
+      control->pairlistDistance = listPairlist;
+      control->prunedDistance = listPruned;
+      control->neighborStructureReason = listReason;
+      control->towersAutoReason = "refused at preflight: " + why;
+      if (control->towersShapeGiven)
+        shape = checkTowersShape(*control, *system, /*setup=*/false);
+      else
+        shape = llvm::json::Object{};
+    }
+    if (!shape)
+      return fail(shape.takeError(), json);
+    if (control->towersShapeGiven ||
+        control->neighborStructure == NeighborStructure::Towers)
+      towers = std::move(*shape);
+  }
   auto refusal = control->stepGraphRefusal(system->numConstraints);
   if (control->stepGraph == "GRAPH" && !refusal.empty())
     return fail(llvm::createStringError("step_graph: %s", refusal.str().c_str()), json);
   using llvm::StringRef;
   auto graphChoice = initialStepGraphChoice(control->stepGraph, refusal,
                                             system->getNumParticles());
-  std::optional<llvm::json::Object> towers;
-  if (control->towersShapeGiven || control->neighborStructure == NeighborStructure::Towers) {
-    auto shape = checkTowersShape(*control, *system, /*setup=*/false);
-    if (!shape)
-      return fail(shape.takeError(), json);
-    towers = std::move(*shape);
-  }
   // As `mdir run` resolves it, at the input's positions
   // (D424); a refusal of `ON` is an error of the file.
   if (llvm::Error error = resolveRigidUnits(*control, *system))

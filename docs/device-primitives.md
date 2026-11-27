@@ -1704,6 +1704,7 @@ only from that record. The tables are in
 | Launches | `blockSize`, `rowLanes`, `stageBlockSize`, `blockMemoryBytes`, the gathering's lanes | 128, 16, 256, 48 KiB, 4 a particle up to order 4 and 8 above | none | Not measured as a choice; the lanes of the gathering in the prototype of #334 (Cellulose, RTX 4090; #411) |
 | The SIMT schedule of a list of units | `blockSize`, `rotationLanes`, `columnUnits` | 128, 16, 128 | none | D421, 2026-11-18: the block and rotation are #795's; the units of a column swept over 64 to 256 on #795's six systems on an RTX 4090 (`sm_89`); other architectures take it as a fallback |
 | The build of the groups | `columnParticles` | 64 | `sm_89`: 96 | The default is D89's, not measured as a choice; the entry of `sm_89` is D423, 2026-11-18: the particles of a column swept over 64 to 192 on JAC, Factor IX, Cellulose, STMV, and a TIP3P box on an RTX 4090, NPT |
+| The traversal of `neighbor_structure = "AUTO"` in `mdir run` and `mdir check` | `towersLeast` | -1 (the rule of D261) | `sm_89`, model RTX 4090: 4,608 | D[best-defaults], 2026-11-27: TOWERS with the derived launch against D261's structure on TIP3P boxes of 3,072 to 19,880 atoms, JAC, Factor IX, Cellulose and STMV in NVT, and the suite's NPT and NVE systems, at 2 fs on an RTX 4090; 3,072 atoms ran 3% slower, 4,608 and more 1.04 to 1.25 times as fast. Unlike the others, this table is read by the driver from the compute capability of the visible device, not from the compile options |
 
 ### 8.2 Key, selection, and fallback
 
