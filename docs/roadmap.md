@@ -339,8 +339,6 @@ D[distribute-pencil-collectives] restricts distributed PME FFT
 transposes to the row, column, or mesh communicator that owns the data.
 D[distribute-pme-rank-groups] supports disjoint particle and reciprocal
 pencil rank ranges.
-D[distribute-mixed-displacement] stages split image coordinates for
-compensated binary32 evaluation of floating mixed midpoint pairs.
 
 D[distribute-pme-pair-overlap] runs the local midpoint force loop and
 reciprocal solve concurrently on disjoint ranks.

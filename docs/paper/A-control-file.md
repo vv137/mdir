@@ -607,8 +607,7 @@ and the new grid contributes to the checkpoint's integrity digest
 Floating-point MPI with one midpoint domain per rank may resize
 domains automatically (D[distribute-auto-balance]). Covered bonded tuples may
 also move to a lighter adjacent domain (D[distribute-tuple-cost]). The run log
-reports both choices. Floating mixed midpoint force evaluation uses
-compensated binary32 relative displacements (D[distribute-mixed-displacement]).
+reports both choices.
 D[mpi-transport] adds `transport = "mpi"` in MPI-enabled builds.
 The grid must have at least as many domains as ranks. The launcher sets
 the rank count. Rank zero owns the output files.

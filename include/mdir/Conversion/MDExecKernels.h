@@ -41,12 +41,6 @@ mlir::Value pairDifference(mlir::OpBuilder &b, mlir::Location loc,
                            mlir::Type computed,
                            mlir::Value otherImage = {});
 
-/// Subtract split binary32 explicit images, recovering the roundoff of the
-/// leading subtraction before the low components are folded in.
-mlir::Value splitPairDifference(mlir::OpBuilder &b, mlir::Location loc,
-                                mlir::Value center, mlir::Value other,
-                                mlir::Value centerLow, mlir::Value otherLow);
-
 /// One over each edge length of `box`. A kernel finds the minimum image
 /// with a multiplication in place of a division.
 ///
@@ -166,8 +160,7 @@ emitPairKernel(mlir::OpBuilder &builder, md_exec::PairForOp op,
                mlir::IRMapping &local, const RowLanes *lanes = nullptr,
                llvm::SmallVectorImpl<mlir::Value> *outTotals = nullptr,
                const PairLayout *layout = nullptr, AddToMember add = nullptr,
-               mlir::Value imageShifts = {}, mlir::Value imagePositions = {},
-               mlir::Value imageResiduals = {});
+               mlir::Value imageShifts = {}, mlir::Value imagePositions = {});
 
 /// Where a loop over pairs over groups of 16 (D89,
 /// docs/neighbor-groups.md) finds its work: the lists of the groups in blocks of 64 entries (`entries` and

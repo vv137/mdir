@@ -276,20 +276,6 @@ Value kernels::pairDifference(OpBuilder &b, Location loc, Value center,
   return arith::SubFOp::create(b, loc, raw, otherImage);
 }
 
-Value kernels::splitPairDifference(OpBuilder &b, Location loc, Value center,
-                                    Value other, Value centerLow, Value otherLow) {
-  // TwoDiff [Higham2002] recovers the leading subtraction's roundoff.
-  Value leading = arith::SubFOp::create(b, loc, center, other);
-  Value virtualOther = arith::SubFOp::create(b, loc, center, leading);
-  Value virtualCenter = arith::AddFOp::create(b, loc, leading, virtualOther);
-  Value centerError = arith::SubFOp::create(b, loc, center, virtualCenter);
-  Value otherError = arith::SubFOp::create(b, loc, virtualOther, other);
-  Value error = arith::AddFOp::create(b, loc, centerError, otherError);
-  Value low = arith::SubFOp::create(b, loc, centerLow, otherLow);
-  return arith::AddFOp::create(b, loc, leading,
-      arith::AddFOp::create(b, loc, error, low));
-}
-
 SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
                                            md_exec::PairForOp op,
                                            Value counts, Value index,
@@ -299,8 +285,7 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
                                            const RowLanes *lanes,
                                            SmallVectorImpl<Value> *outTotals,
                                            const PairLayout *layout,
-                                           AddToMember add, Value imageShifts, Value imagePositions,
-                                           Value imageResiduals) {
+                                           AddToMember add, Value imageShifts, Value imagePositions) {
   Location loc = op.getLoc();
   Value positions = layout ? layout->positions : op.getPositions();
   SmallVector<Value> insBuffers(op.getIns().begin(), op.getIns().end());
@@ -332,8 +317,6 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
   Value centralPosition = loadElement(builder, loc, positions, central);
   if (imagePositions)
     centralPosition = loadElement(builder, loc, imagePositions, central);
-  Value centralLow;
-  if (imageResiduals) centralLow = loadElement(builder, loc, imageResiduals, central);
   SmallVector<Value> centralValues;
   for (Value buffer : insBuffers)
     centralValues.push_back(loadElement(builder, loc, buffer, central));
@@ -386,10 +369,7 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
           // the rows carry their images (D290).
           Value otherPosition = loadElement(pair, loc, imagePositions ? imagePositions : positions, other);
           Value otherImage = imageShifts ? loadElement(pair, loc, imageShifts, other) : Value();
-          Value raw = imageResiduals ?
-              splitPairDifference(pair, loc, centralPosition, otherPosition,
-                                  centralLow, loadElement(pair, loc, imageResiduals, other)) :
-              pairDifference(pair, loc, centralPosition, otherPosition, computed, otherImage);
+          Value raw = pairDifference(pair, loc, centralPosition, otherPosition, computed, otherImage);
           Value d = explicitImages ? raw
                                    : emitMinimumImage(pair, loc, raw,
                                                       boxComputed,

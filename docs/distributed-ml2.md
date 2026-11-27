@@ -1701,10 +1701,3 @@ and skips the observable exchange. An energy-only call reduces one sum.
 A call with a virial consumer reduces all ten components in rank order.
 This applies to both shared and disjoint pencils
 (D[distribute-pme-observable-uses]).
-
-Floating mixed midpoint pairs stage each explicit-image coordinate as
-two binary32 parts. The pair loop corrects the leading subtraction
-with both residual parts before squaring [Higham2002](references.md#higham2002)
-[Bowers2006](references.md#bowers2006). The membership filter keeps its
-binary64 geometry and fixed-point runs keep their original displacement
-arithmetic. See [D[distribute-mixed-displacement]](decisions/distribute-mixed-displacement.md).

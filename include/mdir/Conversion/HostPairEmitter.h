@@ -37,8 +37,7 @@ emitPairRowLanes(mlir::OpBuilder &builder, md_exec::PairForOp op,
                  mlir::Value counts, mlir::Value index, mlir::Value box,
                  mlir::Value inverse, mlir::Value central, int64_t lanes,
                  mlir::Value imageShifts = {}, mlir::Value imagePositions = {},
-                 mlir::Value privateOut = {}, mlir::Value rowOffset = {},
-                 mlir::Value imageResiduals = {});
+                 mlir::Value privateOut = {}, mlir::Value rowOffset = {});
 
 } // namespace kernels
 } // namespace mdir
