@@ -682,45 +682,6 @@ Interfaces: `MemoryEffectOpInterface`
 
 
 
-### `md_exec.fork` (::mdir::md_exec::ForkOp)
-
-_Where the ops marked for a side stream after it start from_
-
-Syntax:
-
-```
-operation ::= `md_exec.fork` $lane attr-dict
-```
-
-Belongs to the storage form. The ops marked for the side stream `lane`
-(1, the second stream; 2, the third, `md_exec.lane = 2`) that follow
-the fork, up to the next `md_exec.join`, start from the work of the
-first stream issued before the fork, not from that issued before them
-(D[concurrent-terms]). So a marked op can be issued after a long loop
-of the first stream and still run beside it. Every op between the fork
-and a marked op of its lane, other than ops marked for that lane, must
-be independent of the marked op (`md-exec-assign-streams`, checked
-again at lowering).
-
-```mlir
-md_exec.fork 1
-md_exec.pair_for ...
-%e, %w = md_exec.reciprocal ... {md_exec.side}
-md_exec.join
-```
-
-The op declares no effects, so that no pass moves an op across it, or
-moves it.
-
-#### Attributes:
-
-<table>
-<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
-<tr><td><code>lane</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
-</table>
-
-
-
 ### `md_exec.join` (::mdir::md_exec::JoinOp)
 
 _Waits for the op that runs beside the ops before it_

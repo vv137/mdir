@@ -4093,10 +4093,6 @@ void Lowering::findSharedFrames(func::FuncOp function,
     Value positions = pair.getPositions();
     for (Operation *crossed = refresh->getNextNode(); crossed != pair;
          crossed = crossed->getNextNode()) {
-      // A fork records an event of the stream and touches no memory
-      // (D[concurrent-terms]).
-      if (isa<md_exec::ForkOp>(crossed))
-        continue;
       // An op whose effects are not all declared, or that may write or
       // free the positions, ends the sharing.
       std::optional<SmallVector<MemoryEffects::EffectInstance>> effects =
@@ -10737,15 +10733,6 @@ LogicalResult Lowering::lowerOp(Operation *op) {
     OpBuilder builder(op);
     count.getResult().replaceAllUsesWith(memref::LoadOp::create(
         builder, op->getLoc(), structure.builds, ValueRange{}));
-  } else if (auto fork = dyn_cast<md_exec::ForkOp>(op)) {
-    // The marked ops of the lane after it start from here
-    // (D[concurrent-terms]).
-    OpBuilder builder(op);
-    func::CallOp::create(
-        builder, op->getLoc(),
-        getOrDeclare(fork.getLane() == 2 ? "mdrtSide2Fork" : "mdrtSideFork",
-                     builder.getFunctionType({}, {})),
-        ValueRange());
   } else if (isa<md_exec::JoinOp>(op)) {
     // The first stream waits for the work of the second.
     OpBuilder builder(op);

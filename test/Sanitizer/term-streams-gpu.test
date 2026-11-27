@@ -1,8 +1,8 @@
 # D[concurrent-terms]: `term_streams = "TERMS"` under compute-sanitizer: the
 # NPT run of pme-side-gpu.test on examples/ala3, 20 steps in mixed
 # precision, with the reciprocal sums on the second stream and the loops
-# over tuples on the third, both forked before the loops over pairs and
-# issued after them. memcheck, racecheck and synccheck find nothing.
+# over tuples on the third, beside the loops over pairs. memcheck,
+# racecheck and synccheck find nothing.
 #
 # REQUIRES: cuda, compute-sanitizer, hdf5
 #
@@ -15,9 +15,8 @@
 # RUN: rm -f %t/out.h5 && cd %t && %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run run.toml 2>&1 | FileCheck %s --check-prefix=RACE
 # RUN: rm -f %t/out.h5 && cd %t && %compute_sanitizer --tool synccheck --error-exitcode 1 mdir run run.toml 2>&1 | FileCheck %s
 
-# SIDE: md_exec.fork 2
-# SIDE: md_exec.pair_for
 # SIDE: md_exec.lane = 2 : i64, md_exec.side
+# SIDE: md_exec.pair_for
 # SIDE: md_exec.join
 
 # CHECK: ERROR SUMMARY: 0 errors

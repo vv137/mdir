@@ -1017,12 +1017,6 @@ def AssignStreams : Pass<"md-exec-assign-streams", "::mlir::ModuleOp"> {
     share a window: they run on the second stream in the order of the
     program, and the first stream waits once, before the first op that is
     not independent of one of them.
-
-    With `fork-after-pairs`, each run of marked ops of one side stream
-    before a loop over pairs of its window moves down to the window's join,
-    and an `md_exec.fork` where it stood lets it start from the first
-    stream there: the host issues the loops over pairs first, and the side
-    work after them, while the pairs run.
   }];
   let options = [
     Option<"reciprocal", "reciprocal", "bool", /*default=*/"false",
@@ -1030,10 +1024,7 @@ def AssignStreams : Pass<"md-exec-assign-streams", "::mlir::ModuleOp"> {
            "stream">,
     Option<"tuples", "tuples", "bool", /*default=*/"false",
            "Run the loops over tuples that can move up past a loop over "
-           "pairs on the second stream">,
-    Option<"forkAfterPairs", "fork-after-pairs", "bool", /*default=*/"false",
-           "Issue the marked ops before a loop over pairs of their window "
-           "at its join instead, from an md_exec.fork where they stood">
+           "pairs on the second stream">
   ];
 }
 

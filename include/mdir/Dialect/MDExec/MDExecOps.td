@@ -1198,33 +1198,6 @@ def MDExec_JoinOp : MDExec_Op<"join"> {
   let assemblyFormat = "attr-dict";
 }
 
-def MDExec_ForkOp : MDExec_Op<"fork"> {
-  let summary = "Where the ops marked for a side stream after it start from";
-  let description = [{
-    Belongs to the storage form. The ops marked for the side stream `lane`
-    (1, the second stream; 2, the third, `md_exec.lane = 2`) that follow
-    the fork, up to the next `md_exec.join`, start from the work of the
-    first stream issued before the fork, not from that issued before them
-    (D[concurrent-terms]). So a marked op can be issued after a long loop
-    of the first stream and still run beside it. Every op between the fork
-    and a marked op of its lane, other than ops marked for that lane, must
-    be independent of the marked op (`md-exec-assign-streams`, checked
-    again at lowering).
-
-    ```mlir
-    md_exec.fork 1
-    md_exec.pair_for ...
-    %e, %w = md_exec.reciprocal ... {md_exec.side}
-    md_exec.join
-    ```
-
-    The op declares no effects, so that no pass moves an op across it, or
-    moves it.
-  }];
-  let arguments = (ins I64Attr:$lane);
-  let assemblyFormat = "$lane attr-dict";
-}
-
 //===----------------------------------------------------------------------===//
 // Loops
 //===----------------------------------------------------------------------===//

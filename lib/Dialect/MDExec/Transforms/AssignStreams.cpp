@@ -150,54 +150,6 @@ public:
         JoinOp::create(builder, op->getLoc());
       }
     }
-
-    if (forkAfterPairs)
-      issueAfterPairs();
-  }
-
-  /// The host issues the work of a step in the order of the program, and a
-  /// launch takes it microseconds: marked ops at the top of a window delay
-  /// the loops over pairs, the longest chain, by their launches. So each run
-  /// of marked ops of one side stream before a loop over pairs of its
-  /// window moves down to the join, and a fork where it stood lets it start
-  /// from there still (md_exec.fork, D[concurrent-terms]). The ops it moves
-  /// past are those of its window, independent of it. At the join, it
-  /// leaves the loops of the first stream after the pairs next to them
-  /// (the bonded publication of TOWERS, D436).
-  void issueAfterPairs() {
-    SmallVector<Block *> blocks;
-    getOperation()->walk([&](Block *block) { blocks.push_back(block); });
-    for (Block *block : blocks) {
-      for (unsigned lane : {1u, 2u}) {
-        Operation *op = block->empty() ? nullptr : &block->front();
-        while (op) {
-          if (getSideLane(op) != lane) {
-            op = op->getNextNode();
-            continue;
-          }
-          // The run of marked ops of the lane from `op`, up to the join,
-          // and the last loop over pairs before the join.
-          SmallVector<Operation *> run;
-          Operation *pair = nullptr, *end = op;
-          for (; end && !isa<JoinOp>(end) &&
-                 !end->hasTrait<OpTrait::IsTerminator>();
-               end = end->getNextNode()) {
-            if (isa<PairForOp>(end))
-              pair = end;
-            else if (getSideLane(end) == lane && !pair)
-              run.push_back(end);
-          }
-          if (pair && !run.empty() && end && isa<JoinOp>(end)) {
-            OpBuilder builder(run.front());
-            ForkOp::create(builder, run.front()->getLoc(),
-                           builder.getI64IntegerAttr(lane));
-            for (Operation *moved : run)
-              moved->moveBefore(end);
-          }
-          op = end;
-        }
-      }
-    }
   }
 };
 } // namespace

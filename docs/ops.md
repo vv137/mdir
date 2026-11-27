@@ -1248,7 +1248,6 @@ The reference of every op is [dialects/md_exec.md](dialects/md_exec.md).
 | `md_exec.reciprocal` | What `md.reciprocal` computes, in the execution IR; Section 10.8 and [pme.md](pme.md) describe its lowerings. |
 | `md_exec.linear_transform` | The unnormalized real three-dimensional FFT, forward or backward, between a real grid and its packed half-spectrum, with its adjoint and the pairing under which it is one declared in the IR (D306, [primitives-map.md](primitives-map.md)). |
 | `md_exec.join` | Storage form only: the ops marked `md_exec.side` before it run on a side stream beside the ops between them and it (D81, D87); the first stream waits for both side streams there (D[concurrent-terms]). |
-| `md_exec.fork` | Storage form only: the ops marked for the side stream `lane` after it, up to the join, start from the first stream at the fork, though they are issued later (D[concurrent-terms]). |
 | `md_exec.rebuild_count` | The number of times a neighbor structure has been built. |
 | `md_exec.zeros`, `md_exec.empty` | Destinations of loops. |
 | `md_exec.pair_for` | Runs a kernel over the pairs of a neighbor structure. |
@@ -1548,7 +1547,6 @@ not prove that its index stays within the declared row footprint.
 | `md_exec.refresh_neighbors` | Rebuilds the structure where it is. The result is the structure that was given. |
 | `md_exec.reset_neighbors` | Storage form only. Makes the structure valid for no configuration. It stands where the value form has an empty structure inside a loop, and where a structure takes the storage of an earlier one (Section 10.5). |
 | `md_exec.join` | Storage form only. The op before it that is marked `md_exec.side` runs on a second stream beside the ops between the two, which must be independent of it; the ops after the join run after it (`md-exec-assign-streams`, D87). |
-| `md_exec.fork` | Storage form only. `md_exec.fork 1` (the second stream, the reciprocal sums) or `md_exec.fork 2` (the third, the loops over tuples marked `md_exec.lane = 2`): the marked ops of that stream after it start from the work of the first stream issued before the fork. Every op between the fork and such an op, other than ops of the same stream, must be independent of it; `md-exec-assign-streams{fork-after-pairs=true}` places forks, and `convert-md-exec-to-gpu` checks them and lowers a fork to `mdrtSideFork` or `mdrtSide2Fork` (D[concurrent-terms]). |
 | `md_exec.zeros`, `md_exec.empty`, `md_exec.build_cells`, `md_exec.build_neighbors`, `md_exec.tabulate` | Do not occur. A table that `md_exec.tabulate` makes (`md-exec-fold-tables`, D91) is computed on the host, entry by entry, where its tables are, and is placed as they are. A build is storage and a refresh with the policy `always`. |
 
 The kernels are the same in both forms.

@@ -125,13 +125,11 @@ static std::string getStageBodiesPass(StringRef arch) {
 /// The options of md-exec-assign-streams for `[execution] term_streams`
 /// (D87, D429, D[concurrent-terms]).
 static std::string getStreamOptions(const Control &control) {
-  // The side work is issued after the loops over pairs, from a fork where
-  // it would stand, so that the host issues the longest chain first.
   StringRef streams = control.resolveTermStreams().first;
   if (streams == "RECIPROCAL")
-    return "{reciprocal=true fork-after-pairs=true}";
+    return "{reciprocal=true}";
   if (streams == "TERMS")
-    return "{reciprocal=true tuples=true fork-after-pairs=true}";
+    return "{reciprocal=true tuples=true}";
   return "";
 }
 

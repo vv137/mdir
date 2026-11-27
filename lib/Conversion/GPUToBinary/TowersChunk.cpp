@@ -326,10 +326,8 @@ struct Chunk {
         // must open and close within one phase (D[concurrent-terms]).
         bool sideCall = n == "mdrtSideBegin" || n == "mdrtSideEnd" ||
                         n == "mdrtSide2Begin" || n == "mdrtSide2End" ||
-                        n == "mdrtSideFork" || n == "mdrtSide2Fork" ||
                         n == "mdrtSideJoin";
-        if (n == "mdrtSideBegin" || n == "mdrtSide2Begin" ||
-            n == "mdrtSideFork" || n == "mdrtSide2Fork")
+        if (n == "mdrtSideBegin" || n == "mdrtSide2Begin")
           sideOpen = true;
         else if (n == "mdrtSideJoin")
           sideOpen = false;
