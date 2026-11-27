@@ -141,8 +141,8 @@ the peak and ideal counts separately over the same domain evaluations.
 A tuple relation retains its member-to-directory plan while its SSA input
 is invariant. Remote identities are sorted and requested once per peer.
 On each geometry evaluation the peer returns one site per requested identity.
-Workers expand the results into disjoint member slots and resolve the received
-midpoint records into disjoint tuple rows. Parameter and force order are preserved.
+Workers read the requested sites through their planned slots and resolve
+the received midpoint records into disjoint tuple rows. Parameter and force order are preserved.
 
 In a floating midpoint pair loop, neighbors whose midpoint ownership is
 stable over the Verlet bounds form a prefix of each row. The prefix uses
@@ -255,3 +255,9 @@ block, one distribution supplies the unwrapped rows. Wrapping writes
 a separate buffer before the trajectory epoch aligns its periodic
 images. The reciprocal mesh and unwrapped constraint consumers keep
 the original coordinates.
+
+The tuple geometry plan stores a slot per member. During midpoint
+assignment, each worker reads coordinates, domain, and row directly
+from the local directory or the unique replies for its peer requests.
+Only the members of the current tuple need temporary geometry. Repeated
+members of the same site share its reply across tuples.

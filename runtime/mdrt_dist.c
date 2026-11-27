@@ -2843,6 +2843,11 @@ int64_t _mlir_ciface_mdrtDistTupleIncidence(struct Memref2I *rows,
 
 struct TopologySite { int64_t domain, row; double x[3]; };
 
+struct TupleGeometry {
+  const int64_t *slots;
+  const struct TopologySite *local, *remote;
+};
+
 #ifdef MDIR_ENABLE_MPI
 /* A geometry snapshot owns one contiguous identity interval per rank.
    Tuple intervals gather only their member sites from this directory. */
@@ -2952,27 +2957,20 @@ static void planSites(struct TuplePlan *p, const struct TopologyShard *shard,
   free(ids);
 }
 
-static struct TopologySite *readSites(struct TuplePlan *p, const struct TopologyShard *shard,
+static struct TopologySite *readRemoteSites(struct TuplePlan *p, const struct TopologyShard *shard,
                                      struct Members *m, int64_t count) {
   if (!p->slots) planSites(p,shard,m,count);
   struct Route *route = &p->route;
-  int64_t n = m->sizes[0]*m->sizes[1];
-  struct TopologySite *sites = malloc((n ? n : 1)*sizeof *sites);
   struct TopologySite *send = malloc((route->receives ? route->receives : 1)*sizeof *send);
   struct TopologySite *recv = malloc((route->sends ? route->sends : 1)*sizeof *recv);
-  if (!sites || !send || !recv) fail("out of memory gathering tuple geometry");
+  if (!send || !recv) fail("out of memory gathering tuple geometry");
   for (int i = 0; i < route->receives; ++i)
     send[i] = shard->sites[p->incoming[i]-shard->first];
   mdrtMPIExchangeRecords(send,route->recv,route->recvOffset,recv,route->send,route->sendOffset,sizeof *send);
-  #pragma omp parallel for schedule(static) if(n > 4096)
-  for (int64_t i = 0; i < n; ++i) {
-    int64_t slot = p->slots[i];
-    sites[i] = slot >= 0 ? shard->sites[slot] : recv[~slot];
-  }
-  free(recv);
   free(send);
-  return sites;
+  return recv;
 }
+
 #endif
 
 static int64_t imageRow(struct Halo *h, int64_t d, int64_t id, const int64_t image[3],
@@ -2991,7 +2989,7 @@ static int64_t imageRow(struct Halo *h, int64_t d, int64_t id, const int64_t ima
 /* Return whether all remote row references fit a neighboring periodic image. */
 static int tupleRows(int64_t handle, struct Memref3D *positions,
                       struct Members *members, struct Memref2I *out, int64_t begin, int64_t end,
-                      int64_t firstTuple, int64_t pastTuple, const struct TopologySite *sites) {
+                      int64_t firstTuple, int64_t pastTuple, const struct TupleGeometry *sites) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
   struct Layout *l = h->layout;
   int64_t count = members->sizes[0], arity = members->sizes[1];
@@ -2999,44 +2997,56 @@ static int tupleRows(int64_t handle, struct Memref3D *positions,
     fail("invalid tuple ownership schedule shape");
   if (count == 0) return 1;
   int compact = 1;
-  int64_t *ids = malloc(arity*sizeof *ids);
-  int64_t (*image)[3] = calloc(arity,sizeof *image);
-  if (!ids || !image) fail("out of memory locating tuple members");
+  int64_t stride = sites ? 1 : positions->strides[2];
+  struct Member {
+    int64_t id, domain, row, image[3];
+    const double *x;
+  } *member = malloc(arity*sizeof *member);
+  if (!member) fail("out of memory locating tuple members");
   for (int64_t t = firstTuple; t < pastTuple; ++t) {
     int64_t anchor = l->count, pivot = 0;
-    const struct TopologySite *site = sites ? sites+t*arity : NULL;
     for (int64_t a = 0; a < arity; ++a) {
-      ids[a] = members->aligned[members->offset + t*members->strides[0] + a*members->strides[1]];
-      if (ids[a] < 0 || ids[a] >= l->count) fail("tuple member outside particle set");
-      if (ids[a] < anchor) { anchor = ids[a]; pivot = a; }
+      int64_t id = members->aligned[members->offset + t*members->strides[0] + a*members->strides[1]];
+      if (id < 0 || id >= l->count) fail("tuple member outside particle set");
+      member[a].id = id;
+      if (sites) {
+        int64_t slot = sites->slots[t*arity+a];
+        const struct TopologySite *site = slot >= 0 ? sites->local+slot : sites->remote+(~slot);
+        member[a].domain = site->domain;
+        member[a].row = site->row;
+        member[a].x = site->x;
+      } else {
+        member[a].domain = l->owner[id];
+        member[a].row = l->row[id];
+        member[a].x = at3(positions,l->owner[id],l->row[id],0);
+      }
+      if (member[a].id < anchor) { anchor = member[a].id; pivot = a; }
     }
     int64_t *record = out->aligned + out->offset + t*out->strides[0];
     int64_t d = 0;
     if (arity == 2) {
-      int first = ids[0] == anchor ? 0 : 1, other = 1 - first;
-      const double *origin = site ? site[first].x : at3(positions, l->owner[anchor], l->row[anchor], 0);
-      int64_t j = ids[other];
-      const double *point = site ? site[other].x : at3(positions, l->owner[j], l->row[j], 0);
+      int first = member[0].id == anchor ? 0 : 1, other = 1 - first;
+      const double *origin = member[first].x, *point = member[other].x;
       for (int k = 2; k >= 0; --k) {
-        int64_t c = site ? k : k * positions->strides[2];
+        int64_t c = k*stride;
         double length = l->edges[k];
         double delta = point[c] - origin[c];
         int64_t shift = -(int64_t)floor(delta / length + 0.5);
         delta += (double)shift * length;
         double u = (origin[c] + 0.5 * delta) / length;
         double cell = floor(u);
-        image[first][k] = -(int64_t)cell;
-        image[other][k] = shift - (int64_t)cell;
+        member[first].image[k] = -(int64_t)cell;
+        member[other].image[k] = shift - (int64_t)cell;
         d = d*l->grid[k] + division(u - cell, l->grid[k]);
       }
     } else {
       for (int k = 2; k >= 0; --k) {
-        double origin = site ? site[pivot].x[k] : *at3(positions, l->owner[anchor], l->row[anchor], k);
+        double origin = member[pivot].x[k*stride];
         double lo = 0, hi = 0, length = l->edges[k];
         for (int64_t a = 0; a < arity; ++a) {
-          double delta = (site ? site[a].x[k] : *at3(positions,l->owner[ids[a]],l->row[ids[a]],k)) - origin;
-          image[a][k] = -(int64_t)floor(delta / length + 0.5);
-          delta += (double)image[a][k] * length;
+          double delta = member[a].x[k*stride] - origin;
+          member[a].image[k] = -(int64_t)floor(delta / length + 0.5);
+          delta += (double)member[a].image[k] * length;
           lo = fmin(lo, delta);
           hi = fmax(hi, delta);
         }
@@ -3044,30 +3054,29 @@ static int tupleRows(int64_t handle, struct Memref3D *positions,
         double translation = floor(u);
         d = d*l->grid[k] + division(u - translation, l->grid[k]);
         for (int64_t a = 0; a < arity; ++a)
-          image[a][k] -= (int64_t)translation;
+          member[a].image[k] -= (int64_t)translation;
       }
     }
     record[0] = d;
     if (d < begin || d >= end) continue;
     for (int64_t a = 0; a < arity; ++a) {
-      int64_t j = ids[a], row = -1;
-      if ((site ? site[a].domain : l->owner[j]) == d && !image[a][0] && !image[a][1] && !image[a][2])
-        row = site ? site[a].row : l->row[j];
-      if (site) {
+      int64_t j = member[a].id, row = -1;
+      if (member[a].domain == d && !member[a].image[0] && !member[a].image[1] && !member[a].image[2])
+        row = member[a].row;
+      if (sites) {
         int64_t *ref = record+1+4*a;
         ref[0] = row >= 0 ? row : -1-j;
-        memcpy(ref+1,image[a],3*sizeof *ref);
+        memcpy(ref+1,member[a].image,3*sizeof *ref);
         if (row < 0)
           for (int k = 0; k < 3; ++k)
-            compact &= image[a][k] >= -1 && image[a][k] <= 1;
+            compact &= member[a].image[k] >= -1 && member[a].image[k] <= 1;
       } else {
-        if (row < 0) row = imageRow(h,d,j,image[a],t);
+        if (row < 0) row = imageRow(h,d,j,member[a].image,t);
         record[(a+1)*out->strides[1]] = row;
       }
     }
   }
-  free(image);
-  free(ids);
+  free(member);
   return compact;
 }
 
@@ -3158,17 +3167,23 @@ int64_t _mlir_ciface_mdrtDistScheduleTuples(int64_t handle, int64_t groups, int6
   int64_t *rows = malloc((count ? count : 1)*recordWidth*sizeof *rows);
   if (!rows) fail("out of memory locating topology interval");
   struct Memref2I records = {rows,rows,0,{count,recordWidth},{recordWidth,1}};
-  struct TopologySite *sites = directory ?
-      readSites((struct TuplePlan *)(intptr_t)plan,(struct TopologyShard *)(intptr_t)directory,&slice,l->count) : NULL;
+  struct TupleGeometry geometry;
+  struct TopologySite *remote = NULL;
+  if (directory) {
+    struct TuplePlan *p = (struct TuplePlan *)(intptr_t)plan;
+    struct TopologyShard *shard = (struct TopologyShard *)(intptr_t)directory;
+    remote = readRemoteSites(p,shard,&slice,l->count);
+    geometry = (struct TupleGeometry){p->slots,shard->sites,remote};
+  }
   int compact = directory != 0;
   {
     #pragma omp parallel for schedule(static) reduction(&:compact) if(count > 256)
     for (int64_t start = 0; start < count; start += 256) {
       int64_t end = start+256 < count ? start+256 : count;
-      compact &= tupleRows(handle,positions,&slice,&records,0,l->domains,start,end,sites);
+      compact &= tupleRows(handle,positions,&slice,&records,0,l->domains,start,end,directory ? &geometry : NULL);
     }
   }
-  free(sites);
+  free(remote);
   struct TupleSchedule *schedule = calloc(1,sizeof *schedule);
   if (!schedule) fail("out of memory creating tuple schedule");
   schedule->references = 1;

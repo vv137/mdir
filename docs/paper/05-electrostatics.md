@@ -1514,3 +1514,9 @@ images. When both request one position field on the same layout, a
 single identity-to-spatial exchange supplies the unwrapped rows.
 Each owner produces the halo coordinates locally. A group projection
 can also wrap an owned correction result before its next solve.
+
+For bonded tuples, the geometry directory sends one reply for each
+distinct requested site. The worker resolves a tuple's member slots
+against the local directory and those replies as it assigns the
+midpoint. This removes the expanded coordinate and ownership array
+formerly written for every member occurrence.
