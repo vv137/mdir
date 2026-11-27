@@ -153,18 +153,18 @@ private:
   LogicalResult lowerNeighborhood(NeighborhoodOp op);
   LogicalResult lowerPartitionCenters(PartitionCentersOp op);
   template <typename OpTy>
-void emitPairs(
-    OpTy op, Location loc, Value first, Value past, bool parallel,
-    llvm::DenseMap<Value, Storage> &storage, Type accumulator, Value shifts,
-    function_ref<Value(OpBuilder &, Value, Value)> add,
-    function_ref<Value(OpBuilder &, Type)> zero,
-    function_ref<Value(OpBuilder &, Value, Value, Value, Type)> load,
-    function_ref<Value(OpBuilder &, Block &, ValueRange)> kernel,
-    function_ref<Value(OpBuilder &, Value value, Value acc, Value d, Value k,
-                       Value isOwned, Value ghostRow)>
-        visit,
-    function_ref<void(OpBuilder &, Value acc, Value d, Value i)> finishCenter,
-    function_ref<void(OpBuilder &, Value acc, Value d)> finishDomain);
+  void emitPairs(
+      OpTy op, Location loc, Value first, Value past, bool parallel,
+      llvm::DenseMap<Value, Storage> &storage, Type accumulator, Value shifts,
+      function_ref<Value(OpBuilder &, Value, Value)> add,
+      function_ref<Value(OpBuilder &, Type)> zero,
+      function_ref<Value(OpBuilder &, Value, Value, Value, Type)> load,
+      function_ref<Value(OpBuilder &, Block &, ValueRange)> kernel,
+      function_ref<Value(OpBuilder &, Value value, Value acc, Value d, Value k,
+                         Value isOwned, Value ghostRow)>
+          visit,
+      function_ref<void(OpBuilder &, Value acc, Value d, Value i)> finishCenter,
+      function_ref<void(OpBuilder &, Value acc, Value d)> finishDomain);
   LogicalResult lowerSumPairs(SumPairsOp op);
   LogicalResult lowerGatherPairs(GatherPairsOp op);
   LogicalResult lowerSumParticles(SumParticlesOp op);
@@ -1106,7 +1106,8 @@ void Lowering::emitPairs(
   auto vec3 = VectorType::get({3}, f64);
   Type i64 = b.getI64Type();
   auto indices = MemRefType::get({ShapedType::kDynamic}, i64);
-  auto buildCells = declare("mdrtDistPairCells",
+  auto buildCells = declare(
+      "mdrtDistPairCells",
       b.getFunctionType({b.getIndexType(), b.getIndexType(), b.getIndexType(),
                          f64, xo.getType(), xg.getType(), xg.getType(), i64,
                          indices, indices}, {}), true);

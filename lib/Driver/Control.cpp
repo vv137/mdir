@@ -3790,7 +3790,7 @@ mdir::driver::readControl(StringRef path, Control *refusedDistribution) {
   Control control;
   Reader reader(path, control);
   if (Error error = reader.read(result.table())) {
-    if (refusedDistribution && result.table().contains("distribute")) {
+    if (refusedDistribution && reader.distributionRefused) {
       // The error may precede parsing the transport. Identify the writer
       // of diagnostics from the requested transport in this case too.
       if (auto transport = result.table()["distribute"]["transport"].value<std::string>())

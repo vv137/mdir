@@ -889,7 +889,7 @@ void _mlir_ciface_mdrtDistHaloSumWords(int64_t handle, struct Memref3W *owned,
   for (int64_t d = first; d < past; ++d)
     for (int64_t r = 0; r < h->layout->rows[d]; ++r)
       for (int64_t c = 0; c < components; ++c)
-        *at3(out, d, r, c) = (double)mdrtDistNarrowWord(*wordAt(owned, d, r, c)) * 0x1p-40;
+        *at3(out, d, r, c) = (double)mdrtDistNarrowWord(*wordAt(owned, d, r, c), DistPairForce) * 0x1p-40;
 }
 
 /* G: (G a)_g = a_{s(g)}, with `image` x_{s(g)} + n_g L. */
