@@ -70,7 +70,6 @@ def simulation(kind, precision, constraints=False):
     system.rigid_hydrogen_bonds = system.rigid_water = constraints
     state = state.draw_velocities(system, 300.0, SEED)
     integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
-    ensemble.com_period = 0  # the default of before D248
     integrator.timestep, ensemble.temperature, ensemble.seed = 0.0005, 300.0, SEED
     ensemble.kind = getattr(mdir.EnsembleKind, kind)
     ensemble.coupling_period = 10
@@ -84,24 +83,16 @@ def rows(path):
     return [line for line in path.read_text().splitlines() if not line.startswith("#")]
 
 
-def dcd_frames(path):
-    """The coordinate records of a DCD file (Fortran records of 4 N bytes),
-    as float32 arrays."""
-    data, records, i = path.read_bytes(), [], 0
-    while i < len(data):
-        n = int.from_bytes(data[i:i + 4], "little")
-        records.append(data[i + 4:i + 4 + n])
-        i += n + 8
-    size = max(len(r) for r in records)
-    return np.array([np.frombuffer(r, dtype=np.float32) for r in records if len(r) == size])
-
-
-# Files equal to those of `mdir run` with the same intervals: the energy
-# rows and the frames, written inside one part (K report intervals). Where
-# the two programs round differently in mixed precision (their loops have
-# another shape; #105), rows and frames agree within three times the
-# difference of `mdir run` in mixed and in double (E), as D196 bounds them.
-cli_double = {}
+# Files equal to those of `mdir run` with the same intervals, byte for
+# byte: the energy rows and the frames, written inside one part (K report
+# intervals), in double and in mixed precision. Both front ends remove the
+# motion of the center of mass with the thermostat (D248). With it off on
+# the Python side alone, the two NVT runs differ from the first step by the
+# velocity of the center of mass, 2.6e-6 nm/ps here, which the rows do not
+# show in double precision but which moves the rounding of single
+# precision, and in mixed precision the trajectories then part and a pair
+# of charges across the plain cutoff moves the potential by
+# 332.06 q_i q_j / r_c (7.218 kcal/mol for two hydrogens of TIP3P; #992).
 for kind in ("NVE", "NVT"):
     for precision in ("Double", "Mixed"):
         for fmt in ("dcd", "xtc"):
@@ -115,69 +106,12 @@ for kind in ("NVE", "NVT"):
             sim.close_reporters()
             mine, theirs = rows(work / f"py-{name}.dat"), rows(work / f"{name}.dat")
             ours, cli_file = work / f"py-{name}.{fmt}", work / f"{name}.{fmt}"
-            if precision == "Double":
-                cli_double[kind, fmt] = theirs, cli_file
-            if mine == theirs and ours.read_bytes() == cli_file.read_bytes():
-                print(f"{target_name} {kind} {precision} {fmt}: {len(mine)} rows and the "
-                      f"trajectory equal to mdir run's, byte for byte")
-                continue
-            assert precision == "Mixed", name
-            double_rows, double_file = cli_double[kind, fmt]
-            assert len(mine) == len(theirs) and mine[0] == theirs[0], (mine[0], theirs[0])
-            # The potential, the total, the virial, the pressure, and the
-            # conserved energy (columns 2, 3, 6, 7, 8) are not compared
-            # after the start. Under the plain cutoff of the Coulomb energy
-            # a pair of charges that is within 8 A in one trajectory and
-            # beyond it in the other moves the potential by
-            # 332.06 q_i q_j / (8 A): 7.218 kcal/mol for two hydrogens of
-            # TIP3P, 14.44 for an oxygen and a hydrogen. About
-            # N^2/2 * 4 pi r_c^2 / V = 2.7e4 pairs lie per A of distance at
-            # the cutoff here, so once the two programs' rounding (#105)
-            # has moved the trajectories some 4e-5 A apart one pair is
-            # expected on either side, and a row differs by whole such
-            # steps, which no bound from the rounding holds (#992: 7.218
-            # kcal/mol at step 60 of NVT on a V100, against 1.6e-3 between
-            # `mdir run` in mixed and in double; 14.47 at step 100 on an
-            # RTX 4090, within 3 E there only because `mdir run` in mixed
-            # and in double were 16.2 apart by such steps too). In double
-            # precision every column is compared above, byte for byte.
-            # The kinetic energy and the temperature (columns 4 and 5) do
-            # not jump when a pair crosses the cutoff, and are compared
-            # within 3 E. Their gap still grows by kicks: such a pair
-            # differs in force by 332.06 q_i q_j / r_c^2 (0.90 kcal/mol/A
-            # for two hydrogens) for as long as it is on opposite sides, so
-            # 3 E holds as long as the run of `mdir run` in double takes
-            # kicks of the same kind. Measured at step 80 of NVT: 0.75 of
-            # the bound on a V100 and 0.65 on an RTX 4090 for the kinetic
-            # energy, 0.01 on the CPU; the frames 0.18, 0.17, and below 0.001.
-            worst, shifted = 0.0, 0
-            for i, (a, b, d) in enumerate(zip(mine, theirs, double_rows)):
-                a, b, d = (np.array([float(x) for x in r.split()])[[0, 1, 4, 5]]
-                           for r in (a, b, d))
-                # A floor of 1e-5 of each value: where the runs of `mdir run`
-                # in mixed and in double happen to agree closely, three
-                # times their difference bounds nothing.
-                bound = 1e-6 + 3 * np.abs(b - d) + 1e-5 * np.abs(b)
-                assert np.all(np.abs(a - b) <= bound), (a, b, d)
-                worst = max(worst, float(np.max(np.abs(a - b) / np.maximum(np.abs(b), 1e-300))))
-                # What the bound rejects: the row of the report interval
-                # before (a row written one interval late).
-                if i > 0:
-                    late = np.array([float(x) for x in mine[i - 1].split()])[[4, 5]]
-                    shifted += bool(np.any(np.abs(late - b[2:]) > bound[2:]))
-            assert shifted == len(mine) - 1, shifted
-            if fmt == "dcd":
-                x, y, z = dcd_frames(ours), dcd_frames(cli_file), dcd_frames(double_file)
-                assert x.shape == y.shape
-                gap, bound = np.abs(x - y).max(), 1e-5 + 3 * np.abs(y - z).max()
-                assert gap <= bound, (gap, bound)
-                frames = f"{x.shape[0] // 3} frames within {gap:.1e} A (3 E: {bound:.1e} A)"
-            else:
-                frames = "XTC frames: " + str(ours.read_bytes().count(bytes([0, 0, 7, 203])))
-            print(f"{target_name} {kind} {precision} {fmt}: {len(mine)} rows, the first equal "
-                  f"and the kinetic energy and the temperature within 3 E (largest relative "
-                  f"difference {worst:.1e}), the rows one interval late rejected "
-                  f"({shifted} of {len(mine) - 1}); {frames}")
+            first = next((i for i, (a, b) in enumerate(zip(mine, theirs)) if a != b), None)
+            assert len(mine) == len(theirs) and first is None, (name, first, mine[first or 0],
+                                                                 theirs[first or 0])
+            assert ours.read_bytes() == cli_file.read_bytes(), name
+            print(f"{target_name} {kind} {precision} {fmt}: {len(mine)} rows and the "
+                  f"trajectory equal to mdir run's, byte for byte")
 
 # With SHAKE and SETTLE the steps of the rows measure K_half from the half
 # steps and the temperature is the optimal estimate (D203); the steps of
