@@ -2456,7 +2456,7 @@ LogicalResult Lowering::lowerGatherPairsExec(GatherPairsOp op) {
   Value ownedOut = allocate(b, layout.capacity, k);
   Value ghostOut;
   if (twoEnded)
-    ghostOut = allocateSums(halo.capacity);
+    ghostOut = allocate(b, halo.capacity, k);
   forPairDomains(b, op.getRelation(), [&](OpBuilder &b, Value d, FlatSymbolRefAttr set, DomainRelation relation) {
     auto localType = md::FieldType::get(module.getContext(),
                                         set,
