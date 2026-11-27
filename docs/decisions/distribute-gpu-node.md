@@ -712,3 +712,266 @@ The liquid controls also passed. The one-GPU-to-ordinary ratio was
 1.211, the one-to-four-GPU speedup was 2.781, and the four-to-eight
 speedup was 1.072. The fixed-skin rebuild-to-covered time ratio was
 2.247.
+
+### Mixed coordinate images and constraint projection
+
+At 2 fs, a one-domain RF run differs from ordinary mixed before its first
+kick. The table gives distributed minus ordinary energy in kcal/mol at
+the input coordinates. Bond, angle, dihedral and both 1–4 energies
+agreed to the six decimals printed. The first and last columns evaluate
+the full potential and the molecular virial independently of the term
+energy listing.
+
+| System | Full potential | Lennard-Jones | RF Coulomb pairs | RF exclusions | Molecular virial |
+|---|---:|---:|---:|---:|---:|
+| Factor IX | −0.032784 | −0.003287 | −0.032591 | +0.005268 | −0.095854 |
+| JAC-RF | +0.005400 | +0.000700 | +0.004550 | −0.000140 | +0.012220 |
+
+The ordinary mixed MATRIX converts coordinates to binary32 before
+subtracting them and applying the periodic translation. Distribution
+first reduces each input coordinate into the primary cell in binary64.
+Translation by a lattice vector and conversion to binary32 can change
+the low bits of the resulting pair displacement. To measure that effect,
+apply exactly the distributed initial translation to the ordinary input
+in memory. Compare the resulting ordinary force with the distributed
+force at the same physical frame. The entries are RMS Cartesian force
+differences in kJ/mol/nm. Frame one uses one ordinary checkpoint,
+serialized once as a common coordinate input for both evaluations.
+
+| System | Input frame, original / translated ordinary | Frame one, original / translated ordinary |
+|---|---:|---:|
+| Factor IX | 0.007771 / 0.0001950 | 0.007753 / 0.0001960 |
+| JAC-RF | 0.0008845 / 0.0001961 | 0.0009628 / 0.0001950 |
+
+On Factor IX the input translation reproduced the distributed
+excluded-pair force to an RMS of $2.29\times10^{-8}$ kJ/mol/nm.
+The corresponding residuals for the Lennard-Jones and real-space
+Coulomb pair forces were $2.81\times10^{-5}$ and $1.80\times10^{-4}$.
+The ordinary MATRIX accumulates center forces by neighbor row and
+combines the lanes of each row. Unique traversal also adds the
+opposite force at the neighbor. Both runs use floating-point
+accumulation. The deterministic fixed-point policy remains a separate
+execution request.
+
+A second comparison supplied identical full ordinary forces, positions
+and velocities to both velocity-Verlet runs. The updated position
+isolates the first half kick, drift and position projection. The
+maximum Cartesian differences after that projection were
+$9.09\times10^{-8}$ nm on Factor IX and $2.34\times10^{-8}$ nm on
+JAC-RF. A prototype preserving the input images and using the ordinary
+mixed constraint kernel arithmetic with a binary64 correction reduced
+those maxima to $1.78\times10^{-15}$ and $8.88\times10^{-16}$ nm.
+Changing either feature alone left larger differences.
+
+The tests in the following subsections used the original repetition-only
+mixed gate. They retain that acceptance result for each historical run.
+
+### One domain with a periodic half MATRIX
+
+With one physical domain every pair endpoint and bonded tuple is local.
+A trial kept the input identity order, built a periodic MATRIX containing
+only neighbors with a higher identity, and added each force to both
+endpoints. This let the constrained step use the local velocity-Verlet
+and projection kernels. The transport still initialized for the requested
+rank. The same-allocation means below cover the second half of each
+204-step RF run at 2 fs.
+
+| System | Precision | Existing one-domain step (ms) | Local unique step (ms) |
+|---|---|---:|---:|
+| JAC-RF | double | 3.383 | 0.795 |
+| Factor IX | double | 5.610 | 2.100 |
+| Cellulose | double | 18.360 | 8.409 |
+| Cellulose | mixed | 16.378 | 7.210 |
+| STMV | double | 47.708 | 22.096 |
+| STMV | mixed | 42.402 | 18.300 |
+
+The first mixed repetition pair passed the frozen gate on both proteins.
+The all-frame potential and virial peaks were 0.882819 and 4.075258
+kcal/mol for Factor IX, and 0.064784 and 0.996674 for JAC-RF.
+With ordinary double as the reference, both corresponding protein
+quantities stayed within 0.0000011 kcal/mol.
+
+In paired unprofiled measurements the local/ordinary ratios were 1.009
+and 1.097 for Cellulose double and mixed, and 1.024 and 1.108 for STMV.
+The CUDA traces counted one extra launch per step in each local run.
+Both modes made 2.127 device-to-host transfers and 4.127 synchronization
+calls per step. The earlier one-domain Cellulose double trace had 29.127
+device-to-host transfers and 61.382 synchronization calls per step.
+Over 102 intervals, both modes copied 204 reduction buffers of 8,192
+bytes and 13 eight-byte values to the host. The latter count matches the
+number of neighbor rebuilds. The extra launch was a particle loop in
+the Cellulose double trace.
+
+An independent build and repetition pair reproduced the performance
+gain. JAC-RF again passed, with peaks of 0.063485 and 0.913002 kcal/mol.
+Factor IX passed potential at 0.845988 but exceeded the frozen virial
+limit of 7.742251 at 9.594057 kcal/mol. The single-domain specialization
+therefore did not qualify for retention.
+
+These RF measurements used kernel launches. The existing graph replay
+implements the mixed TOWERS, Gaussian PME, V-rescale path and requires
+an ordinary step between output boundaries. The validation trajectory
+uses MATRIX, RF, NVE and an energy write every step. Graph replay would
+require a separate implementation covering those output and rebuild
+boundaries.
+
+### Physical rows on two domains
+
+On two domains, retaining the global IDs on the compute stream for the
+lifetime of a physical halo reduced Cellulose double from 37.663 to
+35.670 ms/step. Moving the ID comparison into periodic list construction
+reduced the pair phase from 11.845 to 8.486 ms in a separate paired run.
+The full step averaged 35.820 and 32.378 ms. The maximum potential and
+virial errors of both variants were within 0.0000021 kcal/mol of
+ordinary double. Factor IX mixed exceeded its virial bound with each
+change, reaching 8.637098 and 8.898177 kcal/mol, respectively.
+
+A separate trial selected each bonded tuple's midpoint owner on first
+use in a physical halo, when the runtime verifies that all members are
+present. The unshifted rows and reverse destinations remain valid
+through that halo's lifetime. Reusing that incidence across coordinate
+updates reduced the Cellulose double other-term phase from 10.068 to
+6.109 ms/step on two domains. The STMV mixed full step fell from
+92.638 to 81.816 ms. Both remained slower than the single-domain
+specialization.
+
+The independent local Factor IX repeat first exceeded its virial
+bound at frames 189 and 196 in the two trajectories. The corresponding
+initial virial errors were −0.004552 and −0.004585 kcal/mol. This
+late failure can coexist with agreement of the first projected
+coordinates to machine precision.
+
+With both executors widening force destinations while retaining
+binary32 pair expressions, their full step-zero force checkpoints
+agreed in every stored component for both proteins. Independent
+single-term diagnostics retained small differences. The force-storage
+change still exceeded the JAC-RF mixed bounds over 205 frames
+(0.104037 potential and 1.663530 virial). Step-zero agreement and
+late-trajectory acceptance measure distinct properties.
+
+Tracing the two-domain Cellulose double run showed that stream-owned
+identities reduced rank-zero host-to-device traffic from 13.997 to
+8.384 MB/step. The compact list still launched 278.461 kernels and
+made 30.382 device-to-host transfers and 61.382 synchronization calls
+per step on each rank. Of the downloads, 28 per step returned
+8,192-byte buffers of rank-local reduction results. Rank zero also
+copied 279.374 MB/step between device buffers.
+
+Running ordinary and local unique with the same widened force storage
+gave identical printed kinetic energies at all 205 frames. Their
+maximum potential/virial differences were 0.006042/0.006086 kcal/mol
+for Factor IX and 0.002244/0.003460 kcal/mol for JAC-RF. In the latter
+case even widened ordinary failed against the frozen original mixed
+reference (0.104828/1.661923 kcal/mol). This isolates sensitivity to
+force rounding independently of exchange.
+
+With corrected image and projection arithmetic, a second test of halo
+sharing compared two mixed trajectories on eight devices against the
+frozen ordinary references. The unshared runs passed for both proteins.
+Sharing raised the Factor IX maximum potential difference from 0.695913
+to 1.355350 kcal/mol, above the 1.223086 bound. On JAC-RF the maximum
+virial difference rose from 0.724733 to 1.108238 kcal/mol, above the
+1.098365 bound. Retain the unshared schedule.
+
+The scoped one-domain half MATRIX passed all 20 numerical comparisons,
+53 focused tests and four liquid timing gates. Liquid took 5.859 ms/step
+ordinary, 7.087 on one device, 2.555 on four and 2.407 on eight.
+The fixed four-device rebuild/covered ratio was 2.551. The independent
+Factor IX mixed failure remains decisive for that implementation.
+
+The same executable passed all double protein comparisons at two, four
+and eight devices. Factor IX mixed exceeded both limits at each count.
+Its potential differences were 2.981, 2.596 and 3.356 kcal/mol and its
+virial differences were 10.644, 10.218 and 10.607 kcal/mol. JAC-RF
+mixed exceeded the potential limit on two devices and passed both
+limits on four and eight.
+
+A one-domain trial retained ordinary's binary32 row and lane summation
+order while evaluating each pair once. It stored signed endpoint
+contributions at reciprocal MATRIX slots. Its step-zero full-force RMS
+differences were 0.00001271 kJ/mol/nm for JAC-RF and 0.00001014 for
+Factor IX, compared with 0.00001152 and 0.00001108 in ordinary repeats.
+Both mixed trajectories passed the frozen comparison. Per-step times
+were 15.637 and 58.208 ms, compared with 0.710 and 1.643 for ordinary.
+
+The compact periodic list produced the following mean ms/step on one
+executable. It failed the one-to-two and four-to-eight scaling targets
+in both precisions on both large systems.
+
+| System | Precision | One GPU | Two GPUs | Four GPUs | Eight GPUs |
+|---|---|---:|---:|---:|---:|
+| Cellulose | double | 18.843 | 32.314 | 28.252 | 35.876 |
+| Cellulose | mixed | 16.218 | 30.521 | 27.346 | 35.468 |
+| STMV | double | 47.943 | 84.189 | 78.615 | 104.814 |
+| STMV | mixed | 42.597 | 77.228 | 77.769 | 112.082 |
+
+In Cellulose mixed the ordered trial stored seven binary32 components
+per MATRIX slot and cleared 10.251 GB per step. The same approach
+exhausted device memory on STMV in both precisions. A block-local sort
+at each rebuild indexed reciprocal slots for a parallel lookup.
+Writing only the canonical endpoint and storing each component plane
+contiguously avoided the clear and cut Cellulose mixed to 110.341
+ms/step. That candidate passed both protein mixed checks.
+
+Caching only the RF force coefficient and energy reduced Cellulose
+mixed to 31.412 ms/step. Reconstructing force and diagonal virial in
+the endpoint kernel allowed the compiler to fuse both products into
+their lane sums. The frozen virial bound was crossed at step 198 on
+JAC-RF and 189 on Factor IX. Explicitly rounding the six products
+before adding them reduced full-force RMS error from 0.00013042 to
+0.00001328 kJ/mol/nm on JAC-RF and from 0.00013299 to 0.00001177
+on Factor IX. Both rounded mixed trajectories passed. Cellulose mixed
+still took 33.893 ms/step, compared with 6.576 for ordinary.
+
+With the rounded two-scalar cache, one-device double took 2.493 ms/step
+on JAC-RF and 9.094 on Factor IX, exceeding the 5.60 limit on Factor IX.
+Rounded STMV took 78.901 ms/step mixed and 441.259 double. Both large
+systems exceeded the 1.5-times-ordinary limit in both precisions.
+
+At eight domains a diagnostic rebuilt every destination's list locally
+at the same coordinates and checked the complete identity, image and
+row sequence against the shared result. The check agreed on every rank
+at all 22 JAC-RF and 24 Factor IX rebuilds on both node placements. On
+two nodes this covered 2,228,560 JAC-RF rows and 5,224,040 Factor IX
+rows per rank. The tested membership and ordering therefore agree even
+though the independent shared trajectories exceeded the mixed bounds.
+
+### Open Stage 8f items
+
+The fused tuple scheduler remains uncommitted. In the bracket on two Tesla V100-SXM2 GPUs, the STMV mixed NVE candidate reduced the mean step
+time from 65.375 to 64.126 ms. Across 205 frames, its largest paired
+virial difference against the radix parent was 92.128140 kcal/mol at
+step 204 in the second pair.
+The within-build maxima were 36.437599 kcal/mol for the radix parent
+and 39.669605 kcal/mol for the fused candidate. The largest paired
+potential difference was 5.771644 kcal/mol. This STMV deck has no
+frozen mixed NVE bound, and the paired virial difference exceeds the
+observed repeat variation for both builds. Numerical qualification
+remains open.
+
+The STMV mixed NVT smoke run on one RTX 4090 exposed an open CUDA
+teardown defect. Both the parsed-input reuse candidate
+and its parent wrote all 21 reports through step 200 in both AUTO
+and numeric-distance runs, then exited with status 1. Both numeric
+replays traced CUDA driver status 4 (`CUDA_ERROR_DEINITIALIZED`) to
+`mdrtNCCLReleaseScratch` in `mdrtNCCLFinish`, called from the MPI
+exit handler. A diagnostic candidate relink called `mdrtNCCLFinish`
+before CLI exit and replayed through step 200 with exit status 0.
+The diagnostic change remains outside the production builds.
+
+AUTO pair-list calibration for STMV mixed-precision NVT aborted on
+two Tesla V100-SXM2 GPUs with 32 GiB each. The original log reports an out-of-memory abort on rank
+1 and omits the active distance. A traced replay used the same
+deck and executable on two matching V100s. It reproduced the rank-1
+failure at 12 Å, after completing 9.5, 10 and 11 Å and before trying
+13 Å. The backtrace places the CUDA allocation failure in
+`mdrtNCCLAllocate` during `mdrtDistAdvance`.
+
+AUTO should record and skip a candidate when its device-memory
+requirement exceeds the capacity available to any rank, and choose
+among the candidates that fit. If none fit, it should report a clear
+failure. The current failure aborts the MPI communicator from inside
+the runtime after the trial has started. Safe recovery needs a
+collectively agreed capacity check or isolation of the trial, with a
+regression test that rejects an oversized candidate and still selects a
+viable distance. This remains open.

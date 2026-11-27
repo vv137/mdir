@@ -1436,3 +1436,78 @@ for ordinary on the same allocations. In double precision the
 corresponding pairs were 8.411 versus 8.366 and 22.151 versus 21.692
 ms/step. Both mixed protein tests passed the order-aware limits over
 205 frames.
+
+On one GPU the mixed RF force already differs at the input coordinates.
+Wrapping a coordinate in binary64 before conversion to binary32 can
+change its pair displacement relative to converting the original
+coordinate first. Translating the ordinary input in memory by the
+same integer cell lengths used by the distributed layout reduced the
+RMS Cartesian force difference from 0.007771 to 0.0001950 kJ/mol/nm
+on Factor IX and from 0.0008845 to 0.0001961 on JAC-RF. On a common
+replay of the first 2 fs frame the residuals were 0.0001960 and
+0.0001950 kJ/mol/nm, respectively.
+
+Giving both executors identical positions, velocities and forces
+isolates the first drift and position projection from differences in
+the preceding force calculation. The maximum position differences
+were $9.09\times10^{-8}$ nm for Factor IX and $2.34\times10^{-8}$ nm for
+JAC-RF. Preserving the input coordinate images and evaluating the local
+constraint kernel with ordinary mixed arithmetic and a binary64
+correction brought both below $2\times10^{-15}$ nm. Summation order
+also affects the trajectory check. Reversing only the neighbor slots
+in the ordinary MATRIX kernel produced a peak JAC-RF virial difference
+of 1.275243 kcal/mol over 205 frames, above the 1.098365 kcal/mol
+ordinary-repeat limit. These experiments distinguish first-step
+arithmetic differences from sensitivity of the later trajectory.
+
+With a single physical owner, the unique pair list can be built by
+keeping neighbors of greater global identity. A trial held rows in
+input order, applied each pair force to both endpoints, and left
+constraints and integration on the device. In double precision,
+Cellulose went from 18.36 to 8.41 ms/step and STMV from 47.71 to
+22.10 ms/step. In mixed precision the corresponding times were
+16.38 to 7.21 and 42.40 to 18.30 ms/step. The first pair of
+single-device mixed runs passed the calibrated trajectory comparison
+on both JAC-RF and Factor IX.
+Relative to ordinary on the same device, those four local runs took
+1.009 to 1.108 times as long. Each added one kernel launch per step
+and matched ordinary's 2.127 device-to-host transfers and 4.127
+synchronization calls per step.
+On an independent repetition pair the JAC-RF result held. Factor IX
+reached 9.594 kcal/mol in virial error against its 7.742 kcal/mol
+bound, so the experiment did not qualify the local step.
+A control widened force accumulation in both ordinary and local
+unique while preserving binary32 pair arithmetic. Their kinetic
+energies agreed at all 205 printed frames. On JAC-RF their mutual
+virial difference peaked at 0.003460 kcal/mol, while widened ordinary
+itself exceeded the original mixed limit at 1.661923 kcal/mol.
+
+On eight devices, sharing the halo schedule reduced mixed Cellulose
+from 37.72 to 29.38 ms/step and STMV from 115.09 to 79.40 ms/step.
+On STMV the mean slowest-rank time on covered steps was 29.22 ms
+before sharing and 29.12 ms after sharing. On rebuild steps it fell
+from 724.50 to 446.16 ms. The shared schedule exceeded the Factor IX
+potential bound and the JAC-RF virial bound on eight devices.
+
+Moving the global-identity comparison into list construction gave a
+two-to-four-device speedup of 1.144 for Cellulose double, 1.116 for
+Cellulose mixed and 1.071 for STMV double. The STMV mixed ratio was
+0.993. Moving from one to two or from four to eight devices increased
+step time on both systems in both precisions.
+
+A one-device trial evaluated each pair once and accumulated the
+endpoints in ordinary neighbor order. Storing only the radial force
+coefficient and potential made the rounding boundary visible. Fusing
+the reconstructed Cartesian products into the lane sums increased the
+initial force RMS difference to about 0.00013 kJ/mol/nm on both
+proteins. Rounding the products before addition brought the difference
+back to about 0.000012 kJ/mol/nm and both mixed trajectories passed.
+Cellulose mixed still took 33.89 ms/step, versus 6.58 for ordinary.
+The same rounded implementation took 78.90 ms/step on STMV mixed and
+9.09 on Factor IX double. The faster atomic implementation and the
+ordered implementation each missed at least one acceptance criterion.
+
+An independent classification at each eight-domain halo rebuild
+reproduced every shared global identity and periodic image in row
+order on both proteins. The shared schedule's mixed failure persisted
+in the trajectory comparison despite this agreement at fixed coordinates.
