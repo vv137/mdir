@@ -727,7 +727,6 @@ llvm::json::Object mdir::tool::initialStepGraphChoice(llvm::StringRef request,
                            : spansRefusal.str();
     if (!spansRefusal.empty())
       choice["value"] = "LAUNCH";
-    choice["inputs"] = Object{{"given", false}};
   }
   if (request != "AUTO")
     return choice;

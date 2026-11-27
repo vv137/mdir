@@ -8,5 +8,6 @@
 # CHECK: mixed-npt: bitwise
 # CHECK: double-nvt: bitwise
 # CHECK: double-npt: bitwise
+# CHECK: no split: bitwise
 # CHECK: small cache: bitwise
 # CHECK: groups: close

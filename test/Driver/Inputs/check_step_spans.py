@@ -132,6 +132,13 @@ for precision in ("MIXED", "DOUBLE"):
         bitwise(launch, spans, tag)
         print(f"{tag}: bitwise, {spans['spans'][0]} graph launches")
 
+# Spans that end only at the waits of the host (MDRT_SPANS_SPLIT=0): the
+# flag's event is then issued by the wait itself.
+whole = run("no-split", "SPANS", env={"MDRT_SPANS_SPLIT": "0"})
+assert whole["spans"][2] > 0, whole["spans"]
+bitwise(default, whole, "no split")
+print("no split: bitwise")
+
 # A cache of four graphs releases graphs as it goes, and the results stay
 # bitwise.
 small = run("small-cache", "SPANS", env={"MDRT_SPANS_CACHE": "4"})

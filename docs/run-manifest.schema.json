@@ -271,6 +271,12 @@
                 {
                   "properties": {
                     "category": {"const": "rule"},
+                    "requested": {"const": "SPANS"}
+                  }
+                },
+                {
+                  "properties": {
+                    "category": {"const": "rule"},
                     "requested": {"const": "AUTO"},
                     "value": {"const": "LAUNCH"}
                   },
