@@ -4,7 +4,8 @@
 # `auto` to the storage pass, which then checks the mesh. Every other
 # target or split passes `auto-cufft`, whose reason the plan records
 # (test/Integration/prolate-axis-fft.test). The kernels are PTX for the
-# architecture named; TOWERS needs a device to resolve its launch shape.
+# architecture named, which the device must load: TOWERS resolves its
+# launch shape on it.
 #
 # REQUIRES: cuda
 #
@@ -14,12 +15,13 @@
 # RUN: cd %t && env -u MDIR_PME_AXIS_FFT MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 mdir emit timed.toml --stage=pipeline | FileCheck %s --check-prefix=TIMED
 # TIMED: md-exec-assign-storage{memory=device pme-axis-fft=auto tables=f32}
 #
-# Double precision, another architecture, another neighbor structure,
+# Double precision (which takes the matrix), another architecture,
+# another neighbor structure,
 # other splits, and the prolate window: auto-cufft.
-# RUN: sed 's/^precision = "MIXED"/precision = "DOUBLE"/' %t/timed.toml > %t/double.toml
+# RUN: sed -e 's/^precision = "MIXED"/precision = "DOUBLE"/' -e 's/^neighbor_structure = "TOWERS"/neighbor_structure = "MATRIX"/' %t/timed.toml > %t/double.toml
 # RUN: cd %t && env -u MDIR_PME_AXIS_FFT MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 mdir emit double.toml --stage=pipeline | FileCheck %s --check-prefix=DOUBLE
 # DOUBLE: md-exec-assign-storage{memory=device pme-axis-fft=auto-cufft}
-# RUN: cd %t && env -u MDIR_PME_AXIS_FFT MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_120 mdir emit timed.toml --stage=pipeline | FileCheck %s --check-prefix=CUFFT
+# RUN: cd %t && env -u MDIR_PME_AXIS_FFT MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_86 mdir emit timed.toml --stage=pipeline | FileCheck %s --check-prefix=CUFFT
 # CUFFT: md-exec-assign-storage{memory=device pme-axis-fft=auto-cufft tables=f32}
 # RUN: sed 's/^neighbor_structure = "TOWERS"/neighbor_structure = "MATRIX"/' %t/timed.toml > %t/matrix.toml
 # RUN: cd %t && env -u MDIR_PME_AXIS_FFT MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 mdir emit matrix.toml --stage=pipeline | FileCheck %s --check-prefix=CUFFT
@@ -31,7 +33,7 @@
 # RUN: cd %t && env -u MDIR_PME_AXIS_FFT MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 mdir emit window.toml --stage=pipeline | FileCheck %s --check-prefix=CUFFT
 #
 # The override reaches the storage pass as given.
-# RUN: cd %t && env MDIR_PME_AXIS_FFT=on MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_120 mdir emit double.toml --stage=pipeline | FileCheck %s --check-prefix=ON
+# RUN: cd %t && env MDIR_PME_AXIS_FFT=on MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_86 mdir emit double.toml --stage=pipeline | FileCheck %s --check-prefix=ON
 # ON: md-exec-assign-storage{memory=device pme-axis-fft=on}
 # RUN: cd %t && env MDIR_PME_AXIS_FFT=off MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 mdir emit timed.toml --stage=pipeline | FileCheck %s --check-prefix=OFF
 # OFF: md-exec-assign-storage{memory=device tables=f32}
