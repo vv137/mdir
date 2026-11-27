@@ -356,7 +356,9 @@ ms a step in either front end. The default stayed the matrix here: on the
 dipeptide the groups are the slower structure. The choice by the size of
 the system (G3 of the roadmap) is `NeighborStructure.Auto`, the default
 since D261, which `prepare` resolves with the function of `mdir
-run`.
+run`. TOWERS, which `mdir run` takes under AUTO on a measured device
+(D[best-defaults]), is not taken by `prepare`: its launch is resolved at
+the setup of `mdir run`.
 ## The influence function and the order of PME, and the analytic bonds
 
 D246 (#279, from the inventory of #270). Two settings of

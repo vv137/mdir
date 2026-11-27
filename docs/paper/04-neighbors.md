@@ -1478,3 +1478,19 @@ initial image of length $R$ bounds the translations worth testing along
 axis $i$ by $|u_i-n_i| \le R/h_i$, where $h_i$ is the perpendicular face
 height. The same endpoint orientation is used to cancel a blind direct
 term and its conversion vote.
+
+**The default.** `neighbor_structure = "AUTO"` takes TOWERS in `mdir run`
+where an entry of the device-rule table (D420) admits the input
+(D[best-defaults]). The entry is measured: on an RTX 4090 (sm_89), with the
+launch derived from the device limits and the frame's spans and no timed
+trial, TOWERS took 0.96 to 0.97 of the matrix's rate on a TIP3P box of
+3,072 atoms and 1.04 to 1.25 times the rate of the structure of Section
+4.4 or the matrix from 4,608 atoms to Cellulose (408,609 atoms), at 2 fs
+in NVT. The entry therefore begins at 4,608 particles. The timed trial
+gave launches 0 to 7% faster than the derived one at a setup cost of 82 to
+90 s; at a fixed height both give the same words, so AUTO takes the
+derived launch, or a trial's winner cached for the grid. Inputs that
+TOWERS does not take, or that name a key of the lists, keep the rule of
+Section 4.4, and so does the continuation of a checkpoint that a list
+wrote, whose forces and barostat state a change of traversal would
+recompute. A device without an entry keeps that rule as well.
