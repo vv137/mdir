@@ -137,7 +137,7 @@ private:
   FlatSymbolRefAttr getSet(int64_t d, bool local, Value epoch);
   /// The number of rows of domain `d` that the rows of `rows`, a layout or
   /// a halo, give it, as an index.
-  Value countOf(OpBuilder &b, Storage &rows, Value d);
+  Value countOf(OpBuilder &b, const Storage &rows, Value d);
   /// A field of md_exec on `set` of `k` components of `element`, of the
   /// rows of domain `d` of each buffer of `parts`, one after another, with
   /// the number of rows of each in `counts`: a buffer of all domains
@@ -1371,8 +1371,10 @@ LogicalResult Lowering::lowerDeviceTuples(TupleKernelOp op) {
   if (localBonded && !reduce) emptyGhostForces.insert(op.getResult(1));
   bool flagged = !reduce && op.getNumResults() == 2 && group;
   int64_t arity = op.getRows().getType().getDimSize(1) - 1;
-  Storage &layout = storage[layoutOf(op.getHalo())];
-  Storage &halo = storage[op.getHalo()];
+  // Publishing the tuple results can grow storage before the loop reads
+  // the input row counts.
+  const Storage layout = storage[layoutOf(op.getHalo())];
+  const Storage halo = storage[op.getHalo()];
   Value partial, ownedOut, ghostOut, flags;
   Type totalType;
   if (reduce) {
@@ -2909,7 +2911,7 @@ void Lowering::declareSets() {
     }
 }
 
-Value Lowering::countOf(OpBuilder &b, Storage &rows, Value d) {
+Value Lowering::countOf(OpBuilder &b, const Storage &rows, Value d) {
   return toIndex(b, memref::LoadOp::create(b, loc, rows.rows, d));
 }
 
