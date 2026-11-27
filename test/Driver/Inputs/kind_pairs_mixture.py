@@ -1,6 +1,7 @@
 """Writes a system of four kinds of rigid groups for D405:
 
-    python kind_pairs_mixture.py DIRECTORY [incomplete | outside | ions]
+    python kind_pairs_mixture.py DIRECTORY [incomplete | outside | ions |
+                                            site-first | scattered]
 
 three waters of three sites (TIP3P), two of four sites whose site is a
 linear combination of the frame ([ virtual_sites3 ] of type 1, the
@@ -13,7 +14,12 @@ are inside the cutoff and some outside. Two variants break a fact of
 D403 for the molecules of three Lennard-Jones atoms: `incomplete` drops
 their exclusions, `outside` gives each an ion of its own, not bonded to it,
 that it excludes. `ions` writes the ions alone, two of them: the only rigid
-kind is of one particle.
+kind is of one particle. Two variants change the order of the particles of
+the waters of four sites (D[water-layout]): `site-first` lists the site
+before its frame, so that the frame takes places 1 to 3 of a copy;
+`scattered` lists an ion of its own, not bonded to it and not excluded,
+between the second hydrogen and the site, so that the copy is not of
+consecutive particles.
 """
 import math
 import random
@@ -22,7 +28,7 @@ from pathlib import Path
 
 work = Path(sys.argv[1])
 variant = sys.argv[2] if len(sys.argv) > 2 else None
-assert variant in (None, 'incomplete', 'outside', 'ions')
+assert variant in (None, 'incomplete', 'outside', 'ions', 'site-first', 'scattered')
 random.seed(859)
 
 # name: (atoms as (name, type, charge, mass), the frame distances
@@ -41,6 +47,13 @@ MOLECULES = {
 if variant == 'outside':
     atoms, frame, site = MOLECULES['LJ3']
     MOLECULES['LJ3'] = (atoms + [('NA', 'NA', 1.0, 22.99)], frame, site)
+if variant == 'scattered':
+    atoms, frame, site = MOLECULES['OPC']
+    MOLECULES['OPC'] = (atoms + [('NA', 'NA', 1.0, 22.99)], frame, site)
+# The order in which each molecule's atoms are written, as indices into its
+# list of atoms: the frame, then the site, then any atom that is not bonded.
+ORDER = {'OPC': [3, 0, 1, 2] if variant == 'site-first' else
+         [0, 1, 2, 4, 3] if variant == 'scattered' else [0, 1, 2, 3]}
 COUNTS = [('SOL', 3), ('OPC', 2), ('LJ3', 2), ('NA', 1)]
 if variant == 'ions':
     COUNTS = [('NA', 2)]
@@ -97,17 +110,24 @@ for type, (sigma, epsilon) in TYPES.items():
     ptype = 'D' if type == 'EP' else 'A'
     top.append(f'  {type}  0  1.0  0.0  {ptype}  {sigma}  {epsilon}')
 for name, (atoms, frame, site) in MOLECULES.items():
+    order = ORDER.get(name, list(range(len(atoms))))
+    # The number in the molecule of the atom listed at `i`.
+    at = {i: order.index(i) + 1 for i in range(len(atoms))}
     top += ['', '[ moleculetype ]', f'  {name}  2', '[ atoms ]']
-    for index, (atom, type, charge, mass) in enumerate(atoms, 1):
+    for index, i in enumerate(order, 1):
+        atom, type, charge, mass = atoms[i]
         top.append(f'  {index}  {type}  1  {name}  {atom}  1  {charge}  {mass}')
     if frame:
-        top += ['[ settles ]', f'  1  1  {frame[0]}  {frame[1]}']
+        top += ['[ settles ]', f'  {at[0]}  1  {frame[0]}  {frame[1]}']
     if site:
-        top += ['[ virtual_sites3 ]', f'  4  1  2  3  1  {site[0]!r}  {site[1]!r}']
+        top += ['[ virtual_sites3 ]', f'  {at[3]}  {at[0]}  {at[1]}  {at[2]}  1  {site[0]!r}  {site[1]!r}']
     if len(atoms) > 1 and not (variant == 'incomplete' and name == 'LJ3'):
+        # The ion of `scattered` is a molecule of its own, excluded from none.
+        joined = [at[i] for i in range(len(atoms))
+                  if not (variant == 'scattered' and name == 'OPC' and i == 4)]
         top.append('[ exclusions ]')
-        for i in range(1, len(atoms) + 1):
-            top.append('  ' + '  '.join(str(j) for j in [i] + [k for k in range(1, len(atoms) + 1) if k != i]))
+        for i in sorted(joined):
+            top.append('  ' + '  '.join(str(j) for j in [i] + [k for k in sorted(joined) if k != i]))
 top += ['', '[ system ]', 'four kinds', '', '[ molecules ]']
 top += [f'  {name}  {count}' for name, count in COUNTS]
 (work / 'system.top').write_text('\n'.join(top) + '\n')
@@ -115,7 +135,9 @@ top += [f'  {name}  {count}' for name, count in COUNTS]
 gro = ['four kinds of rigid groups', f'{sum(len(p) for _, p in placed):5d}']
 number = 0
 for residue, (name, points) in enumerate(placed, 1):
-    for (atom, *_), point in zip(MOLECULES[name][0], points):
+    atoms = MOLECULES[name][0]
+    for i in ORDER.get(name, list(range(len(atoms)))):
+        atom, point = atoms[i][0], points[i]
         number += 1
         gro.append(f'{residue:5d}{name:<5}{atom:>5}{number:5d}'
                    + ''.join(f'{v:8.3f}' for v in point))

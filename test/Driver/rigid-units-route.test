@@ -188,6 +188,26 @@
 # RUN: printf '[execution]\ntarget = "GPU"\nprecision = "MIXED"\n[performance]\nrigid_units = "ON"\n' >> %t/outside/run.toml
 # RUN: mdir check %t/outside/run.toml | FileCheck %s --check-prefix=OUTSIDE
 # OUTSIDE: not taken: 2 molecules with an excluded pair outside the molecule
+#
+# The list of units reads a copy of a taken kind from its first particle,
+# its places being consecutive particles (D[water-layout]): the waters of
+# four sites with an ion of their own listed between the second hydrogen
+# and the site are not taken, with that reason, and the third kind is
+# taken in their place. With the site listed before its frame they are
+# consecutive, and taken.
+# RUN: mkdir -p %t/scattered %t/site-first
+# RUN: %python %S/Inputs/kind_pairs_mixture.py %t/scattered scattered
+# RUN: printf '[execution]\ntarget = "GPU"\nprecision = "MIXED"\n[performance]\nrigid_units = "ON"\n' >> %t/scattered/run.toml
+# RUN: mdir check %t/scattered/run.toml | FileCheck %s --check-prefix=SCATTERED
+# SCATTERED: rigid units: ON: the units (ON was given)
+# SCATTERED-NEXT: kind 1: taken, 3 units of 3 places (3 in the frame, 0 sites)
+# SCATTERED-NEXT: kind 2: not taken: one particle
+# SCATTERED-NEXT: kind 3: not taken: 2 molecules not of consecutive particles
+# SCATTERED-NEXT: kind 4: taken, 2 units of 3 places (3 in the frame, 0 sites)
+# RUN: %python %S/Inputs/kind_pairs_mixture.py %t/site-first site-first
+# RUN: printf '[execution]\ntarget = "GPU"\nprecision = "MIXED"\n[performance]\nrigid_units = "ON"\n' >> %t/site-first/run.toml
+# RUN: mdir check %t/site-first/run.toml | FileCheck %s --check-prefix=SITE-FIRST
+# SITE-FIRST: kind 2: taken, 2 units of 4 places (3 in the frame, 1 site)
 
 #--- base.toml
 [input]

@@ -967,7 +967,6 @@ static SmallVector<Value> lowerTraversal(OpBuilder &builder,
   if (op.isSegmented()) {
     unsigned base = serial.dual ? 12 : 7;
     serial.segments = lists[base];
-    serial.members = lists[base + 1];
   }
   serial.places = op.getSizes()[0];
   serial.units = op.getSizes()[1];

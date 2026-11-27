@@ -134,16 +134,17 @@ mlir::LogicalResult lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
                                            TraverseHost &host);
 
 /// The buffers of a list of units (D417, D419), as the runtime holds them
-/// now: the order of the places as the traversal reads it (the slot of a
-/// unit's first member in `members`, or the particle of the rest), their
-/// shifts, the records in the order of the segments (entries, masks,
-/// groups, counts), the first record of each segment, the members of the
-/// units of the taken kinds, and the place where each rank begins (the
+/// now: the order of the places as the traversal reads it (the particle
+/// of a unit's first place, the places of a copy of a taken kind being
+/// consecutive particles (D[water-layout]), or the particle of the rest),
+/// their shifts, the records in the order of the segments (entries, masks,
+/// groups, counts), the first record of each segment, and the place where
+/// each rank begins (the
 /// rest rank 0, kind f rank K - f, then the end of the places). A dual
 /// list adds its inner records and their active records.
 struct SegmentLists {
   mlir::Value order, shifts, entries, masks, groups, counts, offsets;
-  mlir::Value members, rankPlaces;
+  mlir::Value rankPlaces;
   InnerLists inner;
   mlir::Value active, activeCount;
   bool dual = false;
@@ -207,10 +208,11 @@ struct SerialLists {
   mlir::Value active, activeCount;
   bool dual = false;
   /// Over the segments of a list of units (D417): the
-  /// offsets of each segment's units of work, (K+1)(K+2)/2 + 1 of them, and
-  /// the members of each unit of a taken kind, which its place names by
-  /// the position of its first member.
-  mlir::Value segments, members;
+  /// offsets of each segment's units of work, (K+1)(K+2)/2 + 1 of them. A
+  /// place of a taken kind names the particle of its unit's first place,
+  /// and the unit's places are the particles that follow it
+  /// (D[water-layout]).
+  mlir::Value segments;
   mlir::Value places, units;
   mlir::Value positions, cell;
   llvm::SmallVector<mlir::Value> ins, outs;

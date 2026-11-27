@@ -15,6 +15,14 @@
 # RUN: %python %S/Inputs/kind_pairs_mixture.py %t/mixture
 # RUN: %mdir_python %S/Inputs/rigid_units_frames.py mixture %t/mixture/system.top %t/mixture/system.gro 3 10 --oracle | tee %t/mixture.txt | FileCheck %s -DS=mixture --check-prefixes=CHECK,ORACLE
 #
+# The same mixture with the site of the waters of four sites listed before
+# their frame (D[water-layout]): a copy is read from its first particle,
+# and its frame atoms are its places 1 to 3. The oracle takes the site at
+# place 3, so the comparison is with the general route alone.
+# RUN: mkdir -p %t/site-first
+# RUN: %python %S/Inputs/kind_pairs_mixture.py %t/site-first site-first
+# RUN: %mdir_python %S/Inputs/rigid_units_frames.py site-first %t/site-first/system.top %t/site-first/system.gro 3 10 | tee %t/site-first.txt | FileCheck %s -DS=site-first
+#
 # The anchors of the rest, with PME: alanine dipeptide in OPC under NPT
 # (Amber's extra point, not linear in its frame, so compared from the first
 # step on, where the frame is constrained) and in TIP3P under NVT.

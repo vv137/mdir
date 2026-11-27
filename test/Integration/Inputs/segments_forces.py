@@ -66,21 +66,15 @@ if sys.argv[1] == 'emit':
     drop = '--drop-record' in sys.argv
     system = System(top, gro, kinds.split(','))
     parts = read_dump(dump)
-    # The members of the units of the taken kinds, kind by kind, frame atoms
-    # in frame order: the table that the lowering forms (empty_segmented_pairs).
-    members = []
-    for name in system.taken:
-        frame = system.frame(name)
-        for unit in system.molecules[name]:
-            members += [unit[i] for i in frame]
+    # The places of a copy are consecutive particles from the one that its
+    # place in `order` holds (D[water-layout]).
     counts = parts['counts'].tolist()
     if drop:
         counts[0] = 0
     lists = {'entries': parts['entries'].tolist(), 'masks': parts['masks'].tolist(),
              'counts': counts, 'units': parts['groups'].tolist(),
              'ordinals': [0] * len(parts['counts']), 'places': parts['order'].tolist(),
-             'shifts': parts['shifts'].tolist(), 'segments': parts['offsets'].tolist(),
-             'members': members or [0]}
+             'shifts': parts['shifts'].tolist(), 'segments': parts['offsets'].tolist()}
     stored = read_rows(positions).tolist()
     segments_serial.emit(system, program, out, None, False, given=(lists, stored, gro_cell(gro)))
     sys.exit(0)

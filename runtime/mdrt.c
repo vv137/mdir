@@ -238,6 +238,20 @@ void mdrtSegmentsStopExclusions(int64_t count) {
   stopWith(message);
 }
 
+/* The copies of a taken rigid kind of a list of units are read as
+   consecutive particles, the places of each in order (D[water-layout]);
+   `count` copies are not. The order of the state keeps each copy whose
+   particles are consecutive in the input together, so this is a defect. */
+void mdrtSegmentsStopScattered(int64_t count) {
+  char message[320];
+  snprintf(message, sizeof message,
+           "%lld copies of a taken rigid kind are not consecutive particles "
+           "in the order of the state; the list of units reads each copy "
+           "from its first particle",
+           (long long)count);
+  stopWith(message);
+}
+
 /* The constraints of a set, SETTLE (`set` 0) or the groups of SHAKE of `set`
    hydrogens, left a length off its target or not a number in the step
    `step`: the run has failed (D278). */

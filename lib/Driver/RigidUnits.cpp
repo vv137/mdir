@@ -320,6 +320,11 @@ llvm::Error mdir::driver::resolveRigidUnits(Control &control,
                                      "outside the molecule",
                                      kind.outsideExclusions,
                                      plural(kind.outsideExclusions));
+      else if (kind.scattered)
+        // The list reads a copy from its first particle (D[water-layout]).
+        entry.reason = llvm::formatv("{0} molecule{1} not of consecutive "
+                                     "particles",
+                                     kind.scattered, plural(kind.scattered));
       else if (takenCount == 2)
         entry.reason = "beyond the two most populous";
       else {

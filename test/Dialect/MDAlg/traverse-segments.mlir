@@ -70,12 +70,12 @@ func.func @structure(%l: !sp, %x: memref<?x3xf64, 1>, %cell: !md.cell, %f: memre
 }
 
 // CHECK-LABEL: func.func @buffers
-// CHECK: md_alg.traverse_pairs lists(%{{.*}} : memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>) sizes(%{{.*}}, %{{.*}}) contract(!mdrt.segmented_pairs<
+// CHECK: md_alg.traverse_pairs lists(%{{.*}} : memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>) sizes(%{{.*}}, %{{.*}}) contract(!mdrt.segmented_pairs<
 // CHECK-SAME: reach(1.000000e+00)
 // CHECK-SAME: segment(1, 1) sites [(0, 0) [0]] {
 func.func @buffers(%b: memref<?xi32>, %n: index, %x: memref<?x3xf64>, %cell: vector<3xf64>) -> f64 {
   %u0 = arith.constant 0.0 : f64
-  %u = md_alg.traverse_pairs lists(%b, %b, %b, %b, %b, %b, %b, %b, %b : memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>) sizes(%n, %n)
+  %u = md_alg.traverse_pairs lists(%b, %b, %b, %b, %b, %b, %b, %b : memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>) sizes(%n, %n)
       contract(!sp) reach(1.0)
       positions(%x : memref<?x3xf64>) cell(%cell : vector<3xf64>) reduce(%u0 : f64)
       unique visit unordered combine atomic algebra ["any_order"] exchange ["symmetric"]
