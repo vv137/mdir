@@ -1508,3 +1508,9 @@ retained group layout. When the other operand of a vector addition
 already has the same owned rows, the floating-point driver adds the two
 vectors there. A chain of corrections therefore transfers its sum back
 to identity order once, after the last correction needed by its consumer.
+
+The mesh uses unwrapped positions, while a particle halo uses cell
+images. When both request one position field on the same layout, a
+single identity-to-spatial exchange supplies the unwrapped rows.
+Each owner produces the halo coordinates locally. A group projection
+can also wrap an owned correction result before its next solve.

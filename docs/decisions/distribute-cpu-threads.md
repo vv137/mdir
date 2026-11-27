@@ -248,3 +248,10 @@ unwrapped view in those owned rows. Consecutive corrections add in
 the original order. Native consumers collect the sum at the point
 where they need it. An imaged position view cannot supply the
 unwrapped operand.
+
+A rank can derive wrapped positions from an unwrapped owned field on
+the same layout. If a native position field needs both forms in a
+block, one distribution supplies the unwrapped rows. Wrapping writes
+a separate buffer before the trajectory epoch aligns its periodic
+images. The reciprocal mesh and unwrapped constraint consumers keep
+the original coordinates.

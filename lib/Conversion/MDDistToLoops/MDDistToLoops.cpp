@@ -836,16 +836,48 @@ LogicalResult Lowering::lowerDistribute(DistributeOp op) {
   Value first = domainBound(b, false), past = domainBound(b, true);
   Value z = index(b, 0), one = index(b, 1), offsets, ids;
   if (shardExtent.count(op)) {
-    auto view = mdrt::ToBufferOp::create(b,loc,mdrt::getBufferType(fieldType),op.getField());
-    view->setAttr("mdrt.partition_view",b.getUnitAttr());
+    // An image and an unwrapped consumer can share the same permutation.
+    // Keep the raw view immutable when the Verlet epoch adjusts its images.
+    if (!op.getImage() && storage.lookup(op.getResult()).buffer) return success();
+    Value raw;
+    DistributeOp sibling;
+    if (op.getImage() && k == 3 && fieldType.getElementType().isF64()) {
+      if (auto collected = op.getField().getDefiningOp<CollectOp>())
+        if (collected.getLayout() == op.getLayout())
+          raw = storage.lookup(collected.getField()).buffer;
+      if (!raw) {
+        for (Operation *user : op.getField().getUsers()) {
+          auto other = dyn_cast<DistributeOp>(user);
+          if (other && !other.getImage() && other->getAttrs().empty() &&
+              other.getLayout() == op.getLayout() && other->getBlock() == op->getBlock() &&
+              other.getResult().getType() == op.getResult().getType() &&
+              shardExtent.count(other) && !trajectoryCaches.count(other.getResult())) {
+            sibling = other;
+            raw = storage.lookup(other.getResult()).buffer;
+            break;
+          }
+        }
+      }
+    }
     Value owned = allocate(b,layout.capacity,k);
     auto i64 = b.getI64Type();
-    auto fn = declare("mdrtDistDistributeShard",b.getFunctionType({i64,i64,owned.getType(),i64,i64},{}),true);
-    func::CallOp::create(b,loc,fn,ValueRange{layout.handle,bufferAddress(b,view),owned,
-        arith::ConstantIntOp::create(b,loc,fieldType.getElementType().isInteger(32),64),
-        arith::ConstantIntOp::create(b,loc,bool(op.getImage()),64)});
+    Value layoutHandle = layout.handle;
+    if (!raw) {
+      auto view = mdrt::ToBufferOp::create(b,loc,mdrt::getBufferType(fieldType),op.getField());
+      view->setAttr("mdrt.partition_view",b.getUnitAttr());
+      if (sibling) raw = allocate(b,layout.capacity,k);
+      auto fn = declare("mdrtDistDistributeShard",b.getFunctionType({i64,i64,owned.getType(),i64,i64},{}),true);
+      func::CallOp::create(b,loc,fn,ValueRange{layoutHandle,bufferAddress(b,view),raw ? raw : owned,
+          arith::ConstantIntOp::create(b,loc,fieldType.getElementType().isInteger(32),64),
+          arith::ConstantIntOp::create(b,loc,op.getImage() && !sibling,64)});
+      if (sibling) storage[sibling.getResult()].buffer = raw;
+    }
+    if (raw) {
+      auto fn = declare("mdrtDistWrapOwned",b.getFunctionType({i64,raw.getType(),owned.getType()},{}),true);
+      func::CallOp::create(b,loc,fn,ValueRange{layoutHandle,raw,owned});
+    }
     if (Value cache = trajectoryCaches.lookup(op.getResult())) {
-      SmallVector<Value> args{cache, layout.handle, owned};
+      SmallVector<Value> args{cache, layoutHandle, owned};
       func::CallOp::create(b,loc,declare("mdrtDistEpochImages",
           b.getFunctionType(ValueRange(args).getTypes(),{}),true),args);
     }

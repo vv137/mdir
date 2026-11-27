@@ -2226,6 +2226,23 @@ void _mlir_ciface_mdrtMPICollectField(int64_t layout, struct Memref3D *source,
   if (destination != 2) mdrtMPICollectIntervals(global,l->count,width,integer,destination);
 }
 
+/* A periodic and an unwrapped consumer use the same owned permutation.
+   Wrap a separate buffer so an epoch may adjust it to its retained images. */
+void _mlir_ciface_mdrtDistWrapOwned(int64_t layout, struct Memref3D *raw,
+                                    struct Memref3D *wrapped) {
+  struct Layout *l = (struct Layout *)(intptr_t)layout;
+  int64_t first = mdrtMPIDomainBound(l->domains,0), past = mdrtMPIDomainBound(l->domains,1);
+  #pragma omp parallel for collapse(2) schedule(static) if((past-first)*l->stride > 512)
+  for (int64_t d = first; d < past; ++d)
+    for (int64_t r = 0; r < l->stride; ++r) {
+      if (r >= l->rows[d]) continue;
+      for (int k = 0; k < 3; ++k) {
+        double v = *at3(raw,d,r,k);
+        *at3(wrapped,d,r,k) = v - l->edges[k]*floor(v/l->edges[k]);
+      }
+    }
+}
+
 /* The inverse of collection uses its stream in the opposite direction.
    The MPI counts and offsets belong to the immutable spatial layout. */
 void _mlir_ciface_mdrtDistDistributeShard(int64_t layout, int64_t base,
