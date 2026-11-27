@@ -678,6 +678,34 @@ static int runControlImpl(StringRef controlFile, Emit emit,
                   "change; begin a new run from it as 'checkpoint' of "
                   "[input] instead. What differs (checkpoint -> control "
                   "file):" + describe(changes));
+    // A deterministic distributed run gives the same bits on every grid,
+    // so --continue may take another (D[distribute-driver]); without
+    // [distribute], or with it where the run had none, the sums are of
+    // another arithmetic, and the run would not reproduce its uninterrupted
+    // course, which a deterministic continuation promises.
+    auto distributed = [](const Fingerprint &entries) {
+      return llvm::any_of(entries, [](const FingerprintEntry &entry) {
+        return entry.group == "execution" &&
+               StringRef(entry.name).starts_with("[distribute]");
+      });
+    };
+    auto deterministic = [](const Fingerprint &entries) {
+      return llvm::any_of(entries, [](const FingerprintEntry &entry) {
+        return entry.name == "[execution] deterministic" &&
+               entry.value == "true";
+      });
+    };
+    if (deterministic(own->fingerprint) && control->deterministic &&
+        distributed(own->fingerprint) != distributed(fingerprint))
+      return fail("'" + control->restartInput + "' was written by a " +
+                  "deterministic run " +
+                  (distributed(own->fingerprint) ? "with" : "without") +
+                  " [distribute], whose fixed-point sums --continue keeps; "
+                  "continue it " +
+                  (distributed(own->fingerprint)
+                       ? "with [distribute], on any grid,"
+                       : "without [distribute]") +
+                  " or begin a new run from it as 'checkpoint' of [input]");
     std::vector<FingerprintChange> execution =
         compareFingerprints(own->fingerprint, fingerprint, "execution");
     if (!execution.empty())

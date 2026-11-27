@@ -1,0 +1,50 @@
+# [distribute] in the fingerprint of a checkpoint (D[distribute-driver]):
+# its traversal and transport always, and its grid outside the
+# deterministic mode, which gives the same trajectory on every grid.
+# REQUIRES: hdf5
+# RUN: rm -rf %t && mkdir -p %t/first && cd %t/first
+# RUN: sed -e 's|argon.pdb|%S/../../examples/argon/argon.pdb|' -e 's/= 2000$/= 5/' \
+# RUN:     -e 's/= 100$/= 5/' -e 's/= 16$/= 1/' -e 's/= 9.5$/= 8.65/' -e '/^trajectory/d' \
+# RUN:     -e '/^\[output\]/a checkpoint = "state.h5"\ncheckpoint_interval = 5' \
+# RUN:     %S/../../examples/argon/argon.toml > base.toml
+# RUN: cp base.toml run.toml && printf 'deterministic = true\n[distribute]\ndomains = [2, 1, 1]\n' >> run.toml
+# RUN: mdir run run.toml > run.log
+# RUN: mdir checkpoint --print=fingerprint state.h5 | FileCheck %s --check-prefix=RECORD
+# RECORD: execution [distribute] transport = "local"
+# RECORD-NEXT: execution [distribute] traversal = "directed"
+# RECORD-NOT: [distribute] domains
+
+# Another grid continues the deterministic run, without a note.
+# RUN: cp -r %t/first %t/grid && cd %t/grid
+# RUN: sed -e 's/^steps *= 5$/steps = 10/' -e 's/domains = .*/domains = 8/' run.toml > next.toml
+# RUN: mdir run --continue next.toml | FileCheck %s --check-prefix=GRID
+# GRID-NOT: other settings of its execution
+# GRID: MDIR: domain grid 2 x 2 x 2
+
+# Without [distribute], the sums of the ordinary driver would not give the
+# bits of the uninterrupted run: --continue refuses it.
+# RUN: cp -r %t/first %t/ordinary && cd %t/ordinary
+# RUN: sed -e 's/^steps *= 5$/steps = 10/' -e '/^\[distribute\]/d' -e '/^domains/d' run.toml > next.toml
+# RUN: not mdir run --continue next.toml 2>&1 | FileCheck %s --check-prefix=ORDINARY
+# ORDINARY: was written by a deterministic run with [distribute], whose fixed-point sums --continue keeps; continue it with [distribute], on any grid, or begin a new run from it as 'checkpoint' of [input]
+
+# And a deterministic ordinary run does not continue over domains.
+# RUN: mkdir -p %t/plain && cd %t/plain
+# RUN: cp ../first/base.toml run.toml && printf 'deterministic = true\n' >> run.toml
+# RUN: mdir run run.toml > run.log
+# RUN: sed -e 's/^steps *= 5$/steps = 10/' run.toml > next.toml
+# RUN: printf '[distribute]\ndomains = [2, 1, 1]\n' >> next.toml
+# RUN: not mdir run --continue next.toml 2>&1 | FileCheck %s --check-prefix=PLAIN
+# PLAIN: was written by a deterministic run without [distribute], whose fixed-point sums --continue keeps; continue it without [distribute] or begin
+
+# Outside the deterministic mode the grid is recorded, and another grid
+# continues the run with a note of the change.
+# RUN: mkdir -p %t/free && cd %t/free
+# RUN: cp ../first/base.toml run.toml && printf '[distribute]\ndomains = [2, 1, 1]\n' >> run.toml
+# RUN: mdir run run.toml > run.log
+# RUN: mdir checkpoint --print=fingerprint state.h5 | FileCheck %s --check-prefix=FREE
+# FREE: execution [distribute] domains = [2, 1, 1]
+# RUN: sed -e 's/^steps *= 5$/steps = 10/' -e 's/domains = .*/domains = 8/' run.toml > next.toml
+# RUN: mdir run --continue next.toml | FileCheck %s --check-prefix=NOTE
+# NOTE: MDIR: note: the run continues with other settings of its execution
+# NOTE-NEXT: [distribute] domains: [2, 1, 1] -> [2, 2, 2]
