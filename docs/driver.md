@@ -807,11 +807,18 @@ run, an entry each, in three groups:
 |---|---|
 | physics | Every key of `[energy]`, `[pme]`, `[lj_pme]`, `[constraints]`, `[restraints]`, `[boundary]`, and `[free_energy]` as the control file writes it, in a canonical form (keys sorted, a floating-point number as the shortest text of its double, so that `9` and `9.0` are one value, and an integer exactly: below $2^{53}$ in magnitude as the text of its double, from $2^{53}$ on with all its digits, D347, and a value that names a choice in its documented spelling, #702); SHA-256 of the contents of the files of the topology (Amber, GROMACS with its included files, CHARMM structure and parameters), of the masses, and of the reference of positional restraints |
 | coupling | Every key of `[dynamics]` but `steps`, and of `[ensemble]`, `[thermostat]`, and `[barostat]` |
-| execution | Every key of `[execution]`, and `pairlist_distance`, `pruned_distance`, and `rebuild_interval` of `[energy]`, which decide how the forces are found and not what they are |
+| execution | Every key of `[execution]`, and `pairlist_distance`, `pruned_distance`, and `rebuild_interval` of `[energy]`, which decide how the forces are found and not what they are; with `[distribute]`, its `traversal` and `transport` as resolved, and its grid as resolved for the cell (`[distribute] domains`, three divisions) outside the deterministic mode (D[distribute-driver]) |
 
 A value longer than 160 characters is recorded as its SHA-256. The
 entries are the keys as written, not the values the driver resolves: a
-key added with its default value counts as a change. `mdir checkpoint
+key added with its default value counts as a change. The entries of
+`[distribute]` are the exception, resolved values: `domains = 8` and
+`domains = [2, 2, 2]` are one grid for a cubic cell. A deterministic
+distributed run leaves its grid out, since its trajectory and its
+checkpoint are the same on every grid; `--continue` of a deterministic
+run refuses a control file that adds or drops `[distribute]`, whose sums
+are of the other arithmetic (fixed-point words against floating-point
+sums), and takes another grid without a note. `mdir checkpoint
 --print=fingerprint file.h5` lists them.
 
 A value that names a choice, which the reader reads without regard to
@@ -1727,7 +1734,11 @@ the real-space cutoff and skin in Ang. The first halo adds a
 and upper Cartesian bounds in Ang, owned and ghost row counts, and the
 position import in bytes (three doubles per ghost image). The geometric import
 volume in cubic Ang is the shell within halo reach of the domain box,
-including its rounded edges and corners. A rejected distributed control records the reason in its log and manifest.
+including its rounded edges and corners. A rejected distributed control records the reason in its log and manifest:
+a refusal of `[distribute]` itself, of the builder (constraints, a
+triclinic cell), or a diagnostic of the passes of `md_dist` (the exclusions
+of bonded terms, a table of types). Any other error of the control file is
+reported as without the table.
 An existing MDIR log and a valid manifest history accept another refusal.
 An unsafe output alias or unrecognized existing file is protected and the
 reason goes to stderr.
@@ -1753,8 +1764,18 @@ With `[execution] deterministic = true`, a continued distributed run on
 another grid uses the same pair words and physical state as an uninterrupted
 run on the same build. Use an explicit one-domain grid for this comparison.
 Omitting the distribution table selects the ordinary driver and its existing
-floating-point reduction. A fixed-point range diagnostic identifies a term
-or completed quantity that cannot be represented. Intermediate signed
+floating-point reduction, which a deterministic `--continue` refuses (the
+fingerprint, below). A fixed-point range diagnostic names the quantity of
+the term or completed sum that cannot be represented. The formats are
+fitted to their quantities: Q32 for pair energies, virials, kinetic
+energies, and momenta, Q40 for forces, and Q16 for the sum of $F^2/m$ of
+the kinetic correction, whose square of forces leaves the range of Q32
+(below $2^{31}$) for the 864 atoms of argon with 250 times the example's
+$\epsilon$ (distribute-word-formats.test). A decoded word is exact below
+$2^{53}$: $2^{13}$ kJ/mol/nm for a force, $2^{21}$ kJ/mol for a Q32 energy,
+$2^{20}$ for the Q33 total, $2^{37}$ for a Q16 sum; above, the conversion rounds to
+nearest, a function of the word, so that the value is still the same on
+every grid. Intermediate signed
 128-bit subtotals retain cancellation. Deterministic HDF5 output omits
 dataset creation timestamps. Matching invocation histories yield identical
 checkpoint files. A continuation records its part number in the checkpoint

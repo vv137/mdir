@@ -590,4 +590,7 @@ interval traffic. Set `MDIR_DIST_STEP_TRACE` to a fresh prefix for
 rank-local per-step files. The checkpoint and continuation keys also
 apply to distributed runs. A continuation may change `domains`;
 the manifest records both layouts. The deterministic distributed CPU path
-uses checked fixed-point words across grids and restarts.
+uses checked fixed-point words across grids and restarts, and its
+`--continue` refuses a control file that adds or drops `[distribute]`; the
+checkpoint's fingerprint records the traversal, the transport, and, outside
+the deterministic mode, the grid (D[distribute-driver]).
