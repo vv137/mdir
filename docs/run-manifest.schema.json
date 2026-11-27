@@ -163,6 +163,46 @@
         "resolved_choices": {
           "type": "object",
           "properties": {
+            "term_streams": {
+              "type": "object",
+              "required": [
+                "requested",
+                "category",
+                "value",
+                "reason",
+                "changes_rounding"
+              ],
+              "properties": {
+                "requested": {
+                  "enum": [
+                    "SINGLE",
+                    "RECIPROCAL",
+                    "TERMS"
+                  ]
+                },
+                "value": {
+                  "enum": [
+                    "SINGLE",
+                    "RECIPROCAL",
+                    "TERMS"
+                  ]
+                },
+                "category": {
+                  "enum": [
+                    "rule"
+                  ]
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "inputs": {
+                  "type": "object"
+                },
+                "changes_rounding": {
+                  "type": "boolean"
+                }
+              }
+            },
             "step_graph": {
               "type": "object",
               "required": [

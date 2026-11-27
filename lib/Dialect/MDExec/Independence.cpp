@@ -343,13 +343,21 @@ bool md_exec::areIndependent(Operation *a, Operation *b,
   return true;
 }
 
+unsigned md_exec::getSideLane(Operation *op) {
+  if (!op->hasAttr(kSideAttrName))
+    return 0;
+  if (auto lane = op->getAttrOfType<IntegerAttr>(kLaneAttrName))
+    return static_cast<unsigned>(lane.getInt());
+  return 1;
+}
+
 Operation *md_exec::findJoin(Operation *side, BufferAliases &aliases) {
   Operation *next = side->getNextNode();
   for (; next && !next->hasTrait<OpTrait::IsTerminator>();
        next = next->getNextNode()) {
-    // A marked op after it runs after it on the second stream, in the
+    // An op marked for the same side stream runs after it there, in the
     // order of the program (D[concurrent-terms]).
-    if (next->hasAttr(kSideAttrName))
+    if (getSideLane(next) == getSideLane(side))
       continue;
     if (isa<JoinOp>(next) || !areIndependent(side, next, aliases))
       break;
@@ -362,10 +370,11 @@ LogicalResult md_exec::verifySide(Operation *side, BufferAliases &aliases) {
        next = next->getNextNode()) {
     if (isa<JoinOp>(next))
       return success();
-    // Another marked op runs after this one on the second stream; the ops
-    // of the first stream after it must still be independent of this one,
-    // which may be running then (D[concurrent-terms]).
-    if (next->hasAttr(kSideAttrName))
+    // Another op marked for the same side stream runs after this one
+    // there; the ops of the other streams after it must still be
+    // independent of this one, which may be running then
+    // (D[concurrent-terms]).
+    if (getSideLane(next) == getSideLane(side))
       continue;
     if (!areIndependent(side, next, aliases)) {
       InFlightDiagnostic diagnostic =

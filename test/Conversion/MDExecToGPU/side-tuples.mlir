@@ -1,16 +1,16 @@
 // RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu | FileCheck %s
 
-// D[concurrent-terms]: two loops over tuples marked for the second stream,
-// with a destination of their own, are issued there (one kernel, as one
-// run of loops), beside a loop over tuples on the first stream that writes
+// D[concurrent-terms]: two loops over tuples marked for the third stream
+// (lane 2), with a destination of their own, are issued there (one kernel,
+// as one run of loops), beside a loop over tuples on the first stream that writes
 // another buffer; the first stream waits at the join, before the loop over
 // particles that reads both.
 //
 // CHECK-LABEL: func.func @beside(
-// CHECK:         call @mdrtSideBegin()
+// CHECK:         call @mdrtSide2Begin()
 // CHECK:         gpu.launch
 // CHECK-NOT:     gpu.launch
-// CHECK:         call @mdrtSideEnd()
+// CHECK:         call @mdrtSide2End()
 // CHECK-NOT:     call @mdrtSide
 // CHECK:         gpu.launch
 // CHECK-NOT:     call @mdrtSide
@@ -29,13 +29,13 @@ func.func @beside(%members: memref<?x2xi32>, %n: index,
   ^bb0(%d: vector<3xf32>):
     %n0 = arith.negf %d : vector<3xf32>
     md_exec.yield %d, %n0 : vector<3xf32>, vector<3xf32>
-  } {md_exec.side} : memref<?xi32, 1>, memref<?x3xf32, 1>
+  } {md_exec.side, md_exec.lane = 2 : i64} : memref<?xi32, 1>, memref<?x3xf32, 1>
   md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
       outs(%g : memref<?x3xf32, 1>) arity(2) {
   ^bb0(%d: vector<3xf32>):
     %n0 = arith.negf %d : vector<3xf32>
     md_exec.yield %n0, %d : vector<3xf32>, vector<3xf32>
-  } {md_exec.side} : memref<?xi32, 1>, memref<?x3xf32, 1>
+  } {md_exec.side, md_exec.lane = 2 : i64} : memref<?xi32, 1>, memref<?x3xf32, 1>
   md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
       outs(%f : memref<?x3xf32, 1>) arity(2) {
   ^bb0(%d: vector<3xf32>):

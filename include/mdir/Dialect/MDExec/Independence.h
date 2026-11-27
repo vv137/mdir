@@ -78,15 +78,27 @@ bool areIndependent(mlir::Operation *a, mlir::Operation *b,
 /// stream (md_exec.join, D87).
 inline constexpr llvm::StringLiteral kSideAttrName = "md_exec.side";
 
+/// The name of the integer attribute that puts a marked op on another side
+/// stream than the second: `md_exec.lane = 2` for the third
+/// (D[concurrent-terms]).
+inline constexpr llvm::StringLiteral kLaneAttrName = "md_exec.lane";
+
+/// The stream of a marked op: 1 for the second stream, or the lane that
+/// `md_exec.lane` names; 0 if the op is not marked.
+unsigned getSideLane(mlir::Operation *op);
+
 /// Returns the first op after `side` in its block that must not run beside
 /// it: one that is not independent of it, a join, or the terminator.
-/// Another marked op does not end the window: it runs after `side` on the
-/// second stream, in the order of the program (D[concurrent-terms]).
+/// Another op marked for the same side stream does not end the window: it
+/// runs after `side` there, in the order of the program; one marked for
+/// another side stream runs beside it and must be independent of it
+/// (D[concurrent-terms]).
 mlir::Operation *findJoin(mlir::Operation *side, BufferAliases &aliases);
 
-/// Checks that the op `side`, marked to run on a second stream, is followed
+/// Checks that the op `side`, marked to run on a side stream, is followed
 /// in its block by a join, and that every op between the two that is not
-/// marked as well is independent of it. Reports an error on `side` if not.
+/// marked for the same side stream is independent of it. Reports an error
+/// on `side` if not.
 mlir::LogicalResult verifySide(mlir::Operation *side, BufferAliases &aliases);
 
 } // namespace md_exec

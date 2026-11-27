@@ -2074,14 +2074,21 @@ Lowering::lowerOnSide(Operation *at, llvm::function_ref<LogicalResult()> lower) 
   OpBuilder builder(at);
   Location loc = at->getLoc();
   FunctionType none = builder.getFunctionType({}, {});
+  unsigned lane = md_exec::getSideLane(at);
+  if (lane != 1 && lane != 2)
+    return at->emitOpError() << "names side stream " << lane
+                             << "; there are streams 1 and 2";
   auto begin = func::CallOp::create(
-      builder, loc, getOrDeclare("mdrtSideBegin", none), ValueRange());
+      builder, loc,
+      getOrDeclare(lane == 2 ? "mdrtSide2Begin" : "mdrtSideBegin", none),
+      ValueRange());
   if (failed(lower()))
     return failure();
   builder.setInsertionPoint(at);
-  auto end = func::CallOp::create(builder, loc,
-                                  getOrDeclare("mdrtSideEnd", none),
-                                  ValueRange());
+  auto end = func::CallOp::create(
+      builder, loc,
+      getOrDeclare(lane == 2 ? "mdrtSide2End" : "mdrtSideEnd", none),
+      ValueRange());
   bool launches = false;
   for (Operation *issued = begin->getNextNode(); issued != end;
        issued = issued->getNextNode()) {
@@ -2395,7 +2402,10 @@ void Lowering::findRows(func::FuncOp function) {
       ValueRange scratch = isa<md_exec::PairForOp>(op)
                                ? cast<md_exec::PairForOp>(op).getScratch()
                                : cast<md_exec::TupleForOp>(op).getScratch();
-      bool joins = !run.empty() && getPositions(&op) == getPositions(run[0]);
+      // A run is on one stream (D[concurrent-terms]).
+      bool joins = !run.empty() && getPositions(&op) == getPositions(run[0]) &&
+                   op.hasAttr(md_exec::kSideAttrName) ==
+                       run[0]->hasAttr(md_exec::kSideAttrName);
       // The loops over pairs of a run share the order of one structure.
       if (auto pair = dyn_cast<md_exec::PairForOp>(op))
         for (Operation *member : run)
@@ -2573,6 +2583,10 @@ bool Lowering::recordIntegration(ArrayRef<Operation *> run) {
   bool readsBefore = false;
   for (Operation *op : run) {
     auto loop = cast<md_exec::TupleForOp>(op);
+    // A loop on the second stream is issued there alone, not in a kernel
+    // with loops of the first (D[concurrent-terms]).
+    if (loop->hasAttr(md_exec::kSideAttrName))
+      return false;
     // The loops take the particles of one set, have no reductions but a
     // flag each at most, the test of the constraints that the member at
     // place 0 sets (D278), and write none of what the
@@ -10964,9 +10978,11 @@ static LogicalResult keepReadbacksOnDevice(func::FuncOp function) {
     bool inside = false;
     for (Operation &op : *block) {
       if (auto call = dyn_cast<func::CallOp>(op)) {
-        if (call.getCallee() == "mdrtSideBegin")
+        if (call.getCallee() == "mdrtSideBegin" ||
+            call.getCallee() == "mdrtSide2Begin")
           inside = true;
-        else if (call.getCallee() == "mdrtSideEnd")
+        else if (call.getCallee() == "mdrtSideEnd" ||
+                 call.getCallee() == "mdrtSide2End")
           inside = false;
       }
       if (inside)
@@ -11702,7 +11718,7 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
     if (inRows.contains(op)) {
       auto run = rows.find(op);
       if (run != rows.end()) {
-        if (failed(lowerRows(run->second)))
+        if (failed(lowerOnSide(op, [&] { return lowerRows(run->second); })))
           return failure();
         for (Operation *loop : run->second)
           lowered.push_back(loop);

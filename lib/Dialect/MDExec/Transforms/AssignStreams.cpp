@@ -123,7 +123,10 @@ public:
         SmallVector<Place> moves;
         hoistWithProducers(loop, aliases, moves);
         if (loop->isBeforeInBlock(pair)) {
+          // A stream of their own, beside the reciprocal sums.
           loop->setAttr(kSideAttrName, UnitAttr::get(loop->getContext()));
+          loop->setAttr(kLaneAttrName,
+                        IntegerAttr::get(IntegerType::get(loop->getContext(), 64), 2));
           tupleLoops.push_back(loop);
           continue;
         }
