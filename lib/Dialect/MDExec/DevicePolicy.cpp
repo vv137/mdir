@@ -215,6 +215,35 @@ static const Entry<GroupsPolicy> kGroupsTable[] = {
 };
 
 //===----------------------------------------------------------------------===//
+// The traversal of AUTO (D[best-defaults])
+//===----------------------------------------------------------------------===//
+
+// The default keeps the rule of D261 (MATRIX or GROUPS by size): TOWERS
+// was not measured against them as a default on the architecture.
+const TraversalPolicy mdir::md_exec::policy::kDefaultTraversal = {
+    /*towersLeast=*/-1};
+static const Measurement kTraversalDefaultBasis = {
+    "D261", "not measured as a choice of AUTO: the rule of D261 is kept",
+    "2026-10-13"};
+static const ArrayRef<Measured> kTraversalDefaultMeasured = {};
+
+// On sm_89 TOWERS took less time a step than the structure of D261 on
+// every system measured, in NVT and NPT at 2 fs in mixed precision with
+// the default PME (D[best-defaults]): TIP3P boxes of 3,072, 9,989 and
+// 19,880 atoms, JAC, Factor IX, Cellulose and STMV, RTX 4090, two jobs in
+// opposite orders. The least size is that of the smallest box measured.
+static const Measured kTraversal89Measured[] = {{8, 9}};
+static const Entry<TraversalPolicy> kTraversalTable[] = {
+    {{8, 9, ""},
+     {/*towersLeast=*/3000},
+     {"D[best-defaults]",
+      "TIP3P (3,072, 9,989 and 19,880 atoms), JAC, Factor IX, Cellulose and "
+      "STMV, NVT and NPT, RTX 4090",
+      "2026-11-27"},
+     kTraversal89Measured},
+};
+
+//===----------------------------------------------------------------------===//
 // Selection
 //===----------------------------------------------------------------------===//
 
@@ -296,6 +325,15 @@ DevicePolicy mdir::md_exec::policy::getDevicePolicy(StringRef arch,
     policy.groups = entry->values;
     policy.groupsBasis = entry->basis;
     policy.groupsFallback = !covers(entry->measured, key);
+  }
+
+  policy.traversal = kDefaultTraversal;
+  policy.traversalBasis = kTraversalDefaultBasis;
+  policy.traversalFallback = !covers(kTraversalDefaultMeasured, key);
+  if (const auto *entry = find<TraversalPolicy>(kTraversalTable, key)) {
+    policy.traversal = entry->values;
+    policy.traversalBasis = entry->basis;
+    policy.traversalFallback = !covers(entry->measured, key);
   }
   return policy;
 }

@@ -42,6 +42,9 @@ int main(int argc, char **argv) {
                << "groups column-particles="
                << int64_t(policy.groups.columnParticles)
                << " fallback=" << policy.groupsFallback << " ("
-               << policy.groupsBasis.decision << ")\n";
+               << policy.groupsBasis.decision << ")\n"
+               << "traversal towers-least=" << policy.traversal.towersLeast
+               << " fallback=" << policy.traversalFallback << " ("
+               << policy.traversalBasis.decision << ")\n";
   return 0;
 }

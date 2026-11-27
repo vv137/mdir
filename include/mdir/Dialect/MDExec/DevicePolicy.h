@@ -115,6 +115,14 @@ struct GroupsPolicy {
   double columnParticles;
 };
 
+/// The traversal that `neighbor_structure = "AUTO"` takes in `mdir run`
+/// (D[best-defaults]): TOWERS (D428) for an eligible system of at least
+/// `towersLeast` particles, or the rule of D261 where the architecture
+/// was not measured (`towersLeast` -1).
+struct TraversalPolicy {
+  int64_t towersLeast;
+};
+
 /// The key of an entry: an architecture, as a major version and a minor
 /// one (`sm_120` is 12 and 0), the minor -1 for every minor version of
 /// the major; and a device class, empty for every device of the
@@ -137,14 +145,16 @@ struct DevicePolicy {
   LaunchPolicy launch;
   SegmentsPolicy segments;
   GroupsPolicy groups;
+  TraversalPolicy traversal;
   /// The measurement behind each selected entry.
   Measurement pruningBasis, scatterBasis, launchBasis, segmentsBasis,
-      groupsBasis;
+      groupsBasis, traversalBasis;
   /// The tables whose selected entry was not measured on the
   /// architecture: the default where it has no entry of its own, or an
   /// entry of its major version that covered another minor one.
   bool pruningFallback = true, scatterFallback = true, launchFallback = true,
-       segmentsFallback = true, groupsFallback = true;
+       segmentsFallback = true, groupsFallback = true,
+       traversalFallback = true;
   /// The architecture and class as given.
   std::string arch, deviceClass;
 
@@ -170,6 +180,7 @@ extern const ScatterPolicy kDefaultScatter;
 extern const LaunchPolicy kDefaultLaunch;
 extern const SegmentsPolicy kDefaultSegments;
 extern const GroupsPolicy kDefaultGroups;
+extern const TraversalPolicy kDefaultTraversal;
 
 } // namespace policy
 } // namespace md_exec

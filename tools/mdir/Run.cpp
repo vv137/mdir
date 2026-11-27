@@ -563,8 +563,51 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   for (const auto &[code, message] : system->warnings)
     warn(message);
   // `neighbor_structure = "AUTO"` is resolved for the system before
-  // anything is built from it (D261).
+  // anything is built from it (D261): TOWERS where the device's entry of
+  // the traversal table admits the input (D[best-defaults]), else the
+  // rule of D261. The rule's result is kept, so that a refusal of the
+  // TOWERS preflight below falls back to it with the reason.
+  double givenPairlist = control->pairlistDistance;
+  double givenPruned = control->prunedDistance;
   resolveNeighborStructure(*control, *system);
+  struct {
+    NeighborStructure structure;
+    double pairlist, pruned;
+    std::string reason;
+  } listRule{control->neighborStructure, control->pairlistDistance,
+             control->prunedDistance, control->neighborStructureReason};
+  llvm::json::Object traversalChoice;
+  bool autoTowers = false;
+  if (control->neighborStructureRequested == NeighborStructure::Auto) {
+    AutoTowers rule = options.segments
+                          ? AutoTowers{false, "segmented execution", {}}
+                          : resolveAutoTowers(*control, *system);
+    traversalChoice = llvm::json::Object{{"category", "rule"},
+                             {"requested", "AUTO"},
+                             {"towers_rule", std::move(rule.record)}};
+    if (rule.take) {
+      autoTowers = true;
+      control->neighborStructure = NeighborStructure::Towers;
+      control->pairlistDistance = givenPairlist;
+      control->prunedDistance = givenPruned;
+      control->neighborStructureReason = "TOWERS: " + rule.reason;
+    } else {
+      control->neighborStructureReason +=
+          "; TOWERS not taken: " + rule.reason;
+    }
+    traversalChoice["towers_reason"] = rule.reason;
+  }
+  // Back to the rule of D261 where the TOWERS preflight refuses an input
+  // that AUTO took for it.
+  auto fallBackFromTowers = [&](std::string why) {
+    control->neighborStructure = listRule.structure;
+    control->pairlistDistance = listRule.pairlist;
+    control->prunedDistance = listRule.pruned;
+    control->neighborStructureReason =
+        listRule.reason + "; TOWERS refused at preflight: " + why;
+    traversalChoice["towers_refusal"] = std::move(why);
+    autoTowers = false;
+  };
 
   auto graphRefusal = control->stepGraphRefusal(system->numConstraints);
   if (options.segments) graphRefusal = "GRAPH does not support segmented execution";
@@ -760,14 +803,34 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     auto shape =
         checkTowersShape(*control, *system, /*setup=*/true,
                          usesTowers ? previousTowersHeight : StringRef(),
-                         usesTowers ? &control->towersSetup : nullptr);
-    if (!shape)
-      return fail(shape.takeError());
-    if (usesTowers)
-      towersCellHeight =
-          shape->getObject("effective")->getString("cell_height")->str();
-    if (usesTowers) resolvedChoices["towers_shape"] = llvm::json::Object(*shape->getObject("effective"));
-    towersShapeReport = std::move(*shape);
+                         usesTowers ? &control->towersSetup : nullptr,
+                         /*untimed=*/autoTowers && !control->towersShapeTable);
+    // A refusal of the preflight where AUTO took TOWERS is not an error
+    // of the input: the run takes the rule of D261 and says why.
+    bool fellBack = false;
+    if (!shape && autoTowers) {
+      fallBackFromTowers(llvm::toString(shape.takeError()));
+      fellBack = true;
+      usesTowers = false;
+      graphRefusal = control->stepGraphRefusal(system->numConstraints);
+      if (options.segments)
+        graphRefusal = "GRAPH does not support segmented execution";
+      if (control->stepGraph == "GRAPH" && !graphRefusal.empty())
+        return fail("step_graph: " + graphRefusal);
+      if (control->towersShapeGiven)
+        shape = checkTowersShape(*control, *system, /*setup=*/true);
+    }
+    if (!fellBack || control->towersShapeGiven) {
+      if (!shape)
+        return fail(shape.takeError());
+      if (usesTowers)
+        towersCellHeight =
+            shape->getObject("effective")->getString("cell_height")->str();
+      if (usesTowers)
+        resolvedChoices["towers_shape"] =
+            llvm::json::Object(*shape->getObject("effective"));
+      towersShapeReport = std::move(*shape);
+    }
   }
   auto graphChoice = initialStepGraphChoice(control->stepGraph, graphRefusal,
                                             system->getNumParticles());
@@ -1525,6 +1588,15 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     if (!towersCellHeight.empty())
       effective["towers_cell_height"] = towersCellHeight;
     resolvedChoices["step_graph"] = std::move(graphChoice);
+    // The traversal of AUTO, a rule (#952): what it chose and why, and
+    // the lookup of the traversal table behind it (D[best-defaults]).
+    if (control->neighborStructureRequested == NeighborStructure::Auto) {
+      traversalChoice["value"] =
+          getNeighborStructureName(control->neighborStructure);
+      traversalChoice["reason"] = control->neighborStructureReason;
+      traversalChoice["override"] = "[execution] neighbor_structure";
+      resolvedChoices["neighbor_structure"] = std::move(traversalChoice);
+    }
     llvm::json::Object metadata{
         {"build", getManifestBuild()}, {"effective", std::move(effective)},
         {"resolved_choices", std::move(resolvedChoices)},
@@ -1913,7 +1985,11 @@ static int runControlImpl(StringRef controlFile, Emit emit,
     output.log.print("MDIR: note: %s\n", note.c_str());
   // The structure that `AUTO` took, and why (D261); a
   // structure that was given is not repeated.
-  if (control->neighborStructureRequested == NeighborStructure::Auto) {
+  if (control->neighborStructureRequested == NeighborStructure::Auto &&
+      control->neighborStructure == NeighborStructure::Towers) {
+    output.log.print("MDIR: neighbor structure: TOWERS (AUTO: %s)\n",
+                     control->neighborStructureReason.c_str());
+  } else if (control->neighborStructureRequested == NeighborStructure::Auto) {
     if (control->neighborStructure == NeighborStructure::Groups)
       output.log.print("MDIR: neighbor structure: groups of 16 with the "
                        "reach %g Ang", control->pairlistDistance);
