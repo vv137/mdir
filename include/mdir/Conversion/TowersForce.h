@@ -4,15 +4,18 @@
 #include "mdir/Conversion/TowersBuild.h"
 #include "mdir/Conversion/TowersLaunch.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Support/ForceWords.h"
 
 namespace mdir::kernels {
 enum class TowersOutput { Force, Energy, Virial, DiagonalVirial, TensorVirial };
-// The forward index serves wide replay. The window is undirected, so the
-// fused pair loop can keep one target's exclusion data with its record.
+// The forward index serves the physical-pair traversal on wide replay.
 struct TowersExclusionIndex {
-  enum Column { ForwardMask, Maximum, Anchor, Window, Columns };
-  static constexpr int windowSize = 31;
+  enum Column { ForwardMask, Maximum, Columns };
 };
+
+// Coordinates use Q32 in nm. The force word's fractional bits are kept
+// as guard bits in the two-limb product until the entire virial is rounded.
+inline constexpr int towersVirialGuardBits = forceWordFractionBits;
 
 struct TowersForceShape {
   int panel, stripe, workers, records, residency;
@@ -36,6 +39,9 @@ struct TowersForceShape {
     return towersExclusionRows(exclusions, workers);
   }
 };
+
+mlir::Value decodeTowersSlotVirial(mlir::OpBuilder &b, mlir::Location loc,
+                                  mlir::Value limbs, int component);
 
 mlir::LogicalResult emitTowersForce(mlir::ModuleOp module, TowersLayout layout,
                                     md_exec::PairForOp term,

@@ -818,7 +818,7 @@ public:
                              exclusions ? regions.back()
                                         : mdir::md_exec::PairForOp{});
     };
-    if (!layout.host && directVirial && !exclusions &&
+    if (!layout.host && directVirial &&
         terms.front().getNumResults() == 1) {
       auto tensor = dyn_cast<VectorType>(terms.front().getResult(0).getType());
       if (tensor && tensor.getElementType().isF64() &&

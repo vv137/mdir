@@ -87,6 +87,7 @@ struct TowersTrial {
   CUcontext context{};
   CUstream stream{};
   static constexpr int iterations = 9;
+  static constexpr size_t virialBytes = 2 * 9 * sizeof(int64_t);
   CUevent boundaries[2 * iterations + 1]{};
   CUdeviceptr positions{}, edgesBox{}, raw{}, box{}, charge{}, types{}, map{},
       counts{}, rebuildStatus{}, geometry{}, keys{}, local{}, packed{},
@@ -169,7 +170,7 @@ struct TowersTrial {
         !allocate(spans, 8 * entries) || !allocate(state, 8) ||
         !allocate(failed, 8) || !allocate(words, 24 * n) ||
         !allocate(low, 24 * n) || !allocate(high, 24 * n) ||
-        !allocate(arrivals, 4) || !allocate(virial, 72) ||
+        !allocate(arrivals, 4) || !allocate(virial, virialBytes) ||
         !allocate(output, 24 * n))
       return false;
     if (exclusions && (!allocate(bonds, 8ULL * exclusions, edges.data()) ||
@@ -261,7 +262,7 @@ struct Sample {
         kernels::towersForceBlocks(f.cells, split, f.exclusions, threads);
     if (pressure) {
       args.push_back(&f.virial);
-      if (!f.check(api().cuMemsetD8Async(f.virial, 0, 72, f.stream),
+      if (!f.check(api().cuMemsetD8Async(f.virial, 0, f.virialBytes, f.stream),
                    "clear virial"))
         return false;
     }
@@ -275,6 +276,8 @@ struct Sample {
       args.pop_back();
     args[4] = &f.low;
     args.insert(args.end(), {&f.high, &f.words, &f.arrivals, &f.output});
+    if (pressure)
+      args.push_back(&f.virial);
     int grid =
         std::min<int64_t>(f.sms, kernels::towersFinishBlocks(n, threads));
     if (grid == 1)
