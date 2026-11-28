@@ -1333,20 +1333,19 @@ cosine for the exchange and real-fold phases. D[axis-fft-gaussian] also
 supports f64 butterflies and phases for an explicit double-precision run.
 Unoccupied lanes skip the loads and products but reach every block barrier.
 
-On the `sm_89` target, non-deterministic mixed TOWERS runs select the
-emitter for orthorhombic order-four Gaussian meshes of 40³, 64³, and 144 × 84 × 80.
-These three grids passed the independent full-chain reference and improved
-whole-step throughput in both RTX 4090 runs. The same AUTO rule admits the Gaussian folding grids
-28 × 28 × 30, 18 × 20 × 20, 32³, and 22 × 24 × 24, including tilted cells.
-Their full-frame errors and paired MATRIX timings are recorded in the decision.
-D[axis-fft-gaussian] qualifies the default Gaussian PME meshes on the
-same architecture and precision with the benchmark inputs' default
-traversals. The qualified meshes include the orthorhombic 54³, 120 × 70 × 70,
-and 224 × 108 × 108 grids and the orthorhombic and triclinic 40³ grids. Use
-`MDIR_PME_AXIS_FFT=off` to pin cuFFT or `on` to select the emitter on
-supported order-four meshes in mixed or double precision. Unqualified
-automatic choices, unsupported transform lengths, and deterministic
-fixed-order evaluations use cuFFT with a reason.
+On `sm_89`, D[axis-fft-gaussian] automatically selects the emitter
+for non-deterministic mixed-precision order-four Gaussian PME, with
+either an orthorhombic or triclinic cell. Each axis must be 40–224 points
+long, the grid must contain 64,000–2,612,736 points in total, and its axis
+lengths must meet the factorization requirements above. The paired
+benchmarks span 40³, 54³, 120 × 70 × 70, and 224 × 108 × 108. The range
+applies across neighbor traversals. Outside the measured range, AUTO
+keeps cuFFT and reports the range in its reason.
+
+Use `MDIR_PME_AXIS_FFT=off` to pin cuFFT or `on` to request the
+emitter on supported order-four meshes in mixed or double precision.
+Unsupported transform lengths and deterministic fixed-order evaluations
+use cuFFT with a reason.
 
 The setup log and the manifest's `effective.pme.fft_plans` report the
 backend and reason for each requested evaluation. Each stage of a generated

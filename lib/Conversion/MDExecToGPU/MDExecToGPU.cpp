@@ -6190,9 +6190,6 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   StringRef fallback;
   auto requested = op->getAttrOfType<StringAttr>("md_exec.fft_requested");
   StringRef request = requested ? requested.getValue() : StringRef();
-  bool qualifiedTriclinic = !radial &&
-                            (isFoldingFFTMesh(grid) ||
-                             grid == ArrayRef<int64_t>({40, 40, 40}));
   if (!supportsAxisFFT(grid))
     fallback = "unsupported axis length";
   else if (request == "off")
@@ -6201,19 +6198,21 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     fallback = "fixed-order evaluation";
   else if (request == "auto-cufft")
     fallback = radial ? "no qualified timing for this prolate target or split"
-                      : "no qualified timing for this Gaussian target or traversal";
+                      : "Gaussian AUTO requires sm_89 and mixed precision";
   else if (!position.isF64())
     fallback = "requires f64 positions";
   else if (!radial && op.getOrder() != 4)
     fallback = "unqualified spline order";
   else if (op.getDispersion() || op.getP3m())
     fallback = "requires Gaussian influence";
-  else if (tilted && !qualifiedTriclinic && request != "on")
+  else if (tilted && radial && request != "on")
     fallback = "unqualified triclinic mesh";
   else if (op.getPotential())
     fallback = "charge derivative";
   else if (op->hasAttr("md_exec.fft_measured_cufft"))
     fallback = "axis did not win both whole-step timings";
+  else if (!radial && request == "auto" && !inGaussianAxisFFTRange(grid))
+    fallback = kGaussianAxisFFTOutsideRange;
   else if (!pitch || pitch.getInt() != axisFFTPitch(grid[2]))
     fallback = radial ? "no qualified prolate axis timing for this mesh"
                       : "no qualified Gaussian axis timing for this mesh";
@@ -6246,8 +6245,8 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     if (request == "auto") {
       if (radial)
         reason = "prolate axis faster in both timing orders";
-      else if (isGaussianBenchmarkFFTMesh(grid))
-        reason = "Gaussian benchmark mesh qualified by paired timings";
+      else
+        reason = kGaussianAxisFFTRange;
     }
     recordFFTPlan(module, op, reason, fn);
     SmallVector<Value> args{real, complex, tables};

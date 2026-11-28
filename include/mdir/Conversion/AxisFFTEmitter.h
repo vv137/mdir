@@ -28,20 +28,22 @@ inline std::optional<AxisFactors> factorAxis(int64_t n) {
   return std::nullopt;
 }
 
-inline bool isFoldingFFTMesh(llvm::ArrayRef<int64_t> grid) {
-  return grid == llvm::ArrayRef<int64_t>({28, 28, 30}) ||
-         grid == llvm::ArrayRef<int64_t>({32, 32, 32}) ||
-         grid == llvm::ArrayRef<int64_t>({18, 20, 20}) ||
-         grid == llvm::ArrayRef<int64_t>({22, 24, 24});
+// The inclusive axis and volume bounds of the Gaussian timings
+// (D[axis-fft-gaussian]). Check the axes before multiplying.
+inline bool inGaussianAxisFFTRange(llvm::ArrayRef<int64_t> grid) {
+  if (grid.size() != 3)
+    return false;
+  for (int64_t axis : grid)
+    if (axis < 40 || axis > 224)
+      return false;
+  int64_t points = grid[0] * grid[1] * grid[2];
+  return points >= 40 * 40 * 40 && points <= 224 * 108 * 108;
 }
 
-// The default Gaussian meshes covered by the benchmark comparisons.
-inline bool isGaussianBenchmarkFFTMesh(llvm::ArrayRef<int64_t> grid) {
-  return grid == llvm::ArrayRef<int64_t>({40, 40, 40}) ||
-         grid == llvm::ArrayRef<int64_t>({54, 54, 54}) ||
-         grid == llvm::ArrayRef<int64_t>({120, 70, 70}) ||
-         grid == llvm::ArrayRef<int64_t>({224, 108, 108});
-}
+inline constexpr llvm::StringLiteral kGaussianAxisFFTRange =
+    "supported Gaussian FFT with axes 40-224 and 64000-2612736 total points";
+inline constexpr llvm::StringLiteral kGaussianAxisFFTOutsideRange =
+    "outside Gaussian FFT timing range (axes 40-224, 64000-2612736 total points)";
 
 inline bool supportsAxisFFT(llvm::ArrayRef<int64_t> grid) {
   return grid.size() == 3 && grid[2] % 2 == 0 && factorAxis(grid[0]) &&

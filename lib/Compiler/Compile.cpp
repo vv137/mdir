@@ -1,5 +1,4 @@
 #include "mdir/Compiler/Compile.h"
-#include "mdir/Conversion/AxisFFTEmitter.h"
 #include "mdir/Conversion/GPUToBinary.h"
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Dialect/Dyn/DynDialect.h"
@@ -463,15 +462,12 @@ std::string mdir::compiler::getPipeline(const Control &control,
                           !control.deterministic;
     bool towers = control.neighborStructure == NeighborStructure::Towers;
     // D445 qualifies the prolate split and assignment together on TOWERS.
-    // D[axis-fft-gaussian] also compared the benchmark Gaussian meshes
-    // with the default traversal. Storage assignment checks each mesh.
-    bool measuredProlate = towers && control.pmeContinuity == 2 &&
-                           control.pmeBasisTerms == 8 &&
-                           control.pmeWindow == "BSPLINE";
-    bool measuredGaussian =
-        towers || kernels::isGaussianBenchmarkFFTMesh(program.pmeGrid);
+    // The Gaussian mesh range applies across traversals
+    // (D[axis-fft-gaussian]); storage assignment checks each mesh.
     bool measuredProgram =
-        program.pmeProlate ? measuredProlate : measuredGaussian;
+        !program.pmeProlate ||
+        (towers && control.pmeContinuity == 2 && control.pmeBasisTerms == 8 &&
+         control.pmeWindow == "BSPLINE");
     os << "md-exec-assign-storage{memory=device";
     if (fftChoice == "auto" && program.pme)
       os << " pme-axis-fft="

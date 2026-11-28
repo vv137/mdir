@@ -2,20 +2,27 @@
 
 Recorded at its merge.
 
-Extend the five-pass Gaussian PME mesh transform (D435) to the grids
-selected for JAC, Factor IX, TIP3P 10k, Cellulose, and Trp-cage. Keep the
-Gaussian split, grid dimensions, and assignment order selected by the
-existing PME keys.
+**Use the five-pass Gaussian PME mesh transform (D435) across the
+measured mesh range on mixed-precision `sm_89` devices.**
 
-Automatic selection qualifies the backend on `sm_89` in mixed precision.
-The benchmark default meshes are 54³ for JAC, 120 × 70 × 70 for Factor IX,
-40³ for TIP3P 10k and both Trp-cage inputs, and 224 × 108 × 108 for
-Cellulose. The 40³ rule covers orthorhombic and triclinic cells. The other
-three benchmark meshes qualify for orthorhombic cells. The setup log and the manifest's
-`effective.pme.fft_plans` give the mesh, the selected backend, and the
-reason for each evaluation. An unsupported or unqualified plan uses
-cuFFT. The existing `MDIR_PME_AXIS_FFT` override selects the backend
-for paired measurements, and fixed-order evaluation retains cuFFT.
+AUTO uses the axis transform for order-four Gaussian PME in
+non-deterministic mixed precision on `sm_89`, including orthorhombic
+and triclinic cells. Each axis must be 40–224 points long and the mesh
+must contain 64,000–2,612,736 points, inclusive. The transform also
+requires even Z and supported factorizations of X, Y, and Z/2. The
+range spans the paired benchmark meshes 40³, 54³, 120 × 70 × 70, and
+224 × 108 × 108. The rule applies across neighbor traversals and
+supersedes the earlier Gaussian mesh lists, including the smaller D435
+folding grids.
+
+The setup log and the manifest's `effective.pme.fft_plans` give the
+mesh, selected backend, and reason for each evaluation. Gaussian AUTO
+reports the measured range when selecting axis or falling back to cuFFT
+for a supported mesh outside it. Unsupported transforms and fixed-order
+evaluation use cuFFT. The existing PME keys select the split, grid, and
+assignment order. `MDIR_PME_AXIS_FFT` can explicitly select cuFFT or
+request a supported axis transform beyond the AUTO range and in double
+precision.
 
 Validation compares reciprocal forces with cuFFT in mixed and double
 precision and checks fixed-order repeatability. Whole-step and mesh

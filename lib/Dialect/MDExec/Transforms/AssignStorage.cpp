@@ -1442,12 +1442,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   ScatterAttr scatter = op.getScatterAttr();
   bool tiled = scatter && scatter.isTile();
   bool fixedOrder = algebra::getAlgebra(op, 0) == Algebra::FixedOrder;
-  // The measured Gaussian meshes for the five-pass plan (D435,
-  // D[axis-fft-gaussian]).
-  bool measuredMesh = kernels::isFoldingFFTMesh(grid) ||
-                      kernels::isGaussianBenchmarkFFTMesh(grid) ||
-                      grid == ArrayRef<int64_t>({64, 64, 64}) ||
-                      grid == ArrayRef<int64_t>({144, 84, 80});
+  bool measuredMesh = kernels::inGaussianAxisFFTRange(grid);
   bool measuredCuFFT = false;
   if (op.getProlate()) {
     // D445. At setup the driver has already checked the
