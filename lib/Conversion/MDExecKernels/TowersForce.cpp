@@ -75,7 +75,8 @@ private:
   }
   Value localSum;
   Value clonePair(Value t, Value s, Value ti, Value si, Value r2, Value d,
-                  ValueRange targetParameters, bool physical);
+                  ValueRange targetParameters, bool physical,
+                  Value *radial = nullptr);
   void observe(Value result, Value d, bool physical);
   void startObservation();
   void flushObservation();
@@ -234,7 +235,8 @@ Value Force::squared(Value d) {
 }
 
 Value Force::clonePair(Value t, Value s, Value ti, Value si, Value r2, Value d,
-                       ValueRange targetParameters, bool physical) {
+                       ValueRange targetParameters, bool physical,
+                       Value *radial) {
   Block &body = (physical ? correction : term).getKernel().front();
   IRMapping inside = mapping;
   inside.map(body.getArgument(0), r2);
@@ -295,7 +297,21 @@ Value Force::clonePair(Value t, Value s, Value ti, Value si, Value r2, Value d,
     else
       accumulate();
   }
-  return inside.lookupOrDefault(body.getTerminator()->getOperand(physical ? 0 : yieldIndex));
+  Value yielded = body.getTerminator()->getOperand(physical ? 0 : yieldIndex);
+  // A central force yields its radial factor times the displacement.
+  if (radial) {
+    *radial = Value();
+    if (auto product = yielded.getDefiningOp<arith::MulFOp>())
+      for (auto [factor, other] : {std::pair{product.getLhs(), product.getRhs()},
+                                   std::pair{product.getRhs(), product.getLhs()}})
+        if (auto broadcast = factor.getDefiningOp<vector::BroadcastOp>();
+            broadcast && other == body.getArgument(1) &&
+            broadcast.getSource().getType() == f32) {
+          *radial = inside.lookupOrDefault(broadcast.getSource());
+          break;
+        }
+  }
+  return inside.lookupOrDefault(yielded);
 }
 
 // A rejected pair gets a legal radius, but its displacement still belongs
@@ -349,16 +365,52 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
   if (selectCutoff)
     r2 = select(take, r2, mulf(cutoff2, cf(0.5)));
   auto convert = [&]() -> Values {
-    Value f = clonePair(t, s, ti, si, r2, d, targetParameters, physical);
+    Value radial;
+    Value f = clonePair(t, s, ti, si, r2, d, targetParameters, physical,
+                        &radial);
     Values scaled;
     Value narrow = cb(true);
-    for (int a = 0; a < 3; ++a) {
-      Value x = mulf(extract(f, a), wordScale);
-      if (selectCutoff)
-        x = select(take, x, cf(0));
-      scaled.push_back(x);
-      narrow = andi(narrow, andi(cmpf(CmpFPredicate::OGE, x, cf(-0x1p31)),
+    // A central force on the certified GPU path selects and scales its
+    // radial factor once and screens all three components with one test
+    // (D[towers-pair-tail]). The moving dispatch passes the power of two
+    // forceWordScale, so d_a (s w) rounds as (d_a s) w; other entries keep
+    // the product order.
+    bool central = radial && !g.host && !excluding && !recovering &&
+                   certified;
+    if (central) {
+      Value factor = selectCutoff ? select(take, radial, cf(0)) : radial;
+      if (movingDispatch)
+        factor = mulf(factor, wordScale);
+      for (int a = 0; a < 3; ++a) {
+        Value x = mulf(extract(d, a), factor);
+        scaled.push_back(movingDispatch ? x : mulf(x, wordScale));
+      }
+      // Rounding to nearest is monotone. If any component is a NaN, an
+      // infinity or of magnitude at least 2^31, the rounded sum of squares
+      // is not below 2^62. Only then do the exact endpoint tests decide.
+      Value norm = mulf(scaled[2], scaled[2]);
+      norm = math::FmaOp::create(b, loc, scaled[1], scaled[1], norm);
+      norm = math::FmaOp::create(b, loc, scaled[0], scaled[0], norm);
+      narrow = ifElse(
+          {i1}, cmpf(CmpFPredicate::OLT, norm, cf(0x1p62)),
+          [&] { return Values{cb(true)}; },
+          [&] {
+            Value inside = cb(true);
+            for (Value x : scaled)
+              inside = andi(inside,
+                            andi(cmpf(CmpFPredicate::OGE, x, cf(-0x1p31)),
                                  cmpf(CmpFPredicate::OLT, x, cf(0x1p31))));
+            return Values{inside};
+          })[0];
+    } else {
+      for (int a = 0; a < 3; ++a) {
+        Value x = mulf(extract(f, a), wordScale);
+        if (selectCutoff)
+          x = select(take, x, cf(0));
+        scaled.push_back(x);
+        narrow = andi(narrow, andi(cmpf(CmpFPredicate::OGE, x, cf(-0x1p31)),
+                                   cmpf(CmpFPredicate::OLT, x, cf(0x1p31))));
+      }
     }
     auto wide = [&] {
       Values result;
