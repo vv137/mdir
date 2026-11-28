@@ -1,0 +1,11 @@
+# D[towers-npt-grid]
+
+Recorded at its merge.
+
+**Use the fine TOWERS grid in rectangular pressure-coupled dynamics, and rebuild at the reserved count on an axis when the current cell becomes too short.** Issue #1051.
+
+D450 first set the size of the pressure-coupled grid for the run by removing one bin per axis where the ownership stencil permitted it. The reserve protects against contraction, at the cost of additional candidate pairs on every force evaluation. The setup allocates the fine grid for rectangular boxes when the moving build can visit its cells in the existing particle launch. The active grid is a subset of that allocation.
+
+On an axis with nominal count $n$, the active count is $n$ while its bin width covers the corresponding cutoff stencil. When the width fails that condition, the active count drops by one wherever the prior reserve would have done so. Membership, the wrap of the ownership stencil, and exclusion displacements use the same active counts. The physical width check stays on the device. The padded launch and allocation sizes allow graph and span replay across a change of active count.
+
+This changes the internal grid choice. The control file, checkpoint format, pressure-coupling interval, and direct virial formula are unchanged.
