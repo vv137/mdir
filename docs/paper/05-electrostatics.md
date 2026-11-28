@@ -452,7 +452,7 @@ and the second register transform gives $q$. Register stages resolve one
 radix digit at a time in Stockham order. Adjacent lanes own neighboring
 Z slots in the strided passes. Global memory transfers use two scalars at
 each complex index. These are f32 in mixed precision. With
-D[axis-fft-gaussian], an explicit double-precision run uses f64 for the
+D451, an explicit double-precision run uses f64 for the
 mesh, the butterflies, and the exchange and real-fold phases. Automatic
 selection on `sm_89` uses the mixed transform for supported Gaussian
 meshes with 18–224 points per axis and 7,200–2,612,736 points overall

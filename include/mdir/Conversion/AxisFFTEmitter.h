@@ -35,7 +35,7 @@ inline bool isFoldingFFTMesh(llvm::ArrayRef<int64_t> grid) {
          grid == llvm::ArrayRef<int64_t>({22, 24, 24});
 }
 
-// The inclusive bounds of the Gaussian timings (D435, D[axis-fft-gaussian]).
+// The inclusive bounds of the Gaussian timings (D435, D451).
 // Check the axes before multiplying.
 inline bool inGaussianAxisFFTRange(llvm::ArrayRef<int64_t> grid) {
   if (grid.size() != 3)

@@ -1329,11 +1329,11 @@ valid frequencies and occupies a multiple of four complex slots. X, Y and
 Z/2 must each factor into two register transforms of at most 32 points.
 The accepted prime radices are 2, 3, 5, 7, and 11. Register stages embed roots
 rounded from double precision. Mixed precision uses f32 device sine and
-cosine for the exchange and real-fold phases. D[axis-fft-gaussian] also
+cosine for the exchange and real-fold phases. D451 also
 supports f64 butterflies and phases for an explicit double-precision run.
 Unoccupied lanes skip the loads and products but reach every block barrier.
 
-On `sm_89`, D[axis-fft-gaussian] automatically selects the emitter
+On `sm_89`, D451 automatically selects the emitter
 for non-deterministic mixed-precision order-four Gaussian PME, with
 either an orthorhombic or triclinic cell. Each axis must be 18–224 points
 long, the grid must contain 7,200–2,612,736 points in total, and its axis
@@ -1401,7 +1401,7 @@ plan only for mixed TOWERS on `sm_89` with `continuity = 2`,
 orthorhombic meshes where it was faster in both timing orders: 30³, 48³
 and 105 × 60 × 60. On a triclinic cell the same target and split
 qualify the four D435 folding meshes (18 × 20 × 20, 22 × 24 × 24,
-28 × 28 × 30, and 32³), as recorded in D[axis-fft-gaussian]. AUTO keeps
+28 × 28 × 30, and 32³), as recorded in D451. AUTO keeps
 cuFFT on 189 × 90 × 90, where the axis plan was slower, and reports its
 reason when a mesh, split, precision or target falls outside the rule.
 The prolate window (`window = "PROLATE"`, of any order) uses cuFFT under

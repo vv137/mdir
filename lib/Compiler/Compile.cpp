@@ -463,7 +463,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
     bool towers = control.neighborStructure == NeighborStructure::Towers;
     // D445 qualifies the prolate split and assignment together on TOWERS.
     // The Gaussian mesh range applies across traversals
-    // (D[axis-fft-gaussian]); storage assignment checks each mesh.
+    // (D451); storage assignment checks each mesh.
     bool measuredProgram =
         !program.pmeProlate ||
         (towers && control.pmeContinuity == 2 && control.pmeBasisTerms == 8 &&

@@ -1,6 +1,6 @@
 # Appendix A. The control file
 
-D435 and D[axis-fft-gaussian] use the Gaussian PME mesh selected by
+D435 and D451 use the Gaussian PME mesh selected by
 `[pme]`, and D445 uses the prolate PME mesh. The setup log and manifest
 report the device convolution backend and the reason for its selection.
 Gaussian AUTO qualifies supported meshes on mixed-precision `sm_89`
