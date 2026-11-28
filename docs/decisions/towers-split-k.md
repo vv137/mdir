@@ -45,6 +45,14 @@ on the STMV starting frame, apart from split.
 The split 4 and 8 pins also enter the setup trial when other launch
 settings remain unpinned. AUTO proposes splits 1 and 2.
 
+On Trp-cage ff19SB+OPC NVT, the six matched RTX 4090 repeats gave
+force launch spans of 129.00 ± 3.63, 67.86 ± 0.93, 71.24 ± 0.88,
+and 75.73 ± 1.58 µs for splits 1, 2, 4, and 8, respectively. Split 2
+was fastest and took 26.66 µs longer than the 41.2 µs even-spread
+estimate in #1043. Whole-step rates were 892.8 ± 19.6, 1251.8 ± 46.6,
+1186.6 ± 84.4, and 1166.2 ± 71.1 ns/day. The values give means and
+sample standard deviations.
+
 ## Persistent work queue
 
 The prototype builds one queue item per tower and 32-source chunk.
