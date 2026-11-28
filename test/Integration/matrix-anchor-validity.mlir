@@ -14,11 +14,13 @@
 // configuration are (0, 1), (1, 2), and (2, 3), at 0.20, 0.95, and 0.85.
 // The periodic images give no additional pairs. The anchors of (1, 2)
 // remain 1.15 apart, which is outside cutoff + skin without the radii.
-// ANCHOR:      {{^3$}}
+// Use distinct powers of two for the three in-cutoff distances so the
+// result checks membership as well as the number of pairs.
+// ANCHOR:      {{^7$}}
 // ANCHOR-NEXT: {{^1$}}
-// SITE:        {{^3$}}
+// SITE:        {{^7$}}
 // SITE-NEXT:   {{^2$}}
-// NO-RADIUS:   {{^2$}}
+// NO-RADIUS:   {{^3$}}
 // NO-RADIUS-NEXT: {{^1$}}
 
 !vec = !md.field<@atoms, 3 x f64>
@@ -69,7 +71,15 @@ func.func @main() {
       cutoff(1.0) weights [0.5] policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     %one = arith.constant 1.0 : f64
-    md_exec.yield %one : f64
+    %two = arith.constant 2.0 : f64
+    %four = arith.constant 4.0 : f64
+    %short_limit = arith.constant 0.25 : f64
+    %middle_limit = arith.constant 0.81 : f64
+    %short = arith.cmpf olt, %r2, %short_limit : f64
+    %middle = arith.cmpf olt, %r2, %middle_limit : f64
+    %farther = arith.select %middle, %two, %four : f64
+    %bit = arith.select %short, %one, %farther : f64
+    md_exec.yield %bit : f64
   } : !nl, !vec -> f64
 
   %builds = md_exec.rebuild_count %second : !nl

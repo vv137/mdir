@@ -48,6 +48,15 @@ uses the pair-specific reach for admission. The force and energy kernels
 still test the current site distances, with the existing exclusions and
 minimum-image convention.
 
+The existing deterministic fold follows each row's search order. On a GPU
+the row slot also selects its lane before the lane reduction. The wider
+search and the extra entries outside the cutoff can therefore change the
+addition order even for identical in-cutoff site pairs. D84's repeatability
+applies to each fixed list decomposition. Comparing SITE and ANCHOR to
+the bit also requires an order independent of the list, including the
+assignment of in-cutoff entries to lanes. Canonical MATRIX summation is
+tracked in #409.
+
 The coverage fixture rotates a constrained member through 0.40 nm while
 the anchors stay still. A brute-force enumeration gives three pairs
 inside the 1.0 nm cutoff at the second configuration. The site list needs
