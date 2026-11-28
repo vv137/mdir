@@ -136,19 +136,30 @@ private:
   void stageParameters(gpu::GPUFuncOp fn);
   Value pos, id, features, bias, records, totals, keptSlots, accum, coarse;
   Value tid, lane, scale, limit, cutoff2, filterLimit;
-  // The split parts of a tower take its sources in turn
-  // (D[towers-split-interleave]): part p takes the logical sources p,
-  // p + split, ... A part-local index l stands for the logical p + split l.
+  // The split parts of a tower take its sources in turn by chunks of a warp
+  // (D[towers-split-interleave]): part p takes the logical chunks p,
+  // p + split, ... of 32 consecutive sources, so that each warp stages one
+  // contiguous chunk. A part-local index l = 32 c + r stands for the logical
+  // index 32 (split c + p) + r.
   Value sourcePart;
   Value logicalSource(Value local) {
-    return split == 1 ? local : addi(sourcePart, muli(local, cx(split)));
+    if (split == 1)
+      return local;
+    Value chunk = divui(local, cx(32)), rest = remui(local, cx(32));
+    return addi(muli(addi(muli(chunk, cx(split)), sourcePart), cx(32)), rest);
   }
   // The number of part-local sources whose logical index is below x.
   Value localSourcesBelow(Value x) {
     if (split == 1)
       return x;
-    return select(cmpi(CmpIPredicate::ule, x, sourcePart), cx(0),
-                  divui(addi(subi(x, sourcePart), cx(split - 1)), cx(split)));
+    Value chunk = divui(x, cx(32)), rest = remui(x, cx(32));
+    // Whole chunks of this part below the chunk of x, then the part of that
+    // chunk below x if it belongs to this part.
+    Value whole = select(
+        cmpi(CmpIPredicate::ule, chunk, sourcePart), cx(0),
+        divui(addi(subi(chunk, sourcePart), cx(split - 1)), cx(split)));
+    Value own = cmpi(CmpIPredicate::eq, remui(chunk, cx(split)), sourcePart);
+    return addi(muli(whole, cx(32)), select(own, rest, cx(0)));
   }
   void bind(ValueRange args);
   Value width(int axis);
@@ -1708,8 +1719,8 @@ void Force::traversal(Value block) {
   }
   // Contiguous halves of the column would give the first part the home and
   // lower layers, the only sources that meet home targets: up to nine times
-  // the screen passes of the second on a Trp-cage cell. Taking the sources
-  // in turn gives each part the same mix of layers.
+  // the screen passes of the second on a Trp-cage cell. Taking chunks of
+  // sources in turn gives each part the same mix of layers.
   sourcePart = part;
   begin = cx(0);
   end = localSourcesBelow(ns);

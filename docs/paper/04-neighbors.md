@@ -1340,7 +1340,7 @@ two blocks. Only the sources of the home and lower layers, the first in the
 column's order, meet the home targets, so contiguous halves load the first
 block more: on a Trp-cage cell of 3 x 3 x 5 bins it held 9.2 times the
 screen passes of the second, and the launch, one wave of blocks, waited for
-it. The parts therefore take the sources in turn, part $p$ the sources
+it. The parts therefore take chunks of 32 sources in turn, part $p$ the chunks
 $p, p + 2, \dots$; a home target's sources stay a contiguous range of the
 part's indices (D[towers-split-interleave]). Newton's opposite forces
 become opposite integer words, with a certificate on the final sums and

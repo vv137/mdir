@@ -3,3 +3,4 @@
 # RUN: %python %S/Inputs/towers_triclinic_filter.py %t mdir-opt | FileCheck %s
 # CHECK: lattice 0 reach 1 workers 32 packed 1: {{[0-9]+}} pairs; corner pair at 0.9
 # CHECK: lattice 1 reach 2 workers 64 packed 0: {{[0-9]+}} pairs; corner pair at 0.9
+# CHECK: dense reach 2 workers 64 packed 0: {{[0-9]+}} pairs
