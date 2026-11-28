@@ -87,7 +87,12 @@ def premise(lattice, target, source, reach):
     return distance, math.hypot(*gaps), bound
 
 
-def reference(lattice, fractional):
+def reference(lattice, fractional, rounded=False):
+    """With rounded, only the image nearest in fractional coordinates: an
+    image within the cutoff has fractional components below 1/6 of a cell
+    vector here, so it is that one."""
+    if rounded:
+        return reference_rounded(lattice, fractional)
     result = [0] * (3 * len(fractional))
     pairs = 0
     for i, j in itertools.combinations(range(len(fractional)), 2):
@@ -108,7 +113,25 @@ def reference(lattice, fractional):
     return result, pairs
 
 
-def check(directory, lattice, fractional, reach, workers, packed):
+def reference_rounded(lattice, fractional):
+    result = [0] * (3 * len(fractional))
+    pairs = 0
+    wrapped = [[x % 1 for x in p] for p in fractional]
+    for i, j in itertools.combinations(range(len(fractional)), 2):
+        u = [x - y for x, y in zip(wrapped[i], wrapped[j])]
+        d = cartesian(lattice, [x - round(x) for x in u])
+        if dot(d, d) >= 1:
+            continue
+        pairs += 1
+        for a, x in enumerate(d):
+            word = round(scale * 8 * x)
+            result[3 * i + a] += word
+            result[3 * j + a] -= word
+    return result, pairs
+
+
+def check(directory, lattice, fractional, reach, workers, packed,
+          capacity=16, expected=None):
     source = Path(__file__).with_name("towers-force.mlir").read_bytes()
     dims = (*dims_xy, 4 * reach)
     n, split = len(fractional), workers // 32
@@ -123,7 +146,6 @@ def check(directory, lattice, fractional, reach, workers, packed):
         "force-split": split,
         "exclusions": 0,
     }
-    capacity = 16
     image = rebuild.compile_entries(directory, dims, reach, n, capacity, True,
                                     True, False, ("spring", source), opts)
     e = rebuild.Entries(image, True)
@@ -151,7 +173,7 @@ def check(directory, lattice, fractional, reach, workers, packed):
     # and the types by particle.
     atoms = (r.packed_types,) if packed else (r.charge, r.types)
     fields = (state, rebuild.F(scale), failed, *atoms, table)
-    expected, pairs = reference(lattice, fractional)
+    expected, pairs = expected or reference(lattice, fractional)
     for reverse in (False, True):
         r.step(reverse)
         e.sync()
@@ -194,3 +216,14 @@ if __name__ == "__main__":
             print(f"lattice {index} reach {reach} workers {workers} packed {packed}: "
                   f"{pairs} pairs; corner pair at {distance:.4f}, "
                   f"summed gap {summed:.4f}, four-axis bound {bound:.4f}")
+    # Dense columns hold more than one chunk of 32 sources, so that the
+    # split parts take chunks in turn (D[towers-split-interleave]).
+    lattice = cases[0][0]
+    fractional = [
+        tuple(rng.randrange(256) / 256 for _ in range(3)) for _ in range(1200)
+    ]
+    expected = reference(lattice, fractional, rounded=True)
+    for reach, packed in itertools.product((1, 2), (1, 0)):
+        pairs = check(directory, lattice, fractional, reach, 64, packed, 64,
+                      expected)
+        print(f"dense reach {reach} workers 64 packed {packed}: {pairs} pairs")
