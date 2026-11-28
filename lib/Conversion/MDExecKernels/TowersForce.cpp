@@ -139,6 +139,18 @@ private:
   void bind(ValueRange args);
   Value width(int axis);
   Value lateralWord(Value info, int word, bool packedInfo);
+  // A triclinic device entry that reads the binary64 geometry converts the
+  // field offsets, the face normals and the lateral words once per block
+  // into workgroup memory (D[towers-triclinic-filter]). Layout: the field
+  // offsets (3 per field), n0, n1, then the ten lateral words.
+  Value blockGeometry;
+  bool stagesGeometry() const {
+    return g.triclinic && !g.host && !packedChargeType;
+  }
+  int blockGeometryWords() const { return 3 * (5 + 2 * g.reach) + 16; }
+  void stageBlockGeometry();
+  Value faceNormal(int axis, int component);
+  Value lateral(int word);
   Value validWidths(Value raw);
   void screenConstants(Value raw);
   void prepareGeometry();
@@ -203,14 +215,16 @@ Value Force::offsetComponent(ValueRange offset, int component, Value info,
 
 Value Force::point(Value slot, Value field) {
   Value p = load(packed, {slot});
-  bool precomputed = g.triclinic && !g.host && packedChargeType;
+  bool precomputed = g.triclinic && !g.host;
   Values shift, coords;
   if (!precomputed)
     shift = fieldOffset(field);
   for (int a = 0; a < 3; ++a) {
     Value offset;
     if (precomputed)
-      offset = load(geometry, {addi(cx(22 + a), muli(cx(3), field))});
+      offset = packedChargeType
+                   ? load(geometry, {addi(cx(22 + a), muli(cx(3), field))})
+                   : load(blockGeometry, {addi(cx(a), muli(cx(3), field))});
     else if (g.triclinic)
       offset = offsetComponent(shift, a, geometry, false);
     else
@@ -1367,21 +1381,13 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
     Value bound = cf(0);
     for (int a = 0; a < 4; ++a) {
       auto axis = [&](int k) {
-        if (a >= 2)
-          return lateralWord(geometry, 3 * (a - 2) + k,
-                             !g.host && packedChargeType);
-        return packedChargeType
-                   ? load(geometry, {cx(16 + 3 * a + k)})
-                   : truncf(
-                         load(geometry, {cx(a), cx(TowersLayout::normal + k)}));
+        return a >= 2 ? lateral(3 * (a - 2) + k) : faceNormal(a, k);
       };
       Value projected = math::FmaOp::create(
           b, loc, axis(0), extract(p, 0),
           math::FmaOp::create(b, loc, axis(1), extract(p, 1),
                               mulf(axis(2), extract(p, 2))));
-      bound = maxnumf(bound, subf(absf(projected),
-                                  lateralWord(geometry, 6 + a,
-                                              !g.host && packedChargeType)));
+      bound = maxnumf(bound, subf(absf(projected), lateral(6 + a)));
     }
     // Ties at the filter radius are kept.
     bound = maxnumf(cf(0), bound);
@@ -1657,6 +1663,9 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
 }
 
 void Force::traversal(Value block) {
+  // Entries that traverse no tower, such as a finish without a replay, do
+  // not convert the geometry.
+  stageBlockGeometry();
   Value owner = divui(block, cx(split)), part = remui(block, cx(split));
   int columns = 1 + 2 * g.reach;
   Values starts, counts;
@@ -1854,6 +1863,44 @@ Value Force::lateralWord(Value info, int word, bool packedInfo) {
   // Supports are positive: the next binary32 is one unit of the last place up.
   Value next = bitcast(f32, addi(bitcast(i32, nearest), ci(1)));
   return select(below, next, nearest);
+}
+
+Value Force::faceNormal(int axis, int component) {
+  if (stagesGeometry())
+    return load(blockGeometry,
+                {cx(3 * (5 + 2 * g.reach) + 3 * axis + component)});
+  if (!g.host && packedChargeType)
+    return load(geometry, {cx(16 + 3 * axis + component)});
+  return truncf(load(geometry, {cx(axis), cx(TowersLayout::normal + component)}));
+}
+
+Value Force::lateral(int word) {
+  if (stagesGeometry())
+    return load(blockGeometry, {cx(3 * (5 + 2 * g.reach) + 6 + word)});
+  return lateralWord(geometry, word, !g.host && packedChargeType);
+}
+
+// Every word is converted from the binary64 geometry by one thread at the
+// start of a traversal, so that staging a particle and filtering a target
+// read binary32 workgroup memory instead of converting binary64 rows at each
+// use.
+void Force::stageBlockGeometry() {
+  if (!stagesGeometry())
+    return;
+  int fields = 5 + 2 * g.reach;
+  for (int w = 0; w < blockGeometryWords(); ++w)
+    ifThen(cmpi(CmpIPredicate::eq, tid, cx(w % workers)), [&] {
+      Value v;
+      if (w < 3 * fields)
+        v = offsetComponent(fieldOffset(cx(w / 3)), w % 3, geometry, false);
+      else if (w < 3 * fields + 6)
+        v = truncf(load(geometry, {cx((w - 3 * fields) / 3),
+                                   cx(TowersLayout::normal + (w - 3 * fields) % 3)}));
+      else
+        v = lateralWord(geometry, w - 3 * fields - 6, false);
+      store(v, blockGeometry, {cx(w)});
+    });
+  gpu::BarrierOp::create(b, loc);
 }
 
 Value Force::validWidths(Value raw) {
@@ -2109,6 +2156,8 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
     limit = load(geometry, {cx(5)});
   } else
     screenConstants(geometry);
+  if (stagesGeometry())
+    blockGeometry = shared(fn, {blockGeometryWords()}, f32);
   owner = gpu::BlockIdOp::create(b, loc, gpu::Dimension::x);
   if (probe && !recovering) {
     trace = shared(fn, {11}, i64);
@@ -2360,7 +2409,8 @@ LogicalResult Force::emit() {
        body.getArgument(4).getType() != i32))
     return term.emitError("packed-charge-type requires charge (f32) and type "
                           "(i32) inputs in that order");
-  fixedBytes = (panel + stripe) * 44 + 16;
+  fixedBytes = (panel + stripe) * 44 + 16 +
+               (stagesGeometry() ? 4 * blockGeometryWords() : 0);
   for (unsigned j = 0; j < term.getIns().size(); ++j) {
     Type t = body.getArgument(2 + 2 * j).getType();
     if (typeParameter < 0 && t == i32)
