@@ -1442,12 +1442,12 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   ScatterAttr scatter = op.getScatterAttr();
   bool tiled = scatter && scatter.isTile();
   bool fixedOrder = algebra::getAlgebra(op, 0) == Algebra::FixedOrder;
-  // These order-four meshes passed the full-chain accuracy gate and
-  // benefited from five passes on the measured TOWERS target (#961).
+  // The measured Gaussian meshes for the five-pass plan (D435,
+  // D[axis-fft-gaussian]).
   bool measuredMesh = kernels::isFoldingFFTMesh(grid) ||
       (grid[0] == grid[1] && grid[1] == grid[2] &&
-       (grid[0] == 40 || grid[0] == 64)) ||
-      (grid[0] == 144 && grid[1] == 84 && grid[2] == 80);
+       (grid[0] == 40 || grid[0] == 54 || grid[0] == 64)) ||
+      grid == ArrayRef<int64_t>({144, 84, 80});
   bool measuredCuFFT = false;
   if (op.getProlate()) {
     // D445. At setup the driver has already checked the
@@ -1462,7 +1462,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   }
   bool requestAxis = axisFFT == "on" || (axisFFT == "auto" && measuredMesh);
   bool pitched =
-      requestAxis && onDevice && (gridType.isF32() || op.getProlate()) &&
+      requestAxis && onDevice &&
       cast<MemRefType>(positions.getType()).getElementType().isF64() &&
       (op.getOrder() == 4 || op.getProlate()) && !fixedOrder &&
       !op.getPotential() && !op.getP3m() && !op.getDispersion() &&
@@ -1571,7 +1571,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       op.getPotentialAttr(), op.getProlateAttr(), op.getSplineAssignmentAttr(),
       op.getP3mAttr(),
       op.getGatherAllAttr(), onDevice ? op.getScatterAttr() : ScatterAttr());
-  if (onDevice && (op.getProlate() || axisFFT != "off"))
+  if (onDevice)
     created->setAttr("md_exec.fft_requested",
                      scope.builder.getStringAttr(axisFFT));
   if (axisFFT == "auto" && measuredCuFFT)

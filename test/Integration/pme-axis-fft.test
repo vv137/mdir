@@ -9,6 +9,17 @@
 # RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --grid 40 40 40 > %t
 # RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=AUTO
 # RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=off" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=FALLBACK --implicit-check-not=fft_stage
+# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --grid 54 54 54 > %t
+# RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=JAC --implicit-check-not=mdrtCudaFFT
+# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --grid 54 54 55 | mdir-opt --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=ODD --implicit-check-not=fft_stage
+# JAC: backend = "axis"
+# JAC-SAME: grid = array<i64: 54, 54, 54>
+# JAC: call @mdrt_gpu_pme_axis_fft_54x54x54_observed
+# ODD: backend = "cufft"
+# ODD-SAME: grid = array<i64: 54, 54, 55>
+# ODD-SAME: reason = "unsupported axis length"
+# ODD: call @mdrtCudaFFTForward3DF32
+# ODD: call @mdrtCudaFFTBackward3DF32
 # RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --tilted --grid 22 24 24 > %t
 # RUN: mdir-opt %t --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=FOLDING
 # FOLDING: call @mdrt_gpu_pme_axis_fft_22x24x24

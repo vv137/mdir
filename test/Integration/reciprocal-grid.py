@@ -73,7 +73,8 @@ def expected(evaluator=False):
     return 2.5*values if evaluator else values
 
 
-def emit(evaluator=False, mixed=False, force_only=False, listed=False, tilted=False):
+def emit(evaluator=False, mixed=False, force_only=False, listed=False, tilted=False,
+         charge_derivative=True):
     force_element = 'f32' if mixed else 'f64'
     x_type = '!md.field<@atoms, 3 x f64>'
     force_type = f'!md.field<@atoms, 3 x {force_element}>'
@@ -98,7 +99,8 @@ def emit(evaluator=False, mixed=False, force_only=False, listed=False, tilted=Fa
             f'  md.return %u, %f, %w, %p : f64, {x_type}, vector<9xf64>, {q_type}',
             '}',
         ]
-    if mixed:
+    direct = mixed or not charge_derivative
+    if direct:
         del lines[1:5]
     serial = 0
 
@@ -144,7 +146,7 @@ def emit(evaluator=False, mixed=False, force_only=False, listed=False, tilted=Fa
     kind = 'triclinic' if tilted else 'orthorhombic'
     lines.append(f'  {cell} = md.{kind}_cell {", ".join(lengths)}')
     energy, force, virial, potential = (name() for _ in range(4))
-    if mixed:
+    if direct:
         subset = ''
         if listed:
             indices = name()
@@ -165,7 +167,7 @@ def emit(evaluator=False, mixed=False, force_only=False, listed=False, tilted=Fa
                 lines.extend([f'  {scalar} = vector.extract {virial}[{i}] : f64 from vector<9xf64>',
                               f'  func.call @mdrtPrintFFTValue({scalar}) : (f64) -> ()'])
         element = force_element if components == 3 else 'f64'
-        if mixed and components == 1:
+        if direct and components == 1:
             continue
         ty = 'memref<?' + ('x3' if components == 3 else '') + f'x{element}>'
         view = name()

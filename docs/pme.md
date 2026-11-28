@@ -1308,8 +1308,7 @@ call), ms a step:
 
 ## Five-pass Gaussian convolution on a device
 
-D435 generates five kernels for a mixed-precision
-Gaussian mesh. Z packs adjacent real points into complex pairs. Y transforms
+D435 generates five kernels for a Gaussian PME mesh. Z packs adjacent real points into complex pairs. Y transforms
 adjacent half-spectrum slots in a tile. The X pass transforms the remaining
 axis, calls the pointwise operation supplied by the PME lowering,
 and immediately inverts X. Inverse Y and Z produce the real potential for
@@ -1329,9 +1328,10 @@ The real mesh is compact. For even Z, each complex row contains Z/2 + 1
 valid frequencies and occupies a multiple of four complex slots. X, Y and
 Z/2 must each factor into two register transforms of at most 32 points.
 The accepted prime radices are 2, 3, 5, 7, and 11. Register stages embed roots
-rounded from double precision. The exchange and real-fold phases use f32
-device sine and cosine. Unoccupied lanes skip the loads and products but
-reach every block barrier.
+rounded from double precision. Mixed precision uses f32 device sine and
+cosine for the exchange and real-fold phases. D[axis-fft-gaussian] also
+supports f64 butterflies and phases for an explicit double-precision run.
+Unoccupied lanes skip the loads and products but reach every block barrier.
 
 On the `sm_89` target, non-deterministic mixed TOWERS runs select the
 emitter for orthorhombic order-four Gaussian meshes of 40³, 64³, and 144 × 84 × 80.
@@ -1339,9 +1339,11 @@ These three grids passed the independent full-chain reference and improved
 whole-step throughput in both RTX 4090 runs. The same AUTO rule admits the Gaussian folding grids
 28 × 28 × 30, 18 × 20 × 20, 32³, and 22 × 24 × 24, including tilted cells.
 Their full-frame errors and paired MATRIX timings are recorded in the decision.
-Other meshes default to cuFFT.
-Use `MDIR_PME_AXIS_FFT=off` to pin cuFFT or `on` to measure the emitter on
-other supported order-four meshes. Unsupported paths still use cuFFT.
+D[axis-fft-gaussian] adds the Gaussian 54³ mesh. Use
+`MDIR_PME_AXIS_FFT=off` to pin cuFFT or `on` to select the emitter on
+supported order-four meshes in mixed or double precision. Unqualified
+automatic choices, unsupported transform lengths, and deterministic
+fixed-order evaluations use cuFFT with a reason.
 
 The setup log and the manifest's `effective.pme.fft_plans` report the
 backend and reason for each requested evaluation. Each stage of a generated

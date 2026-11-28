@@ -468,8 +468,8 @@ std::string mdir::compiler::getPipeline(const Control &control,
     bool measuredProlate = control.pmeContinuity == 2 &&
                            control.pmeBasisTerms == 8 &&
                            control.pmeWindow == "BSPLINE";
-    if (program.pmeProlate && fftChoice == "auto" &&
-        !(measuredTarget && measuredProlate))
+    if (program.pme && fftChoice == "auto" &&
+        !(measuredTarget && (!program.pmeProlate || measuredProlate)))
       os << " pme-axis-fft=auto-cufft";
     else if (fftChoice == "on" || (fftChoice == "auto" && measuredTarget))
       os << " pme-axis-fft=" << fftChoice;

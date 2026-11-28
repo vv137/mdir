@@ -1,8 +1,10 @@
 # Appendix A. The control file
 
-D435 and D445 use the Gaussian or prolate mesh selected by `[pme]`. The device
-convolution choice and its validation override are described in
-the PME reference for [Gaussian](../pme.md#five-pass-gaussian-convolution-on-a-device) and [prolate](../pme.md#cutoff-continuity-of-the-prolate-splitting) splitting.
+D435 and D[axis-fft-gaussian] use the Gaussian PME mesh selected by
+`[pme]`, and D445 uses the prolate PME mesh. The setup log and manifest
+report the device convolution backend and the reason for its selection.
+See the PME reference for [Gaussian](../pme.md#five-pass-gaussian-convolution-on-a-device)
+and [prolate](../pme.md#cutoff-continuity-of-the-prolate-splitting) choices.
 
 D380 reserves internal configuration for the separate
 frame product program. No control-file key sets it, and no default, file
