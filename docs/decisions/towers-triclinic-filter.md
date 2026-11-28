@@ -28,11 +28,44 @@ Recorded 2026-11-28.
 
 ## 4. Where the 2.2 times comes from
 
-Measured on RTX 4090 with the same frame and the same TOWERS shape on the Trp-cage cell (60°, 60°, 90°) and on an orthorhombic control of the same particles and volume, $L\times L\times L/\sqrt2$. To be completed with the measurements of this branch.
+Measured on RTX 4090 with the same frames and the same pinned TOWERS shape (512 threads, one block per SM, split 2, HALF height: 3 x 3 x 5 bins, 90 tower blocks and 28 exclusion blocks per launch for ff19SB+OPC) on the Trp-cage cell (60°, 60°, 90°) and on an orthorhombic control of the same particles and volume, $L \times L \times L/\sqrt2$. The control's residues were wrapped by their centers into that box and relaxed by minimization and 10 ps of NVT (OpenMM); its grid is again 3 x 3 x 5 bins with the same populations.
+
+1. [measured] Kernel time per step, uninstrumented `main`, Nsight Systems over steps 1,200 to 3,800 of 4,000, NVT, 2 fs:
+
+| Input | TOWERS force + finish (µs) | TOWERS pair kernels (µs) | Matrix pair loop (µs) | Matrix pair kernels (µs) | Ratio of the pair kernels |
+|---|---:|---:|---:|---:|---:|
+| Trp-cage ff19SB+OPC, cell | 92.4 | 101.9 | 40.3 | 46.4 | 2.20 |
+| Orthorhombic control | 78.2 | 81.1 | 40.1 | 46.3 | 1.75 |
+| Trp-cage ff14SB+TIP3P, cell | 63.4 | 73.3 | 33.5 | 38.8 | 1.89 |
+| Orthorhombic control | 52.7 | 55.6 | 31.9 | 37.0 | 1.50 |
+
+   The pair kernels add the exclusion-correction pair loop, which runs on the tuple stream beside the TOWERS force. The matrix does not depend on the cell's shape. So of the 2.20 times, 1.75 are present on the orthorhombic control, and 1.26 come with the cell.
+2. [measured] The counters of an instrumented build, per force launch averaged over 261 launches, two-axis filter (`main`'s) on the same frames:
+
+| Quantity | Cell | Control |
+|---|---:|---:|
+| Input targets of the tiles | 124,034 | 118,102 |
+| Kept by the lateral filter, per input target | 0.974 | 0.720 |
+| Screened slot pairs (sources times kept targets) | 40.0 M | 29.6 M |
+| Screen passes | 4.21 M | 4.21 M |
+| Pass rate of the screen | 0.105 | 0.142 |
+| Records | 341,500 | 323,300 |
+| Sources per tile / panel (480) | 0.69 | 0.73 |
+| Targets per tile / stripe (512) | 0.93 | 0.93 |
+| Mean tower block (µs) | 59.3 | 57.4 |
+| Slowest tower block (µs) | 97.7 | 89.4 |
+| Exclusion block, the closest-image replay (µs) | 9.4 | 2.8 |
+
+3. [measured] The tower and exclusion blocks fit in one wave of 128 SMs, so a launch lasts as long as its slowest block. A block's time follows its screen passes (correlation 0.99 to 1.00 over the 90 tower blocks), not its screened slot pairs (0.02 to 0.14). The slowest blocks are the first parts of the towers: with contiguous halves of the column, only the first part meets the home targets, and it holds 9.2 times the passes of the second on the cell, 4.4 times on the control (D[towers-split-interleave]). The tilt of the column moves the upper layers away from the half plate, which is why the cell is worse.
+4. [measured] The phases of the slowest block on the cell: staging 4.4 µs, filter 3.1, screen 13.5, pair evaluation 69.2, the rest 8.0. The closest-image replay of the exclusion blocks (9.4 µs) and the conversion of the image shifts (now once per traversal, Section 1) are not on the critical path.
+5. [measured] So the 2.2 times is mostly the split: the first parts of the towers carry the home pairs, the launch waits for them, and the cell's tilt makes it worse. The filter is a small term: the cell keeps 0.974 of its lateral targets against 0.720 on the control. That excess is the cell's geometry: its bins are 12.3 Å across their faces against 15.0 Å on the control, for a cutoff of 12 Å. No lateral filter recovers it (item 6).
+6. [measured] The filters on the same frames. Kept per input target: two-axis 0.974, four-axis 0.893 (in the kernel, 261 launches); offline on the input frame, two-axis 0.968, four-axis 0.866, exact distance 0.843. The four-axis bound removes 8.3% of the targets that pass the two-axis filter in the kernel (10.5% offline); the exact distance would remove 12.9% offline, so the bound reaches 82% of what any lateral filter can remove (81% on the control, where the sum is exact). The screened slot pairs fall from 40.0 M to 36.7 M per launch and the pass rate rises from 0.105 to 0.115; the passes are unchanged. The slowest block's screen phase is 13.49 µs with either filter: the filter does not move the critical path.
 
 ## 5. Correctness
 
-To be completed.
+1. [measured] The instrumented build appends every unordered pair that the direct force kernel takes, within the cutoff, excluded pairs included, from the first launch of a module, and the runs write the frame of that launch. Brute force over the closest image in binary64 gives the reference set under the same cutoff and exclusion convention. On the input frames after 300 steps and on four frames of each Trp-cage input taken from a matrix run every 500 steps (then 10 steps): zero pairs missing, zero extra and zero duplicated outside the pairs within $10^{-4}$ Å of the cutoff, where binary32 and binary64 disagree (0 to 9 such pairs per frame of about 4.14 M and 2.34 M pairs). The same holds on the orthorhombic controls, with the two-axis and the four-axis filter, and after D[towers-split-interleave].
+2. [measured] The matrix's pair set is not dumped. It is compared here through brute force, which its own tests check, and through the run's energies (Section 6).
+3. [measured] `Runtime/towers-triclinic-filter-gpu.test`: two sheared lattices, ((8, 0, 0), (0, 8, 0), (4, 4, 6)) and ((8, 0, 0), (-3, 8, 0), (-2, -3, 8)), with $\hat{\mathbf n}_0\cdot\hat{\mathbf n}_1$ = 0.31 and 0.43, 150 random dyadic particles each, and a corner pair at 0.981 and 0.990 of the cutoff whose summed squared face gaps are 1.12 and 1.18 times the cutoff squared. The force words of a spring within the cutoff match an exhaustive loop over images exactly, for the packed and the binary64 geometry entries, reach 1 and 2, one and two warps per tower, in both insertion orders and through the replay of the certificate. Mutations that fail it: the sum of the squared gaps (the corner pair is missing), supports from one vertex, and part-local bounds rounded down (D[towers-split-interleave]).
 
 ## 6. Timing
 
