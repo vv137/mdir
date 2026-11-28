@@ -502,6 +502,16 @@ without an eligible pair region uses the derived shape. An explicit TOWERS run t
 For a topology with exclusions, setup allocates 16 bytes per atom for the
 forward exclusion index and the exclusion window that pressure evaluation
 caches with each target record (D455).
+
+For rectangular pressure-coupled runs whose fine grid fits the moving
+particle launch, the setup report gives the nominal `grid_bins` and marks
+`adaptive_grid`. The moving build uses the fine counts where the current
+bin widths cover the ownership stencil. When an axis crosses its lower
+width boundary, the build uses the reserved count on that axis and
+rebuilds membership and the periodic stencil before evaluating the force.
+The device checks the resulting widths. Triclinic and sparse grids use
+the fixed reserve of D450 (D[towers-npt-grid]).
+
 The effective manifest and checkpoint reserve `towers_cell_height` for the
 resolved height.
 See [Appendix A](paper/A-control-file.md) for AUTO fields.

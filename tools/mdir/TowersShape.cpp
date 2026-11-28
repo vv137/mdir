@@ -160,12 +160,12 @@ struct FrameSpans {
 };
 
 llvm::Expected<FrameSpans> measureSpans(const System &system, double cutoff,
-                                        int reach, bool variableBox) {
+                                        int reach, bool reserve) {
   mdir::tool::TowersCell geometry(system);
   FrameSpans maximum;
   Cell dims;
   for (int i = 0; i < 3; ++i) {
-    double n = geometry.bins(i, reach, cutoff, variableBox);
+    double n = geometry.bins(i, reach, cutoff, reserve);
     if (!(n >= (i == 2 ? 2 * reach + 1 : 3) && n < INT32_MAX / 4))
       return refusal("cell height is unsupported for this box and cutoff");
     dims[i] = int(n);
@@ -360,7 +360,8 @@ llvm::Expected<TowersShape>
 timeCandidates(const Control &control, const System &system,
                const Limits &limits, const FrameSpans &spans,
                const mdir::tool::TowersEmitter &emit,
-               std::vector<TowersShape> &candidates, Object &report) {
+               std::vector<TowersShape> &candidates, Object &report,
+               bool adaptiveGrid) {
   using namespace mdir;
   using namespace mdir::tool;
   auto start = std::chrono::steady_clock::now();
@@ -374,7 +375,7 @@ timeCandidates(const Control &control, const System &system,
   double cutoff = control.cutoffDistance * units::length;
   int reach = first.cellHeight == "HALF" ? 2 : 1;
   auto frame = createTowersTrial(limits.device, system, spans.cells, reach,
-                                 spans.capacity, parameters);
+                                 spans.capacity, parameters, adaptiveGrid);
   if (!frame)
     return frame.takeError();
   auto population = readTowersPopulation(**frame, *firstImage);
@@ -624,6 +625,14 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
   result["candidate_cells"] = std::move(planned);
   if (choices.empty())
     return refusal("cell height is unsupported for this box and cutoff");
+  bool adaptiveGrid = control.barostat &&
+                      geometry.adaptiveGrid(reach, cutoff, system.getNumParticles());
+  bool reserve = control.barostat && !adaptiveGrid;
+  llvm::json::Array gridBins;
+  for (int axis = 0; axis < 3; ++axis)
+    gridBins.push_back(int(geometry.bins(axis, reach, cutoff, reserve)));
+  result["grid_bins"] = std::move(gridBins);
+  result["adaptive_grid"] = adaptiveGrid;
   if (!*limits) {
     if (setup)
       return refusal(
@@ -634,7 +643,7 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
     result["register_check"] = "register check runs at setup";
     return result;
   }
-  auto maximum = measureSpans(system, cutoff, reach, control.barostat);
+  auto maximum = measureSpans(system, cutoff, reach, reserve);
   if (!maximum)
     return maximum.takeError();
   if (!maximum->cells)
@@ -669,7 +678,7 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
   if (!*emit) {
     if (setup) {
       auto frame = createTowersTrial((*limits)->device, system, maximum->cells,
-                                     reach, maximum->capacity, {});
+                                     reach, maximum->capacity, {}, adaptiveGrid);
       if (!frame)
         return frame.takeError();
       auto population = readTowersPopulation(**frame, rebuildOnly);
@@ -684,7 +693,7 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
         control.barostat ? "towers_force_virial" : "towers_force";
     if (setup) {
       shape = timeCandidates(control, system, **limits, *maximum, *emit,
-                             candidates, result);
+                             candidates, result, adaptiveGrid);
       if (!shape)
         return shape.takeError();
     } else {
@@ -703,9 +712,9 @@ mdir::tool::checkTowersShape(const Control &control, const System &system,
   if (resolved) {
     resolved->launch = *shape;
     resolved->capacity = maximum->capacity;
+    resolved->adaptiveGrid = adaptiveGrid;
     for (int a = 0; a < 3; ++a)
-      resolved->bins[a] =
-          int(geometry.bins(a, reach, cutoff, control.barostat));
+      resolved->bins[a] = int(geometry.bins(a, reach, cutoff, reserve));
   }
 #endif
   result["effective"] = fields(*shape, false);

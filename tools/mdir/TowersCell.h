@@ -28,12 +28,27 @@ struct TowersCell {
     }
   }
 
-  // Reserve one bin of contraction for a pressure-coupled box when the
-  // periodic ownership stencil still fits.
-  double bins(int axis, int reach, double cutoff, bool variableBox) const {
+  // A fixed pressure-coupled grid reserves one bin of contraction wherever
+  // the periodic ownership stencil still fits.
+  double bins(int axis, int reach, double cutoff, bool reserve) const {
     int radius = axis == 2 ? reach : 1;
     double count = std::floor(heights[axis] * radius / cutoff);
-    return variableBox && count > 2 * radius + 1 ? count - 1 : count;
+    return reserve && count > 2 * radius + 1 ? count - 1 : count;
+  }
+
+  // The particle preparation launch can rebuild the stencil for a padded
+  // rectangular grid when it has at least one work item per grid cell.
+  bool adaptiveGrid(int reach, double cutoff, size_t atoms) const {
+    if (triclinic)
+      return false;
+    double cells = 1;
+    bool canContract = false;
+    for (int axis = 0; axis < 3; ++axis) {
+      double count = bins(axis, reach, cutoff, false);
+      canContract |= count > 2 * (axis == 2 ? reach : 1) + 1;
+      cells *= count;
+    }
+    return canContract && cells <= atoms;
   }
 
   // Rectangular entries take Cartesian positions and the triclinic entries

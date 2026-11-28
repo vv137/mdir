@@ -41,6 +41,8 @@ llvm::Error Builder::build() {
       module->setAttr("mdir.towers_wide_pack", b.getUnitAttr());
     if (setup.launch.screen == "SCALAR")
       module->setAttr("mdir.towers_scalar_screen", b.getUnitAttr());
+    if (setup.adaptiveGrid)
+      module->setAttr("mdir.towers_adaptive_grid", b.getUnitAttr());
     if (control.stepGraph == "GRAPH")
       module->setAttr("mdir.towers_dt", b.getF64FloatAttr(control.timestep));
     if (system.topology)

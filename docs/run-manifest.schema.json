@@ -508,6 +508,8 @@
                 "source": {"type": "object"},
                 "selection": {"type": "string"},
                 "effective": {"type": "object"},
+                "grid_bins": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "integer", "minimum": 3}},
+                "adaptive_grid": {"type": "boolean"},
                 "candidate_cells": {"type": "array"},
                 "launch_candidates": {"type": "array"},
                 "screen_reason": {"type": "string"},

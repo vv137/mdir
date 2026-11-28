@@ -12,6 +12,9 @@ struct TowersLayout {
   // additional slot per atom. Inverse entries also carry the owning cell.
   bool growCells = false;
   bool widePack = false;
+  // A positive cutoff lets rectangular moving rows contract the active grid
+  // while keeping cell IDs and allocations pitched by the nominal counts.
+  double adaptiveCutoff = 0;
   int64_t slots() const {
     return int64_t(cells()) * capacity + (growCells ? atoms : 0);
   }
@@ -27,7 +30,8 @@ struct TowersLayout {
   // (D453).
   static constexpr int lattice = 3, step = 6, normal = 9, slab = 12,
                        diagonal = 13, support = 16;
-  int rawColumns() const { return triclinic ? 18 : 3; }
+  static constexpr int activeBins = 3;
+  int rawColumns() const { return triclinic ? 18 : adaptiveCutoff ? 4 : 3; }
   int boxSize() const { return triclinic ? 9 : 3; }
   // A packed triclinic force geometry ends with the two diagonal lateral axes
   // and the four supports of the cross-section, rounded up to binary32.
@@ -44,7 +48,8 @@ struct TowersMovingRow {
   TowersLayout g;
   bool cartesianPositions;
   mlir::Value positions, cell, raw, box, geometry, status, charge, types,
-      counts, keys, local, initialWords, initialState, initialFailed, arrivals;
+      counts, keys, local, initialWords, initialState, initialFailed, arrivals,
+      map;
   void emit(mlir::OpBuilder &b, mlir::Location loc, mlir::Value atom,
             mlir::ValueRange binsInfo, mlir::ValueRange fields) const;
 };

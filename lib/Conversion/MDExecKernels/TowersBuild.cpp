@@ -37,7 +37,8 @@ public:
 
   void emit(bool audit);
   void initializeCell(Value cell, Value map, Value counts);
-  void geometry(Value box, Value status, Value info);
+  void geometry(Value box, Value status, Value info, ValueRange binsInfo = {});
+  void mapActiveCell(Value cell, Value map, ValueRange active);
   void insert(Value item, Value atom, ValueRange xyzq, ValueRange binGeometry,
               ValueRange lattice, Value counts, Value keys, Value local);
 
@@ -57,7 +58,8 @@ private:
                 function_ref<void(Value, Value)> place);
   Value wrap(Value position, Value length);
   Value quarterCell(Value v, Value width, Value reciprocal);
-  Values locate(Value x, Value length, Value width, Value reciprocal, int bins);
+  Values locate(Value x, Value length, Value width, Value reciprocal, int bins,
+                Value active);
   void emitOwnership(MemRefType spans, MemRefType ids);
 };
 
@@ -121,11 +123,12 @@ Value TowersBuild::quarterCell(Value v, Value width, Value reciprocal) {
 }
 
 Values TowersBuild::locate(Value x, Value length, Value width, Value reciprocal,
-                           int bins) {
+                           int bins, Value active) {
+  Value quarters = muli(active, ci(4));
   auto precise = [&] {
     Value v = wrap(x, length);
     Value q = quarterCell(v, width, reciprocal);
-    return Values{v, minsi(maxsi(q, ci(0)), ci(4 * bins - 1))};
+    return Values{v, minsi(maxsi(q, ci(0)), subi(quarters, ci(1)))};
   };
   if (g.host || bins > (1 << 20)) {
     return precise();
@@ -140,19 +143,20 @@ Values TowersBuild::locate(Value x, Value length, Value width, Value reciprocal,
   Value guard =
       mulf(cf(0x1p-20f), arith::MaximumFOp::create(
                              b, loc, cf(1), math::AbsFOp::create(b, loc, q)));
+  Value period = sitofp(f32, quarters);
   Value interior = andi(cmpf(CmpFPredicate::OGT, gap, guard),
-                        andi(cmpf(CmpFPredicate::OGT, q, cf(-4 * bins)),
-                             cmpf(CmpFPredicate::OLT, q, cf(8 * bins))));
+                        andi(cmpf(CmpFPredicate::OGT, q, subf(cf(0), period)),
+                             cmpf(CmpFPredicate::OLT, q, mulf(cf(2), period))));
   return ifElse(
       {f64, i32}, interior,
       [&] {
         Value k = fptosi(i32, math::FloorOp::create(b, loc, q));
         Value below = cmpi(CmpIPredicate::slt, k, ci(0));
-        Value above = cmpi(CmpIPredicate::sge, k, ci(4 * bins));
+        Value above = cmpi(CmpIPredicate::sge, k, quarters);
         Value shift =
             select(below, length, select(above, subf(cd(0), length), cd(0)));
         Value delta =
-            select(below, ci(4 * bins), select(above, ci(-4 * bins), ci(0)));
+            select(below, quarters, select(above, subi(ci(0), quarters), ci(0)));
         return Values{addf(x, shift), addi(k, delta)};
       },
       precise);
@@ -203,7 +207,8 @@ void TowersBuild::sortWarp(Value keys, Value base, Value lane, Value count,
   }
 }
 
-void TowersBuild::geometry(Value box, Value status, Value info) {
+void TowersBuild::geometry(Value box, Value status, Value info,
+                           ValueRange binsInfo) {
   store(ci(0), status, {cx(0)});
   for (auto [axis, bins] : llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
     Value length = g.triclinic ? cd(1) : load(box, {cx(axis)});
@@ -233,10 +238,15 @@ void TowersBuild::geometry(Value box, Value status, Value info) {
       }
       store(divf(height, cd(bins)), info, {cx(axis), cx(TowersLayout::slab)});
     }
-    Value width = divf(length, cd(bins));
+    bool adaptive = g.adaptiveCutoff && !binsInfo.empty();
+    Value width = adaptive ? binsInfo[3 * axis + 1] : divf(length, cd(bins));
     store(length, info, {cx(axis), cx(0)});
     store(width, info, {cx(axis), cx(1)});
-    store(divf(cd(4), width), info, {cx(axis), cx(2)});
+    store(adaptive ? binsInfo[3 * axis + 2] : divf(cd(4), width), info,
+          {cx(axis), cx(2)});
+    if (g.adaptiveCutoff)
+      store(adaptive ? sitofp(f64, binsInfo[9 + axis]) : cd(bins), info,
+            {cx(axis), cx(TowersLayout::activeBins)});
   }
   if (!g.triclinic)
     return;
@@ -284,14 +294,47 @@ void TowersBuild::geometry(Value box, Value status, Value info) {
   }
 }
 
+void TowersBuild::mapActiveCell(Value cell, Value map, ValueRange active) {
+  Values coordinates;
+  Value occupied = cb(true);
+  int stride = g.cells();
+  auto dims = std::array{g.nx, g.ny, g.nz};
+  for (auto [axis, bins] : llvm::enumerate(dims)) {
+    stride /= bins;
+    Value coordinate = indexCast(i32, remui(divui(cell, cx(stride)), cx(bins)));
+    coordinates.push_back(coordinate);
+    occupied = andi(occupied, cmpi(CmpIPredicate::ult, coordinate, active[axis]));
+  }
+  // Wrap the stencil at the active boundary but retain the nominal pitch.
+  // An inactive cell maps to itself, so it publishes zero for all its spans.
+  for (auto [field, delta] : llvm::enumerate(offsets)) {
+    Value owner = ci(0);
+    for (auto [axis, pitch] : llvm::enumerate(dims)) {
+      Value coordinate = coordinates[axis];
+      if (delta[axis]) {
+        coordinate = subi(coordinate, ci(delta[axis]));
+        if (delta[axis] > 0)
+          coordinate = select(cmpi(CmpIPredicate::slt, coordinate, ci(0)),
+                              addi(coordinate, active[axis]), coordinate);
+        else
+          coordinate = select(cmpi(CmpIPredicate::sge, coordinate, active[axis]),
+                              subi(coordinate, active[axis]), coordinate);
+      }
+      owner = addi(muli(owner, ci(pitch)), coordinate);
+    }
+    store(select(occupied, owner, indexCast(i32, cell)), map, {cell, cx(field)});
+  }
+}
+
 void TowersBuild::initializeCell(Value cell, Value map, Value counts) {
   store(ci(0), counts, {cell});
   if (g.growCells)
     store(ci(-1), counts, {addi(cx(g.cells()), cell)});
-  for (auto [field, delta] : llvm::enumerate(offsets)) {
-    Offset back{-delta[0], -delta[1], -delta[2]};
-    store(indexCast(i32, neighbor(cell, back)), map, {cell, cx(field)});
-  }
+  if (!g.adaptiveCutoff)
+    for (auto [field, delta] : llvm::enumerate(offsets)) {
+      Offset back{-delta[0], -delta[1], -delta[2]};
+      store(indexCast(i32, neighbor(cell, back)), map, {cell, cx(field)});
+    }
 }
 
 void TowersBuild::insert(Value item, Value atom, ValueRange xyzq,
@@ -305,7 +348,8 @@ void TowersBuild::insert(Value item, Value atom, ValueRange xyzq,
     Value x = xyzq[axis];
     Value width = binGeometry[3 * axis + 1];
     Value reciprocal = binGeometry[3 * axis + 2];
-    Values located = locate(x, length, width, reciprocal, bins);
+    Value active = g.adaptiveCutoff ? binGeometry[9 + axis] : ci(bins);
+    Values located = locate(x, length, width, reciprocal, bins, active);
     Value v = located[0], quarter = located[1];
     Value bin = shrui(quarter, ci(2));
     cell = addi(muli(cell, cx(bins)), indexCast(index, bin));
@@ -415,6 +459,10 @@ void TowersBuild::emit(bool audit) {
                     load(a[2], {cx(axis), cx(TowersLayout::lattice + k)}));
             }
           }
+          if (g.adaptiveCutoff)
+            for (int axis = 0; axis < 3; ++axis)
+              binGeometry.push_back(fptosi(
+                  i32, load(a[2], {cx(axis), cx(TowersLayout::activeBins)})));
           xyzq.push_back(load(a[1], {atom}));
           insert(item, atom, xyzq, binGeometry, lattice, a[3], a[4], a[5]);
         });
@@ -603,6 +651,7 @@ SmallVector<Value> mdir::kernels::towersMovingBinGeometry(OpBuilder &b,
                                                           Value cell) {
   auto dbl = b.getF64Type();
   SmallVector<Value> binsInfo;
+  SmallVector<Value, 3> active;
   if (g.cells() <= g.atoms) {
     for (auto [a, bins] : llvm::enumerate(std::array{g.nx, g.ny, g.nz})) {
       Value length =
@@ -610,12 +659,29 @@ SmallVector<Value> mdir::kernels::towersMovingBinGeometry(OpBuilder &b,
                       : vector::ExtractOp::create(b, loc, cell, a).getResult();
       Value width =
           arith::DivFOp::create(b, loc, length, createReal(b, loc, dbl, bins));
+      if (g.adaptiveCutoff) {
+        int radius = a == 2 ? g.reach : 1;
+        Value count = arith::ConstantIntOp::create(b, loc, bins, 32);
+        if (bins > 2 * radius + 1) {
+          Value minimum = createReal(b, loc, dbl, g.adaptiveCutoff / radius);
+          Value fits = arith::CmpFOp::create(
+              b, loc, CmpFPredicate::OGE, width, minimum);
+          Value fallbackCount =
+              arith::ConstantIntOp::create(b, loc, bins - 1, 32);
+          Value fallbackWidth = arith::DivFOp::create(
+              b, loc, length, createReal(b, loc, dbl, bins - 1));
+          count = arith::SelectOp::create(b, loc, fits, count, fallbackCount);
+          width = arith::SelectOp::create(b, loc, fits, width, fallbackWidth);
+        }
+        active.push_back(count);
+      }
       binsInfo.push_back(length);
       binsInfo.push_back(width);
       binsInfo.push_back(
           arith::DivFOp::create(b, loc, createReal(b, loc, dbl, 4), width));
     }
   }
+  llvm::append_range(binsInfo, active);
   return binsInfo;
 }
 
@@ -670,9 +736,17 @@ void mdir::kernels::TowersMovingRow::emit(OpBuilder &k, Location loc, Value i,
     for (auto [j, v] : llvm::enumerate(lattice))
       memref::StoreOp::create(at, l, v, box, ValueRange{createIndex(at, l, j)});
     if (g.cells() <= g.atoms)
-      emitTowersGeometry(at, l, g, box, status, geometry);
+      TowersBuild(at, l, g).geometry(box, status, geometry, binsInfo);
     scf::YieldOp::create(at, l);
   });
+  if (g.adaptiveCutoff) {
+    auto inGrid = arith::CmpIOp::create(k, loc, arith::CmpIPredicate::ult, i,
+                                        axis(g.cells()));
+    scf::IfOp::create(k, loc, inGrid, [&](OpBuilder &at, Location l) {
+      TowersBuild(at, l, g).mapActiveCell(i, map, binsInfo.drop_front(9));
+      scf::YieldOp::create(at, l);
+    });
+  }
   if (!cartesianPositions)
     for (int a = 0; a < 3; ++a)
       memref::StoreOp::create(k, loc, xyz[a], raw, ValueRange{axis(a), i});
@@ -759,11 +833,12 @@ void mdir::kernels::emitOwnedTowersSpans(
 LogicalResult mdir::kernels::emitTowersBuild(ModuleOp module, TowersLayout g,
                                              bool audit) {
   auto [atoms, nx, ny, nz, reach, capacity, host, compact, triclinic,
-        growCells, widePack] = g;
+        growCells, widePack, adaptiveCutoff] = g;
   if (atoms < 1 || atoms >= (1 << 26) || (reach != 1 && reach != 2) || nx < 3 ||
       ny < 3 || nz < 2 * reach + 1 || capacity < 1 || nx > INT_MAX / 4 ||
       ny > INT_MAX / 4 || nz > INT_MAX / 4 ||
-      INT_MAX / capacity / nx / ny < nz || g.slots() > INT_MAX) {
+      INT_MAX / capacity / nx / ny < nz || g.slots() > INT_MAX ||
+      (adaptiveCutoff && (host || triclinic || !compact || g.cells() > atoms))) {
     return module.emitError("infeasible rectangular TOWERS layout");
   }
   OpBuilder builder = OpBuilder::atBlockEnd(module.getBody());

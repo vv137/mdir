@@ -248,7 +248,7 @@ struct Dispatch {
     TowersMovingRow input{g, bool(shape.cartesianPositions), positions, cell,
                           raw, box, geometry, status, charge, types, counts,
                           keys, local, initialWords, initialState, initialFailed,
-                          arrivals};
+                          arrivals, map};
     rows(b, loc, idx(g.atoms), [&](OpBuilder &k, Value i) {
       input.emit(k, loc, i, binsInfo, fields);
     });
@@ -545,6 +545,8 @@ LogicalResult mdir::kernels::lowerTowersPair(
       int(grid[3]), int(grid[4]), int(grid[5]),
       false,        true,         isTriclinic(pair.getCellMutable().get()),
       true, module->hasAttr("mdir.towers_wide_pack")};
+  if (module->hasAttr("mdir.towers_adaptive_grid"))
+    g.adaptiveCutoff = pair.getCutoff().convertToDouble();
   TowersForceShape shape{int(launch[2]),
                          int(launch[3]),
                          int(launch[0]),
