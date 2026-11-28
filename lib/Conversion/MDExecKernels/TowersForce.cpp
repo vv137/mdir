@@ -154,9 +154,9 @@ private:
   Value width(int axis);
   Value lateralWord(Value info, int word, bool packedInfo);
   // A triclinic device entry that reads the binary64 geometry converts the
-  // field offsets, the face normals and the lateral words once per block
-  // into workgroup memory (D[towers-triclinic-filter]). Layout: the field
-  // offsets (3 per field), n0, n1, then the ten lateral words.
+  // field offsets, the face normals and the lateral words once per
+  // traversal into workgroup memory (D[towers-triclinic-filter]). Layout:
+  // the field offsets (3 per field), n0, n1, then the ten lateral words.
   Value blockGeometry;
   bool stagesGeometry() const {
     return g.triclinic && !g.host && !packedChargeType;
@@ -1881,7 +1881,8 @@ Value Force::lateralWord(Value info, int word, bool packedInfo) {
   if (word < 6)
     return truncf(
         load(info, {cx(word / 3), cx(TowersLayout::diagonal + word % 3)}));
-  Value x = load(info, {cx(word % 2), cx(TowersLayout::support + (word - 6) / 2)});
+  Value x = load(info, {cx(word % 2),
+                        cx(TowersLayout::support + (word - 6) / 2)});
   Value nearest = truncf(x);
   Value below = cmpf(CmpFPredicate::OLT,
                      arith::ExtFOp::create(b, loc, f64, nearest), x);
@@ -1896,7 +1897,8 @@ Value Force::faceNormal(int axis, int component) {
                 {cx(3 * (5 + 2 * g.reach) + 3 * axis + component)});
   if (!g.host && packedChargeType)
     return load(geometry, {cx(16 + 3 * axis + component)});
-  return truncf(load(geometry, {cx(axis), cx(TowersLayout::normal + component)}));
+  return truncf(
+      load(geometry, {cx(axis), cx(TowersLayout::normal + component)}));
 }
 
 Value Force::lateral(int word) {
@@ -1919,8 +1921,9 @@ void Force::stageBlockGeometry() {
       if (w < 3 * fields)
         v = offsetComponent(fieldOffset(cx(w / 3)), w % 3, geometry, false);
       else if (w < 3 * fields + 6)
-        v = truncf(load(geometry, {cx((w - 3 * fields) / 3),
-                                   cx(TowersLayout::normal + (w - 3 * fields) % 3)}));
+        v = truncf(load(geometry,
+                        {cx((w - 3 * fields) / 3),
+                         cx(TowersLayout::normal + (w - 3 * fields) % 3)}));
       else
         v = lateralWord(geometry, w - 3 * fields - 6, false);
       store(v, blockGeometry, {cx(w)});

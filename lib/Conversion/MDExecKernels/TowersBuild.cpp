@@ -272,8 +272,9 @@ void TowersBuild::geometry(Value box, Value status, Value info) {
       for (int e1 : {1, -1}) {
         Value projection = cd(0);
         for (int k = 0; k < 3; ++k) {
-          Value vertex = mulf(cd(0.5), addf(mulf(cd(e0), at(0, TowersLayout::step + k)),
-                                           mulf(cd(e1), at(1, TowersLayout::step + k))));
+          Value vertex =
+              mulf(cd(0.5), addf(mulf(cd(e0), at(0, TowersLayout::step + k)),
+                                 mulf(cd(e1), at(1, TowersLayout::step + k))));
           projection = addf(projection, mulf(u[k], vertex));
         }
         support = maxnumf(support, projection);
