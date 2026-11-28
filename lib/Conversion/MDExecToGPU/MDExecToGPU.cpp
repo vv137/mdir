@@ -6188,35 +6188,36 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   auto pitch = op->getAttrOfType<IntegerAttr>("md_exec.fft_pitch");
   bool forceOnly = op.getEnergy().use_empty() && op.getVirial().use_empty();
   StringRef fallback;
-  auto request = op->getAttrOfType<StringAttr>("md_exec.fft_requested");
-  if (radial && !supportsAxisFFT(grid))
+  auto requested = op->getAttrOfType<StringAttr>("md_exec.fft_requested");
+  StringRef request = requested ? requested.getValue() : StringRef();
+  if (!supportsAxisFFT(grid))
     fallback = "unsupported axis length";
-  else if (radial && request && request.getValue() == "off")
+  else if (request == "off")
     fallback = "cuFFT requested";
-  else if (radial && request && request.getValue() == "auto-cufft")
-    fallback = "no qualified timing for this prolate target or split";
-  else if ((!narrowGrid && !radial) || !position.isF64())
-    fallback = "requires mixed precision";
+  else if (fixedPoint)
+    fallback = "fixed-order evaluation";
+  else if (request == "auto-cufft")
+    fallback = radial ? "no qualified timing for this prolate target or split"
+                      : "Gaussian AUTO requires sm_89 and mixed precision";
+  else if (!position.isF64())
+    fallback = "requires f64 positions";
   else if (!radial && op.getOrder() != 4)
     fallback = "unqualified spline order";
   else if (op.getDispersion() || op.getP3m())
     fallback = "requires Gaussian influence";
-  else if (tilted && !isFoldingFFTMesh(grid) &&
-           op->getAttrOfType<StringAttr>("md_exec.fft_requested") !=
-                         builder.getStringAttr("on"))
+  else if (radial && request != "on" && tilted && !isFoldingFFTMesh(grid))
     fallback = "unqualified triclinic mesh";
+  else if (radial && request == "auto" && !tilted && isFoldingFFTMesh(grid))
+    fallback = "no qualified prolate axis timing for this mesh";
   else if (op.getPotential())
     fallback = "charge derivative";
-  else if (fixedPoint)
-    fallback = "fixed-order evaluation";
-  else if (!supportsAxisFFT(grid))
-    fallback = "unsupported axis length";
   else if (op->hasAttr("md_exec.fft_measured_cufft"))
     fallback = "axis did not win both whole-step timings";
+  else if (!radial && request == "auto" && !inGaussianAxisFFTRange(grid))
+    fallback = kGaussianAxisFFTOutsideRange;
   else if (!pitch || pitch.getInt() != axisFFTPitch(grid[2]))
-    fallback = radial && request && request.getValue() == "auto"
-                   ? "no qualified prolate axis timing for this mesh"
-                   : "no pitched plan for this mesh";
+    fallback = radial ? "no qualified prolate axis timing for this mesh"
+                      : "no qualified Gaussian axis timing for this mesh";
   else if (!forceOnly && (grid[2] / 2 + 8) / 8 > grid[0])
     fallback = "insufficient block partial storage";
   if (fallback.empty()) {
@@ -6227,7 +6228,9 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                        "x" + std::to_string(grid[1]) + "x" +
                        std::to_string(grid[2]);
     if (radial)
-      name += narrowGrid ? "_prolate" : "_prolate_f64";
+      name += "_prolate";
+    if (!narrowGrid)
+      name += "_f64";
     if (tilted)
       name += "_triclinic";
     if (!forceOnly)
@@ -6240,9 +6243,14 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
       fn = emitter.emitAxisFFT(name, grid, pitch.getInt(), !forceOnly, tilted,
                                radial);
     }
-    StringRef reason = radial && request && request.getValue() == "auto"
-                           ? "prolate axis faster in both timing orders"
-                           : "supported mixed-radix mesh";
+    StringRef reason = "supported mixed-radix mesh";
+    if (request == "auto") {
+      if (radial)
+        reason = tilted ? "qualified triclinic prolate folding mesh"
+                        : "prolate axis faster in both timing orders";
+      else
+        reason = kGaussianAxisFFTRange;
+    }
     recordFFTPlan(module, op, reason, fn);
     SmallVector<Value> args{real, complex, tables};
     if (!forceOnly)

@@ -16,19 +16,23 @@ work = Path(directory)
 work.mkdir(parents=True, exist_ok=True)
 
 
-def run(grid, mixed, axis, force_only=False, tilted=False):
+def run(grid, mixed, axis, force_only=False, tilted=False, deterministic=False):
     gaussian.GRID = gaussian.reference.GRID = grid
     source = work / "input.mlir"
     with source.open("w") as out, contextlib.redirect_stdout(out):
-        gaussian.emit(mixed=mixed, force_only=force_only, tilted=tilted)
+        gaussian.emit(mixed=mixed, force_only=force_only, tilted=tilted,
+                      charge_derivative=False)
     args = [mdir_opt, str(source), "--md-inline", "--canonicalize",
-            "--convert-md-to-md-exec", "--md-exec-assign-algebra",
+            "--convert-md-to-md-exec",
+            "--md-exec-assign-algebra" + ("=deterministic=true" if deterministic else ""),
             "--md-exec-assign-storage=memory=device pme-axis-fft=" + ("on" if axis else "off"),
             "--convert-md-exec-to-gpu", "--md-alg-transform-collections",
             "--convert-md-alg-to-gpu", "--symbol-dce"]
     ir = subprocess.check_output(args)
     selected = b"call @mdrt_gpu_pme_axis_fft_" in ir
-    assert selected == (axis and mixed), (grid, selected)
+    assert selected == (axis and not deterministic), (grid, selected)
+    if deterministic and axis:
+        assert b'reason = "fixed-order evaluation"' in ir
     binary = subprocess.check_output(
         ["mlir-opt", f"--gpu-lower-to-nvvm-pipeline=cubin-format=isa cubin-chip={os.environ['MDIR_LIT_GPU_CHIP']}",
          "--convert-ub-to-llvm", "--reconcile-unrealized-casts"], input=ir)
@@ -52,10 +56,11 @@ for grid in ((15, 7, 10), (8, 9, 12)):
     emitter = run(grid, True, True)
     force_only = run(grid, True, True, True)
     baseline = run(grid, True, False)
-    double = run(grid, False, True)[:19]
+    double = run(grid, False, False)
     reference = gaussian.expected()[:19]
     print("mesh", grid)
     compare("double cuFFT / direct DFT", double, reference, 2e-7)
+    compare("double axis / double cuFFT", run(grid, False, True), double, 2e-12)
     compare("axis / direct DFT", emitter, reference, 3e-5)
     compare("axis / mixed cuFFT", emitter, baseline, 3e-5)
     np.testing.assert_allclose(force_only, reference[1:10], rtol=0,
@@ -72,3 +77,16 @@ for grid in ((28, 28, 30), (32, 32, 32), (18, 20, 20), (22, 24, 24)):
     double = run(grid, False, False, tilted=True)[:19]
     compare("axis / double cuFFT", emitter, double, 3e-5)
     compare("axis / mixed cuFFT", emitter, baseline, 3e-5)
+
+# JAC's default mesh uses radix 3 in the folded real transform and both
+# complex transforms. Fixing the accumulation order retains cuFFT.
+gaussian.BETA = 1.7
+grid = (54, 54, 54)
+for mixed, tolerance in ((True, 3e-5), (False, 2e-12)):
+    print(f"Gaussian 54 mesh, {'mixed' if mixed else 'double'}")
+    compare("axis / cuFFT", run(grid, mixed, True), run(grid, mixed, False),
+            tolerance)
+    pinned = run(grid, mixed, True, deterministic=True)
+    baseline = run(grid, mixed, False, deterministic=True)
+    assert pinned.tobytes() == baseline.tobytes()
+    print("fixed-order axis request and cuFFT agree bitwise")

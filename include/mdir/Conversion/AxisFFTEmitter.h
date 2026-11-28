@@ -35,6 +35,23 @@ inline bool isFoldingFFTMesh(llvm::ArrayRef<int64_t> grid) {
          grid == llvm::ArrayRef<int64_t>({22, 24, 24});
 }
 
+// The inclusive bounds of the Gaussian timings (D435, D[axis-fft-gaussian]).
+// Check the axes before multiplying.
+inline bool inGaussianAxisFFTRange(llvm::ArrayRef<int64_t> grid) {
+  if (grid.size() != 3)
+    return false;
+  for (int64_t axis : grid)
+    if (axis < 18 || axis > 224)
+      return false;
+  int64_t points = grid[0] * grid[1] * grid[2];
+  return points >= 18 * 20 * 20 && points <= 224 * 108 * 108;
+}
+
+inline constexpr llvm::StringLiteral kGaussianAxisFFTRange =
+    "supported Gaussian FFT with axes 18-224 and 7200-2612736 total points";
+inline constexpr llvm::StringLiteral kGaussianAxisFFTOutsideRange =
+    "outside Gaussian FFT timing range (axes 18-224, 7200-2612736 total points)";
+
 inline bool supportsAxisFFT(llvm::ArrayRef<int64_t> grid) {
   return grid.size() == 3 && grid[2] % 2 == 0 && factorAxis(grid[0]) &&
          factorAxis(grid[1]) && factorAxis(grid[2] / 2);

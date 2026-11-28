@@ -450,8 +450,14 @@ $W_{B_0}^{bq}$. A register transform at fixed $b$ gives $p$, a
 shared-memory exchange applies the middle phase and groups common $p$,
 and the second register transform gives $q$. Register stages resolve one
 radix digit at a time in Stockham order. Adjacent lanes own neighboring
-Z slots in the strided passes. Global memory transfers use a pair of f32
-values at each complex index. This groups the real and imaginary components
+Z slots in the strided passes. Global memory transfers use two scalars at
+each complex index. These are f32 in mixed precision. With
+D[axis-fft-gaussian], an explicit double-precision run uses f64 for the
+mesh, the butterflies, and the exchange and real-fold phases. Automatic
+selection on `sm_89` uses the mixed transform for supported Gaussian
+meshes with 18–224 points per axis and 7,200–2,612,736 points overall
+in both orthorhombic and triclinic cells. Pairing
+the scalars groups the real and imaginary components
 in one vector access while preserving the butterfly evaluation order. In X, the inverse follows the same
 factorization in reverse order after the in-register diagonal product.
 [[Govindaraju2008]](references.md#govindaraju2008) [[Tolmachev2023]](references.md#tolmachev2023)

@@ -457,22 +457,23 @@ std::string mdir::compiler::getPipeline(const Control &control,
     // Kernels in f32 look their tables up in f32.
     const char *fftOverride = std::getenv("MDIR_PME_AXIS_FFT");
     StringRef fftChoice = fftOverride && *fftOverride ? fftOverride : "auto";
-    bool measuredTarget =
-        arch == "sm_89" && control.precision == Precision::Mixed &&
-        control.neighborStructure == NeighborStructure::Towers && program.pme &&
-        !control.deterministic;
+    bool measuredTarget = arch == "sm_89" &&
+                          control.precision == Precision::Mixed &&
+                          !control.deterministic;
+    bool towers = control.neighborStructure == NeighborStructure::Towers;
+    // D445 qualifies the prolate split and assignment together on TOWERS.
+    // The Gaussian mesh range applies across traversals
+    // (D[axis-fft-gaussian]); storage assignment checks each mesh.
+    bool measuredProgram =
+        !program.pmeProlate ||
+        (towers && control.pmeContinuity == 2 && control.pmeBasisTerms == 8 &&
+         control.pmeWindow == "BSPLINE");
     os << "md-exec-assign-storage{memory=device";
-    // D445 qualifies the radial spectrum and assignment
-    // together. The storage pass checks the mesh of each evaluation. Only
-    // this split was timed; the prolate window keeps cuFFT under AUTO.
-    bool measuredProlate = control.pmeContinuity == 2 &&
-                           control.pmeBasisTerms == 8 &&
-                           control.pmeWindow == "BSPLINE";
-    if (program.pmeProlate && fftChoice == "auto" &&
-        !(measuredTarget && measuredProlate))
-      os << " pme-axis-fft=auto-cufft";
-    else if (fftChoice == "on" || (fftChoice == "auto" && measuredTarget))
-      os << " pme-axis-fft=" << fftChoice;
+    if (fftChoice == "auto" && program.pme)
+      os << " pme-axis-fft="
+         << (measuredTarget && measuredProgram ? "auto" : "auto-cufft");
+    else if (fftChoice == "on")
+      os << " pme-axis-fft=on";
     os << (control.precision == Precision::Double ? "" : " tables=f32")
        << "},md-exec-assign-streams" << getStreamOptions(control) << ","
        // The batched bodies of models in stages (D293).

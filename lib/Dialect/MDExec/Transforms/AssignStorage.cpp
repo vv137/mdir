@@ -1442,12 +1442,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   ScatterAttr scatter = op.getScatterAttr();
   bool tiled = scatter && scatter.isTile();
   bool fixedOrder = algebra::getAlgebra(op, 0) == Algebra::FixedOrder;
-  // These order-four meshes passed the full-chain accuracy gate and
-  // benefited from five passes on the measured TOWERS target (#961).
-  bool measuredMesh = kernels::isFoldingFFTMesh(grid) ||
-      (grid[0] == grid[1] && grid[1] == grid[2] &&
-       (grid[0] == 40 || grid[0] == 64)) ||
-      (grid[0] == 144 && grid[1] == 84 && grid[2] == 80);
+  bool measuredMesh = kernels::inGaussianAxisFFTRange(grid);
   bool measuredCuFFT = false;
   if (op.getProlate()) {
     // D445. At setup the driver has already checked the
@@ -1455,14 +1450,19 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
     // the four-point B-spline window was timed; the prolate window keeps
     // cuFFT under AUTO.
     bool cubic = op.getSplineAssignment() && op.getOrder() == 4;
+    // Reserve pitched storage for the folding meshes so lowering can
+    // select the triclinic plan (D435, #961).
     measuredMesh = cubic && (grid == ArrayRef<int64_t>({30, 30, 30}) ||
                              grid == ArrayRef<int64_t>({48, 48, 48}) ||
-                             grid == ArrayRef<int64_t>({105, 60, 60}));
+                             grid == ArrayRef<int64_t>({105, 60, 60}) ||
+                             kernels::isFoldingFFTMesh(grid));
     measuredCuFFT = cubic && grid == ArrayRef<int64_t>({189, 90, 90});
   }
-  bool requestAxis = axisFFT == "on" || (axisFFT == "auto" && measuredMesh);
+  bool requestAxis = axisFFT == "on" ||
+                     (axisFFT == "auto" && measuredMesh &&
+                      (gridType.isF32() || op.getProlate()));
   bool pitched =
-      requestAxis && onDevice && (gridType.isF32() || op.getProlate()) &&
+      requestAxis && onDevice &&
       cast<MemRefType>(positions.getType()).getElementType().isF64() &&
       (op.getOrder() == 4 || op.getProlate()) && !fixedOrder &&
       !op.getPotential() && !op.getP3m() && !op.getDispersion() &&
@@ -1571,7 +1571,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       op.getPotentialAttr(), op.getProlateAttr(), op.getSplineAssignmentAttr(),
       op.getP3mAttr(),
       op.getGatherAllAttr(), onDevice ? op.getScatterAttr() : ScatterAttr());
-  if (onDevice && (op.getProlate() || axisFFT != "off"))
+  if (onDevice)
     created->setAttr("md_exec.fft_requested",
                      scope.builder.getStringAttr(axisFFT));
   if (axisFFT == "auto" && measuredCuFFT)
