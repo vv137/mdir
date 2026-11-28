@@ -24,8 +24,12 @@ struct TowersLayout {
   static constexpr int lattice = 3, step = 6, normal = 9, slab = 12;
   int rawColumns() const { return triclinic ? 13 : 3; }
   int boxSize() const { return triclinic ? 9 : 3; }
+  // A triclinic force geometry ends with the two diagonal lateral axes and
+  // the four outward supports of the cross-section (D[towers-triclinic-filter]).
+  int lateralAxesOffset() const { return 22 + 3 * (5 + 2 * reach); }
+  static constexpr int lateralAxesWords = 10;
   int packedGeometrySize() const {
-    return triclinic ? 22 + 3 * (5 + 2 * reach) : 7;
+    return triclinic ? lateralAxesOffset() + lateralAxesWords : 7;
   }
   int cells() const { return nx * ny * nz; }
 };
