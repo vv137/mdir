@@ -14,21 +14,22 @@ def source():
     body = force[start:end]
     direct = body.replace("  md_exec.pair_for", "  %virial = md_exec.pair_for")
     direct = direct.replace("cutoff(1.0) exchange [antisymmetric]",
-                            "reduce(%zero : vector<3xf64>)\n"
+                            "reduce(%zero : vector<9xf64>)\n"
                             "      cutoff(1.0) weights [0.5] "
                             "exchange [antisymmetric, symmetric]")
     direct = direct.replace(
         "    md_exec.yield %df : vector<3xf32>",
         """    %d64 = arith.extf %d : vector<3xf32> to vector<3xf64>
     %f64 = arith.extf %df : vector<3xf32> to vector<3xf64>
-    %w = arith.mulf %d64, %f64 : vector<3xf64>
-    md_exec.yield %df, %w : vector<3xf32>, vector<3xf64>""",
+    %outer = vector.outerproduct %d64, %f64 : vector<3xf64>, vector<3xf64>
+    %w = vector.shape_cast %outer : vector<3x3xf64> to vector<9xf64>
+    md_exec.yield %df, %w : vector<3xf32>, vector<9xf64>""",
     )
     direct = direct.replace("} : !nl, memref<?x3xf64>",
-                            "} : !nl, memref<?x3xf64> -> vector<3xf64>")
+                            "} : !nl, memref<?x3xf64> -> vector<9xf64>")
     correction = body.replace("    %spring = memref.load %k[%a, %b] : memref<2x2xf32>",
                               "    %spring = arith.constant 0.0 : f32")
-    before = force[:start] + "  %zero = arith.constant dense<0.0> : vector<3xf64>\n"
+    before = force[:start] + "  %zero = arith.constant dense<0.0> : vector<9xf64>\n"
     return (before + direct + correction + force[end:]).encode()
 
 
@@ -37,7 +38,7 @@ def check(work, workers, split):
     # The first excluded pair crosses a periodic face at 0.05 angstrom.
     # The second shares a staged slot with a retained interaction.
     xyz = [(0.002, 0.5, 0.5), (5.997, 0.5, 0.5),
-           (3.125, 3.5, 3.5), (3.25, 3.5, 3.5), (3.5, 3.5, 3.5)]
+           (3.125, 3.5, 3.5), (3.25, 3.5, 3.5), (3.5, 3.625, 3.5)]
     exclusions = (0, 1, 2, 3)
     n = len(xyz)
     image = rebuild.compile_entries(
@@ -63,7 +64,7 @@ def check(work, workers, split):
     state = e.array(rebuild.I, 2)
     failed = e.array(C.c_int64, 1)
     force = e.array(C.c_int64, 3 * n)
-    virial = e.array(C.c_uint64, 12)
+    virial = e.array(C.c_uint64, 18)
     items = r.cells * split * workers + len(exclusions) // 2
     reference = None
     for excluded_spring in (0, 2**15, 2**30, 2**15):
@@ -78,9 +79,12 @@ def check(work, workers, split):
         e.run("force_virial", items, *args, virial, **kw)
         e.sync()
         assert state[:] == [0, 0] and failed[0] == 0, (state[:], failed[0])
-        # Two active springs: 8 * (0.375^2 + 0.25^2) = 1.625.
-        expected = [0] * 12
+        # The two retained displacements are (0.375, 0.125, 0)
+        # and (0.25, 0.125, 0), each with a force of 8 times displacement.
+        expected = [0] * 18
         expected[0] = 13 * 2**47
+        expected[2] = expected[6] = 5 * 2**47
+        expected[8] = 2**48
         assert virial[:] == expected, (excluded_spring, virial[:], expected)
         observed = (tuple(force), tuple(virial))
         if reference is None:
