@@ -69,8 +69,33 @@ Measured on RTX 4090 with the same frames and the same pinned TOWERS shape (512 
 
 ## 6. Timing
 
-To be completed.
+RTX 4090, 2 fs, mixed precision, two jobs with the arms interleaved in opposite orders, three repeats per arm in each (n = 6), the rate of steps 3,000 to 6,000 of 6,000 as `mdir run` reports it; mean ± standard deviation and the mean without the lowest and highest sample. SM clock under load 2,573 and 2,598 MHz in the two jobs. Arms: `main` with the matrix; `main` with TOWERS; this decision alone (the four-axis filter and the conversion once per traversal, "filter"); this decision with D[towers-split-interleave] ("branch"). TOWERS takes the shape pinned in Section 4 in all three TOWERS arms; "branch, AUTO shape" takes the shape of the setup trial.
+
+1. [measured] Whole step, ns/day:
+
+| Input | Matrix | TOWERS, `main` | Filter | Branch | Branch, AUTO shape |
+|---|---:|---:|---:|---:|---:|
+| Trp-cage ff19SB+OPC, NVT | 1274 ± 26 | 1042 ± 22 | 1052 ± 17 | 1202 ± 65 (trimmed 1210) | 1246 ± 21 |
+| Trp-cage ff19SB+OPC, NPT | 1038 ± 21 | 779 ± 17 | 782 ± 12 | 933 ± 17 | 928 ± 23 |
+| Trp-cage ff14SB+TIP3P, NVT | 1546 ± 40 | 1307 ± 86 (trimmed 1326) | 1344 ± 27 | 1544 ± 32 | 1531 ± 69 |
+| Trp-cage ff14SB+TIP3P, NPT | 1239 ± 27 | 990 ± 24 | 985 ± 19 | 1123 ± 29 | 1137 ± 25 |
+| JAC, NVT (orthorhombic) | | 1639 ± 42 | 1642 ± 42 | 1641 ± 39 | |
+| JAC, NPT | | 1405 ± 29 | 1405 ± 33 | 1401 ± 29 | |
+| TIP3P 10k, NVT | | 2386 ± 46 | 2380 ± 32 | 2351 ± 73 (trimmed 2364) | |
+| TIP3P 10k, NPT | | 1841 ± 65 (trimmed 1856) | 1868 ± 29 | 1814 ± 32 | |
+
+2. [measured] TOWERS force + finish, µs per step (Nsight Systems, NVT, n = 6):
+
+| Input | `main` | Filter | Branch |
+|---|---:|---:|---:|
+| Trp-cage ff19SB+OPC | 94.9 ± 1.4 | 90.5 ± 1.5 | 65.0 ± 1.3 |
+| Orthorhombic control | 81.5 ± 1.6 | 81.6 ± 1.3 | 62.1 ± 1.0 |
+| Trp-cage ff14SB+TIP3P | 64.6 ± 2.3 | 64.4 ± 1.9 | 45.8 ± 1.0 |
+| Orthorhombic control | 56.3 ± 1.5 | 55.9 ± 1.8 | 42.6 ± 1.0 |
+
+3. [measured] The filter alone, with the interleaved split on both arms (the instrumented build run without counters and with the two-axis filter, against the branch; n = 3): force + finish 67.1 ± 0.4 against 64.9 ± 0.2 µs on the ff19SB cell, 47.4 ± 0.7 against 46.6 ± 1.0 on ff14SB.
+4. [measured] The orthorhombic controls JAC (split 1) and TIP3P 10k NVT (split 1) are unchanged within one standard deviation. TIP3P 10k NPT takes split 2: 1,814 ± 32 against 1,841 ± 65 ns/day on `main`, 1.5% lower, within the spread of `main`; against the filter arm (1,868 ± 29) 2.9% lower. Its tower parts were nearly balanced before; the strided staging of D[towers-split-interleave] costs there.
 
 ## 7. AUTO
 
-To be completed.
+[measured] With the branch the whole step under TOWERS is within 2% of the matrix in NVT on both Trp-cage inputs (1,246 against 1,274 and 1,531 against 1,546 ns/day, AUTO shape) and 8 to 11% below it in NPT. It does not beat the matrix, so this decision does not propose that AUTO time TOWERS on triclinic cells. The rule that keeps AUTO on the matrix for a triclinic cell belongs to #1007, not to `main`; it stays as it is. What remains on these grids is granularity: 90 tower blocks on 128 SMs at one block per SM, and a launch of about 65 µs against 41 µs for the sum of the block times spread over all SMs.
