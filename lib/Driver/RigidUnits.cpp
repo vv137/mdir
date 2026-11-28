@@ -208,15 +208,9 @@ void diagnoseNonlinearSites(const RigidKind &kind, const Topology &topology,
 /// the constraints keep, and the hydrogens of a rigid water that no taken
 /// kind holds, belong to the unit of their heavy atom. Gives the longest
 /// of those constrained lengths.
-double findAnchored(const Topology &topology, const std::vector<bool> &inKind,
-                    std::vector<std::array<unsigned, 2>> &anchored) {
-  double longest = 0.0;
-  auto anchor = [&](unsigned member, unsigned center, double length) {
-    if (inKind[member] || inKind[center])
-      return;
-    anchored.push_back({member, center});
-    longest = std::max(longest, length);
-  };
+void visitHydrogenAnchors(
+    const Topology &topology,
+    llvm::function_ref<void(unsigned, unsigned, double)> anchor) {
   for (const Topology::Shake &shake : topology.shakes)
     for (size_t k = 0; k != shake.hydrogens.size(); ++k)
       anchor(shake.hydrogens[k], shake.center, shake.lengths[k]);
@@ -224,6 +218,18 @@ double findAnchored(const Topology &topology, const std::vector<bool> &inKind,
     anchor(settle.oxygen + 1, settle.oxygen, settle.distanceOH);
     anchor(settle.oxygen + 2, settle.oxygen, settle.distanceOH);
   }
+}
+
+double findAnchored(const Topology &topology, const std::vector<bool> &inKind,
+                    std::vector<std::array<unsigned, 2>> &anchored) {
+  double longest = 0.0;
+  visitHydrogenAnchors(topology, [&](unsigned member, unsigned center,
+                                    double length) {
+    if (inKind[member] || inKind[center])
+      return;
+    anchored.push_back({member, center});
+    longest = std::max(longest, length);
+  });
   return longest;
 }
 
@@ -449,6 +455,55 @@ llvm::Error mdir::driver::resolveRigidUnits(Control &control,
   }
   control.rigidUnitsRoute = std::move(route);
   return llvm::Error::success();
+}
+
+MatrixAnchorPlan mdir::driver::getMatrixAnchorPlan(const Control &control,
+                                                       const System &system) {
+  const Topology &topology = *system.topology;
+  const unsigned count = topology.getNumParticles();
+  std::vector<unsigned> anchors(count);
+  std::iota(anchors.begin(), anchors.end(), 0);
+  std::vector<double> lengths(count, 0.0), radii(count, 0.0);
+  auto attach = [&](unsigned member, unsigned anchor, double bound) {
+    anchors[member] = anchor;
+    lengths[member] = bound;
+    // At the input or restart, the first evaluation precedes constraints.
+    const Vec x = getPosition(system, member);
+    const Vec y = getPosition(system, anchor);
+    const double initial = norm(reduce({x.x - y.x, x.y - y.y, x.z - y.z},
+                                       system, control.periodic));
+    radii[anchor] = std::max(
+        radii[anchor], std::max(initial, bound) + rigidUnitsMargin);
+  };
+  const double tolerance =
+      control.precision == Precision::Double ? 1.0e-8 : 1.0e-4;
+  visitHydrogenAnchors(topology, [&](unsigned member, unsigned anchor,
+                                    double length) {
+    attach(member, anchor, length * std::sqrt(1.0 + tolerance));
+  });
+  for (const auto &site : topology.virtualSites) {
+    // An extra point of rigid water lies on the O–H bisector at distance
+    // |a|. A linear virtual site is bounded by the weighted bond lengths.
+    if (anchors[site.j] != site.i || anchors[site.k] != site.i ||
+        anchors[site.i] != site.i || lengths[site.j] == 0.0 ||
+        lengths[site.k] == 0.0)
+      continue;
+    const double bound = site.kind == Topology::VirtualSite::AmberWater
+        ? std::abs(site.a)
+        : std::abs(site.a) * lengths[site.j] + std::abs(site.b) * lengths[site.k];
+    attach(site.site, site.i, bound);
+  }
+
+  MatrixAnchorPlan plan;
+  plan.members.reserve(2 * count);
+  plan.signedRadii.reserve(count);
+  for (unsigned i = 0; i != count; ++i) {
+    plan.members.push_back(i);
+    plan.members.push_back(anchors[i]);
+    const double radius = radii[anchors[i]];
+    plan.signedRadii.push_back(i == anchors[i] ? radius : -radius);
+  }
+  return plan;
 }
 
 RigidUnitsPlan mdir::driver::getRigidUnitsPlan(const RigidUnitsRoute &route,

@@ -49,6 +49,18 @@ static Value emitTest(RefreshNeighborsOp refresh, bool pruned) {
   Value margin = arith::SubFOp::create(
       builder, loc, arith::MulFOp::create(builder, loc, least, constant(reach)),
       constant(cutoff));
+  Value radii = refresh.getAnchorRadii();
+  if (radii) {
+    // A contraction spends skin at the largest covering reach. On an
+    // expansion the smallest reach gives a conservative bound.
+    Value change = arith::SubFOp::create(builder, loc, least, constant(1.0));
+    Value contraction =
+        arith::MinimumFOp::create(builder, loc, change, constant(0.0));
+    Value loss = arith::MulFOp::create(
+        builder, loc, contraction,
+        constant(2.0 * refresh.getMaxAnchorRadius()->convertToDouble()));
+    margin = arith::AddFOp::create(builder, loc, margin, loss);
+  }
   Value half = arith::MulFOp::create(
       builder, loc, arith::MaximumFOp::create(builder, loc, margin,
                                               constant(0.0)),
@@ -58,9 +70,13 @@ static Value emitTest(RefreshNeighborsOp refresh, bool pruned) {
   Value limit2 = arith::MulFOp::create(builder, loc, half, half);
   Value no = arith::ConstantOp::create(builder, loc, builder.getI1Type(),
                                        builder.getBoolAttr(false));
+  Value zeroMargin = radii ? constant(0.0) : Value();
+  SmallVector<Value> inputs{positions, reference};
+  if (radii)
+    inputs.push_back(radii);
   auto loop = ParticleForOp::create(
       builder, loc, TypeRange{builder.getI1Type()},
-      ValueRange{positions, reference}, /*outs=*/ValueRange(),
+      inputs, /*outs=*/ValueRange(),
       /*reduce=*/ValueRange{no}, /*scratch=*/ValueRange());
 
   Block *block = new Block();
@@ -68,6 +84,11 @@ static Value emitTest(RefreshNeighborsOp refresh, bool pruned) {
   Type value = field.getKernelValueType();
   Value now = block->addArgument(value, loc);
   Value then = block->addArgument(value, loc);
+
+  Value radius;
+  if (radii)
+    radius = block->addArgument(
+        cast<md::FieldType>(radii.getType()).getKernelValueType(), loc);
 
   OpBuilder kernel = OpBuilder::atBlockEnd(block);
   Value scaled = arith::MulFOp::create(kernel, loc, then, scale);
@@ -81,6 +102,19 @@ static Value emitTest(RefreshNeighborsOp refresh, bool pruned) {
   // displacement that is not a number exceeds it.
   Value far = arith::CmpFOp::create(kernel, loc, arith::CmpFPredicate::UGT,
                                     distance2, limit);
+  if (radius) {
+    Value zero = arith::ConstantOp::create(
+        kernel, loc, kernel.getFloatAttr(radius.getType(), 0.0));
+    // The sign marks the members. Lone sites have zero radius and are
+    // anchors in their own right.
+    Value anchor = arith::CmpFOp::create(kernel, loc, arith::CmpFPredicate::OGE,
+                                       radius, zero);
+    far = arith::AndIOp::create(kernel, loc, far, anchor);
+    // A negative margin is invalid even if no anchor has moved.
+    Value contracted = arith::CmpFOp::create(
+        kernel, loc, arith::CmpFPredicate::ULT, margin, zeroMargin);
+    far = arith::OrIOp::create(kernel, loc, far, contracted);
+  }
   YieldOp::create(kernel, loc, ValueRange{far});
   return loop.getResult(0);
 }

@@ -120,7 +120,12 @@ private:
   LogicalResult emitBuild(OpBuilder &builder, Location loc,
                           const Neighbors &structure, Value positions,
                           Value box, double reach, double cellWidth,
-                          Value centers = Value());
+                          Value centers = Value(),
+                          Value anchorMembers = {}, Value anchorRadii = {},
+                          double maxAnchorRadius = 0.0);
+  void filterAnchorRows(OpBuilder &builder, Location loc,
+                        const Neighbors &structure, Value entries,
+                        Value anchors, Value radii, Value box, double reach);
 
   /// The number of particles that `buffer` holds a field of.
   Value createSize(OpBuilder &builder, Location loc, Value buffer) {
@@ -864,15 +869,151 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
   neighbors[op.getResult()] = structure;
 }
 
+// The host template bins anchor coordinates at the maximum covering
+// reach. Compact its rows at each pair's own reach in the same search
+// order, including the other triclinic images when the first is outside.
+void Lowering::filterAnchorRows(OpBuilder &builder, Location loc,
+                                const Neighbors &structure, Value entries,
+                                Value anchors, Value radii, Value box,
+                                double reach) {
+  Type real = cast<MemRefType>(anchors.getType()).getElementType();
+  Type narrow = builder.getF32Type(), wide = builder.getF64Type();
+  Value inverse = createInverse(builder, loc, box);
+  Value zero = createIndex(builder, loc, 0), one = createIndex(builder, loc, 1);
+  bool tilted = isTriclinic(box);
+  Value baseReach = createReal(builder, loc, wide, reach);
+  // Match the host template's search padding for f32 arithmetic.
+  Value padding = createReal(builder, loc, wide, 3.0e-6);
+  SmallVector<Value> imageArgs;
+  func::FuncOp imageWithin;
+  Value edgeSum = createReal(builder, loc, wide, 0.0);
+  for (int64_t k = 0, e = cast<VectorType>(box.getType()).getNumElements();
+       k != e; ++k) {
+    Value edge = vector::ExtractOp::create(builder, loc, box, k);
+    edge = math::AbsFOp::create(builder, loc, edge);
+    edgeSum = arith::AddFOp::create(builder, loc, edgeSum, edge);
+    if (tilted)
+      imageArgs.push_back(convertReal(builder, loc, edge, narrow));
+  }
+  Value pad = arith::MulFOp::create(builder, loc, padding, edgeSum);
+  Value paddedReach = arith::AddFOp::create(builder, loc, baseReach, pad);
+  if (tilted) {
+    // The image search takes signed tilts and inverse diagonal edges.
+    for (int64_t k = 3; k != 6; ++k)
+      imageArgs[k] = convertReal(
+          builder, loc, vector::ExtractOp::create(builder, loc, box, k), narrow);
+    for (int64_t k = 0; k != 3; ++k)
+      imageArgs.push_back(convertReal(
+          builder, loc, vector::ExtractOp::create(builder, loc, inverse, k),
+          narrow));
+    imageWithin = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
+        module, getInstanceName("mdrt.image_within_triclinic", real)));
+  }
+  scf::ParallelOp::create(
+      builder, profile::refine(loc, "matrix_anchor_filter"), ValueRange{zero},
+      ValueRange{structure.size}, ValueRange{one},
+      [&](OpBuilder &body, Location, ValueRange ivs) {
+        Value i = ivs[0];
+        Value n = memref::LoadOp::create(body, loc, structure.counts,
+                                          ValueRange{i});
+        auto loadRadius = [&](OpBuilder &at, Value site) -> Value {
+          Value radius = loadElement(at, loc, radii, site);
+          return convertReal(at, loc, math::AbsFOp::create(at, loc, radius),
+                             wide);
+        };
+        Value xi = convertReal(body, loc, loadElement(body, loc, anchors, i),
+                               wide);
+        Value ri = loadRadius(body, i);
+        Value stop = arith::IndexCastOp::create(body, loc, body.getIndexType(), n);
+        auto kept = scf::ForOp::create(
+            body, loc, zero, stop, one, ValueRange{zero},
+            [&](OpBuilder &at, Location, Value slot, ValueRange iter) {
+              Value neighbor = memref::LoadOp::create(at, loc, entries,
+                                                      ValueRange{i, slot});
+              Value j = arith::IndexCastOp::create(at, loc, at.getIndexType(),
+                                                    neighbor);
+              Value xj = convertReal(at, loc, loadElement(at, loc, anchors, j),
+                                     wide);
+              Value raw = arith::SubFOp::create(at, loc, xi, xj);
+              Value d = emitMinimumImage(at, loc, raw, box, inverse);
+              Value pairRadii = arith::AddFOp::create(at, loc, ri,
+                                                       loadRadius(at, j));
+              Value far = arith::AddFOp::create(at, loc, paddedReach, pairRadii);
+              Value r2 = arith::MulFOp::create(at, loc, far, far);
+              Value squares = arith::MulFOp::create(at, loc, d, d);
+              Value d2 = vector::ReductionOp::create(
+                  at, loc, vector::CombiningKind::ADD, squares);
+              Value near = arith::CmpFOp::create(at, loc, arith::CmpFPredicate::OLT,
+                                                  d2, r2);
+              if (tilted) {
+                auto images = scf::IfOp::create(at, loc, TypeRange{at.getI1Type()},
+                                               near, /*withElseRegion=*/true);
+                OpBuilder yes = OpBuilder::atBlockEnd(images.thenBlock());
+                scf::YieldOp::create(yes, loc, ValueRange{near});
+                OpBuilder no = OpBuilder::atBlockEnd(images.elseBlock());
+                SmallVector<Value, 15> arguments;
+                for (int64_t k = 0; k != 3; ++k)
+                  arguments.push_back(convertReal(
+                      no, loc, vector::ExtractOp::create(no, loc, d, k), narrow));
+                llvm::append_range(arguments, imageArgs);
+                arguments.push_back(convertReal(no, loc, far, narrow));
+                arguments.push_back(convertReal(no, loc, r2, narrow));
+                arguments.push_back(createReal(no, loc, narrow, 64.0));
+                Value found = func::CallOp::create(no, loc, imageWithin, arguments)
+                                  .getResult(0);
+                scf::YieldOp::create(no, loc, ValueRange{found});
+                near = images.getResult(0);
+              }
+              Value next = iter[0];
+              auto append = scf::IfOp::create(
+                  at, loc, TypeRange{at.getIndexType()}, near,
+                  /*withElseRegion=*/true);
+              OpBuilder yes = OpBuilder::atBlockEnd(append.thenBlock());
+              memref::StoreOp::create(yes, loc, neighbor, entries, ValueRange{i, next});
+              Value incremented = arith::AddIOp::create(yes, loc, next, one);
+              scf::YieldOp::create(yes, loc, ValueRange{incremented});
+              OpBuilder no = OpBuilder::atBlockEnd(append.elseBlock());
+              scf::YieldOp::create(no, loc, ValueRange{next});
+              scf::YieldOp::create(at, loc, append.getResults());
+            });
+        Value count = arith::IndexCastOp::create(
+            body, loc, cast<MemRefType>(structure.counts.getType()).getElementType(),
+            kept.getResult(0));
+        memref::StoreOp::create(body, loc, count, structure.counts, ValueRange{i});
+      });
+}
+
 LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                                   const Neighbors &structure, Value positions,
                                   Value box, double reach,
-                                  double cellWidth, Value centers) {
+                                  double cellWidth, Value centers,
+                                  Value anchorMembers, Value anchorRadii,
+                                  double maxAnchorRadius) {
   Type real = cast<MemRefType>(positions.getType()).getElementType();
   if (failed(addTemplates(real, static_cast<bool>(centers))))
     return failure();
 
-  Value reachValue = createReal(builder, loc, real, reach);
+  Value searchPositions = positions;
+  if (anchorMembers) {
+    searchPositions = memref::AllocOp::create(
+        builder, loc, cast<MemRefType>(positions.getType()),
+        ValueRange{structure.size});
+    Value zero = createIndex(builder, loc, 0), one = createIndex(builder, loc, 1);
+    scf::ParallelOp::create(
+        builder, profile::refine(loc, "matrix_anchor_positions"),
+        ValueRange{zero}, ValueRange{structure.size}, ValueRange{one},
+        [&](OpBuilder &body, Location, ValueRange ivs) {
+          auto member = [&](Value slot) -> Value {
+            Value id = memref::LoadOp::create(
+                body, loc, anchorMembers, ValueRange{ivs[0], slot});
+            return arith::IndexCastOp::create(body, loc, body.getIndexType(), id);
+          };
+          Value site = member(zero), anchor = member(one);
+          storeElement(body, loc, loadElement(body, loc, positions, anchor),
+                       searchPositions, site);
+        });
+  }
+  Value reachValue = createReal(builder, loc, real, reach + 2.0 * maxAnchorRadius);
   Value leastValue = createReal(builder, loc, real, cellWidth);
   Value boxValue = convertReal(builder, loc, box, real);
   // A triclinic cell is searched in its fractional coordinates, whose cells
@@ -908,7 +1049,7 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
     Block *before = builder.createBlock(&again.getBefore());
     OpBuilder at = OpBuilder::atBlockEnd(before);
     Value entries = getMatrixEntries(at, loc, structure.handle);
-    SmallVector<Value, 8> operands = {positions, boxValue};
+    SmallVector<Value, 8> operands = {searchPositions, boxValue};
     if (tilted)
       operands.push_back(widthsValue);
     operands.append({reachValue, widthValue, structure.counts, entries});
@@ -944,6 +1085,11 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
 
   // Leave the excluded pairs out.
   Value filtered = getMatrixEntries(builder, loc, structure.handle);
+  if (anchorMembers) {
+    filterAnchorRows(builder, loc, structure, filtered, searchPositions,
+                     anchorRadii, box, reach);
+    memref::DeallocOp::create(builder, loc, searchPositions);
+  }
   if (structure.excluded)
     scf::ParallelOp::create(
         builder, profile::refine(loc, "exclusion_filter"),
@@ -1023,9 +1169,16 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
   // distance never exceeds the plain one: the structure holds every pair
   // within the reach in plain differences, and more, which the loops' test
   // of the cutoff on the plain displacement removes.
+  auto build = [&](OpBuilder &at) {
+    const double radius = op.getMaxAnchorRadius()
+                              ? op.getMaxAnchorRadius()->convertToDouble()
+                              : 0.0;
+    return emitBuild(at, loc, structure, positions, box, reach, cellWidth,
+                     op.getCenters(), op.getAnchorMembers(),
+                     op.getAnchorRadii(), radius);
+  };
   if (op.getPolicy() == md_exec::RebuildPolicy::Always)
-    return emitBuild(builder, loc, structure, positions, box, reach,
-                     cellWidth, op.getCenters());
+    return build(builder);
 
   // Whether no particle has moved more than half the skin since the
   // structure was built, emitted where `at` is. A barostat scales the
@@ -1149,8 +1302,7 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
   Value stale = arith::XOrIOp::create(builder, loc, valid, yes);
   scf::IfOp::create(
       builder, loc, stale, [&](OpBuilder &then, Location) {
-        status = emitBuild(then, loc, structure, positions, box, reach,
-                           cellWidth);
+        status = build(then);
         scf::YieldOp::create(then, loc);
       });
   return status;

@@ -815,3 +815,18 @@ chose other skins than on the RTX 4090 (Factor IX 13.5 / 8.7 Å, JAC
 ## The order of the state
 
 Planned, from the roadmap (#603). TODO: the state is sorted in space only where a run begins (white paper, Section 4.2); the loops over pairs read the order of the last build (D86), but the gathers of positions and the scatters of forces follow the order of the state, which diffusion scrambles (water moves about 37 Å in 1 ns). Measured so far: JAC fell from 726 to 722 ns/day over 2 ns, 0.5%, then stayed flat (Section 10.5). First measure the loss over 10 ns of a large system (STMV, or 6n4o of MDBench at 239,131 atoms); if it exceeds about 1%, permute the state and renumber the relations every N builds.
+
+## Anchor validity for a single MATRIX list
+
+With `[execution].matrix_validity = "ANCHOR"`, a periodic dynamics run
+with a topology can check the single MATRIX list using the positions of
+its constraint anchors. The default `"SITE"` checks every site. A rigid
+water uses its oxygen, a group of constrained hydrogens uses its heavy
+atom, and a lone site is its own anchor. Unit radii cover constraint
+tolerances and the initial configuration.
+
+The search uses the usual list reach plus the sum of the two unit radii.
+The force cutoff and exclusions apply to the site pairs. The anchor
+displacement test spends the skin, with an additional contraction term
+when a barostat shrinks the box. See the covering proof and the
+validation fixture. [D[matrix-anchor-validity]](decisions/matrix-anchor-validity.md)

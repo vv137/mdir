@@ -727,6 +727,14 @@ LogicalResult BuildNeighborsOp::verify() {
                              neighbors.getParticleSet())))
     return failure();
 
+  if (getAnchorMembers() || getAnchorRadii() || getMaxAnchorRadius()) {
+    if (!getAnchorMembers() || !getAnchorRadii() || !getMaxAnchorRadius())
+      return emitOpError("expects anchor membership, radii, and maximum together");
+    if (getKind() != NeighborKind::Matrix || getCenters() ||
+        getImages() == Images::Explicit)
+      return emitOpError("anchors require a MATRIX with minimum images");
+  }
+
   double cutoff = getCutoff().convertToDouble();
   double skin = getSkin().convertToDouble();
   if (!(cutoff > 0.0))
@@ -811,6 +819,10 @@ void RefreshNeighborsOp::getEffects(
   addEffect<MemoryEffects::Read>(effects, getNeighborsMutable());
   addEffect<MemoryEffects::Write>(effects, getNeighborsMutable());
   addEffect<MemoryEffects::Read>(effects, getPositionsMutable());
+  for (OpOperand &operand : getAnchorMembersMutable())
+    addEffect<MemoryEffects::Read>(effects, operand);
+  for (OpOperand &operand : getAnchorRadiiMutable())
+    addEffect<MemoryEffects::Read>(effects, operand);
   for (OpOperand &operand : getScratchMutable())
     addEffect<MemoryEffects::Write>(effects, operand);
 }
@@ -826,6 +838,23 @@ LogicalResult RefreshNeighborsOp::verify() {
   if (failed(verifyPositions(getOperation(), getPositions(),
                              neighbors.getParticleSet())))
     return failure();
+  if (getAnchorMembers() || getAnchorRadii() || getMaxAnchorRadius()) {
+    if (!getAnchorMembers() || !getAnchorRadii() || !getMaxAnchorRadius())
+      return emitOpError("expects anchor membership, radii, and maximum together");
+    if (getCenters() || getPruneSkin() || getImages() == Images::Explicit ||
+        getPolicy() == RebuildPolicy::Interval)
+      return emitOpError("anchors require a single checked MATRIX with minimum images");
+    if (isStorageForm()) {
+      auto members = dyn_cast<MemRefType>(getAnchorMembers().getType());
+      auto radii = dyn_cast<MemRefType>(getAnchorRadii().getType());
+      if (!members || members.getDimSize(1) != 2 || !radii ||
+          radii.getRank() != 1 || !isReal(radii.getElementType()))
+        return emitOpError("expects buffers of (site, anchor) tuples and scalar radii");
+      if (getPolicy() == RebuildPolicy::Check && !getMoved())
+        return emitOpError("requires the exposed anchor validity test");
+    }
+  }
+
   double cutoff = getCutoff().convertToDouble();
   double skin = getSkin().convertToDouble();
   double width = getCellWidth().convertToDouble();

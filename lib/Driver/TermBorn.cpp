@@ -43,12 +43,12 @@ static TermIRValues buildBornContribution(mlir::OpBuilder &builder, mlir::ValueR
     return arith::DivFOp::create(builder, loc, a, b);
   };
   Value neighborhood = mdir::md::NeighborhoodOp::create(
-      builder, loc, pairsType, values[0], values[1], Value{},
+      builder, loc, pairsType, values[0], values[1], Value{}, Value(), Value(), FloatAttr(),
       builder.getF64FloatAttr(config.cutoff));
   Value reach = neighborhood;
   if (config.radiusCutoff > 0.0)
     reach = mdir::md::NeighborhoodOp::create(
-        builder, loc, pairsType, values[0], values[1], Value{},
+        builder, loc, pairsType, values[0], values[1], Value{}, Value(), Value(), FloatAttr(),
         builder.getF64FloatAttr(config.reachCutoff));
   // Descreening [Hawkins1996], integrated only over shells inside the
   // smooth radius cutoff when one is selected (D152).

@@ -1862,9 +1862,12 @@ LogicalResult Lowering::lowerNeighborhoodExec(NeighborhoodOp op) {
         md_exec::getBuildType(set, md_exec::NeighborKind::Matrix,
                               md_exec::Images::Explicit),
         cells, positions, relation.cell, /*excluded=*/Value(), nOwned,
-        APFloat(cutoff),
-        APFloat(skin), md_exec::NeighborKind::Matrix,
-        static_cast<uint64_t>(width), md_exec::Images::Explicit);
+        /*anchor_members=*/Value(), /*anchor_radii=*/Value(),
+        /*max_anchor_radius=*/FloatAttr(),
+        b.getF64FloatAttr(cutoff), b.getF64FloatAttr(skin),
+        md_exec::NeighborKindAttr::get(b.getContext(), md_exec::NeighborKind::Matrix),
+        b.getI64IntegerAttr(width),
+        md_exec::ImagesAttr::get(b.getContext(), md_exec::Images::Explicit));
     relation.positions.push_back(positions);
     relation.neighbors.push_back(structure);
     relation.centers.push_back(nOwned);

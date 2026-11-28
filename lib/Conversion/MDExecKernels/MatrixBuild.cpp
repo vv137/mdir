@@ -29,12 +29,17 @@ public:
   void emitCellWidth();
   void emitMatrixSort();
   void emitMatrixImageWithin();
-  void emitBuildNeighborsMatrixTriclinic();
+  void emitBuildNeighborsMatrixTriclinic(bool anchored);
   void emitSpatialOrder();
-  void emitSearch(StringRef symbol, bool triclinic, bool testAllImages);
+  void emitSearch(StringRef symbol, bool triclinic, bool testAllImages,
+                  bool anchored = false);
 
 private:
-  bool tilted, allImages;
+  bool tilted, allImages, anchors;
+  Value baseReach, radii, paddedBaseReach;
+  MemRefType radiiType =
+      MemRefType::get({ShapedType::kDynamic}, f32, MemRefLayoutAttrInterface(),
+                      b.getI64IntegerAttr(1));
   // Common arguments and SSA values captured by the build's launches.
   Value x, box, widths, reach, cellWidth, excluded, counts, entries, order;
   Value lx, ly, lz, ilx, ily, ilz, tbx, tcx, tcy;
@@ -81,7 +86,8 @@ private:
   void emitSearchRows();
   void emitBuildResult();
   Value emitCandidateWithinReach(Value xi, Value yi, Value zi, Value xj,
-                                 Value yj, Value zj, Value inRun);
+                                 Value yj, Value zj, Value inRun,
+                                 Value pairFar = Value());
 };
 void MatrixBuild::emitCellCount() {
   function("mdrt_gpu_cell_count", b.getFunctionType({f64, f64}, {index}),
@@ -361,6 +367,8 @@ void MatrixBuild::emitSearchGeometry() {
   Value tiny = cd(3.0e-6);
   Value margin = mulf(lxyz, tiny);
   Value far = addf(reach, margin);
+  if (anchors)
+    paddedBaseReach = truncf(addf(baseReach, margin));
   Value far2 = mulf(far, far);
   limit2 = truncf(far2);
   if (allImages) {
@@ -622,6 +630,7 @@ void MatrixBuild::emitSearchRows() {
         Value xi = load(sorted, {p, zeroIndex});
         Value yi = load(sorted, {p, firstIndex});
         Value zi = load(sorted, {p, secondIndex});
+        Value radiusI = anchors ? absf(load(radii, {i})) : Value();
         Value k32 = load(key, {i});
         Value cellX = remui(k32, nx32);
         Value rest = divui(k32, nx32);
@@ -725,8 +734,14 @@ void MatrixBuild::emitSearchRows() {
                           Value xj = load(sorted, {qc, zeroIndex});
                           Value yj = load(sorted, {qc, firstIndex});
                           Value zj = load(sorted, {qc, secondIndex});
+                          Value pairFar;
+                          if (anchors) {
+                            Value j = indexCast(index, load(order, {qc}));
+                            Value radiusJ = absf(load(radii, {j}));
+                            pairFar = addf(paddedBaseReach, addf(radiusI, radiusJ));
+                          }
                           Value nearby = emitCandidateWithinReach(
-                              xi, yi, zi, xj, yj, zj, inRun);
+                              xi, yi, zi, xj, yj, zj, inRun, pairFar);
                           Value other = cmpi(CmpIPredicate::ne, p32, q32);
                           Value nearOther = andi(nearby, other);
                           Value neighbor = andi(nearOther, inRun);
@@ -858,7 +873,7 @@ void MatrixBuild::emitBuildResult() {
 
 Value MatrixBuild::emitCandidateWithinReach(Value xi, Value yi, Value zi,
                                             Value xj, Value yj, Value zj,
-                                            Value inRun) {
+                                            Value inRun, Value pairFar) {
   Value dx, dy, dz;
   if (tilted) {
     // The minimum-image displacement of the triclinic cell, in one
@@ -908,7 +923,8 @@ Value MatrixBuild::emitCandidateWithinReach(Value xi, Value yi, Value zi,
   Value dz_2 = mulf(dz, dz);
   Value dxy_2 = addf(dx_2, dy_2);
   Value r2 = addf(dxy_2, dz_2);
-  Value nearPass = cmpf(CmpFPredicate::OLT, r2, limit2);
+  Value pairLimit2 = pairFar ? mulf(pairFar, pairFar) : limit2;
+  Value nearPass = cmpf(CmpFPredicate::OLT, r2, pairLimit2);
   if (!allImages)
     return nearPass;
 
@@ -921,8 +937,8 @@ Value MatrixBuild::emitCandidateWithinReach(Value xi, Value yi, Value zi,
         Value nearImage =
             call("mdrt_gpu_matrix_image_within", {i1},
                  {dx, dy, dz, narrowLx, narrowLy, narrowLz, narrowBx, narrowCx,
-                  narrowCy, narrowIlx, narrowIly, narrowIlz, narrowFar, limit2,
-                  mostImages})[0];
+                  narrowCy, narrowIlx, narrowIly, narrowIlz,
+                  pairFar ? pairFar : narrowFar, pairLimit2, mostImages})[0];
         return {nearImage};
       },
       [&]() -> Values { return {nearPass}; });
@@ -931,13 +947,16 @@ Value MatrixBuild::emitCandidateWithinReach(Value xi, Value yi, Value zi,
 }
 
 void MatrixBuild::emitSearch(StringRef symbol, bool triclinic,
-                             bool testAllImages) {
+                             bool testAllImages, bool anchored) {
   tilted = triclinic;
   allImages = testAllImages;
+  anchors = anchored;
   SmallVector<Type> inputs{positions, tilted ? tiltedType : boxType};
   if (tilted)
     inputs.push_back(boxType);
   inputs.append({f64, f64, buffer, buffer, rowType, buffer});
+  if (anchors)
+    inputs.append({f64, radiiType});
   function(symbol, b.getFunctionType(inputs, {index, index}),
            [&](ValueRange arguments) {
              unsigned arg = 0;
@@ -951,6 +970,10 @@ void MatrixBuild::emitSearch(StringRef symbol, bool triclinic,
              counts = arguments[arg++];
              entries = arguments[arg++];
              order = arguments[arg++];
+             if (anchors) {
+               baseReach = arguments[arg++];
+               radii = arguments[arg++];
+             }
              emitSearchGeometry();
              emitClearCellCounts();
              emitParticleBins();
@@ -1065,54 +1088,31 @@ void MatrixBuild::emitMatrixImageWithin() {
            });
 }
 
-void MatrixBuild::emitBuildNeighborsMatrixTriclinic() {
-  function("mdrt_gpu_build_neighbors_matrix_triclinic",
-           b.getFunctionType({positions, tiltedType, boxType, f64, f64, buffer,
-                              buffer, rowType, buffer},
-                             {index, index}),
+void MatrixBuild::emitBuildNeighborsMatrixTriclinic(bool anchored) {
+  StringRef stem = "mdrt_gpu_build_neighbors_matrix_triclinic";
+  StringRef suffix = anchored ? "_anchor" : "";
+  SmallVector<Type> inputs{positions, tiltedType, boxType, f64, f64, buffer,
+                           buffer, rowType, buffer};
+  if (anchored)
+    inputs.append({f64, radiiType});
+  function((stem + suffix).str(), b.getFunctionType(inputs, {index, index}),
            [&](ValueRange arguments) {
-             Value x = arguments[0];
              Value box = arguments[1];
-             Value widths = arguments[2];
-             Value reach = arguments[3];
-             Value cellWidth = arguments[4];
-             Value excluded = arguments[5];
-             Value counts = arguments[6];
-             Value entries = arguments[7];
-             Value order = arguments[8];
+             Value searchReach = arguments[3];
              Value lx = extract(box, 0);
              Value ly = extract(box, 1);
              Value lz = extract(box, 2);
-             Value leastXy = minimumf(lx, ly);
-             Value least = minimumf(leastXy, lz);
-             Value part = cd(0.49);
-             Value bound = mulf(least, part);
-             Value within = cmpf(CmpFPredicate::OLE, reach, bound);
-             auto largestValues = ifElse(
-                 {index, index}, within,
-                 [&]() -> Values {
-                   auto oneValues =
-                       call("mdrt_gpu_build_neighbors_matrix_triclinic_pass",
-                            {index, index},
-                            {x, box, widths, reach, cellWidth, excluded, counts,
-                             entries, order});
-                   Value one = oneValues[0];
-                   Value oneNot = oneValues[1];
-                   return {one, oneNot};
-                 },
-                 [&]() -> Values {
-                   auto allValues =
-                       call("mdrt_gpu_build_neighbors_matrix_triclinic_images",
-                            {index, index},
-                            {x, box, widths, reach, cellWidth, excluded, counts,
-                             entries, order});
-                   Value all = allValues[0];
-                   Value allNot = allValues[1];
-                   return {all, allNot};
-                 });
-             Value largest = largestValues[0];
-             Value notNumbers = largestValues[1];
-             func::ReturnOp::create(b, loc, ValueRange{largest, notNumbers});
+             Value least = minimumf(minimumf(lx, ly), lz);
+             Value bound = mulf(least, cd(0.49));
+             Value within = cmpf(CmpFPredicate::OLE, searchReach, bound);
+             auto search = [&](StringRef geometry) -> Values {
+               return call((stem + geometry + suffix).str(), {index, index},
+                           arguments);
+             };
+             auto largest = ifElse(
+                 {index, index}, within, [&] { return search("_pass"); },
+                 [&] { return search("_images"); });
+             func::ReturnOp::create(b, loc, largest);
            });
 }
 
@@ -1220,7 +1220,7 @@ void MatrixBuild::emitSpatialOrder() {
 
 } // namespace
 
-void kernels::emitMatrixBuild(ModuleOp module) {
+void kernels::emitMatrixBuild(ModuleOp module, bool anchors) {
   OpBuilder builder = OpBuilder::atBlockEnd(module.getBody());
   MatrixBuild matrix(builder, module.getLoc());
   matrix.emitCellCount();
@@ -1235,7 +1235,16 @@ void kernels::emitMatrixBuild(ModuleOp module) {
   matrix.emitMatrixImageWithin();
   matrix.emitSearch("mdrt_gpu_build_neighbors_matrix_triclinic_images", true,
                     true);
-  matrix.emitBuildNeighborsMatrixTriclinic();
+  matrix.emitBuildNeighborsMatrixTriclinic(false);
+  if (anchors) {
+    matrix.emitSearch("mdrt_gpu_build_neighbors_matrix_anchor", false, false,
+                      true);
+    matrix.emitSearch("mdrt_gpu_build_neighbors_matrix_triclinic_pass_anchor",
+                      true, false, true);
+    matrix.emitSearch("mdrt_gpu_build_neighbors_matrix_triclinic_images_anchor",
+                      true, true, true);
+    matrix.emitBuildNeighborsMatrixTriclinic(true);
+  }
   matrix.emitSpatialOrder();
 }
 

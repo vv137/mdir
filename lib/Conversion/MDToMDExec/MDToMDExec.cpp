@@ -143,8 +143,11 @@ LogicalResult Converter::convertNeighborhood(md::NeighborhoodOp op) {
                             md_exec::Images::Minimum),
       cells,
       op.getPositions(), op.getCell(), excluded, /*centers=*/Value(),
-      APFloat(cutoff), APFloat(skin), md_exec::NeighborKind::Matrix,
-      static_cast<uint64_t>(width), md_exec::Images::Minimum);
+      op.getAnchorMembers(), op.getAnchorRadii(), op.getMaxAnchorRadiusAttr(),
+      op.getCutoffAttr(), builder.getF64FloatAttr(skin),
+      md_exec::NeighborKindAttr::get(context, md_exec::NeighborKind::Matrix),
+      builder.getI64IntegerAttr(width),
+      md_exec::ImagesAttr::get(context, md_exec::Images::Minimum));
 
   neighbors[op.getResult()] = structure;
   converted.push_back(op);

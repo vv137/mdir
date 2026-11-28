@@ -122,8 +122,22 @@ llvm::Error Builder::emitTopologyPotential(StringRef name, unsigned terms,
         }
         auto pairs = mdir::md::RelationType::get(&context, atoms, 2,
             mdir::md::Orientation::Unordered, mlir::FlatSymbolRefAttr{});
+        mlir::Value anchorMembers, anchorRadii;
+        mlir::FloatAttr maxAnchorRadius;
+        if (control.matrixAnchorValidity) {
+          anchorMembers = relation("matrix_anchor_members");
+          anchorRadii = field("matrix_anchor_radius");
+          const auto radius = llvm::find_if(program.fields, [](const auto &f) {
+            return f.name == "matrix_anchor_radius";
+          });
+          if (!radius->values.empty())
+            maxAnchorRadius = ir.getF64FloatAttr(
+                *std::max_element(radius->values.begin(), radius->values.end()));
+          else
+            maxAnchorRadius = ir.getF64FloatAttr(0.0);
+        }
         neighborhood = mdir::md::NeighborhoodOp::create(ir, loc, pairs,
-            args[0], args[1], excluded,
+            args[0], args[1], excluded, anchorMembers, anchorRadii, maxAnchorRadius,
             ir.getF64FloatAttr(control.cutoffDistance * units::length));
       }
       TermNativeTopology state{{args[0], args[1], neighborhood,
@@ -165,7 +179,7 @@ llvm::Error Builder::emitPotential() {
     auto pairs = mdir::md::RelationType::get(&context, atoms, 2,
         mdir::md::Orientation::Unordered, mlir::FlatSymbolRefAttr{});
     mlir::Value neighborhood = mdir::md::NeighborhoodOp::create(ir, loc, pairs,
-        args[0], args[1], mlir::Value{}, ir.getF64FloatAttr(control.cutoffDistance * units::length));
+        args[0], args[1], mlir::Value{}, mlir::Value(), mlir::Value(), mlir::FloatAttr(), ir.getF64FloatAttr(control.cutoffDistance * units::length));
     auto field = [&](StringRef name) -> mlir::Value {
       auto found = llvm::find_if(program.fields, [&](const auto &field) { return field.name == name; });
       assert(found != program.fields.end() && "bare potential field must exist");

@@ -1617,10 +1617,19 @@ LogicalResult Assignment::convertBuildNeighbors(BuildNeighborsOp op,
       op.getKindAttr(), op.getWidthAttr(), loc, shared);
   if (shared || &scope != root || excluded)
     ResetNeighborsOp::create(scope.builder, loc, storage, excluded);
+  Value anchorMembers, anchorRadii;
+  if (Value relation = op.getAnchorMembers()) {
+    anchorMembers = mapping.lookupOrNull(relation);
+    if (!anchorMembers)
+      return op.emitOpError() << "anchor membership has no storage";
+    if (failed(getBuffer(op.getAnchorRadii(), scope, anchorRadii)))
+      return failure();
+  }
   auto refresh = RefreshNeighborsOp::create(
       scope.builder, loc, storage.getType(), storage, positions,
       mapping.lookup(op.getCell()), /*scratch=*/ValueRange(),
       /*moved=*/Value(), /*stale=*/Value(), mapCenters(op.getCenters()),
+      anchorMembers, anchorRadii, op.getMaxAnchorRadiusAttr(),
       op.getCutoffAttr(), op.getSkinAttr(), /*prune_skin=*/FloatAttr(),
       cells.getWidthAttr(),
       RebuildPolicyAttr::get(scope.builder.getContext(), RebuildPolicy::Check),
@@ -1662,10 +1671,19 @@ LogicalResult Assignment::convertRefreshNeighbors(RefreshNeighborsOp op,
   }
 
   Value stale = op.getStale() ? mapping.lookup(op.getStale()) : Value();
+  Value anchorMembers, anchorRadii;
+  if (Value relation = op.getAnchorMembers()) {
+    anchorMembers = mapping.lookupOrNull(relation);
+    if (!anchorMembers)
+      return op.emitOpError() << "anchor membership has no storage";
+    if (failed(getBuffer(op.getAnchorRadii(), scope, anchorRadii)))
+      return failure();
+  }
   auto refresh = RefreshNeighborsOp::create(
       scope.builder, op.getLoc(), storage.getType(), storage, positions,
       mapping.lookup(op.getCell()), scratch, moved, stale,
-      mapCenters(op.getCenters()), op.getCutoffAttr(), op.getSkinAttr(),
+      mapCenters(op.getCenters()), anchorMembers, anchorRadii,
+      op.getMaxAnchorRadiusAttr(), op.getCutoffAttr(), op.getSkinAttr(),
       op.getPruneSkinAttr(), op.getCellWidthAttr(), op.getPolicyAttr(),
       op.getIntervalAttr(), op.getImagesAttr());
   neighbors[op.getResult()] = refresh.getResult();

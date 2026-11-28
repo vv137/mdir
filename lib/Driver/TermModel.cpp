@@ -56,7 +56,7 @@ static TermIRValues buildHostedModelEvaluation(mlir::OpBuilder &builder, mlir::V
     if (config.edges) {
       auto cutoff = builder.getF64FloatAttr(config.cutoffs[index]);
       Value neighborhood = mdir::md::NeighborhoodOp::create(
-          builder, loc, pairsType, values[1], values[0], Value{}, cutoff);
+          builder, loc, pairsType, values[1], values[0], Value{}, Value(), Value(), FloatAttr(), cutoff);
       edges =
           mdir::md::EdgesOp::create(builder, loc, edgesType, neighborhood,
                                     values[1], values[0], cutoff);

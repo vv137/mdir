@@ -683,7 +683,9 @@ private:
   /// what every build records (finishBuild).
   LogicalResult emitBuild(OpBuilder &builder, Location loc,
                           const Neighbors &structure, Value positions,
-                          Value box, double reach, double cellWidth);
+                          Value box, double reach, double cellWidth,
+                          Value anchorMembers = {}, Value anchorRadii = {},
+                          double maxAnchorRadius = 0.0);
   /// Stops the run, through the runtime, if `notNumbers` positions, as a
   /// build counted them, are not numbers (D107).
   void emitStopNotNumbers(OpBuilder &builder, Location loc, Value notNumbers);
@@ -5616,7 +5618,11 @@ LogicalResult Lowering::addMatrixBuild(Type real) {
     return success();
 
   OwningOpRef<ModuleOp> definitions = ModuleOp::create(module.getLoc());
-  kernels::emitMatrixBuild(*definitions);
+  bool anchors = false;
+  module.walk([&](md_exec::RefreshNeighborsOp refresh) {
+    anchors |= static_cast<bool>(refresh.getAnchorMembers());
+  });
+  kernels::emitMatrixBuild(*definitions, anchors);
   if (failed(instantiateTemplates(*definitions, real)))
     return failure();
   for (Operation &op : llvm::make_early_inc_range(*definitions)) {
@@ -8618,8 +8624,9 @@ void Lowering::emitStopNotNumbers(OpBuilder &builder, Location loc,
 
 LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                                   const Neighbors &structure, Value positions,
-                                  Value box, double reach,
-                                  double cellWidth) {
+                                  Value box, double reach, double cellWidth,
+                                  Value anchorMembers, Value anchorRadii,
+                                  double maxAnchorRadius) {
   if (structure.groups) {
     if (failed(emitGroupsBuild(builder, loc, structure, positions, box,
                                reach)))
@@ -8634,7 +8641,40 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
   if (failed(addMatrixBuild(real)))
     return failure();
 
-  Value reachValue = createReal(builder, loc, real, reach);
+  Value searchPositions = positions, searchRadii, copiedMembers;
+  if (anchorMembers) {
+    auto tupleType = cast<MemRefType>(anchorMembers.getType());
+    if (auto renamed = deviceTuplesOf.find(anchorMembers);
+        renamed != deviceTuplesOf.end()) {
+      anchorMembers = renamed->second.renumbered;
+    } else if (!isDeviceType(tupleType)) {
+      auto type = getDeviceType(tupleType.getShape(), tupleType.getElementType());
+      copiedMembers = createDeviceBuffer(builder, loc, type, {structure.size});
+      createTransfer(builder, loc, copiedMembers, anchorMembers);
+      anchorMembers = copiedMembers;
+    }
+    searchPositions = createDeviceBuffer(
+        builder, loc, cast<MemRefType>(positions.getType()), {structure.size});
+    searchRadii = createDeviceBuffer(
+        builder, loc, getDeviceType({ShapedType::kDynamic}, builder.getF32Type()),
+        {structure.size});
+    launchOver(builder, loc, structure.size, [&](OpBuilder &at, Value tuple) {
+      auto member = [&](int64_t slot) -> Value {
+        Value id = memref::LoadOp::create(
+            at, loc, anchorMembers, ValueRange{tuple, createIndex(at, loc, slot)});
+        return arith::IndexCastOp::create(at, loc, at.getIndexType(), id);
+      };
+      Value site = member(0), anchor = member(1);
+      storeElement(at, loc, loadElement(at, loc, positions, anchor),
+                   searchPositions, site);
+      Value radius = loadElement(at, loc, anchorRadii, site);
+      if (radius.getType().isF64())
+        radius = arith::TruncFOp::create(at, loc, at.getF32Type(), radius);
+      storeElement(at, loc, radius, searchRadii, site);
+    });
+  }
+  Value baseReach = createReal(builder, loc, real, reach);
+  Value reachValue = createReal(builder, loc, real, reach + 2.0 * maxAnchorRadius);
   Value leastValue = createReal(builder, loc, real, cellWidth);
   Value boxValue = convertReal(builder, loc, box, real);
   // A triclinic cell is searched in its fractional coordinates, whose cells
@@ -8664,11 +8704,13 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                                     ValueRange{createIndex(builder, loc, 0)});
     excluded = noExcluded;
   }
+  std::string buildName = buildNeighborsName;
+  if (tilted)
+    buildName += "_triclinic";
+  if (anchorMembers)
+    buildName += "_anchor";
   auto build = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
-      module,
-      getInstanceName(tilted ? std::string(buildNeighborsName) + "_triclinic"
-                             : std::string(buildNeighborsName),
-                      real)));
+      module, getInstanceName(buildName, real)));
   // Build; if a row was too narrow to hold the neighbors of a particle,
   // the runtime makes the rows wider, and the build is made again.
   Type wide = builder.getI64Type();
@@ -8677,11 +8719,13 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
     Block *before = builder.createBlock(&again.getBefore());
     OpBuilder at = OpBuilder::atBlockEnd(before);
     Value entries = getMatrixEntries(at, loc, structure.handle);
-    SmallVector<Value, 9> operands = {positions, boxValue};
+    SmallVector<Value, 11> operands = {searchPositions, boxValue};
     if (tilted)
       operands.push_back(widthsValue);
     operands.append({reachValue, widthValue, excluded, structure.counts,
                      entries, structure.order});
+    if (anchorMembers)
+      operands.append({baseReach, searchRadii});
     auto built = func::CallOp::create(at, loc, build, operands);
     Value largest = built.getResult(0);
     emitStopNotNumbers(
@@ -8721,6 +8765,17 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                            /*asyncDependencies=*/ValueRange(), plain);
   }
 
+  if (anchorMembers) {
+    for (Value buffer : {searchPositions, searchRadii, copiedMembers}) {
+      if (!buffer)
+        continue;
+      auto type = cast<MemRefType>(buffer.getType());
+      auto plainType = MemRefType::get(type.getShape(), type.getElementType());
+      Value plain =
+          memref::MemorySpaceCastOp::create(builder, loc, plainType, buffer);
+      gpu::DeallocOp::create(builder, loc, Type(), ValueRange(), plain);
+    }
+  }
   if (failed(finishBuild(builder, loc, structure, positions, box)))
     return failure();
   if (structure.edges)
@@ -10224,9 +10279,15 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
   double skin = op.getSkin().convertToDouble();
   double cellWidth = op.getCellWidth().convertToDouble();
 
+  auto buildMatrixOrGroups = [&](OpBuilder &at) {
+    const double radius = op.getMaxAnchorRadius()
+                              ? op.getMaxAnchorRadius()->convertToDouble()
+                              : 0.0;
+    return emitBuild(at, loc, structure, positions, box, reach, cellWidth,
+                     op.getAnchorMembers(), op.getAnchorRadii(), radius);
+  };
   if (op.getPolicy() == md_exec::RebuildPolicy::Always)
-    return emitBuild(builder, loc, structure, positions, box, reach,
-                     cellWidth);
+    return buildMatrixOrGroups(builder);
 
   Value moved = op.getMoved();
   if (!moved && op.getScratch().size() != 2)
@@ -10423,7 +10484,7 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
   auto rebuild = scf::IfOp::create(builder, loc, stale,
                                    /*withElseRegion=*/false);
   OpBuilder then(rebuild.thenBlock()->getTerminator());
-  return emitBuild(then, loc, structure, positions, box, reach, cellWidth);
+  return buildMatrixOrGroups(then);
 }
 
 //===----------------------------------------------------------------------===//

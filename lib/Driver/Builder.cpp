@@ -68,6 +68,14 @@ llvm::Error Builder::build() {
       StringRef(spread) != "written")
     return makeError("MDIR_SITE_SPREAD is '" + llvm::Twine(spread) +
                      "'; expected 'derived' or 'written'");
+  if (control.matrixAnchorValidity &&
+      (control.neighborStructure != NeighborStructure::Matrix ||
+       control.rebuildPeriod || control.prunedDistance != 0.0 ||
+       !control.periodic || !system.topology || control.distribution ||
+       control.rigidUnitsRoute.units || control.frames || control.minimize))
+    return makeError(
+        "matrix_validity ANCHOR requires periodic dynamics with a topology "
+        "and a single checked MATRIX list");
   // The neighbor matrix of a triclinic cell holds every pair that has an
   // image within its reach, whatever the reach: its build tests the images
   // beyond that of the one pass where the reach is more than half of the

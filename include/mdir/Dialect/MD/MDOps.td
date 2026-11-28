@@ -231,7 +231,7 @@ def MD_CheckedRectangularCellOp : MD_Op<"checked_rectangular_cell", [MemoryEffec
 // Relations
 //===----------------------------------------------------------------------===//
 
-def MD_NeighborhoodOp : MD_Op<"neighborhood", [Pure]> {
+def MD_NeighborhoodOp : MD_Op<"neighborhood", [Pure, AttrSizedOperandSegments]> {
   let summary = "Builds the relation of pairs within a cutoff";
   let description = [{
     ```text
@@ -262,13 +262,18 @@ def MD_NeighborhoodOp : MD_Op<"neighborhood", [Pure]> {
     MD_ReferenceFieldType:$positions,
     MD_CellType:$cell,
     Optional<MD_RelationType>:$excluded,
+    Optional<MD_RelationType>:$anchor_members,
+    Optional<MD_FieldType>:$anchor_radii,
+    OptionalAttr<F64Attr>:$max_anchor_radius,
     F64Attr:$cutoff
   );
   let results = (outs MD_RelationType:$result);
   let assemblyFormat = [{
     $positions `,` $cell `cutoff` `(` $cutoff `)`
-    (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)? attr-dict
-    `:` qualified(type($positions)) `->` qualified(type($result))
+    (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)?
+    (`anchors` `(` $anchor_members^ `,` $anchor_radii `,` $max_anchor_radius `:`
+      qualified(type($anchor_members)) `,` qualified(type($anchor_radii)) `)`)?
+    attr-dict `:` qualified(type($positions)) `->` qualified(type($result))
   }];
   let hasVerifier = 1;
 }

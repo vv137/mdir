@@ -114,6 +114,19 @@ times as long. The proof above then goes through with $\mathbf m$ the
 ratio of the diagonals $(a_x, b_y, c_z)$ of the two cells, which is what
 the test takes for either kind of cell.
 
+**MATRIX over constraint anchors.** In the optional anchor form the
+geometry of a rigid constraint frame bounds each site by its unit radius
+$e_f$, as in Section 4.7. The search keeps all the site entries of two
+units at an anchor separation within $R + e_f + e_g$. The current site
+distance is at least the current anchor distance less $e_f + e_g$ by the
+triangle inequality. Apply the theorem with cutoff $r_c + e_f + e_g$,
+reach $R + e_f + e_g$, and displacement $d$ measured on anchors. The
+smallest margin over unit pairs is bounded below by
+$mR - r_c + \min(0,m-1)\,2\max_f e_f$, where $m$ is the smallest component
+of $\mathbf m$. Only the neighbor search and validity test use the anchor
+geometry. The interactions use the site configurations in the
+Hamiltonian. [D[matrix-anchor-validity]](../decisions/matrix-anchor-validity.md)
+
 **Implementation.** The test is not a separate kernel. The pass
 `md-exec-expose-validity` writes it as a loop over particles,
 

@@ -26,12 +26,19 @@ struct Parameters {
   bool isKnown = false;
   Type type;
   /// The pairs that the structure leaves out.
-  Value excluded;
+  Value excluded, anchorMembers, anchorRadii;
+  Attribute maxAnchorRadius;
   Attribute kind, width, cutoff, skin, cellWidth;
+
+  bool sameAnchors(const Parameters &other) const {
+    return anchorMembers == other.anchorMembers &&
+           anchorRadii == other.anchorRadii &&
+           maxAnchorRadius == other.maxAnchorRadius;
+  }
 
   bool operator==(const Parameters &other) const {
     return isKnown && other.isKnown && type == other.type &&
-           excluded == other.excluded &&
+           excluded == other.excluded && sameAnchors(other) &&
            kind == other.kind &&
            width == other.width && cutoff == other.cutoff &&
            skin == other.skin && cellWidth == other.cellWidth;
@@ -92,6 +99,9 @@ static void findParameters(Value structure,
       Parameters parameters;
       parameters.isKnown = true;
       parameters.type = structure.getType();
+      parameters.anchorMembers = refresh.getAnchorMembers();
+      parameters.anchorRadii = refresh.getAnchorRadii();
+      parameters.maxAnchorRadius = refresh.getMaxAnchorRadiusAttr();
       parameters.cutoff = refresh.getCutoffAttr();
       parameters.skin = refresh.getSkinAttr();
       parameters.cellWidth = refresh.getCellWidthAttr();
@@ -126,6 +136,9 @@ static SmallVector<Source, 4> findSources(Block &block) {
       source.parameters.isKnown = true;
       source.parameters.type = build.getResult().getType();
       source.parameters.excluded = build.getExcluded();
+      source.parameters.anchorMembers = build.getAnchorMembers();
+      source.parameters.anchorRadii = build.getAnchorRadii();
+      source.parameters.maxAnchorRadius = build.getMaxAnchorRadiusAttr();
       source.parameters.kind = build.getKindAttr();
       source.parameters.width = build.getWidthAttr();
       source.parameters.cutoff = build.getCutoffAttr();
@@ -158,7 +171,8 @@ static SmallVector<Source, 4> findSources(Block &block) {
       SmallVector<Parameters> found;
       findParameters(loop.getRegionIterArgs()[index], found);
       if (!found.empty() && llvm::all_of(found, [&](Parameters &other) {
-            return other.cutoff == found.front().cutoff &&
+            return other.sameAnchors(found.front()) &&
+                   other.cutoff == found.front().cutoff &&
                    other.skin == found.front().skin &&
                    other.cellWidth == found.front().cellWidth;
           })) {
@@ -231,6 +245,8 @@ static Value continueIn(Source source, Value current) {
         builder, build.getLoc(), current.getType(), current,
         build.getPositions(), build.getCell(), /*scratch=*/ValueRange(),
         /*moved=*/Value(), /*stale=*/Value(), /*centers=*/Value(),
+        build.getAnchorMembers(), build.getAnchorRadii(),
+        build.getMaxAnchorRadiusAttr(),
         build.getCutoffAttr(), build.getSkinAttr(), /*prune_skin=*/FloatAttr(),
         cells.getWidthAttr(),
         RebuildPolicyAttr::get(builder.getContext(), RebuildPolicy::Check),
@@ -317,6 +333,9 @@ static void reuseNeighbors(scf::ForOp loop) {
 static bool isSameRefresh(RefreshNeighborsOp first, RefreshNeighborsOp second) {
   return first.getPositions() == second.getPositions() &&
          first.getCell() == second.getCell() &&
+         first.getAnchorMembers() == second.getAnchorMembers() &&
+         first.getAnchorRadii() == second.getAnchorRadii() &&
+         first.getMaxAnchorRadiusAttr() == second.getMaxAnchorRadiusAttr() &&
          first.getScratch().empty() && second.getScratch().empty() &&
          !first.getMoved() && !second.getMoved() && !first.getStale() &&
          !second.getStale() && first.getCutoffAttr() == second.getCutoffAttr() &&

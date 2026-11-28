@@ -363,6 +363,22 @@ LogicalResult NeighborhoodOp::verify() {
                            << ", but the positions belong to "
                            << positions.getParticleSet();
   }
+  if (getAnchorMembers() || getAnchorRadii() || getMaxAnchorRadius()) {
+    if (!getAnchorMembers() || !getAnchorRadii() || !getMaxAnchorRadius())
+      return emitOpError("expects anchor membership, radii, and maximum together");
+    auto anchors = cast<RelationType>(getAnchorMembers().getType());
+    auto radii = cast<FieldType>(getAnchorRadii().getType());
+    if (anchors.getParticleSet() != positions.getParticleSet() ||
+        anchors.getArity() != 2 || !anchors.getTupleSet() ||
+        anchors.getOrientation() != Orientation::Ordered ||
+        radii.getParticleSet() != positions.getParticleSet() ||
+        !radii.getKernelValueType().isF64())
+      return emitOpError("expects ordered (site, anchor) tuples and a scalar "
+                         "f64 radius field on the position set");
+    const APFloat radius = *getMaxAnchorRadius();
+    if (!radius.isFinite() || radius.convertToDouble() < 0)
+      return emitOpError("expects a finite nonnegative maximum anchor radius");
+  }
   return success();
 }
 

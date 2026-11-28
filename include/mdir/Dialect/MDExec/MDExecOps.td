@@ -483,6 +483,9 @@ def MDExec_BuildNeighborsOp : MDExec_Op<"build_neighbors", [
     MD_CellType:$cell,
     Optional<MDExec_Incidence>:$excluded,
     Optional<Index>:$centers,
+    Optional<MDExec_RelationOrMembers>:$anchor_members,
+    Optional<MDExec_FieldOrBuffer>:$anchor_radii,
+    OptionalAttr<F64Attr>:$max_anchor_radius,
     F64Attr:$cutoff,
     F64Attr:$skin,
     MDExec_NeighborKind:$kind,
@@ -496,6 +499,8 @@ def MDExec_BuildNeighborsOp : MDExec_Op<"build_neighbors", [
     `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
     `kind` `(` $kind `)` `width` `(` $width `)`
     (`images` `(` $images^ `)`)?
+    (`anchors` `(` $anchor_members^ `,` $anchor_radii `,` $max_anchor_radius `:`
+       qualified(type($anchor_members)) `,` qualified(type($anchor_radii)) `)`)?
     (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)? attr-dict
     `:` qualified(type($cells)) `,` qualified(type($positions))
     `->` qualified(type($result))
@@ -955,6 +960,9 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     Optional<I1>:$moved,
     Optional<I1>:$stale,
     Optional<Index>:$centers,
+    Optional<MDExec_RelationOrMembers>:$anchor_members,
+    Optional<MDExec_FieldOrBuffer>:$anchor_radii,
+    OptionalAttr<F64Attr>:$max_anchor_radius,
     F64Attr:$cutoff,
     F64Attr:$skin,
     OptionalAttr<F64Attr>:$prune_skin,
@@ -975,6 +983,8 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     (`prune_skin` `(` $prune_skin^ `)`)?
     `cell_width` `(` $cell_width `)` (`interval` `(` $interval^ `)`)?
     (`images` `(` $images^ `)`)?
+    (`anchors` `(` $anchor_members^ `,` $anchor_radii `,` $max_anchor_radius `:`
+       qualified(type($anchor_members)) `,` qualified(type($anchor_radii)) `)`)?
     `policy` `(` $policy `)` attr-dict
     `:` qualified(type($neighbors)) `,` qualified(type($positions))
   }];

@@ -2,6 +2,7 @@
 // Term-specific collections and constants are owned by the adapters.
 
 #include "BuilderImpl.h"
+#include "mdir/Driver/RigidUnits.h"
 
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
@@ -64,6 +65,31 @@ llvm::Error Builder::collectTopology() {
       return error;
   } else {
     collectTopologyArrays();
+  }
+  if (control.matrixAnchorValidity) {
+    MatrixAnchorPlan plan = getMatrixAnchorPlan(control, system);
+    if (isTriclinic() && !plan.signedRadii.empty()) {
+      double largest = *std::max_element(plan.signedRadii.begin(),
+                                        plan.signedRadii.end());
+      double reach = control.pairlistDistance * units::length + 2.0 * largest;
+      if (reach > 127.0 * control.cutoffDistance * units::length)
+        return makeError("the MATRIX covering reach exceeds 127 times the cutoff");
+    }
+    auto radii = llvm::find_if(program.fields, [](const Program::Field &field) {
+      return field.name == "matrix_anchor_radius";
+    });
+    if (radii == program.fields.end()) {
+      program.fields.push_back({"matrix_anchor_radius", std::move(plan.signedRadii)});
+      Program::TupleSet set;
+      set.name = "matrix_anchor_members";
+      set.arity = 2;
+      set.reversible = false;
+      set.oriented = true;
+      set.members = std::move(plan.members);
+      program.tupleSets.push_back(std::move(set));
+    } else {
+      radii->values = std::move(plan.signedRadii);
+    }
   }
   if (capture) {
     capture->fields = program.fields;

@@ -3049,7 +3049,11 @@ Error Reader::readExecution(const toml::table &table) {
                                    "neighbor_capacity", "fast_math",
                                    "spatial_order", "deterministic",
                                    "neighbor_structure", "towers_shape", "step_graph",
-                                   "term_streams"}))
+                                   "term_streams", "matrix_validity"}))
+    return error;
+  if (Error error = readChoice<bool>(
+          table, "matrix_validity", control.matrixAnchorValidity,
+          {{"SITE", false}, {"ANCHOR", true}}))
     return error;
   StringRef streams = "SINGLE";
   if (Error error = readChoice<StringRef>(table, "term_streams", streams,

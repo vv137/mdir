@@ -481,6 +481,7 @@ struct Control {
   /// log, the manifest, and `mdir check`.
   NeighborStructure neighborStructureRequested = NeighborStructure::Auto;
   std::string neighborStructureReason;
+  bool matrixAnchorValidity = false;
   /// `[performance] rigid_units`, whether it was given, and its route
   /// once resolved (`resolveRigidUnits`).
   RigidUnits rigidUnits = RigidUnits::Auto;

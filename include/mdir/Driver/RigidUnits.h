@@ -26,6 +26,16 @@ namespace driver {
 /// places from their anchor, in nm (#795, ruling 5: 10^-3 Å).
 constexpr double rigidUnitsMargin = 1e-4;
 
+/// The (site, anchor) relation and unit radii for a checked MATRIX list.
+struct MatrixAnchorPlan {
+  std::vector<int32_t> members;
+  /// Positive at an anchor, negative at a non-anchor, zero at a lone site.
+  std::vector<double> signedRadii;
+};
+
+MatrixAnchorPlan getMatrixAnchorPlan(const Control &control,
+                                     const System &system);
+
 /// Resolves `control.rigidUnits` for `system` at its positions and cell:
 /// fills `control.rigidUnitsRoute`, or refuses `ON` where the route cannot
 /// apply, with the reason. `AUTO` takes the general route until its rule is
