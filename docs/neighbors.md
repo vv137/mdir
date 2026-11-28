@@ -156,12 +156,13 @@ evaluating a direct pair, so even a canceled term too large for signed
 D455 used an exact exclusion window in each pressure target record and
 reduced its binary64 pair virial once per block.
 
-On moving pressure steps, the force flush also forms the virial outer
-product of each cell-relative staged position and its accumulated force
-words. An exclusion block subtracts the two endpoint products in the same
-images. Both feed the same two-limb sum before rounding to Q32. The
-forward exclusion index and sorted lookup serve wide force replay, which
-visits physical pairs and supplies the missing wide virial words
+On moving pressure steps, the force flush forms the virial outer product
+of each Q32 staged position and its accumulated Q28 slot force. The staged
+position includes the image shift into the interaction box. An exclusion
+block subtracts the two endpoint products in the same images. Both feed
+the same three-limb sum with 28 guard bits. The forward exclusion index
+and sorted lookup serve wide force replay, which visits physical pairs
+and adds the missing wide products before the final rounding to Q32
 (D[towers-slot-virial]).
 
 On the GPU, a single block of `towers_recover_once` can replace the clear,

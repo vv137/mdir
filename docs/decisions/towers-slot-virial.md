@@ -43,6 +43,15 @@ between the pair and slot tensors was $5.09\times 10^{-16}$ on JAC,
 $7.02\times 10^{-16}$ on Factor IX, $3.54\times 10^{-16}$ on TIP3P 10k,
 and $4.66\times 10^{-16}$ on triclinic Trp-cage. The maximum modeled
 absolute staged coordinate was 2.492 nm and the maximum narrow slot
-product was 9,246 kJ/mol.
+product was 9,246 kJ/mol. Modeling Q28 force quantization on the same
+frames with binary64 pair evaluation gave relative RMS errors between
+$1.19\times 10^{-11}$ and $1.02\times 10^{-10}$. This isolates fixed-point
+rounding from the mixed-precision pair evaluation.
+
+The acceptance tolerance for the full direct tensor is $10^{-6}$ relative
+RMS against the binary64 pair sum. The required twofold margin sets the
+acceptance gate at $5\times 10^{-7}$. The 0.05 Å exclusion fixture also
+requires identical guarded tensor words when the excluded sites are
+disabled.
 
 The control keys, defaults, file formats and overwrite behavior are unchanged.

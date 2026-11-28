@@ -1032,7 +1032,7 @@ void Force::addSlotVirial(Value position, ValueRange force, bool negate,
     // Positions remain in matched staged images. Accumulate their Q32
     // products at Q60 and defer rounding until all exclusions cancel.
     // For n < 2^26, fewer than 2^52 narrow endpoints times 2^40 times
-    // (2^41 + 2^9) sum below 2^134 including the exclusion debits.
+    // (2^41 + 2^9) sum below 2^135 including the exclusion debits.
     Value x = extract(position, axis);
     Value fits = cmpf(CmpFPredicate::OLT, absf(x), cf(0x1p8));
     valid = andi(valid, fits);

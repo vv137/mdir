@@ -1309,9 +1309,11 @@ coordinate, first in $x$, then in $y$. For equal lateral bases the smaller
 $z$ supplies the plate. Either assignment works inside one home box.
 After evaluation the box exports opposite forces to both home boxes.
 
-On a pressure step, consider the direct virial from the energy derivative
-with respect to strain (Section 3.6). Each uniquely owned pair contributes
-its displacement times its target force. Let $\mathbf x_s$ be the position
+The direct virial is the negative strain derivative of the direct pair
+energy (Section 3.6). In a homogeneous strain each pair displacement
+changes by the strain applied to that displacement. By the chain rule,
+the derivative contracts the strain with the pair displacement outer
+product of the target force. Let $\mathbf x_s$ be the position
 relative to the center of the staged slot's cell. In the interaction box,
 the pair endpoints occupy $\mathbf x_s+\mathbf S_{c(s)}$ and
 $\mathbf x_t+\mathbf S_{c(t)}$. The antisymmetric pair force contributes
@@ -1534,8 +1536,8 @@ additional signed residual in one packed word per slot and component.
 An exclusion block subtracts the same endpoint products before rounding.
 The signed three-limb reduction preserves all 28 guard bits until the
 total is rounded to Q32. Wide replay adds the missing physical pair
-products. It indexes each excluded pair by the
-smaller permanent atom ID. A 32-bit mask resolves
+products. The replay indexes each excluded pair by the smaller permanent
+atom ID. A 32-bit mask resolves
 the next 32 IDs exactly. A more distant partner above the greatest
 excluded ID in that row is outside the exclusion set. The remaining
 queries use the sorted topology pairs. This index also serves physical
