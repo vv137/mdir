@@ -153,12 +153,20 @@ independently quantized correction. Wide recovery tests membership before
 evaluating a direct pair, so even a canceled term too large for signed
 64-bit conversion cannot invalidate the physical result.
 
-The moving fused force and virial entry caches an undirected exclusion
-window with the target fields of each record. Sources covered by the
-window use an exact bit test. A source outside the window can require the
-forward index and sorted lookup. Each block reduces its binary64 warp
-totals in tile scratch before issuing its virial additions
-(D455).
+D455 used an exact exclusion window in each pressure target record and
+reduced its binary64 pair virial once per block.
+
+On moving pressure steps, the force flush forms the virial outer product
+of each Q32 staged position and its accumulated Q28 slot force. The staged
+position includes the image shift into the interaction box. The tile
+keeps the difference between Q28 and scaled Q18 in separate 32-bit
+shared planes where the tile budget permits, with packed words for
+larger tiles. An exclusion
+block subtracts the two endpoint products in the same images. Both feed
+the same three-limb sum with 28 guard bits. The forward exclusion index
+and sorted lookup serve wide force replay, which visits physical pairs
+and adds the missing wide products before the final rounding to Q32
+(D[towers-slot-virial]).
 
 On the GPU, a single block of `towers_recover_once` can replace the clear,
 recover and check launches. Its arguments and shared record reservation

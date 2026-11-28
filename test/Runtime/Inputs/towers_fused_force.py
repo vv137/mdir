@@ -2,7 +2,6 @@
 
 import ctypes
 import itertools
-import math
 import sys
 from pathlib import Path
 
@@ -34,7 +33,7 @@ def frames(directory, fused):
     force = entries.array(ctypes.c_int64, n * 3)
     flag = entries.array(rebuild.I, 2)
     failures = entries.array(ctypes.c_int64, 1)
-    virial = entries.array(rebuild.D, 6)
+    virial = entries.array(ctypes.c_uint64, 18)
     result = []
     for step in range(4):
         frame.box[:] = [6 + 3 * step / 16] * 3
@@ -49,7 +48,7 @@ def frames(directory, fused):
         force[:] = [0] * (n * 3)
         failures[0] = 0
         flag[:] = [0, 0]
-        virial[:] = [0] * 6
+        virial[:] = [0] * len(virial)
         entries.run("force_virial" if fused else "force", frame.cells * 128,
                     frame.spans, frame.packed, frame.ids, frame.geometry, force,
                     flag, rebuild.F(2**18), failures, frame.charge, frame.types, table,
@@ -58,17 +57,20 @@ def frames(directory, fused):
         assert frame.status[0] == flag[0] == failures[0] == 0
         assert any(force[:])
         if fused:
-            reference = [0.0] * 3
+            reference = [0] * 3
             for i, j in itertools.combinations(range(n), 2):
                 delta = [a - b for a, b in zip(xyz[i], xyz[j])]
                 if sum(d * d for d in delta) < 1:
                     k = table[2 * frame.types[i] + frame.types[j]]
                     k *= frame.charge[i] * frame.charge[j]
                     for a, d in enumerate(delta):
-                        reference[a] += d * rebuild.F(k * d).value
-            result_diag = [virial[j] for j in (0, 3, 5)]
-            assert all(math.isclose(x, y, abs_tol=1e-9)
-                       for x, y in zip(reference, result_diag)), (reference, result_diag)
+                        force_word = round(rebuild.F(k * d).value * 2**28)
+                        reference[a] += round(d * 2**32) * force_word
+            expected = [0] * len(virial)
+            for index, total in zip((0, 3, 5), reference):
+                for limb in range(3):
+                    expected[3 * index + limb] = (total >> (64 * limb)) & (2**64 - 1)
+            assert virial[:] == expected, (expected, virial[:])
         result.append(force[:])
     entries.close()
     return result

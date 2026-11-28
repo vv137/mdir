@@ -54,7 +54,8 @@ private:
   unsigned yieldIndex;
   int virialYield;
   Value fusedSum;
-  bool fused() const { return virialYield >= 0 && !observer() && !recovering; }
+  bool slotVirial() const { return virialYield >= 0 && !observer(); }
+  bool fused() const { return slotVirial() && !recovering; }
   bool virial() const {
     return output != TowersOutput::Force && output != TowersOutput::Energy;
   }
@@ -68,7 +69,7 @@ private:
   }
   int virialComponents() {
     return output == TowersOutput::TensorVirial ||
-                   (fused() && fusedVirialWidth() == 9)
+                   (slotVirial() && fusedVirialWidth() == 9)
                ? 9
                : 6;
   }
@@ -80,14 +81,37 @@ private:
   StringRef observerName() const {
     return energy() ? "towers_energy" : "towers_virial";
   }
-  Value localSum, virialPartials;
+  Value localSum;
   Value clonePair(Value t, Value s, Value ti, Value si, Value r2, Value d,
-                  ValueRange targetParameters, bool physical,
-                  ValueRange window = {});
+                  ValueRange targetParameters, bool physical);
   void observe(Value result, Value d, bool physical);
   void startObservation();
   void flushObservation();
-  void flushFusedVirial();
+  struct Limbs { Value low, high; };
+  Limbs addLimbs(Limbs left, Limbs right);
+  Limbs productLimbs(Value coordinate, Value force);
+  void publishLimbs(Value destination, int slot, Limbs part);
+  using VirialLimbs = std::array<Value, towersVirialLimbs>;
+  static constexpr int packedForceBits = 43;
+  static constexpr int fineForceBits =
+      towersVirialGuardBits - forceWordFractionBits;
+  bool separateResidual() const {
+    // Include the dynamic records and leave room for alignment and counters.
+    // The packed layout fits tiles that cannot reserve three more planes.
+    return fused() &&
+           fixedBytes + 12 * (panel + stripe) + 8 * recordCap + 512 <=
+               48 * 1024;
+  }
+  Value fineForceResidual(Value scaled, Value word);
+  Value fineResidualPlane;
+  Value baseSlotForce(Value packed);
+  Value fineSlotForce(Value packed, Value base);
+  Value unsignedCarry(Value sum, Value left);
+  VirialLimbs addVirialLimbs(VirialLimbs left, VirialLimbs right);
+  void startSlotVirial();
+  void addSlotVirial(Value position, ValueRange force, bool negate = false,
+                     ValueRange wideResiduals = {});
+  void flushSlotVirial();
   Value reduceWarpVirial(Value part, int firstDelta);
   Value warpDown(Value v, int d);
   void observationEntries();
@@ -96,8 +120,6 @@ private:
   Value bonds, inverse, raw, box, exclusionIndex;
   bool excluding = false;
   Value isExcluded(Value a, Value c);
-  Value excludedByWindow(Value targetSlot, Value sourceSlot, ValueRange window);
-  bool cacheExclusions() const { return fused() && indexedExclusions; }
   Value searchExclusions(Value first, Value second);
   void exclusion(Value row);
 
@@ -203,8 +225,7 @@ private:
   Value displacement(Value target, Value source);
   Value squared(Value d);
   Values pair(Value t, Value s, Value ti, Value si,
-              ValueRange targetParameters = {}, bool physical = false,
-              ValueRange window = {});
+              ValueRange targetParameters = {}, bool physical = false);
   Value sharedAdd(Value dst, Value byteOffset, Value word);
   void addWord(Value dst, Value i, Value axis, Value w);
   Value shared(gpu::GPUFuncOp fn, ArrayRef<int64_t> shape, Type t);
@@ -287,8 +308,7 @@ Value Force::squared(Value d) {
 }
 
 Value Force::clonePair(Value t, Value s, Value ti, Value si, Value r2, Value d,
-                       ValueRange targetParameters, bool physical,
-                       ValueRange window) {
+                       ValueRange targetParameters, bool physical) {
   Block &body = (physical ? correction : term).getKernel().front();
   IRMapping inside = mapping;
   inside.map(body.getArgument(0), r2);
@@ -334,24 +354,6 @@ Value Force::clonePair(Value t, Value s, Value ti, Value si, Value r2, Value d,
     } else
       b.clone(op, inside);
   }
-  if (fused() && !excluding) {
-    auto accumulate = [&] {
-      Value v =
-          inside.lookupOrDefault(body.getTerminator()->getOperand(virialYield));
-      int size = cast<VectorType>(v.getType()).getNumElements();
-      for (int a = 0; a < size; ++a) {
-        int j = virialSlot(size, a);
-        store(addf(load(localSum, {cx(j)}), extract(v, a)), localSum, {cx(j)});
-      }
-    };
-    if (exclusions) {
-      Value excluded = window.empty()
-                           ? isExcluded(load(id, {ti}), load(id, {si}))
-                           : excludedByWindow(ti, si, window);
-      ifThen(notNarrow(excluded), accumulate);
-    } else
-      accumulate();
-  }
   return inside.lookupOrDefault(body.getTerminator()->getOperand(physical ? 0 : yieldIndex));
 }
 
@@ -377,10 +379,17 @@ static bool canSelectCutoff(Block &body) {
 }
 
 Values Force::pair(Value t, Value s, Value ti, Value si,
-                   ValueRange targetParameters, bool physical,
-                   ValueRange window) {
+                   ValueRange targetParameters, bool physical) {
   Value d = displacement(t, s), r2 = squared(d);
-  auto wt = g.host || (excluding && recovering) ? i64 : i32;
+  bool packedForce = fused() && !physical && !separateResidual();
+  bool separateFine = separateResidual() && !physical;
+  auto wt = g.host || (excluding && recovering) || packedForce ? i64 : i32;
+  SmallVector<Type> wordTypes(3, wt);
+  if (separateFine)
+    wordTypes.append(3, i32);
+  auto zeroWords = [&] {
+    return Values(wordTypes.size(), wt == i64 ? cl(0) : ci(0));
+  };
   Value take = physical ? cb(true) : cmpf(CmpFPredicate::OLT, r2, cutoff2);
   if ((recovering || virial()) && exclusions &&
       !excluding) {
@@ -401,14 +410,13 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
   // The moving force region reads a type table and a radial table. Give a
   // rejected candidate an in-range radius for the radial lookup. Mask the
   // scaled components before certification so even a NaN force contributes
-  // zero words and zero failed conversions. Fused virials have side effects.
-  bool selectCutoff = movingDispatch && !fused() && !excluding && !recovering &&
+  // zero words and zero failed conversions.
+  bool selectCutoff = movingDispatch && !excluding && !recovering &&
                       canSelectCutoff(term.getKernel().front());
   if (selectCutoff)
     r2 = select(take, r2, mulf(cutoff2, cf(0.5)));
   auto convert = [&]() -> Values {
-    Value f = clonePair(t, s, ti, si, r2, d, targetParameters, physical,
-                        window);
+    Value f = clonePair(t, s, ti, si, r2, d, targetParameters, physical);
     Values scaled;
     Value narrow = cb(true);
     for (int a = 0; a < 3; ++a) {
@@ -451,7 +459,7 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
       else
         store(addi(load(localVotes, {}), shortVote() ? trunci(vote) : vote),
               localVotes, {});
-      return Values(3, g.host ? cl(0) : ci(0));
+      return zeroWords();
     };
     if (g.host) {
       Values converted = ifElse(
@@ -466,9 +474,9 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
       return converted;
     }
     Values result = ifElse(
-        {i32, i32, i32}, narrow,
+        wordTypes, narrow,
         [&] {
-          Values words;
+          Values words, residuals;
           for (Value x : scaled) {
             Value q = LLVM::InlineAsmOp::create(
                           b, loc, TypeRange{i32}, ValueRange{x},
@@ -476,8 +484,17 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
                           LLVM::TailCallKind::None, LLVM::AsmDialectAttr(),
                           ArrayAttr())
                           .getResult(0);
+            if (packedForce) {
+              Value base = arith::ExtSIOp::create(b, loc, i64, q);
+              Value residual = arith::ExtSIOp::create(
+                  b, loc, i64, fineForceResidual(x, q));
+              q = addi(base, shli(residual, cl(packedForceBits)));
+            }
+            if (separateFine)
+              residuals.push_back(fineForceResidual(x, q));
             words.push_back(q);
           }
+          words.append(residuals);
           return words;
         },
         [&] {
@@ -487,6 +504,16 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
           // replay. Keep its actual word for this stage's direct-only
           // oracle.
           Values f = wide();
+          // The provisional slot sum already contains every narrow pair.
+          // Replay only supplies wide words for physical pairs that were
+          // skipped by the provisional conversion.
+          if (slotVirial() && (recovering ? movingDispatch : !certified)) {
+            Values residuals;
+            for (auto [component, word] : llvm::zip(scaled, f))
+              residuals.push_back(fineForceResidual(component, word));
+            addSlotVirial(t, f, false, residuals);
+            addSlotVirial(s, f, true, residuals);
+          }
           Value target = indexCast(index, load(id, {ti})),
                 source = indexCast(index, load(id, {si}));
           for (int a = 0; a < 3; ++a) {
@@ -498,14 +525,13 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
               addWord(words, source, cx(a), subi(cl(0), f[a]));
             }
           }
-          return Values(3, ci(0));
+          return zeroWords();
         });
     return result;
   };
   if (selectCutoff)
     return convert();
-  return ifElse({wt, wt, wt}, take, convert,
-                [&] { return Values(3, wt == i64 ? cl(0) : ci(0)); });
+  return ifElse(wordTypes, take, convert, zeroWords);
 }
 
 // Only lanes of this CTA access the tile. The barriers protect its reuse.
@@ -526,9 +552,10 @@ void Force::addWord(Value dst, Value i, Value axis, Value w) {
     Value offset = muli(indexCast(i64, linear), cl(8));
     atomic(LLVM::AtomicBinOp::add, pointerTo(baseAddress(dst), offset), w);
   } else {
+    int bytes = w.getType() == i64 ? 8 : 4;
     sharedAdd(
         dst,
-        muli(indexCast(i64, addi(muli(axis, cx(panel + stripe)), i)), cl(4)),
+        muli(indexCast(i64, addi(muli(axis, cx(panel + stripe)), i)), cl(bytes)),
         w);
   }
 }
@@ -559,23 +586,6 @@ Value Force::isExcluded(Value a, Value c) {
             {i1}, cmpi(CmpIPredicate::ule, second, maximum),
             [&] { return Values{searchExclusions(first, second)}; },
             [&] { return Values{cb(false)}; });
-      })[0];
-}
-
-Value Force::excludedByWindow(Value targetSlot, Value sourceSlot,
-                              ValueRange window) {
-  Value source = load(id, {sourceSlot});
-  Value gap = subi(source, window[0]);
-  Value covered = cmpi(CmpIPredicate::ult, gap,
-                       ci(TowersExclusionIndex::windowSize));
-  Value mask = window[1];
-  Value slow = andi(notNarrow(covered), cmpi(CmpIPredicate::slt, mask, ci(0)));
-  return ifElse(
-      {i1}, slow,
-      [&] { return Values{isExcluded(load(id, {targetSlot}), source)}; },
-      [&] {
-        Value bit = andi(shrui(mask, andi(gap, ci(31))), ci(1));
-        return Values{andi(covered, cmpi(CmpIPredicate::ne, bit, ci(0)))};
       })[0];
 }
 
@@ -809,6 +819,26 @@ void Force::exclusion(Value row) {
     excluding = false;
     return;
   }
+  if (fused()) {
+    Values force;
+    for (int a = 0; a < 3; ++a) {
+      Value w = direct[a];
+      if (separateResidual()) {
+        Value base = arith::ExtSIOp::create(b, loc, i64, w);
+        Value residual =
+            arith::ExtSIOp::create(b, loc, i64, direct[3 + a]);
+        force.push_back(addi(shli(base, cl(fineForceBits)), residual));
+      } else {
+        force.push_back(fineSlotForce(w, baseSlotForce(w)));
+      }
+    }
+    Value nonzero = cmpi(CmpIPredicate::ne,
+                         ori(ori(force[0], force[1]), force[2]), cl(0));
+    ifThen(nonzero, [&] {
+      addSlotVirial(t, force, true);
+      addSlotVirial(s, force);
+    });
+  }
   for (int axis = 0; axis < 3; ++axis) {
     Value word = corrected[axis];
     if (recovering) {
@@ -818,7 +848,10 @@ void Force::exclusion(Value row) {
       auto extend = [&](Value v) -> Value {
         return g.host ? v : arith::ExtSIOp::create(b, loc, i64, v);
       };
-      word = subi(extend(word), extend(direct[axis]));
+      Value debit = fused() && !separateResidual()
+                        ? baseSlotForce(direct[axis])
+                        : extend(direct[axis]);
+      word = subi(extend(word), debit);
       addWord(words, ti, cx(axis), word);
       addWord(words, si, cx(axis), subi(cl(0), word));
     }
@@ -872,7 +905,7 @@ void Force::ownedPairs(Value owner) {
 // than 2^26 atoms even the sum of all signed i64 pair words fits in 128 bits.
 void Force::startObservation() {
   localSum = memref::AllocaOp::create(
-      b, loc, cast<MemRefType>(fused() ? fusedSum.getType() : types[4]));
+      b, loc, cast<MemRefType>(types[4]));
   for (int j = 0; j < (energy() ? 2 : virialComponents()); ++j)
     store(energy() ? cl(0) : cd(0), localSum, {cx(j)});
 }
@@ -959,44 +992,177 @@ Value Force::reduceWarpVirial(Value part, int firstDelta) {
   return part;
 }
 
-void Force::flushFusedVirial() {
-  int width = fusedVirialWidth(), warps = workers / 32;
-  Value leader = cmpi(CmpIPredicate::eq, lane, ci(0));
-  Value warp = divui(tid, cx(32));
-  // All lanes have finished with the force planes before any lane reuses
-  // their storage for the warp totals.
-  if (warps > 1)
-    gpu::BarrierOp::create(b, loc);
-  auto publish = [&](int component, Value part) {
-    // Skip empty blocks. An unordered sum still reaches the finite check.
-    ifThen(andi(leader, cmpf(CmpFPredicate::UNE, part, cd(0))), [&] {
-      int slot = virialSlot(width, component);
-      atomic(LLVM::AtomicBinOp::fadd,
-             pointerTo(baseAddress(fusedSum), cl(8 * slot)), part);
-    });
-  };
-  for (int j = 0; j < width; ++j) {
-    Value part = reduceWarpVirial(load(localSum, {cx(virialSlot(width, j))}), 16);
-    if (warps == 1)
-      publish(j, part);
-    else
-      ifThen(leader, [&] { store(part, virialPartials, {cx(j), warp}); });
-  }
-  if (warps == 1)
-    return;
+Force::Limbs Force::addLimbs(Limbs left, Limbs right) {
+  Value low = addi(left.low, right.low);
+  Value carry = arith::ExtUIOp::create(
+      b, loc, i64, cmpi(CmpIPredicate::ult, low, left.low));
+  return {low, addi(addi(left.high, right.high), carry)};
+}
 
-  gpu::BarrierOp::create(b, loc);
-  ifThen(cmpi(CmpIPredicate::eq, warp, cx(0)), [&] {
-    Value active = cmpi(CmpIPredicate::ult, lane, ci(warps));
-    for (int j = 0; j < width; ++j) {
-      Value part = ifElse(
-          {f64}, active,
-          [&] { return Values{load(virialPartials, {cx(j), tid})}; },
-          [&] { return Values{cd(0)}; })[0];
-      part = reduceWarpVirial(part, llvm::NextPowerOf2(unsigned(warps - 1)) / 2);
-      publish(j, part);
+Force::Limbs Force::productLimbs(Value coordinate, Value force) {
+  Value high = LLVM::InlineAsmOp::create(
+      b, loc, TypeRange{i64}, ValueRange{coordinate, force},
+      "mul.hi.s64 $0, $1, $2;", "=l,l,l", false, false,
+      LLVM::TailCallKind::None, LLVM::AsmDialectAttr(), ArrayAttr())
+                   .getResult(0);
+  return {muli(coordinate, force), high};
+}
+
+// Each narrow endpoint contributes at most 2^9 residual units. At most
+// 1024 opposite slots contribute to a slot, so each residual sum fits i32.
+Value Force::fineForceResidual(Value scaled, Value word) {
+  Value error = subf(scaled, sitofp(f32, word));
+  Value fine = mulf(error, cf(1 << fineForceBits));
+  if (word.getType() == i32)
+    return LLVM::InlineAsmOp::create(
+               b, loc, TypeRange{i32}, ValueRange{fine},
+               "cvt.rni.s32.f32 $0,$1;", "=r,f", false, false,
+               LLVM::TailCallKind::None, LLVM::AsmDialectAttr(), ArrayAttr())
+        .getResult(0);
+  return LLVM::InlineAsmOp::create(b, loc, TypeRange{i64}, ValueRange{fine},
+                                  "cvt.rni.s64.f32 $0,$1;", "=l,f", false,
+                                  false, LLVM::TailCallKind::None,
+                                  LLVM::AsmDialectAttr(), ArrayAttr())
+      .getResult(0);
+}
+
+Value Force::baseSlotForce(Value packed) {
+  // 1024 narrow endpoints of at most 2^31 base units fit in signed 43 bits.
+  Value shift = cl(64 - packedForceBits);
+  return shrsi(shli(packed, shift), shift);
+}
+
+Value Force::fineSlotForce(Value packed, Value base) {
+  // Subtract the base to remove any carry into the packed residual field.
+  Value residual = shrsi(subi(packed, base), cl(packedForceBits));
+  return addi(shli(base, cl(fineForceBits)), residual);
+}
+
+Value Force::unsignedCarry(Value sum, Value left) {
+  return arith::ExtUIOp::create(b, loc, i64,
+                              cmpi(CmpIPredicate::ult, sum, left));
+}
+
+Force::VirialLimbs Force::addVirialLimbs(VirialLimbs left, VirialLimbs right) {
+  Limbs lower = addLimbs({left[0], left[1]}, {right[0], right[1]});
+  Value middle = addi(left[1], right[1]);
+  Value carry = ori(unsignedCarry(middle, left[1]),
+                    unsignedCarry(lower.high, middle));
+  return {lower.low, lower.high, addi(addi(left[2], right[2]), carry)};
+}
+
+void Force::startSlotVirial() {
+  int extent = towersVirialLimbs * fusedVirialWidth();
+  localSum = memref::AllocaOp::create(b, loc, MemRefType::get({extent}, i64));
+  for (int j = 0; j < extent; ++j)
+    store(cl(0), localSum, {cx(j)});
+}
+
+void Force::addSlotVirial(Value position, ValueRange force, bool negate,
+                          ValueRange wideResiduals) {
+  int width = fusedVirialWidth();
+  Value valid = cb(true);
+  for (int axis = 0; axis < 3; ++axis) {
+    // Positions remain in matched staged images. Accumulate their Q32
+    // products at Q60 and defer rounding until all exclusions cancel.
+    // For n < 2^26, fewer than 2^52 narrow endpoints times 2^40 times
+    // (2^41 + 2^9) sum below 2^135 including the exclusion debits.
+    Value x = extract(position, axis);
+    Value fits = cmpf(CmpFPredicate::OLT, absf(x), cf(0x1p8));
+    valid = andi(valid, fits);
+    Value scaled = mulf(select(fits, x, cf(0)), cf(0x1p32));
+    Value coordinate = LLVM::InlineAsmOp::create(
+        b, loc, TypeRange{i64}, ValueRange{scaled}, "cvt.rni.s64.f32 $0, $1;",
+        "=l,f", false, false, LLVM::TailCallKind::None, LLVM::AsmDialectAttr(),
+        ArrayAttr()).getResult(0);
+    for (int j = 0; j < (width == 3 ? 1 : 3); ++j) {
+      int component = width == 3 ? axis : 3 * axis + j;
+      int forceAxis = width == 3 ? axis : j;
+      Limbs word = productLimbs(coordinate, force[forceAxis]);
+      VirialLimbs product{word.low, word.high, shrsi(word.high, cl(63))};
+      if (!wideResiduals.empty()) {
+        // Replay retains the Q18 force word's full range. Scale its product
+        // in limbs before adding the residual to avoid overflowing that word.
+        // Each Q50 wide product is certified as before, whose combined
+        // bound of 2^126 leaves ample room for shifting and the residual.
+        int highBits = 126 - 2 * llvm::Log2_64_Ceil(g.atoms) - 64;
+        int64_t bound = int64_t{1} << highBits;
+        Value bounded = andi(cmpi(CmpIPredicate::sge, word.high, cl(-bound)),
+                             cmpi(CmpIPredicate::slt, word.high, cl(bound)));
+        valid = andi(valid, bounded);
+        Value shift = cl(fineForceBits), complement = cl(64 - fineForceBits);
+        Limbs residual = productLimbs(coordinate, wideResiduals[forceAxis]);
+        product = addVirialLimbs(
+            {shli(word.low, shift),
+             ori(shli(word.high, shift), shrui(word.low, complement)),
+             shrsi(word.high, complement)},
+            {residual.low, residual.high, shrsi(residual.high, cl(63))});
+      }
+      if (negate)
+        product = addVirialLimbs({xori(product[0], cl(-1)),
+                                  xori(product[1], cl(-1)),
+                                  xori(product[2], cl(-1))},
+                                 {cl(1), cl(0), cl(0)});
+      int slot = towersVirialLimbs * component;
+      auto sum = addVirialLimbs({load(localSum, {cx(slot)}),
+                                 load(localSum, {cx(slot + 1)}),
+                                 load(localSum, {cx(slot + 2)})},
+                                product);
+      for (int limb = 0; limb < towersVirialLimbs; ++limb)
+        store(sum[limb], localSum, {cx(slot + limb)});
     }
+  }
+  ifThen(notNarrow(valid), [&] { flag(invalid, Fatal, InvalidContribution); });
+}
+
+void Force::publishLimbs(Value destination, int slot, Limbs part) {
+  if (!g.host)
+    for (int delta : {16, 8, 4, 2, 1})
+      part = addLimbs(part, {warpDown(part.low, delta), warpDown(part.high, delta)});
+  auto add = [&](int index, Value word) {
+    if (!g.host)
+      return atomic(LLVM::AtomicBinOp::add,
+                    pointerTo(baseAddress(destination), cl(8 * index)), word);
+    Value old = load(destination, {cx(index)});
+    store(addi(old, word), destination, {cx(index)});
+    return old;
+  };
+  Value writes = cmpi(CmpIPredicate::ne, ori(part.low, part.high), cl(0));
+  if (!g.host)
+    writes = andi(writes, cmpi(CmpIPredicate::eq, lane, ci(0)));
+  ifThen(writes, [&] {
+    Value old = add(slot, part.low);
+    Value carry = arith::ExtUIOp::create(
+        b, loc, i64, cmpi(CmpIPredicate::ult, addi(old, part.low), old));
+    Value high = addi(part.high, carry);
+    ifThen(cmpi(CmpIPredicate::ne, high, cl(0)), [&] { add(slot + 1, high); });
   });
+}
+
+void Force::flushSlotVirial() {
+  int width = fusedVirialWidth();
+  for (int j = 0; j < width; ++j) {
+    int first = towersVirialLimbs * j;
+    VirialLimbs part{load(localSum, {cx(first)}), load(localSum, {cx(first + 1)}),
+                     load(localSum, {cx(first + 2)})};
+    for (int delta : {16, 8, 4, 2, 1})
+      part = addVirialLimbs(part, {warpDown(part[0], delta), warpDown(part[1], delta),
+                                   warpDown(part[2], delta)});
+    Value writes = cmpi(CmpIPredicate::ne, ori(ori(part[0], part[1]), part[2]), cl(0));
+    ifThen(andi(writes, cmpi(CmpIPredicate::eq, lane, ci(0))), [&] {
+      int slot = towersVirialLimbs * virialSlot(width, j);
+      auto add = [&](int index, Value word) {
+        return atomic(LLVM::AtomicBinOp::add,
+                      pointerTo(baseAddress(fusedSum), cl(8 * index)), word);
+      };
+      Value low = add(slot, part[0]);
+      Value middle = addi(part[1], unsignedCarry(addi(low, part[0]), low));
+      Value prev = add(slot + 1, middle);
+      Value high = addi(part[2], ori(unsignedCarry(middle, part[1]),
+                                      unsignedCarry(addi(prev, middle), prev)));
+      ifThen(cmpi(CmpIPredicate::ne, high, cl(0)), [&] { add(slot + 2, high); });
+    });
+  }
 }
 
 void Force::flushObservation() {
@@ -1016,36 +1182,7 @@ void Force::flushObservation() {
     }
     return;
   }
-  Value low = load(localSum, {cx(0)}), high = load(localSum, {cx(1)});
-  if (!g.host) {
-    // Reduce the signed two-limb sums in each warp before issuing the
-    // contended low-word atomic whose return value supplies its carry.
-    for (int d : {16, 8, 4, 2, 1}) {
-      Value other = warpDown(low, d), next = addi(low, other);
-      high = addi(addi(high, warpDown(high, d)),
-                  arith::ExtUIOp::create(b, loc, i64,
-                                         cmpi(CmpIPredicate::ult, next, low)));
-      low = next;
-    }
-  }
-  auto add = [&](int slot, Value delta) {
-    if (!g.host)
-      return atomic(LLVM::AtomicBinOp::add,
-                    pointerTo(baseAddress(words), cl(8 * slot)), delta);
-    Value old = load(words, {cx(slot)});
-    store(addi(old, delta), words, {cx(slot)});
-    return old;
-  };
-  Value writes = cmpi(CmpIPredicate::ne, ori(low, high), cl(0));
-  if (!g.host)
-    writes = andi(writes, cmpi(CmpIPredicate::eq, lane, ci(0)));
-  ifThen(writes, [&] {
-    Value old = add(0, low);
-    Value carry = arith::ExtUIOp::create(
-        b, loc, i64, cmpi(CmpIPredicate::ult, addi(old, low), old));
-    Value delta = addi(high, carry);
-    ifThen(cmpi(CmpIPredicate::ne, delta, cl(0)), [&] { add(1, delta); });
-  });
+  publishLimbs(words, 0, {load(localSum, {cx(0)}), load(localSum, {cx(1)})});
 }
 
 void Force::observationEntries() {
@@ -1633,12 +1770,20 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
       return select(cmpi(CmpIPredicate::ult, i, sc), i,
                     addi(cx(panel), subi(i, sc)));
     };
+    bool separate = separateResidual();
+    bool packed = fused() && !separate;
+    int wordCount = separate ? 6 : 3;
+    int fieldsStart = 3 + wordCount;
+    Value zeroWord = packed ? cl(0) : ci(0);
     if (!observer())
       forLoop(tid, occupied, cx(workers), {}, [&](Value i, ValueRange) {
         Value slot = activeSlot(i);
         for (int a = 0; a < 3; ++a) {
-          store(ci(0), accum, {cx(a), slot});
-          store(ci(0), coarse, {cx(a), slot});
+          store(zeroWord, accum, {cx(a), slot});
+          if (!packed)
+            store(ci(0), coarse, {cx(a), slot});
+          if (separate)
+            store(ci(0), fineResidualPlane, {cx(a), slot});
         }
         return Values{};
       });
@@ -1678,15 +1823,17 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
         Values v{load(pos, {slot})};
         for (Value p : tileParameters)
           v.push_back(p ? load(p, {slot}) : extract(v[0], 3));
-        if (cacheExclusions()) {
-          Value row = indexCast(index, load(id, {slot}));
-          for (auto column : {TowersExclusionIndex::Anchor,
-                              TowersExclusionIndex::Window})
-            v.push_back(load(exclusionIndex, {row, cx(column)}));
-        }
         return v;
       };
-      Values initial{found, header, m, ci(0), ci(0), ci(0)};
+      auto writeTarget = [&](Value slot, ValueRange state) {
+        for (int a = 0; a < 3; ++a) {
+          addWord(accum, slot, cx(a), state[3 + a]);
+          if (separate)
+            addWord(fineResidualPlane, slot, cx(a), state[6 + a]);
+        }
+      };
+      Values initial{found, header, m};
+      initial.append(wordCount, zeroWord);
       Values cached = targetValues(targetSlot(header));
       initial.append(cached);
       auto endState =
@@ -1703,9 +1850,8 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
                       TypeRange(x.drop_front(3)), cmpi(CmpIPredicate::ne, prev, t),
                       [&] {
                         if (!observer())
-                          for (int a = 0; a < 3; ++a)
-                            addWord(accum, prev, cx(a), x[3 + a]);
-                        Values fresh(3, ci(0));
+                          writeTarget(prev, x);
+                        Values fresh(wordCount, zeroWord);
                         fresh.append(targetValues(t));
                         return fresh;
                       },
@@ -1719,15 +1865,20 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
             Value s = indexCast(
                 index, addi(shli(andi(shrui(v[1], ci(10)), ci(15)), ci(5)),
                             math::CountTrailingZerosOp::create(b, loc, v[2])));
-            ValueRange targetData = v.drop_front(6);
-            ValueRange window =
-                cacheExclusions() ? targetData.take_back(2) : ValueRange{};
-            ValueRange fields = targetData.drop_front().drop_back(window.size());
-            Values f = pair(targetData[0], load(pos, {s}), t, s, fields, false,
-                            window);
+            ValueRange targetData = v.drop_front(fieldsStart);
+            Values f = pair(targetData[0], load(pos, {s}), t, s,
+                            targetData.drop_front());
             Values next{v[0], v[1], andi(v[2], subi(v[2], ci(1)))};
             if (observer()) {
               next.append(x.begin() + 3, x.begin() + 6);
+              next.append(targetData.begin(), targetData.end());
+              return next;
+            }
+            if (packed) {
+              for (int a = 0; a < 3; ++a) {
+                addWord(accum, s, cx(a), subi(cl(0), f[a]));
+                next.push_back(addi(v[3 + a], f[a]));
+              }
               next.append(targetData.begin(), targetData.end());
               return next;
             }
@@ -1749,13 +1900,16 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
                 addWord(coarse, t, cx(a), q);
               }
             });
+            if (separate)
+              for (int a = 0; a < 3; ++a) {
+                addWord(fineResidualPlane, s, cx(a), subi(ci(0), f[3 + a]));
+                next.push_back(addi(v[6 + a], f[3 + a]));
+              }
             next.append(targetData.begin(), targetData.end());
             return next;
           });
       if (!observer())
-        for (int a = 0; a < 3; ++a) {
-          addWord(accum, targetSlot(endState[1]), cx(a), endState[3 + a]);
-        }
+        writeTarget(targetSlot(endState[1]), endState);
     });
     barrier();
     mark(5);
@@ -1763,13 +1917,25 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
       forLoop(tid, occupied, cx(workers), {}, [&](Value thread, ValueRange) {
         Value i = activeSlot(thread);
         Value atom = indexCast(index, load(id, {i}));
+        Values slotForce;
         for (int a = 0; a < 3; ++a) {
-          int shift = std::max(panel, stripe) <= 512 ? 22 : 21;
-          Value q = load(coarse, {cx(a), i});
-          Value residual = subi(load(accum, {cx(a), i}), shli(q, ci(shift)));
-          Value w =
-              addi(shli(arith::ExtSIOp::create(b, loc, i64, q), cl(shift)),
-                   arith::ExtSIOp::create(b, loc, i64, residual));
+          Value accumulated = load(accum, {cx(a), i});
+          Value w;
+          if (packed) {
+            w = baseSlotForce(accumulated);
+            slotForce.push_back(fineSlotForce(accumulated, w));
+          } else {
+            int shift = std::max(panel, stripe) <= 512 ? 22 : 21;
+            Value q = load(coarse, {cx(a), i});
+            Value residual = subi(accumulated, shli(q, ci(shift)));
+            w = addi(shli(arith::ExtSIOp::create(b, loc, i64, q), cl(shift)),
+                     arith::ExtSIOp::create(b, loc, i64, residual));
+            if (separate)
+              slotForce.push_back(addi(
+                  shli(w, cl(fineForceBits)),
+                  arith::ExtSIOp::create(
+                      b, loc, i64, load(fineResidualPlane, {cx(a), i}))));
+          }
           ifThen(cmpi(CmpIPredicate::ne, w, cl(0)), [&] {
             if (recovering)
               addWide(atom, cx(a), w, false);
@@ -1777,6 +1943,8 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
               addWord(words, atom, cx(a), w);
           });
         }
+        if (fused())
+          addSlotVirial(load(pos, {i}), slotForce);
         return Values{};
       });
     mark(6);
@@ -1890,7 +2058,7 @@ void Force::bind(ValueRange args) {
 // rectangular tables are read once per CTA. Other captured values retain
 // their original addresses and types.
 void Force::stageParameters(gpu::GPUFuncOp fn) {
-  int64_t fixed = fixedBytes;
+  int64_t fixed = fixedBytes + (separateResidual() ? 12 * (panel + stripe) : 0);
   for (auto [i, v] : llvm::enumerate(parameters)) {
     Type t = term.getKernel().front().getArgument(2 + 2 * i).getType();
     tileParameters.push_back(static_cast<int>(i) == positionParameter
@@ -2129,6 +2297,8 @@ void Force::withValidGeometry(function_ref<void()> body) {
   Value valid = andi(widths, andi(cmpf(CmpFPredicate::OGT, wordScale, cf(0)),
                                   cmpf(CmpFPredicate::OLE, wordScale,
                                        cf(std::numeric_limits<float>::max()))));
+  if (fused())
+    valid = andi(valid, cmpf(CmpFPredicate::OEQ, wordScale, cf(forceWordScale)));
   ifThenElse(valid, body, [&] {
     if (g.host)
       store(ci(InvalidGeometry), invalid, {cx(Fatal)});
@@ -2253,10 +2423,11 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
   totals = shared(fn, {2}, i32);
   int slots = panel + stripe;
   // Screen features and the compacted target list die at the prefix barrier.
-  // Six force planes cover all four arrays, even when the stripe dominates.
-  int scratchBytes = (observer() ? 2 * slots + 2 * stripe : 6 * slots) * 4;
-  if (fused() && workers > 32)
-    scratchBytes = std::max(scratchBytes, fusedVirialWidth() * (workers / 32) * 8);
+  // The base force planes cover all four arrays, even when the stripe
+  // dominates. The separate Q28 residual uses three additional planes.
+  int forcePlanes = separateResidual() ? 9 : 6;
+  int scratchBytes =
+      (observer() ? 2 * slots + 2 * stripe : forcePlanes * slots) * 4;
   Value scratch = shared(fn, {scratchBytes}, b.getI8Type());
   fn.setWorkgroupAttributionAttr(fn.getNumWorkgroupAttributions() - 1,
                                  "llvm.align", b.getI64IntegerAttr(16));
@@ -2273,11 +2444,14 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
   bias = view(2 * slots, {stripe}, f32);
   keptSlots = view(2 * slots + stripe, {stripe}, i32);
   if (!observer()) {
-    accum = view(0, {3, slots}, i32);
-    coarse = view(3 * slots, {3, slots}, i32);
+    bool separate = separateResidual();
+    bool packed = fused() && !separate;
+    accum = view(0, {3, slots}, packed ? i64 : i32);
+    if (!packed)
+      coarse = view(3 * slots, {3, slots}, i32);
+    if (separate)
+      fineResidualPlane = view(6 * slots, {3, slots}, i32);
   }
-  if (fused() && workers > 32)
-    virialPartials = view(0, {fusedVirialWidth(), workers / 32}, f64);
   bind(entry.getArguments());
   if (counting)
     retryCounts = entry.getArgument(entryTypes.size() - 1);
@@ -2324,8 +2498,10 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
         cmpi(CmpIPredicate::ult, after, cx(towerBlocks() + groups - first));
     owner = select(middle, shifted, owner);
   }
-  if (observer() || fused())
+  if (observer())
     startObservation();
+  else if (fused())
+    startSlotVirial();
   auto evaluate = [&] {
     auto tower = [&] {
       stageParameters(fn);
@@ -2355,13 +2531,17 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
   };
   if (recovering) {
     bool finish = movingDispatch && singleBlock && !observer();
+    int end = entryTypes.size();
+    bool replayVirial = finish && slotVirial();
+    if (replayVirial)
+      fusedSum = entry.getArgument(--end);
     if (!observer())
-      highWords = entry.getArgument(entryTypes.size() - (finish ? 4 : 1));
+      highWords = entry.getArgument(end - (finish ? 4 : 1));
     Value replay, retry, provisional, destination, stride;
     if (finish) {
-      provisional = entry.getArgument(entryTypes.size() - 3);
-      Value arrivals = entry.getArgument(entryTypes.size() - 2);
-      destination = entry.getArgument(entryTypes.size() - 1);
+      provisional = entry.getArgument(end - 3);
+      Value arrivals = entry.getArgument(end - 2);
+      destination = entry.getArgument(end - 1);
       Value grid = gpu::GridDimOp::create(b, loc, gpu::Dimension::x);
       stride = muli(grid, cx(workers));
       retry = certifyGrid(provisional, arrivals, grid, stride);
@@ -2373,6 +2553,8 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
         evaluate();
         return;
       }
+      if (replayVirial)
+        startSlotVirial();
       // One CTA owns the whole fallback. Its barriers order clearing,
       // traversal and range checks without a grid-wide rendezvous.
       auto atoms = [&](auto visit) {
@@ -2419,6 +2601,8 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
                [&] { flag(invalid, Fatal, InvalidTotal); });
       } else
         atoms([&](Value i) { checkWide(invalid, words, highWords, i); });
+      if (replayVirial)
+        flushSlotVirial();
     });
     if (finish)
       publishGrid(provisional, destination, retry, stride);
@@ -2439,8 +2623,7 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
     });
   }
   if (fused())
-    ifThen(cmpi(CmpIPredicate::ult, owner, cx(towerBlocks())),
-           [&] { flushFusedVirial(); });
+    flushSlotVirial();
   else if (observer() && !singleBlock)
     flushObservation();
   mark(7);
@@ -2622,14 +2805,14 @@ LogicalResult Force::emit() {
         virialYield = saved;
       }
       auto fusedTypes = types;
-      fusedTypes.push_back(mem({virialComponents()}, f64));
+      fusedTypes.push_back(mem({towersVirialLimbs * virialComponents()}, i64));
       device(recordsGlobal, fusedTypes);
     } else
       device(recordsGlobal, types);
     if (emitRetryCounter && recordCap < groups * stripe) {
       auto diagnosticTypes = types;
       if (fused())
-        diagnosticTypes.push_back(mem({virialComponents()}, f64));
+        diagnosticTypes.push_back(mem({towersVirialLimbs * virialComponents()}, i64));
       diagnosticTypes.push_back(mem({towerBlocks()}, i64));
       counting = true;
       device(recordsGlobal, diagnosticTypes);
@@ -2656,6 +2839,8 @@ LogicalResult Force::emit() {
         replay.push_back(term.getNumResults() == 0 && !keepForceWords
                              ? term.getOuts().front().getType()
                              : types[4]);
+        if (slotVirial())
+          replay.push_back(mem({towersVirialLimbs * virialComponents()}, i64));
       }
       device(recordsGlobal, replay, true);
       recovering = false;
@@ -2674,4 +2859,37 @@ LogicalResult mdir::kernels::emitTowersForce(ModuleOp module, TowersLayout g,
     b.setInsertionPointToStart(
         module.lookupSymbol<gpu::GPUModuleOp>("towers").getBody());
   return Force(b, g, term, shape, probe, correction).emit();
+}
+
+Value mdir::kernels::decodeTowersSlotVirial(OpBuilder &b, Location loc,
+                                         Value limbs, int component) {
+  // Round the signed two-limb value from Q(32 + guard) to Q32,
+  // using the low bits for ties-to-even. Recenter the low
+  // limb so that small negative totals convert without loss.
+  NeighborBuildCode ir(b, loc);
+  Type dbl = b.getF64Type();
+  constexpr int guard = towersVirialGuardBits;
+  int first = towersVirialLimbs * component;
+  Value lo = ir.load(limbs, {ir.cx(first)});
+  Value mid = ir.load(limbs, {ir.cx(first + 1)});
+  Value hi = ir.load(limbs, {ir.cx(first + 2)});
+  Value low = ir.ori(ir.shrui(lo, ir.cl(guard)),
+                     ir.shli(mid, ir.cl(64 - guard)));
+  // The certified signed sum fits in 128 bits after discarding the guards.
+  Value high = ir.ori(ir.shrui(mid, ir.cl(guard)),
+                      ir.shli(hi, ir.cl(64 - guard)));
+  Value remainder = ir.andi(lo, ir.cl((1LL << guard) - 1));
+  Value half = ir.cl(1LL << (guard - 1));
+  Value odd = ir.cmpi(arith::CmpIPredicate::ne,
+                      ir.andi(low, ir.cl(1)), ir.cl(0));
+  Value round = ir.ori(ir.cmpi(arith::CmpIPredicate::ugt, remainder, half),
+                       ir.andi(odd, ir.cmpi(arith::CmpIPredicate::eq,
+                                           remainder, half)));
+  Value rounded = ir.addi(low, ir.select(round, ir.cl(1), ir.cl(0)));
+  Value carry = ir.cmpi(arith::CmpIPredicate::ult, rounded, low);
+  Value negative = ir.cmpi(arith::CmpIPredicate::slt, rounded, ir.cl(0));
+  high = ir.addi(high, ir.addi(ir.select(carry, ir.cl(1), ir.cl(0)),
+                              ir.select(negative, ir.cl(1), ir.cl(0))));
+  return ir.addf(ir.mulf(ir.sitofp(dbl, high), ir.cd(0x1p32)),
+                  ir.mulf(ir.sitofp(dbl, rounded), ir.cd(0x1p-32)));
 }

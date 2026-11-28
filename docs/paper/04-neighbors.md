@@ -1309,13 +1309,20 @@ coordinate, first in $x$, then in $y$. For equal lateral bases the smaller
 $z$ supplies the plate. Either assignment works inside one home box.
 After evaluation the box exports opposite forces to both home boxes.
 
-On a pressure step a target record carries an exclusion window keyed by
-permanent atom ID. Its bits give exact exclusion membership for a
-contiguous interval, and a flag identifies windows with excluded partners
-outside that interval. The forward index and sorted exclusion list resolve
-these cases. The accepted physical pairs contribute their direct virial
-to binary64 thread sums, which reduce to one total per tower block
-(D455).
+The direct virial is the negative strain derivative of the direct pair
+energy (Section 3.6). In a homogeneous strain each pair displacement
+changes by the strain applied to that displacement. By the chain rule,
+the derivative contracts the strain with the pair displacement outer
+product of the target force. Let $\mathbf x_s$ be the position
+relative to the center of the staged slot's cell. In the interaction box,
+the pair endpoints occupy $\mathbf x_s+\mathbf S_{c(s)}$ and
+$\mathbf x_t+\mathbf S_{c(t)}$. The antisymmetric pair force contributes
+$\mathbf f_{ij}$ to its target slot and $-\mathbf f_{ij}$ to its source
+slot. Distributing their displacement outer product and collecting terms
+of each slot gives $\sum_s(\mathbf x_s+\mathbf S_{c(s)})\otimes\mathbf F_s$.
+The box origin drops out because the pair forces sum to zero. Tiling
+partitions the same sum and can repeat a slot with a partial force
+(D[towers-slot-virial]).
 
 For a square lateral base the two tower extensions contribute
 $2r_c b_{xy}^2$. The plate contributes two lateral face strips and
@@ -1521,11 +1528,27 @@ ownership rule among separately requested force, energy and direct virial
 kernels. The energy kernel rounds each pair energy to Q32 and sums the
 words with signed two-limb arithmetic. The tensor kernel visits physical
 pairs and accumulates the six independent components of the minimum-image
-displacement times the target force in binary64. On moving pressure steps, the force traversal sums the pair
-region's binary64 virial term and omits excluded direct pairs from this sum.
-The two outputs share the displacement and pair evaluation. Each endpoint
-receives the same quantized force word as in a force-only step. The moving traversal indexes each
-excluded pair by the smaller permanent atom ID. A 32-bit mask resolves
+displacement times the target force in binary64. On moving pressure steps,
+the force traversal uses the single sum from Section 4.8. It rounds the
+staged position to Q32 in nm and takes the exact integer outer product
+with a Q28 slot force. The tile accumulates the original Q18 word in
+the force planes and the additional signed residual in 32-bit shared
+planes. A lane accumulates its target residual in registers while it
+processes records for that slot. Tiles that exceed the shared-memory
+budget for the separate planes pack the Q18 and residual sums into a
+single 64-bit word per slot and component.
+An exclusion block subtracts the same endpoint products before rounding.
+The signed three-limb reduction preserves all 28 guard bits until the
+total is rounded to Q32. A common translation of the Q32 positions
+cancels exactly because the two endpoints receive opposite force words.
+The exclusion debit uses the same endpoint images and cancels
+independently of traversal order. On the 0.05 Å exclusion fixture,
+rounding the retained pair's force to Q18 would add about
+$1.9\times 10^{-7}$ relative tensor error on one frame, compared with
+about $5\times 10^{-8}$ from the mixed-precision pair evaluation on that
+frame (D[towers-slot-virial]). Wide replay adds the missing physical pair
+products. The replay indexes each excluded pair by the smaller permanent
+atom ID. A 32-bit mask resolves
 the next 32 IDs exactly. A more distant partner above the greatest
 excluded ID in that row is outside the exclusion set. The remaining
 queries use the sorted topology pairs. This index also serves physical

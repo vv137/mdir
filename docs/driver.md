@@ -499,9 +499,12 @@ in microseconds, winning shape, margin over the runner-up, whether the
 interquartile ranges overlap, and trial cost in milliseconds. A grid-cache
 hit reuses that record. A single feasible launch skips candidate timing. A program
 without an eligible pair region uses the derived shape. An explicit TOWERS run then rebuilds from the current positions at each direct evaluation and certifies the forces before integration. Pressure steps accumulate direct force and virial together. On force-only steps, eligible moving pair loops select zero words outside the cutoff (D430).
-For a topology with exclusions, setup allocates 16 bytes per atom for the
-forward exclusion index and the exclusion window that pressure evaluation
-caches with each target record (D455).
+On pressure steps the staged force flush forms the direct virial from
+Q28 slot forces. Dynamics use the Q18 force words. The exclusion blocks
+cancel their provisional virial contributions exactly in the three-limb
+accumulator (D[towers-slot-virial]). For a topology with exclusions,
+setup allocates eight bytes per atom for the forward exclusion index used
+by wide replay.
 The effective manifest and checkpoint reserve `towers_cell_height` for the
 resolved height.
 See [Appendix A](paper/A-control-file.md) for AUTO fields.

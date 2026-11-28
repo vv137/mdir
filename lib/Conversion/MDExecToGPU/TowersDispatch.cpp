@@ -148,15 +148,10 @@ struct Dispatch {
         transfer(init, loc, edges, members);
         rows(init, loc, createIndex(init, loc, g.atoms),
              [&](OpBuilder &k, Value i) {
-               for (int column = 0; column < Index::Columns; ++column) {
-                 Value value =
-                     column == Index::Anchor
-                         ? Value(arith::IndexCastOp::create(k, loc, narrow, i))
-                         : createZero(k, loc, narrow);
+               for (int column = 0; column < Index::Columns; ++column)
                  memref::StoreOp::create(
-                     k, loc, value, exclusionIndex,
+                     k, loc, createZero(k, loc, narrow), exclusionIndex,
                      ValueRange{i, createIndex(k, loc, column)});
-               }
              });
         rows(init, loc, createIndex(init, loc, shape.exclusions),
              [&](OpBuilder &k, Value i) {
@@ -185,39 +180,6 @@ struct Dispatch {
                memref::AtomicRMWOp::create(
                    k, loc, arith::AtomicRMWKind::maxu, second, exclusionIndex,
                    ValueRange{row, createIndex(k, loc, Index::Maximum)});
-               Value other = arith::IndexCastOp::create(
-                   k, loc, k.getIndexType(), second);
-               memref::AtomicRMWOp::create(
-                   k, loc, arith::AtomicRMWKind::minu, first, exclusionIndex,
-                   ValueRange{other, createIndex(k, loc, Index::Anchor)});
-             });
-        rows(init, loc, createIndex(init, loc, shape.exclusions),
-             [&](OpBuilder &k, Value i) {
-               auto atom = [&](int column) {
-                 return memref::LoadOp::create(
-                     k, loc, edges, ValueRange{i, createIndex(k, loc, column)})
-                     .getResult();
-               };
-               Value first = atom(0), second = atom(1);
-               // Bit 31 requests an exact lookup for candidates outside the
-               // window. The lower bits remain exact for pairs within it.
-               for (auto [target, partner] :
-                    {std::pair{first, second}, std::pair{second, first}}) {
-                 Value row = arith::IndexCastOp::create(
-                     k, loc, k.getIndexType(), target);
-                 Value anchor = memref::LoadOp::create(
-                     k, loc, exclusionIndex,
-                     ValueRange{row, createIndex(k, loc, Index::Anchor)});
-                 Value gap = arith::SubIOp::create(k, loc, partner, anchor);
-                 Value shift = arith::MinUIOp::create(
-                     k, loc, gap, arith::ConstantIntOp::create(
-                                      k, loc, Index::windowSize, 32));
-                 Value bit = arith::ShLIOp::create(
-                     k, loc, arith::ConstantIntOp::create(k, loc, 1, 32), shift);
-                 memref::AtomicRMWOp::create(
-                     k, loc, arith::AtomicRMWKind::ori, bit, exclusionIndex,
-                     ValueRange{row, createIndex(k, loc, Index::Window)});
-               }
              });
         edges.getDefiningOp()->setAttr("mdir.initialized", init.getUnitAttr());
       }
@@ -358,7 +320,8 @@ LogicalResult Dispatch::run(Value positions, Value *forceWords) {
                    : tensor ? TowersOutput::TensorVirial
                             : TowersOutput::DiagonalVirial;
     shape.yieldIndex = i;
-    if (failed(compile(i)))
+    bool reusedVirial = int(i) == shape.virialYield;
+    if (!reusedVirial && failed(compile(i)))
       return failure();
     if (i == 0) {
       if (g.cells() > g.atoms)
@@ -372,17 +335,15 @@ LogicalResult Dispatch::run(Value positions, Value *forceWords) {
              {counts, keys, local, types, map, packed, packedTypes, ids,
               inverse, spans, status});
     }
-    if (!force || i != 0) {
+    if (!reusedVirial && (!force || i != 0)) {
       fill(state, narrow);
       fill(failedConversions, wide);
     }
-    Value words = force    ? buffer("force words", forceType)
-                  : energy ? buffer("energy limbs", limbs)
-                           : buffer("virial", mem({tensor ? 9 : 6}, dbl));
-    bool reusedVirial = int(i) == shape.virialYield;
-    if (reusedVirial)
-      words = fusedVirial;
-    else if (!force || i != 0)
+    Value words = reusedVirial ? fusedVirial
+                  : force      ? buffer("force words", forceType)
+                  : energy     ? buffer("energy limbs", limbs)
+                               : buffer("virial", mem({tensor ? 9 : 6}, dbl));
+    if (!reusedVirial && (!force || i != 0))
       fill(words, force || energy ? wide : dbl);
     double scale = force ? forceWordScale : energy ? 0x1p32 : 1.0;
     SmallVector<Value> args{spans,
@@ -404,8 +365,9 @@ LogicalResult Dispatch::run(Value positions, Value *forceWords) {
     if (force && shape.virialYield >= 0) {
       bool full =
           components(op.getResult(shape.virialYield - 1).getType()) == 9;
-      fusedVirial = buffer("fused virial", mem({full ? 9 : 6}, dbl));
-      fill(fusedVirial, dbl);
+      fusedVirial =
+          buffer("fused virial", mem({towersVirialLimbs * (full ? 9 : 6)}, wide));
+      fill(fusedVirial, wide);
       args.push_back(fusedVirial);
     }
     if (!reusedVirial)
@@ -429,6 +391,8 @@ LogicalResult Dispatch::run(Value positions, Value *forceWords) {
       if (op.getNumResults() || forceWords)
         finishedForce = buffer("published force", forceType);
       args.push_back(finishedForce ? finishedForce : op.getOuts().front());
+      if (fusedVirial)
+        args.push_back(fusedVirial);
       launch("towers_finish", n, shape.workers, args, shared);
       continue;
     } else if (energy) {
@@ -440,6 +404,8 @@ LogicalResult Dispatch::run(Value positions, Value *forceWords) {
       launch("towers_check_recovered_energy", 1, 1, {recovered, state});
       result = buffer("published energy", mem({1}, wide));
       launch("towers_publish_energy", 1, 1, {state, words, recovered, result});
+    } else if (reusedVirial) {
+      result = fusedVirial;
     } else {
       launch("towers_virial_check", tensor ? 9 : 6, 32, {words, state});
       result = words;
@@ -475,10 +441,13 @@ LogicalResult Dispatch::run(Value positions, Value *forceWords) {
       });
       if (!force) {
         for (int j = 0; j < width; ++j) {
-          Value value = memref::LoadOp::create(
-              k, loc, result,
-              ValueRange{createIndex(k, loc,
-                                     width == 3 ? std::array{0, 3, 5}[j] : j)});
+          int component = width == 3 ? std::array{0, 3, 5}[j] : j;
+          Value value;
+          if (reusedVirial)
+            value = decodeTowersSlotVirial(k, loc, result, component);
+          else
+            value = memref::LoadOp::create(
+                k, loc, result, ValueRange{createIndex(k, loc, component)});
           if (energy) {
             value = arith::SIToFPOp::create(k, loc, dbl, value);
             value = arith::MulFOp::create(k, loc, value,
