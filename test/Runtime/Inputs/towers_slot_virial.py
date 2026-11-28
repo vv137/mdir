@@ -2,6 +2,7 @@
 
 import ctypes as C
 from pathlib import Path
+import struct
 import sys
 
 import towers_rebuild as rebuild
@@ -38,7 +39,7 @@ def check(work, workers, split):
     # The first excluded pair crosses a periodic face at 0.05 angstrom.
     # The second shares a staged slot with a retained interaction.
     xyz = [(0.002, 0.5, 0.5), (5.997, 0.5, 0.5),
-           (3.125, 3.5, 3.5), (3.25, 3.5, 3.5), (3.5, 3.625, 3.5)]
+           (3.125, 3.5, 3.5), (3.25, 3.5, 3.5), (3.5, 3.375, 3.5)]
     exclusions = (0, 1, 2, 3)
     n = len(xyz)
     image = rebuild.compile_entries(
@@ -64,11 +65,25 @@ def check(work, workers, split):
     state = e.array(rebuild.I, 2)
     failed = e.array(C.c_int64, 1)
     force = e.array(C.c_int64, 3 * n)
-    virial = e.array(C.c_uint64, 18)
+    virial = e.array(C.c_uint64, 27)
     items = r.cells * split * workers + len(exclusions) // 2
+    # Use the next binary32 spring above 8 to exercise the precision below
+    # Q18. The retained sites also have opposite x and y displacements,
+    # so the raw limbs include negative off-diagonal values.
+    spring = 8 + 2**-20
+    displacements = [(0.375, -0.125, 0), (0.25, -0.125, 0)]
+    expected = []
+    for row in range(3):
+        for column in range(3):
+            total = 0
+            for d in displacements:
+                component = struct.unpack("<f", struct.pack("<f", spring * d[column]))[0]
+                total += round(d[row] * 2**32) * round(component * 2**28)
+            expected.extend((total >> (64 * i)) & (2**64 - 1) for i in range(3))
+    assert expected[0] % 2**42 != 0
     reference = None
     for excluded_spring in (0, 2**15, 2**30, 2**15):
-        table[:] = [8, 8, 8, excluded_spring]
+        table[:] = [spring, spring, spring, excluded_spring]
         force[:] = [0] * len(force)
         virial[:] = [0] * len(virial)
         state[:] = [0, 0]
@@ -79,12 +94,6 @@ def check(work, workers, split):
         e.run("force_virial", items, *args, virial, **kw)
         e.sync()
         assert state[:] == [0, 0] and failed[0] == 0, (state[:], failed[0])
-        # The two retained displacements are (0.375, 0.125, 0)
-        # and (0.25, 0.125, 0), each with a force of 8 times displacement.
-        expected = [0] * 18
-        expected[0] = 13 * 2**47
-        expected[2] = expected[6] = 5 * 2**47
-        expected[8] = 2**48
         assert virial[:] == expected, (excluded_spring, virial[:], expected)
         observed = (tuple(force), tuple(virial))
         if reference is None:

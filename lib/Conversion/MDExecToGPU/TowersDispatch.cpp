@@ -365,7 +365,8 @@ LogicalResult Dispatch::run(Value positions, Value *forceWords) {
     if (force && shape.virialYield >= 0) {
       bool full =
           components(op.getResult(shape.virialYield - 1).getType()) == 9;
-      fusedVirial = buffer("fused virial", mem({full ? 18 : 12}, wide));
+      fusedVirial =
+          buffer("fused virial", mem({towersVirialLimbs * (full ? 9 : 6)}, wide));
       fill(fusedVirial, wide);
       args.push_back(fusedVirial);
     }

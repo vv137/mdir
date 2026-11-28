@@ -1,6 +1,7 @@
 // Device timing of a private, rebuilt and certified frame at a fixed grid.
 #include "TowersTrial.h"
 #include "TowersCell.h"
+#include "mdir/Conversion/TowersForce.h"
 #include "mdir/Conversion/TowersLaunch.h"
 #include "mdir/Support/ForceWords.h"
 #if MDIR_HAS_CUDA
@@ -87,7 +88,8 @@ struct TowersTrial {
   CUcontext context{};
   CUstream stream{};
   static constexpr int iterations = 9;
-  static constexpr size_t virialBytes = 2 * 9 * sizeof(int64_t);
+  static constexpr size_t virialBytes =
+      kernels::towersVirialLimbs * 9 * sizeof(int64_t);
   CUevent boundaries[2 * iterations + 1]{};
   CUdeviceptr positions{}, edgesBox{}, raw{}, box{}, charge{}, types{}, map{},
       counts{}, rebuildStatus{}, geometry{}, keys{}, local{}, packed{},

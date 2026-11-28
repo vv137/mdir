@@ -13,9 +13,10 @@ struct TowersExclusionIndex {
   enum Column { ForwardMask, Maximum, Columns };
 };
 
-// Coordinates use Q32 in nm. The force word's fractional bits are kept
-// as guard bits in the two-limb product until the entire virial is rounded.
-inline constexpr int towersVirialGuardBits = forceWordFractionBits;
+// Coordinates use Q32 in nm and virial forces use Q28. The three-limb
+// accumulator keeps those additional bits until rounding the total to Q32.
+inline constexpr int towersVirialGuardBits = 28;
+inline constexpr int towersVirialLimbs = 3;
 
 struct TowersForceShape {
   int panel, stripe, workers, records, residency;

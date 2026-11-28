@@ -12,23 +12,29 @@ work carries the same image and a disjoint portion of the slot force.
 Exclusion blocks subtract the endpoint products with those images. The
 pair traversal and the exclusion blocks keep their original force words.
 
-The staged coordinate has 32 fractional bits in nm and the force word has
-18 fractional bits in kJ/(mol nm). The two signed 64-bit limbs represent a
-Q32 virial with 18 additional fractional bits, which carry through the tile,
-warp and grid sums. Rounding each slot separately would break
-distributivity. The complete sum rounds once to Q32, ties to even.
+Each staged coordinate uses Q32 in nm. A fused pressure step keeps both
+the original Q18 force word and the Q28 virial force in kJ/(mol nm). It
+packs the signed Q18 word into the low 43 bits and the signed difference
+between the Q28 word and the scaled Q18 word into the high bits. At most
+1,024 opposite slots contribute to a tile slot. Each contributes at most
+$2^{31}$ base units and $2^9$ residual units, so both accumulated fields
+fit. The fused kernel uses the same shared-memory footprint as the
+force-only kernel. At the slot flush, it publishes the original Q18 force
+and uses the Q28 word for the outer product.
 
-The coordinate certificate bounds each shifted component by 256 nm in
-magnitude, and therefore each coordinate word by $2^{40}$. The narrow
-force word has magnitude at most $2^{31}$. With fewer than $2^{26}$ atoms,
-there are fewer than $2^{52}$ pair endpoints,
-and exclusion debits can at most double that count. Their combined
-absolute sum is below $2^{124}$ in the guarded representation. Wide replay
-visits physical pairs and adds only the products missing from the narrow
-traversal. For $N$ atoms, each wide endpoint product is bounded by
-$2^{126-2\lceil\log_2 N\rceil}$. The two bounds together fit in signed
-128 bits. The force certificate rejects an invalid coordinate or wide
-product before publication.
+Three 64-bit limbs hold the signed Q60 virial through the tile, warp, and
+grid sums. The complete sum rounds once to Q32, ties to even. For a
+shifted coordinate of magnitude below 256 nm, its word has magnitude
+below $2^{40}$. With fewer than $2^{26}$ atoms, there are fewer than
+$2^{52}$ narrow pair endpoints. Each carries at most $2^{41} + 2^9$ force
+units, and exclusion debits at most double the endpoint count. The
+combined absolute sum is below $2^{135}$. Wide replay visits physical
+pairs and adds the products skipped by the narrow traversal. For $N$
+atoms, the original Q50 wide endpoint product is bounded by
+$2^{126-2\lceil\log_2 N\rceil}$. The kernel shifts that product by ten in
+the accumulator and adds its fine residual. The complete sum fits in
+signed 128 bits after dropping the 28 guard bits. The force certificate
+rejects an invalid coordinate or wide product before publication.
 
 A CPU binary64 check on the captured initial frames uses the periodic
 direct pair displacements and groups their forces by the NT owner and
