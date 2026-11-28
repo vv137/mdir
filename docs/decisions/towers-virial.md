@@ -47,3 +47,37 @@ atoms, so the number of additions and cancellations to each component is
 less than $2^{52}$ and even the sum of their absolute word magnitudes is
 less than $2^{115}$. Round-to-nearest Q32 gives an absolute quantization
 bound of $2^{-33}$ kJ/mol per included pair.
+
+## Cancellation measurements and choice
+
+The subtraction prototypes feed each accepted direct pair into the
+accumulator before the exclusion blocks subtract their recomputed terms.
+The Q32 prototype rounds each component to nearest, with ties to even,
+and compares the rounded word against the signed range before adding it.
+An out-of-range or nonfinite conversion contributes zero and casts a
+signed vote. A matching invalid exclusion cancels the vote. The remaining
+vote must be zero before the prototype publishes the virial. Warp and
+block additions propagate the carry between the two limbs. The low limb
+of a global atomic addition returns its previous value, which supplies
+the carry to the corresponding high-limb addition.
+
+On the four initial pressure frames on the RTX 5090, the greatest
+FP64 subtraction residue relative to exact lookup was
+$2.28\times10^{-6}$ kJ/mol, or $1.79\times10^{-12}$ relative RMS on
+Factor IX. The four frames meet the $10^{-6}$ relative RMS bound against
+the independent binary64 direct sum. The Q32 sums obtained by subtracting
+exclusions agree word for word with the Q32 sums obtained by looking up
+exclusions before adding. The force words also agree through publication.
+
+On RTX 4090 JAC, the mean fused kernel over nine launches was
+$67.67$ µs with lookup, $54.08$ µs with FP64 subtraction, and $82.07$ µs
+with Q32 subtraction. The Q32 decode took another $1.30$ µs. Median
+instrumented flush costs were $6{,}211$ cycles for FP64 subtraction and
+$4{,}056$ for Q32 subtraction. The cheaper integer flush did not offset
+per-pair rounding and carry arithmetic. Q32 would make this direct sum
+independent of accumulation order, but its total cost exceeded both
+FP64 variants on this frame. The implementation keeps the exact cached
+lookup and the FP64 block reduction. Lookup also keeps arbitrarily
+large or nonfinite excluded terms out of the accumulation, which FP64
+add-then-subtract cannot guarantee. The JAC fused kernel remains above
+the 1.2-times force-only target.
