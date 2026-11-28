@@ -9,7 +9,7 @@ dispatch and the setup trial use one source block per part per tower,
 with the same exclusion schedule. The retry diagnostic allocates one
 counter per source block of the largest candidate that uses it.
 
-At split $k$, part $p$ takes chunks $p, p+k, \\dots$ of 32 sources. The
+At split $k$, part $p$ takes chunks $p, p+k, \dots$ of 32 sources. The
 chunk assignment from D[towers-split-interleave] gives every logical
 source exactly one owner. Its mapping is increasing within a part, so
 the home-target range remains contiguous in part-local indices. Every
@@ -20,6 +20,18 @@ The same Newton pair contributes the same two fixed-point force words
 under each split at a fixed height. The partition changes the order of
 integer additions. The same published words result when the sums fit,
 including after certified replay.
+
+## Persistent work queue
+
+The prototype builds one queue item per tower and 32-source chunk.
+Persistent blocks claim items with an atomic ticket. On Trp-cage
+ff19SB+OPC NVT, six RTX 4090 repeats in two opposite arm orders gave
+102.12 ± 3.73 µs/step for queue construction, force, and finish, versus
+70.01 ± 1.63 µs/step for force and finish at split 2. Queue construction
+took 2.26 ± 0.10 µs/step. The force launch spans were 96.75 ± 3.52 µs
+and 66.52 ± 1.53 µs. The whole-step rates were 947.62 ± 21.30 ns/day
+and 1146.42 ± 24.64 ns/day. The values give the mean and sample standard
+deviation. The measured slowdown ruled out the persistent queue.
 
 ## Validation
 
