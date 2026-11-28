@@ -6188,24 +6188,27 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   auto pitch = op->getAttrOfType<IntegerAttr>("md_exec.fft_pitch");
   bool forceOnly = op.getEnergy().use_empty() && op.getVirial().use_empty();
   StringRef fallback;
-  auto request = op->getAttrOfType<StringAttr>("md_exec.fft_requested");
+  auto requested = op->getAttrOfType<StringAttr>("md_exec.fft_requested");
+  StringRef request = requested ? requested.getValue() : StringRef();
+  bool qualifiedTriclinic = !radial &&
+                            (isFoldingFFTMesh(grid) ||
+                             grid == ArrayRef<int64_t>({40, 40, 40}));
   if (!supportsAxisFFT(grid))
     fallback = "unsupported axis length";
-  else if (request && request.getValue() == "off")
+  else if (request == "off")
     fallback = "cuFFT requested";
   else if (fixedPoint)
     fallback = "fixed-order evaluation";
-  else if (request && request.getValue() == "auto-cufft")
+  else if (request == "auto-cufft")
     fallback = radial ? "no qualified timing for this prolate target or split"
-                      : "no qualified timing for this Gaussian target";
+                      : "no qualified timing for this Gaussian target or traversal";
   else if (!position.isF64())
     fallback = "requires f64 positions";
   else if (!radial && op.getOrder() != 4)
     fallback = "unqualified spline order";
   else if (op.getDispersion() || op.getP3m())
     fallback = "requires Gaussian influence";
-  else if (tilted && (radial || !isFoldingFFTMesh(grid)) &&
-           (!request || request.getValue() != "on"))
+  else if (tilted && !qualifiedTriclinic && request != "on")
     fallback = "unqualified triclinic mesh";
   else if (op.getPotential())
     fallback = "charge derivative";
@@ -6239,9 +6242,13 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
       fn = emitter.emitAxisFFT(name, grid, pitch.getInt(), !forceOnly, tilted,
                                radial);
     }
-    StringRef reason = radial && request && request.getValue() == "auto"
-                           ? "prolate axis faster in both timing orders"
-                           : "supported mixed-radix mesh";
+    StringRef reason = "supported mixed-radix mesh";
+    if (request == "auto") {
+      if (radial)
+        reason = "prolate axis faster in both timing orders";
+      else if (isGaussianBenchmarkFFTMesh(grid))
+        reason = "Gaussian benchmark mesh qualified by paired timings";
+    }
     recordFFTPlan(module, op, reason, fn);
     SmallVector<Value> args{real, complex, tables};
     if (!forceOnly)

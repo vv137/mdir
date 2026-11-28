@@ -1,0 +1,11 @@
+# The Gaussian rule qualifies the benchmark grid on the default traversal.
+# Storage dispatch and the unsupported-axis fallback are checked in
+# Integration/pme-axis-fft.test.
+# REQUIRES: cuda
+# RUN: mkdir -p %t
+# RUN: sed -e 's|TOPOLOGY|%S/Inputs/opc/opc.prmtop|' -e 's|COORDINATES|%S/Inputs/opc/opc.inpcrd|' -e 's/"CUTOFF"/"PME"/' %S/Inputs/kind-pairs/opc-run.toml > %t/run.toml
+# RUN: printf '\n[pme]\ngrid = [54, 54, 54]\n' >> %t/run.toml
+# RUN: env -u MDIR_PME_AXIS_FFT MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 mdir emit %t/run.toml --stage=pipeline | FileCheck %s --check-prefix=AUTO
+# AUTO: md-exec-assign-storage{memory=device pme-axis-fft=auto tables=f32}
+# RUN: env -u MDIR_PME_AXIS_FFT MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_86 mdir emit %t/run.toml --stage=pipeline | FileCheck %s --check-prefix=OTHER
+# OTHER: md-exec-assign-storage{memory=device pme-axis-fft=auto-cufft tables=f32}

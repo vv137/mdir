@@ -80,6 +80,7 @@ for grid in ((28, 28, 30), (32, 32, 32), (18, 20, 20), (22, 24, 24)):
 
 # JAC's default mesh uses radix 3 in the folded real transform and both
 # complex transforms. Fixing the accumulation order retains cuFFT.
+gaussian.BETA = 1.7
 grid = (54, 54, 54)
 for mixed, tolerance in ((True, 3e-5), (False, 2e-12)):
     print(f"Gaussian 54 mesh, {'mixed' if mixed else 'double'}")

@@ -1339,7 +1339,10 @@ These three grids passed the independent full-chain reference and improved
 whole-step throughput in both RTX 4090 runs. The same AUTO rule admits the Gaussian folding grids
 28 × 28 × 30, 18 × 20 × 20, 32³, and 22 × 24 × 24, including tilted cells.
 Their full-frame errors and paired MATRIX timings are recorded in the decision.
-D[axis-fft-gaussian] adds the Gaussian 54³ mesh. Use
+D[axis-fft-gaussian] qualifies the default Gaussian PME meshes on the
+same architecture and precision with the benchmark inputs' default
+traversals. The qualified meshes include the orthorhombic 54³, 120 × 70 × 70,
+and 224 × 108 × 108 grids and the orthorhombic and triclinic 40³ grids. Use
 `MDIR_PME_AXIS_FFT=off` to pin cuFFT or `on` to select the emitter on
 supported order-four meshes in mixed or double precision. Unqualified
 automatic choices, unsupported transform lengths, and deterministic

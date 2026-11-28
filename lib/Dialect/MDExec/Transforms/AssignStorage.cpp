@@ -1445,9 +1445,9 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   // The measured Gaussian meshes for the five-pass plan (D435,
   // D[axis-fft-gaussian]).
   bool measuredMesh = kernels::isFoldingFFTMesh(grid) ||
-      (grid[0] == grid[1] && grid[1] == grid[2] &&
-       (grid[0] == 40 || grid[0] == 54 || grid[0] == 64)) ||
-      grid == ArrayRef<int64_t>({144, 84, 80});
+                      kernels::isGaussianBenchmarkFFTMesh(grid) ||
+                      grid == ArrayRef<int64_t>({64, 64, 64}) ||
+                      grid == ArrayRef<int64_t>({144, 84, 80});
   bool measuredCuFFT = false;
   if (op.getProlate()) {
     // D445. At setup the driver has already checked the
@@ -1460,7 +1460,9 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
                              grid == ArrayRef<int64_t>({105, 60, 60}));
     measuredCuFFT = cubic && grid == ArrayRef<int64_t>({189, 90, 90});
   }
-  bool requestAxis = axisFFT == "on" || (axisFFT == "auto" && measuredMesh);
+  bool requestAxis = axisFFT == "on" ||
+                     (axisFFT == "auto" && measuredMesh &&
+                      (gridType.isF32() || op.getProlate()));
   bool pitched =
       requestAxis && onDevice &&
       cast<MemRefType>(positions.getType()).getElementType().isF64() &&

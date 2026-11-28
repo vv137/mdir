@@ -35,6 +35,14 @@ inline bool isFoldingFFTMesh(llvm::ArrayRef<int64_t> grid) {
          grid == llvm::ArrayRef<int64_t>({22, 24, 24});
 }
 
+// The default Gaussian meshes covered by the benchmark comparisons.
+inline bool isGaussianBenchmarkFFTMesh(llvm::ArrayRef<int64_t> grid) {
+  return grid == llvm::ArrayRef<int64_t>({40, 40, 40}) ||
+         grid == llvm::ArrayRef<int64_t>({54, 54, 54}) ||
+         grid == llvm::ArrayRef<int64_t>({120, 70, 70}) ||
+         grid == llvm::ArrayRef<int64_t>({224, 108, 108});
+}
+
 inline bool supportsAxisFFT(llvm::ArrayRef<int64_t> grid) {
   return grid.size() == 3 && grid[2] % 2 == 0 && factorAxis(grid[0]) &&
          factorAxis(grid[1]) && factorAxis(grid[2] / 2);

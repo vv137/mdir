@@ -1,4 +1,5 @@
 #include "mdir/Compiler/Compile.h"
+#include "mdir/Conversion/AxisFFTEmitter.h"
 #include "mdir/Conversion/GPUToBinary.h"
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Dialect/Dyn/DynDialect.h"
@@ -457,22 +458,26 @@ std::string mdir::compiler::getPipeline(const Control &control,
     // Kernels in f32 look their tables up in f32.
     const char *fftOverride = std::getenv("MDIR_PME_AXIS_FFT");
     StringRef fftChoice = fftOverride && *fftOverride ? fftOverride : "auto";
-    bool measuredTarget =
-        arch == "sm_89" && control.precision == Precision::Mixed &&
-        control.neighborStructure == NeighborStructure::Towers && program.pme &&
-        !control.deterministic;
-    os << "md-exec-assign-storage{memory=device";
-    // D445 qualifies the radial spectrum and assignment
-    // together. The storage pass checks the mesh of each evaluation. Only
-    // this split was timed; the prolate window keeps cuFFT under AUTO.
-    bool measuredProlate = control.pmeContinuity == 2 &&
+    bool measuredTarget = arch == "sm_89" &&
+                          control.precision == Precision::Mixed &&
+                          !control.deterministic;
+    bool towers = control.neighborStructure == NeighborStructure::Towers;
+    // D445 qualifies the prolate split and assignment together on TOWERS.
+    // D[axis-fft-gaussian] also compared the benchmark Gaussian meshes
+    // with the default traversal. Storage assignment checks each mesh.
+    bool measuredProlate = towers && control.pmeContinuity == 2 &&
                            control.pmeBasisTerms == 8 &&
                            control.pmeWindow == "BSPLINE";
-    if (program.pme && fftChoice == "auto" &&
-        !(measuredTarget && (!program.pmeProlate || measuredProlate)))
-      os << " pme-axis-fft=auto-cufft";
-    else if (fftChoice == "on" || (fftChoice == "auto" && measuredTarget))
-      os << " pme-axis-fft=" << fftChoice;
+    bool measuredGaussian =
+        towers || kernels::isGaussianBenchmarkFFTMesh(program.pmeGrid);
+    bool measuredProgram =
+        program.pmeProlate ? measuredProlate : measuredGaussian;
+    os << "md-exec-assign-storage{memory=device";
+    if (fftChoice == "auto" && program.pme)
+      os << " pme-axis-fft="
+         << (measuredTarget && measuredProgram ? "auto" : "auto-cufft");
+    else if (fftChoice == "on")
+      os << " pme-axis-fft=on";
     os << (control.precision == Precision::Double ? "" : " tables=f32")
        << "},md-exec-assign-streams" << getStreamOptions(control) << ","
        // The batched bodies of models in stages (D293).
