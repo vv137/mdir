@@ -519,11 +519,15 @@ a slot of a device mirror. Before each chunk the host computes those
 arguments from the current cell and writes them there on the graph's
 stream, and the captured kernels read their slots
 (D450). Each kernel thus receives the bytes that its launch
-would have passed at that cell. The TOWERS grid stays that of setup: in
-10,000 scalings of the suite's NPT inputs no bin count that setup would
-choose changed, and the faces kept at least 8.9% of width beyond the
-cutoff. The coupling step itself remains on the host, since the V-rescale
-factor of the same step needs the kinetic energy there.
+would have passed at that cell. The TOWERS allocation and launch extent
+are fixed at setup. For a rectangular grid with at most one cell per
+particle, the moving build uses the fine count on each axis while its bin
+width covers the cutoff stencil. On an axis that contracts below this
+width, the build uses one fewer bin where the periodic stencil still
+fits (D[towers-npt-grid]). Because the physical cutoff is unchanged under
+cell rescaling, the membership, wrapped ownership stencil, and exclusion
+displacements use the same active counts. The force entry checks the
+active widths before publication.
 Setup selects the pack network before capture (D434). The ordinary force
 region includes the bonded work-unit grid when enabled (D436–D438).
 On an axis FFT mesh, each replay executes the five D435 passes. For the

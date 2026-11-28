@@ -7,6 +7,7 @@ by about 6% in 200 steps, so a chunk that replayed the cell of its capture
 would fail the bound by orders of magnitude; MDRT_STEP_MIRROR_FAULT=1 makes
 the runtime keep the first cell and checks that the test sees it.
 """
+import json
 import os
 from pathlib import Path
 import re
@@ -34,10 +35,13 @@ lines[-1] = "".join(f"{float(v):12.7f}" for v in box)
 
 
 def run(name, mode, steps=200, energy=10, barostat="", pressure=500.0, tau=0.1,
-        source=inputs, checkpoint=None, env=None, fail=False):
+        source=inputs, checkpoint=None, env=None, fail=False, cutoff=8.0,
+        timestep=0.001):
     directory = work / name
     directory.mkdir()
     control = deck.format(inputs=source, mode=mode, steps=steps, period=10)
+    control = control.replace("cutoff            = 8.0", f"cutoff = {cutoff}")
+    control = control.replace("time_step  = 0.001", f"time_step = {timestep}")
     control = control.replace("energy_interval = 10", f"energy_interval = {energy}")
     control = control.replace("checkpoint_interval = 10", f"checkpoint_interval = {energy}")
     control = control.replace('ensemble    = "NVT"', f'ensemble    = "NPT"\npressure    = {pressure}')
@@ -143,6 +147,19 @@ for label, keys, source in (("semi-isotropic", 'coupling = "SEMI_ISOTROPIC"\n', 
     runs = [run(f"{label}-{name}", mode, steps=100, barostat=keys, source=source)
             for name, mode in (("launch", "LAUNCH"), ("again", "LAUNCH"), ("graph", "GRAPH"))]
     compare(*runs, label)
+
+# At 7.35 A cutoff, y starts at 29.718 A and takes four bins. The barostat
+# crosses the 29.4 A boundary, so the next force and replay use three bins.
+crossing = [run(f"crossing-{name}", mode, cutoff=7.35, timestep=0.002)
+            for name, mode in (("launch", "LAUNCH"), ("again", "LAUNCH"), ("graph", "GRAPH"))]
+for result in crossing:
+    marker = "MDIR: TOWERS launch shape "
+    shape = next(json.loads(line[len(marker):]) for line in result["log"].splitlines()
+                 if line.startswith(marker))
+    assert shape["adaptive_grid"] and shape["grid_bins"] == [3, 4, 3], shape
+    final_y = result["state"]["edges"][1]
+    assert 3 * 0.735 < final_y < 4 * 0.735, final_y
+compare(*crossing, "fine-grid boundary")
 
 # A cell compressed until its faces no longer cover the cutoff. The
 # scaling is followed by a step of the host's launches, whose check of the
