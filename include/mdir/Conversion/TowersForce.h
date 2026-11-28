@@ -7,6 +7,13 @@
 
 namespace mdir::kernels {
 enum class TowersOutput { Force, Energy, Virial, DiagonalVirial, TensorVirial };
+// The forward index serves wide replay. The window is undirected, so the
+// fused pair loop can keep one target's exclusion data with its record.
+struct TowersExclusionIndex {
+  enum Column { ForwardMask, Maximum, Anchor, Window, Columns };
+  static constexpr int windowSize = 31;
+};
+
 struct TowersForceShape {
   int panel, stripe, workers, records, residency;
   bool packedChargeType, certified;

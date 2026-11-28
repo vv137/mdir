@@ -1309,6 +1309,14 @@ coordinate, first in $x$, then in $y$. For equal lateral bases the smaller
 $z$ supplies the plate. Either assignment works inside one home box.
 After evaluation the box exports opposite forces to both home boxes.
 
+On a pressure step a target record carries an exclusion window keyed by
+permanent atom ID. Its bits give exact exclusion membership for a
+contiguous interval, and a flag identifies windows with excluded partners
+outside that interval. The forward index and sorted exclusion list resolve
+these cases. The accepted physical pairs contribute their direct virial
+to binary64 thread sums, which reduce to one total per tower block
+(D[towers-virial]).
+
 For a square lateral base the two tower extensions contribute
 $2r_c b_{xy}^2$. The plate contributes two lateral face strips and
 rounded edges totaling a half disk times the layer height. Thus Shaw's

@@ -10,6 +10,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/Support/MathExtras.h"
 #include <cmath>
 #include <limits>
 
@@ -57,28 +58,37 @@ private:
   bool virial() const {
     return output != TowersOutput::Force && output != TowersOutput::Energy;
   }
+  int fusedVirialWidth() {
+    return cast<VectorType>(term.getKernel()
+                                .front()
+                                .getTerminator()
+                                ->getOperand(virialYield)
+                                .getType())
+        .getNumElements();
+  }
   int virialComponents() {
-    return (output == TowersOutput::TensorVirial ||
-            (fused() && cast<VectorType>(term.getKernel()
-                                             .front()
-                                             .getTerminator()
-                                             ->getOperand(virialYield)
-                                             .getType())
-                                .getNumElements() == 9))
+    return output == TowersOutput::TensorVirial ||
+                   (fused() && fusedVirialWidth() == 9)
                ? 9
                : 6;
+  }
+  static int virialSlot(int width, int component) {
+    return width == 3 ? std::array{0, 3, 5}[component] : component;
   }
   bool observer() const { return output != TowersOutput::Force; }
   bool energy() const { return output == TowersOutput::Energy; }
   StringRef observerName() const {
     return energy() ? "towers_energy" : "towers_virial";
   }
-  Value localSum;
+  Value localSum, virialPartials;
   Value clonePair(Value t, Value s, Value ti, Value si, Value r2, Value d,
-                  ValueRange targetParameters, bool physical);
+                  ValueRange targetParameters, bool physical,
+                  ValueRange window = {});
   void observe(Value result, Value d, bool physical);
   void startObservation();
   void flushObservation();
+  void flushFusedVirial();
+  Value reduceWarpVirial(Value part, int firstDelta);
   Value warpDown(Value v, int d);
   void observationEntries();
   int exclusions, split, exclusionRows;
@@ -86,6 +96,8 @@ private:
   Value bonds, inverse, raw, box, exclusionIndex;
   bool excluding = false;
   Value isExcluded(Value a, Value c);
+  Value excludedByWindow(Value targetSlot, Value sourceSlot, ValueRange window);
+  bool cacheExclusions() const { return fused() && indexedExclusions; }
   Value searchExclusions(Value first, Value second);
   void exclusion(Value row);
 
@@ -191,7 +203,8 @@ private:
   Value displacement(Value target, Value source);
   Value squared(Value d);
   Values pair(Value t, Value s, Value ti, Value si,
-              ValueRange targetParameters = {}, bool physical = false);
+              ValueRange targetParameters = {}, bool physical = false,
+              ValueRange window = {});
   Value sharedAdd(Value dst, Value byteOffset, Value word);
   void addWord(Value dst, Value i, Value axis, Value w);
   Value shared(gpu::GPUFuncOp fn, ArrayRef<int64_t> shape, Type t);
@@ -274,7 +287,8 @@ Value Force::squared(Value d) {
 }
 
 Value Force::clonePair(Value t, Value s, Value ti, Value si, Value r2, Value d,
-                       ValueRange targetParameters, bool physical) {
+                       ValueRange targetParameters, bool physical,
+                       ValueRange window) {
   Block &body = (physical ? correction : term).getKernel().front();
   IRMapping inside = mapping;
   inside.map(body.getArgument(0), r2);
@@ -326,13 +340,16 @@ Value Force::clonePair(Value t, Value s, Value ti, Value si, Value r2, Value d,
           inside.lookupOrDefault(body.getTerminator()->getOperand(virialYield));
       int size = cast<VectorType>(v.getType()).getNumElements();
       for (int a = 0; a < size; ++a) {
-        int j = size == 3 ? std::array{0, 3, 5}[a] : a;
+        int j = virialSlot(size, a);
         store(addf(load(localSum, {cx(j)}), extract(v, a)), localSum, {cx(j)});
       }
     };
-    if (exclusions)
-      ifThen(notNarrow(isExcluded(load(id, {ti}), load(id, {si}))), accumulate);
-    else
+    if (exclusions) {
+      Value excluded = window.empty()
+                           ? isExcluded(load(id, {ti}), load(id, {si}))
+                           : excludedByWindow(ti, si, window);
+      ifThen(notNarrow(excluded), accumulate);
+    } else
       accumulate();
   }
   return inside.lookupOrDefault(body.getTerminator()->getOperand(physical ? 0 : yieldIndex));
@@ -360,7 +377,8 @@ static bool canSelectCutoff(Block &body) {
 }
 
 Values Force::pair(Value t, Value s, Value ti, Value si,
-                   ValueRange targetParameters, bool physical) {
+                   ValueRange targetParameters, bool physical,
+                   ValueRange window) {
   Value d = displacement(t, s), r2 = squared(d);
   auto wt = g.host || (excluding && recovering) ? i64 : i32;
   Value take = physical ? cb(true) : cmpf(CmpFPredicate::OLT, r2, cutoff2);
@@ -389,7 +407,8 @@ Values Force::pair(Value t, Value s, Value ti, Value si,
   if (selectCutoff)
     r2 = select(take, r2, mulf(cutoff2, cf(0.5)));
   auto convert = [&]() -> Values {
-    Value f = clonePair(t, s, ti, si, r2, d, targetParameters, physical);
+    Value f = clonePair(t, s, ti, si, r2, d, targetParameters, physical,
+                        window);
     Values scaled;
     Value narrow = cb(true);
     for (int a = 0; a < 3; ++a) {
@@ -527,17 +546,36 @@ Value Force::isExcluded(Value a, Value c) {
       {i1}, cmpi(CmpIPredicate::ule, distance, ci(32)),
       [&] {
         Value bit = andi(subi(distance, ci(1)), ci(31));
-        Value mask = load(exclusionIndex, {row, cx(0)});
+        Value mask =
+            load(exclusionIndex, {row, cx(TowersExclusionIndex::ForwardMask)});
         return Values{andi(
             cmpi(CmpIPredicate::ne, distance, ci(0)),
             cmpi(CmpIPredicate::ne, andi(shrui(mask, bit), ci(1)), ci(0)))};
       },
       [&] {
-        Value maximum = load(exclusionIndex, {row, cx(1)});
+        Value maximum =
+            load(exclusionIndex, {row, cx(TowersExclusionIndex::Maximum)});
         return ifElse(
             {i1}, cmpi(CmpIPredicate::ule, second, maximum),
             [&] { return Values{searchExclusions(first, second)}; },
             [&] { return Values{cb(false)}; });
+      })[0];
+}
+
+Value Force::excludedByWindow(Value targetSlot, Value sourceSlot,
+                              ValueRange window) {
+  Value source = load(id, {sourceSlot});
+  Value gap = subi(source, window[0]);
+  Value covered = cmpi(CmpIPredicate::ult, gap,
+                       ci(TowersExclusionIndex::windowSize));
+  Value mask = window[1];
+  Value slow = andi(notNarrow(covered), cmpi(CmpIPredicate::slt, mask, ci(0)));
+  return ifElse(
+      {i1}, slow,
+      [&] { return Values{isExcluded(load(id, {targetSlot}), source)}; },
+      [&] {
+        Value bit = andi(shrui(mask, andi(gap, ci(31))), ci(1));
+        return Values{andi(covered, cmpi(CmpIPredicate::ne, bit, ci(0)))};
       })[0];
 }
 
@@ -843,7 +881,7 @@ void Force::observe(Value value, Value d, bool physical) {
   if (output == TowersOutput::DiagonalVirial || output == TowersOutput::TensorVirial) {
     int size = cast<VectorType>(value.getType()).getNumElements();
     for (int a = 0; a < size; ++a) {
-      int j = size == 3 ? std::array{0, 3, 5}[a] : a;
+      int j = virialSlot(size, a);
       Value part = extract(value, a);
       store(addf(load(localSum, {cx(j)}), part), localSum, {cx(j)});
     }
@@ -912,6 +950,55 @@ Value Force::warpDown(Value v, int d) {
       .getResult(0);
 }
 
+Value Force::reduceWarpVirial(Value part, int firstDelta) {
+  for (int delta = firstDelta; delta; delta /= 2) {
+    Value bits = arith::BitcastOp::create(b, loc, i64, part);
+    part = addf(part, arith::BitcastOp::create(b, loc, f64,
+                                               warpDown(bits, delta)));
+  }
+  return part;
+}
+
+void Force::flushFusedVirial() {
+  int width = fusedVirialWidth(), warps = workers / 32;
+  Value leader = cmpi(CmpIPredicate::eq, lane, ci(0));
+  Value warp = divui(tid, cx(32));
+  // All lanes have finished with the force planes before any lane reuses
+  // their storage for the warp totals.
+  if (warps > 1)
+    gpu::BarrierOp::create(b, loc);
+  auto publish = [&](int component, Value part) {
+    // Skip empty blocks. An unordered sum still reaches the finite check.
+    ifThen(andi(leader, cmpf(CmpFPredicate::UNE, part, cd(0))), [&] {
+      int slot = virialSlot(width, component);
+      atomic(LLVM::AtomicBinOp::fadd,
+             pointerTo(baseAddress(fusedSum), cl(8 * slot)), part);
+    });
+  };
+  for (int j = 0; j < width; ++j) {
+    Value part = reduceWarpVirial(load(localSum, {cx(virialSlot(width, j))}), 16);
+    if (warps == 1)
+      publish(j, part);
+    else
+      ifThen(leader, [&] { store(part, virialPartials, {cx(j), warp}); });
+  }
+  if (warps == 1)
+    return;
+
+  gpu::BarrierOp::create(b, loc);
+  ifThen(cmpi(CmpIPredicate::eq, warp, cx(0)), [&] {
+    Value active = cmpi(CmpIPredicate::ult, lane, ci(warps));
+    for (int j = 0; j < width; ++j) {
+      Value part = ifElse(
+          {f64}, active,
+          [&] { return Values{load(virialPartials, {cx(j), tid})}; },
+          [&] { return Values{cd(0)}; })[0];
+      part = reduceWarpVirial(part, llvm::NextPowerOf2(unsigned(warps - 1)) / 2);
+      publish(j, part);
+    }
+  });
+}
+
 void Force::flushObservation() {
   if (!energy()) {
     for (int j = 0; j < virialComponents(); ++j) {
@@ -919,14 +1006,10 @@ void Force::flushObservation() {
       if (g.host)
         store(addf(load(words, {cx(j)}), part), words, {cx(j)});
       else {
-        for (int delta : {16, 8, 4, 2, 1}) {
-          Value bits = arith::BitcastOp::create(b, loc, i64, part);
-          part = addf(part, arith::BitcastOp::create(b, loc, f64,
-                                                     warpDown(bits, delta)));
-        }
+        part = reduceWarpVirial(part, 16);
         ifThen(cmpi(CmpIPredicate::eq, lane, ci(0)), [&] {
           atomic(LLVM::AtomicBinOp::fadd,
-                 pointerTo(baseAddress(fused() ? fusedSum : words), cl(8 * j)),
+                 pointerTo(baseAddress(words), cl(8 * j)),
                  part);
         });
       }
@@ -1595,6 +1678,12 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
         Values v{load(pos, {slot})};
         for (Value p : tileParameters)
           v.push_back(p ? load(p, {slot}) : extract(v[0], 3));
+        if (cacheExclusions()) {
+          Value row = indexCast(index, load(id, {slot}));
+          for (auto column : {TowersExclusionIndex::Anchor,
+                              TowersExclusionIndex::Window})
+            v.push_back(load(exclusionIndex, {row, cx(column)}));
+        }
         return v;
       };
       Values initial{found, header, m, ci(0), ci(0), ci(0)};
@@ -1631,8 +1720,11 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
                 index, addi(shli(andi(shrui(v[1], ci(10)), ci(15)), ci(5)),
                             math::CountTrailingZerosOp::create(b, loc, v[2])));
             ValueRange targetData = v.drop_front(6);
-            Values f = pair(targetData[0], load(pos, {s}), t, s,
-                            targetData.drop_front());
+            ValueRange window =
+                cacheExclusions() ? targetData.take_back(2) : ValueRange{};
+            ValueRange fields = targetData.drop_front().drop_back(window.size());
+            Values f = pair(targetData[0], load(pos, {s}), t, s, fields, false,
+                            window);
             Values next{v[0], v[1], andi(v[2], subi(v[2], ci(1)))};
             if (observer()) {
               next.append(x.begin() + 3, x.begin() + 6);
@@ -2162,9 +2254,10 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
   int slots = panel + stripe;
   // Screen features and the compacted target list die at the prefix barrier.
   // Six force planes cover all four arrays, even when the stripe dominates.
-  Value scratch =
-      shared(fn, {(observer() ? 2 * slots + 2 * stripe : 6 * slots) * 4},
-             b.getI8Type());
+  int scratchBytes = (observer() ? 2 * slots + 2 * stripe : 6 * slots) * 4;
+  if (fused() && workers > 32)
+    scratchBytes = std::max(scratchBytes, fusedVirialWidth() * (workers / 32) * 8);
+  Value scratch = shared(fn, {scratchBytes}, b.getI8Type());
   fn.setWorkgroupAttributionAttr(fn.getNumWorkgroupAttributions() - 1,
                                  "llvm.align", b.getI64IntegerAttr(16));
   Block &entry = fn.getBody().front();
@@ -2183,6 +2276,8 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
     accum = view(0, {3, slots}, i32);
     coarse = view(3 * slots, {3, slots}, i32);
   }
+  if (fused() && workers > 32)
+    virialPartials = view(0, {fusedVirialWidth(), workers / 32}, f64);
   bind(entry.getArguments());
   if (counting)
     retryCounts = entry.getArgument(entryTypes.size() - 1);
@@ -2343,7 +2438,10 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
              pointerTo(baseAddress(failedConversions), cl(0)), count);
     });
   }
-  if ((observer() || fused()) && !singleBlock)
+  if (fused())
+    ifThen(cmpi(CmpIPredicate::ult, owner, cx(towerBlocks())),
+           [&] { flushFusedVirial(); });
+  else if (observer() && !singleBlock)
     flushObservation();
   mark(7);
   if (probe && !recovering)
@@ -2435,7 +2533,7 @@ LogicalResult Force::emit() {
          cartesianPositions ? cartesianPositions : mem({3, g.atoms}, f64),
          mem({g.boxSize()}, f64)});
     if (indexedExclusions)
-      types.push_back(mem({g.atoms, 2}, i32));
+      types.push_back(mem({g.atoms, TowersExclusionIndex::Columns}, i32));
     if (correction && (!supported(correction) ||
         !llvm::equal(correction.getIns(), term.getIns()) ||
         correction.getKernel().front().getArgumentTypes() !=
