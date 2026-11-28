@@ -38,6 +38,13 @@ and target staging through the staging barrier. The sum of block
 staging times measures staging work. Blocks can overlap in time, so the
 force launch span comes from the uninstrumented trace.
 
+The STMV guard uses the 4 fs NPT benchmark with a fixed initial velocity
+seed. It uses the same split orders, with 2,000 steps for throughput
+and 250 steps for each trace. All STMV arms share the shape calibrated
+on the STMV starting frame, apart from split.
+The split 4 and 8 pins also enter the setup trial when other launch
+settings remain unpinned. AUTO proposes splits 1 and 2.
+
 ## Persistent work queue
 
 The prototype builds one queue item per tower and 32-source chunk.
