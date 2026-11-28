@@ -6,14 +6,15 @@
 # made), and the blocks at its peaks by what they were allocated for: the
 # buffers of the groups by name, the rest as compiled code. With
 # MDIR_DEVICE_MEMORY=1 it prints the peaks alone, as before.
+# Pin cuFFT so the run creates the plans counted below.
 #
 # REQUIRES: cuda
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' | sed 's|INPUTS|%S/Inputs/dipeptide|' > %t/run.toml
-# RUN: cd %t && env MDIR_DEVICE_MEMORY=2 mdir run run.toml > detail.log 2>&1
+# RUN: cd %t && env MDIR_PME_AXIS_FFT=off MDIR_DEVICE_MEMORY=2 mdir run run.toml > detail.log 2>&1
 # RUN: FileCheck %s %if pme-callback %{ -DPLANS=3 %} %else %{ -DPLANS=2 %} < %t/detail.log
-# RUN: cd %t && env MDIR_DEVICE_MEMORY=1 mdir run run.toml > peaks.log 2>&1
+# RUN: cd %t && env MDIR_PME_AXIS_FFT=off MDIR_DEVICE_MEMORY=1 mdir run run.toml > peaks.log 2>&1
 # RUN: FileCheck %s --check-prefix=PEAKS < %t/peaks.log
 #
 # CHECK: mdrt: device memory: the incidence structure of {{[0-9]+}} tuples of {{[0-9]}}: 1168 particles, ragged rows of {{[0-9]+}} entries of {{[0-9]}} values, {{[0-9]+}} bytes
