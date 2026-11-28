@@ -429,5 +429,39 @@ std::string mdir::kernels::placeCouplingOnDevice(func::FuncOp function,
       }
     }
   }
+  // The small host buffers that the copies of the virials still reach, at
+  // the outputs: page-locked, as the results are (the maintainer's addition
+  // to #1026).
+  SmallVector<gpu::MemcpyOp> small;
+  function.walk([&](gpu::MemcpyOp copy) {
+    if (copy->hasAttr("mdir.readback") || copy->hasAttr("mdir.coupling_read"))
+      small.push_back(copy);
+  });
+  llvm::DenseSet<Value> pinned;
+  for (gpu::MemcpyOp copy : small) {
+    Value target = copy.getDst();
+    Operation *made = target.getDefiningOp();
+    auto type = dyn_cast<MemRefType>(target.getType());
+    if (!made || !isa<memref::AllocOp, memref::AllocaOp>(made) || !type ||
+        !type.getLayout().isIdentity() || type.getMemorySpace() || type.getRank() != 1 ||
+        !type.hasStaticShape() || type.getNumElements() > 16 ||
+        !type.getElementType().isF64() || pinned.contains(target))
+      continue;
+    bool plain = llvm::all_of(target.getUsers(), [](Operation *user) {
+      return isa<memref::LoadOp, gpu::MemcpyOp, memref::DeallocOp>(user);
+    });
+    if (!plain)
+      continue;
+    Value page = results.pinned(type.getNumElements());
+    SmallVector<Operation *> releases;
+    for (Operation *user : target.getUsers())
+      if (isa<memref::DeallocOp>(user))
+        releases.push_back(user);
+    for (Operation *op : releases)
+      op->erase();
+    target.replaceAllUsesWith(page);
+    made->erase();
+    pinned.insert(page);
+  }
   return "";
 }

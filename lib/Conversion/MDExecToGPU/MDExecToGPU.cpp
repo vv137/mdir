@@ -11837,18 +11837,11 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
     coupling.readback = [&] { return numReadbacks++; };
     coupling.bringIn = [&](gpu::LaunchOp launch) { bringIn(launch); };
     coupling.room = [&] { return resultCapacity - nextResult[f64]; };
-    // The pressures of a scaling of the cell, which the host reads: a few
-    // numbers of their own, so that the copy is small.
-    std::optional<std::pair<Value, Value>> scalars;
-    coupling.scalars = [&]() -> std::pair<Value, Value> {
-      if (scalars)
-        return *scalars;
+    // Page-locked memory of the runtime for a small host buffer of f64.
+    coupling.pinned = [&](int64_t count) -> Value {
       Block &entry = function.getBody().front();
       OpBuilder builder(&entry, entry.begin());
       Type wide = builder.getI64Type();
-      int64_t count = kernels::CouplingResults::numScalars;
-      Value device = createDeviceBuffer(builder, at,
-                                        getDeviceType({count}, f64), {});
       func::FuncOp memory = getOrDeclare(
           "mdrtHostResults",
           builder.getFunctionType({wide, wide},
@@ -11861,17 +11854,34 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
       Value whole = func::CallOp::create(builder, at, memory,
                                          ValueRange{place, number})
                         .getResult(0);
-      Value host = memref::SubViewOp::create(
+      return memref::SubViewOp::create(
           builder, at, MemRefType::get({count}, f64), whole,
-          ArrayRef<int64_t>{0}, ArrayRef<int64_t>{count},
-          ArrayRef<int64_t>{1});
+          ArrayRef<int64_t>{0}, ArrayRef<int64_t>{count}, ArrayRef<int64_t>{1});
+    };
+    // The pressures of a scaling of the cell, which the host reads: a few
+    // numbers of their own, so that the copy is small.
+    std::optional<std::pair<Value, Value>> scalars;
+    coupling.scalars = [&]() -> std::pair<Value, Value> {
+      if (scalars)
+        return *scalars;
+      Block &entry = function.getBody().front();
+      OpBuilder builder(&entry, entry.begin());
+      Type wide = builder.getI64Type();
+      int64_t count = kernels::CouplingResults::numScalars;
+      (void)wide;
+      Value device = createDeviceBuffer(builder, at,
+                                        getDeviceType({count}, f64), {});
+      Value host = coupling.pinned(count);
       scalars = std::make_pair(device, host);
       return *scalars;
     };
     std::string reason = kernels::placeCouplingOnDevice(function, coupling);
+    // Not reached by the programs that the driver writes (D[device-coupling],
+    // Section 6), but said where it is.
     if (!reason.empty())
-      module->setAttr("mdir.coupling_host",
-                      StringAttr::get(context, reason));
+      function.emitWarning() << "coupling_step: the coupling step of this "
+                                "function stays on the host: "
+                             << reason;
   }
   if (failed(keepReadbacksOnDevice(function, deviceCoupling)))
     return failure();

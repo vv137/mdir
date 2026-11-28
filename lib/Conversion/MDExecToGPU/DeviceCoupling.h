@@ -20,6 +20,8 @@ struct CouplingResults {
   /// for the numbers that the host still reads at a coupling step.
   std::function<std::pair<mlir::Value, mlir::Value>()> scalars;
   static constexpr int64_t numScalars = 8;
+  /// A page-locked host buffer of `count` f64, made at the entry.
+  std::function<mlir::Value(int64_t)> pinned;
 };
 
 /// Moves the arithmetic of the coupling step that the host does on the
