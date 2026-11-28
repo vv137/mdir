@@ -2,13 +2,20 @@
 
 This document says how to build LLVM, HDF5, and MDIR from source, how to
 install the build, how to run the tests, and how to run the passes by hand
-with `mdir-opt`. A release, its container, and the Python wheel need none
-of it ([README.md](../README.md#installing)).
+with `mdir-opt`. It is the source-build part of the installation manual,
+[installing.md](installing.md), which also covers the release's tarball
+and wheel, the container, the check of an installation, clusters, and
+troubleshooting; a release, its container, and the Python wheel need none
+of this document.
 [CONTRIBUTING.md](../CONTRIBUTING.md) and
 [Appendix B of the white paper](paper/B-contributing.md) say what a change
 must carry and the tiers of tests.
 
 ## 1. Requirements
+
+The full matrix, with the CUDA toolkit for each GPU architecture, the
+driver minimums, and the libstdc++ of a newer GCC, is in
+[installing.md](installing.md#2-requirements). In short:
 
 - A C++17 compiler whose standard library has the floating-point
   `std::from_chars` (`std::chars_format`): GCC 11 or later, or a Clang whose
@@ -20,7 +27,9 @@ must carry and the tiers of tests.
 - LLVM and MLIR 23.1.2, built with `scripts/build-llvm.sh`
 - `lit`, for the tests (`pip install lit`)
 - For NVIDIA GPUs: the driver, and the CUDA toolkit for its header and its
-  device math library. Versions 11.2 and 13.x are known to work. The
+  device math library. Versions 11.2, 12.9, and 13.x are known to work;
+  Volta (V100) and earlier need a 12.x or older toolkit, since CUDA 13
+  removed them ([installing.md](installing.md#22-gpu-architectures-and-cuda-toolkits)). The
   driver must support at least the major version of the toolkit, for
   example CUDA 13.0 for a build with CUDA 13.2; a run on an older driver
   stops with both versions ([debugging.md](debugging.md), #657)
