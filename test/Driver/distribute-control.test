@@ -5,6 +5,9 @@
 # RUN:     -e 's/= 9.5$/= 8.65/' %S/../../examples/argon/argon.toml > %t/base.toml
 # RUN: cp %t/base.toml %t/grid.toml && printf '\n[distribute]\ndomains = 8\n' >> %t/grid.toml
 # RUN: cd %t && env MDRT_DIST_TRACE=1 mdir run grid.toml > out 2> trace
+# RUN: sed -E 's/^(threads[[:space:]]*=[[:space:]]*)1$/\12/' %t/grid.toml > %t/threaded.toml
+# RUN: cd %t && mdir emit threaded.toml --stage=lowered | FileCheck %s --check-prefix=THREADED
+# THREADED: llvm.func {{.*}}@mdir_dist_pairs_
 # RUN: FileCheck %s --check-prefix=GRID < %t/out
 # RUN: FileCheck %s --check-prefix=REBUILD < %t/trace
 # GRID: MDIR: domain grid 2 x 2 x 2, local transport, directed traversal

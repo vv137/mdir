@@ -558,7 +558,7 @@
                   "minItems": 3,
                   "maxItems": 3
                 },
-                "transport": {"const": "local"},
+                "transport": {"enum": ["local", "mpi"]},
                 "traversal": {"enum": ["directed", "unique"]},
                 "ranks": {"type": "integer", "minimum": 1},
                 "cutoff_angstrom": {"type": "number"},
@@ -570,7 +570,7 @@
                 "traversal_source": {"enum": ["requested", "default"]},
                 "reach_angstrom": {"type": "number", "exclusiveMinimum": 0}
               },
-              "required": ["grid", "transport", "traversal", "reach_angstrom"],
+              "required": ["grid", "transport", "traversal", "reach_angstrom", "ranks"],
               "additionalProperties": false
             },
             "rigid_units_route": {

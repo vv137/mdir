@@ -1565,3 +1565,23 @@ Philox with the seed, absolute step, entity zero and stream zero. Supporting
 a distributed bath would also require identical kinetic-energy input to
 that draw. Deterministic NVE tests compare the numerical dataset bytes across
 decompositions, including a change of decomposition at restart.
+### CPU MPI transport (D[mpi-transport], Section 9)
+
+A rank owns a consecutive interval of domains, with excess domains
+assigned one apiece to the first ranks. Pair kernels and particle maps
+visit that interval. Each halo exchange packs the overlapping ghost rows
+by peer into a variable-count all-to-all. Reverse exchange accumulates
+the returned contributions in the same order as the in-process executor.
+The D310 wait therefore observes a completed payload. The current
+exchange is synchronous. The coverage predicate uses a communicator-wide
+logical AND. After migration and before collection, broadcasts make the
+live domain rows available for repacking or output. All ranks retain
+layout metadata and capacity for the global rows. Scalar reductions
+broadcast domain partials and fold them in domain order.
+
+For MPI, rank clocks use local monotonic time. Rank extrema compare
+durations and need no clock synchronization. A rendezvous before each
+payload collective measures arrival wait plus barrier latency. The rank
+table reports actual inter-rank halo payload separately from logical
+intra-rank copies. With a fixed grid, assigning the same domain partials
+to another number of ranks preserves their order in the reduction.

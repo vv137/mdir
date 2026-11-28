@@ -448,3 +448,8 @@ missing (Section 3.3), not unfitting.
 | Reweighting | Reductions over frames on the host, outside the step and its lowering |
 
 The group-buffer interface uses the shared slot contract of D350. Compiler selection and runtime allocation lengths use the same declaration; target-independent metadata introduces no NVIDIA instruction or tuning change.
+
+D[mpi-transport] implements the CPU halo copy and reverse sum with MPI
+peer exchanges, collective coverage with logical AND, and scalar
+reduction in domain order. See the CPU transport in
+[ML2](distributed-ml2.md).

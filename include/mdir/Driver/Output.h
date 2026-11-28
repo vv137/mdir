@@ -158,6 +158,8 @@ struct BlockMean {
 /// The output of the run that is under way. The functions that compiled
 /// code calls write to it.
 struct Output {
+  // Agree on a stop before any rank leaves the compiled step.
+  std::function<int(int)> checkpointVote;
   Log log;
   std::function<void()> finishDistribution;
   /// Records a checkpoint stop before its direct process exit (D168).

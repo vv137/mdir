@@ -3146,8 +3146,12 @@ Error Reader::readDistribute(const toml::table &table) {
     }
   }
   if (Error err = readChoice<std::string>(table, "transport", dist.transport,
-                                          {{"local", "local"}}))
+                                          {{"local", "local"}, {"mpi", "mpi"}}))
     return err;
+#if !MDIR_ENABLE_MPI
+  if (dist.transport == "mpi")
+    return fail(table, "MPI transport requires a build with MDIR_ENABLE_MPI=ON");
+#endif
   if (Error err = readChoice<std::string>(
           table, "traversal", dist.traversal,
           {{"directed", "directed"}, {"unique", "unique"}}))
@@ -3874,8 +3878,16 @@ mdir::driver::readControl(StringRef path, Control *refusedDistribution) {
   Control control;
   Reader reader(path, control);
   if (Error error = reader.read(result.table())) {
-    if (refusedDistribution && reader.distributionRefused)
+    if (refusedDistribution && reader.distributionRefused) {
+      // The error may precede parsing the transport. Identify the writer
+      // of diagnostics from the requested transport in this case too.
+      if (auto transport = result.table()["distribute"]["transport"].value<std::string>())
+        if (StringRef(*transport).equals_insensitive("mpi")) {
+          if (!control.distribution) control.distribution.emplace();
+          control.distribution->transport = "mpi";
+        }
       *refusedDistribution = std::move(control);
+    }
     return std::move(error);
   }
   return control;

@@ -1935,8 +1935,14 @@ void _mlir_ciface_mdrtFinish(void *positions, void *velocities,
 static void writeState(int64_t step, void *positions, void *velocities,
                        void *forces, void *ids) {
   Output &output = *current;
-  if (output.checkpointPath.empty())
+  if (output.checkpointPath.empty()) {
+    if (output.checkpointVote && step < output.endStep &&
+        output.checkpointVote(stopSignal)) {
+      if (output.finishDistribution) output.finishDistribution();
+      std::exit(StoppedStatus);
+    }
     return;
+  }
   ReturnMark returns;
   OutputTimes &times = getTimes();
   Clock::time_point entered = Clock::now();
@@ -2026,6 +2032,11 @@ static void writeState(int64_t step, void *positions, void *velocities,
   else if (output.maxWalltime > 0.0 &&
            elapsed + output.longestSegment > output.maxWalltime)
     reason = "the wall time";
+  if (output.checkpointVote) {
+    int vote = output.checkpointVote(stopSignal ? stopSignal : int(reason != nullptr));
+    reason = vote == SIGTERM ? "SIGTERM" : vote == SIGINT ? "SIGINT" :
+             vote ? "the wall time" : nullptr;
+  }
   if (!reason)
     return;
   if (output.finishDistribution)

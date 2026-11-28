@@ -29,6 +29,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Transforms/Patterns.h"
+#include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
@@ -87,10 +88,10 @@ public:
   /// (D290): a structure holds `width` neighbors of a row at first,
   /// in cells of 1/`cellsPerReach` of its reach.
   Lowering(ModuleOp module, bool throughExec = false, int64_t width = 64,
-           int64_t cellsPerReach = 3, bool haloEvents = false)
+           int64_t cellsPerReach = 3, bool haloEvents = false, bool mpi = false, bool parallelDomains = false)
       : module(module), loc(UnknownLoc::get(module.getContext())),
         throughExec(throughExec), width(width), cellsPerReach(cellsPerReach),
-        haloEvents(haloEvents) {}
+        haloEvents(haloEvents), mpi(mpi), parallelDomains(parallelDomains) {}
 
   bool fixedPoint = false;
   LogicalResult run(func::FuncOp function);
@@ -153,7 +154,7 @@ private:
   LogicalResult lowerPartitionCenters(PartitionCentersOp op);
   template <typename OpTy>
   void emitPairs(
-      OpTy op, Location loc, int64_t domains,
+      OpTy op, Location loc, Value first, Value past, bool parallel,
       llvm::DenseMap<Value, Storage> &storage, Type accumulator, Value shifts,
       function_ref<Value(OpBuilder &, Value, Value)> add,
       function_ref<Value(OpBuilder &, Type)> zero,
@@ -255,7 +256,16 @@ private:
 
   bool throughExec;
   int64_t width, cellsPerReach;
-  bool haloEvents;
+  bool haloEvents, mpi, parallelDomains;
+  Value domainBound(OpBuilder &b, bool end) {
+    if (!mpi)
+      return index(b, end ? domains : 0);
+    auto i64 = b.getI64Type();
+    auto bound = declare("mdrtMPIDomainBound", b.getFunctionType({i64, i64}, {i64}), false);
+    Value n = arith::ConstantIntOp::create(b, loc, domains, 64);
+    Value side = arith::ConstantIntOp::create(b, loc, end, 64);
+    return toIndex(b, func::CallOp::create(b, loc, bound, ValueRange{n, side}).getResult(0));
+  }
   llvm::DenseMap<Value, DomainRelation> relations;
   /// The epochs of the sets of md_exec: layouts and halos, numbered.
   llvm::DenseMap<Value, int64_t> ownedEpochs, localEpochs;
@@ -561,7 +571,7 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
   ArrayRef<int64_t> grid = decomposition.getGrid();
   Type i64 = b.getI64Type(), f64 = b.getF64Type();
   func::FuncOp partition = declare(
-      "mdrtDistPartition",
+      mpi ? "mdrtDistMPIPartition" : "mdrtDistPartition",
       b.getFunctionType({wide, i64, i64, i64, f64, f64, f64}, {i64}), true);
   Value handle =
       func::CallOp::create(
@@ -645,7 +655,7 @@ LogicalResult Lowering::lowerDistribute(DistributeOp op) {
   Value owned = allocate(b, layout.capacity, k);
   // owned[d][r] = field[ids[d][r]], wrapped into the cell with `image`.
   scf::ForOp::create(
-      b, loc, index(b, 0), index(b, domains), index(b, 1), ValueRange(),
+      b, loc, domainBound(b, false), domainBound(b, true), index(b, 1), ValueRange(),
       [&](OpBuilder &bd, Location, Value d, ValueRange) {
         Value count = toIndex(
             bd, memref::LoadOp::create(bd, loc, layout.rows, ValueRange{d}));
@@ -684,6 +694,26 @@ LogicalResult Lowering::lowerCollect(CollectOp op) {
   auto fieldType = cast<md::FieldType>(op.getResult().getType());
   Storage &layout = storage[op.getLayout()];
   Value owned = storage[op.getField()].buffer;
+  // Other consumers can feed the next replicated segment. Only a private
+  // checkpoint snapshot can skip sending the gathered field to those peers.
+  bool checkpointOnly = llvm::all_of(op.getResult().getUsers(), [](Operation *user) {
+    auto call = dyn_cast<mdrt::HostCallOp>(user);
+    return call && call.getCallee() == "mdrtWriteCheckpoint";
+  });
+  Value limit = index(b, domains);
+  if (mpi) {
+    SmallVector<Type> args{b.getI64Type(), owned.getType()};
+    if (checkpointOnly) {
+      auto gather = declare("mdrtMPICheckpointRows",
+                            b.getFunctionType(args, {b.getI64Type()}), true);
+      Value count = func::CallOp::create(b, loc, gather,
+          ValueRange{layout.handle, owned}).getResult(0);
+      limit = toIndex(b, count);
+    } else {
+      auto share = declare("mdrtMPICollectRows", b.getFunctionType(args, {}), true);
+      func::CallOp::create(b, loc, share, ValueRange{layout.handle, owned});
+    }
+  }
   int64_t k = fieldType.getNumComponents();
   MemRefType type = mdrt::getBufferType(fieldType);
   // The buffer is handed to the program as a field, which owns it from
@@ -691,7 +721,7 @@ LogicalResult Lowering::lowerCollect(CollectOp op) {
   Value global =
       memref::AllocOp::create(b, loc, type, ValueRange{layout.count});
   scf::ForOp::create(
-      b, loc, index(b, 0), index(b, domains), index(b, 1), ValueRange(),
+      b, loc, index(b, 0), limit, index(b, 1), ValueRange(),
       [&](OpBuilder &bd, Location, Value d, ValueRange) {
         Value rows = toIndex(
             bd, memref::LoadOp::create(bd, loc, layout.rows, ValueRange{d}));
@@ -952,7 +982,7 @@ LogicalResult Lowering::lowerPartitionCenters(PartitionCentersOp op) {
     return arith::ConstantIndexOp::create(at, loc, v);
   };
   scf::ForOp::create(
-      b, loc, c(b, 0), c(b, domains), c(b, 1), ValueRange(),
+      b, loc, domainBound(b, false), domainBound(b, true), c(b, 1), ValueRange(),
       [&](OpBuilder &bd, Location, Value d, ValueRange) {
         Value nOwned = toIndex(
             bd, memref::LoadOp::create(bd, loc, layout.rows, ValueRange{d}));
@@ -1034,7 +1064,7 @@ struct PairSide {
 /// accumulator of each center, `finishDomain` the sum over its centers.
 template <typename OpTy>
 void Lowering::emitPairs(
-    OpTy op, Location loc, int64_t domains,
+    OpTy op, Location loc, Value first, Value past, bool parallel,
     llvm::DenseMap<Value, Storage> &storage, Type accumulator, Value shifts,
     function_ref<Value(OpBuilder &, Value, Value)> add,
     function_ref<Value(OpBuilder &, Type)> zero,
@@ -1080,12 +1110,8 @@ void Lowering::emitPairs(
       "mdrtDistPairCells",
       b.getFunctionType({b.getIndexType(), b.getIndexType(), b.getIndexType(),
                          f64, xo.getType(), xg.getType(), xg.getType(), i64,
-                         indices, indices},
-                        {}),
-      true);
-  scf::ForOp::create(
-      b, loc, c(b, 0), c(b, domains), c(b, 1), ValueRange(),
-      [&](OpBuilder &bd, Location, Value d, ValueRange) {
+                         indices, indices}, {}), true);
+  auto visitDomain = [&](OpBuilder &bd, Value d) {
         Value owned = arith::IndexCastOp::create(
             bd, loc, bd.getIndexType(),
             memref::LoadOp::create(bd, loc, layout.rows, ValueRange{d}));
@@ -1258,8 +1284,31 @@ void Lowering::emitPairs(
         memref::DeallocOp::create(bd, loc, spans);
         memref::DeallocOp::create(bd, loc, order);
         finishDomain(bd, centers.getResult(0), d);
-        scf::YieldOp::create(bd, loc);
-      });
+  };
+  Value one = c(b, 1);
+  if (parallel) {
+    auto loop = scf::ParallelOp::create(b, loc, ValueRange{first}, ValueRange{past}, ValueRange{one},
+        [&](OpBuilder &bd, Location, ValueRange indices) {
+          visitDomain(bd, indices.front());
+          scf::ReduceOp::create(bd, loc);
+        });
+    // Give each domain's cell construction and loops a function scope.
+    // SCF-to-OpenMP otherwise retains an alloca_scope around the call to
+    // the cell builder, which cannot contain the lowered loop backedges.
+    IRRewriter rewriter(b.getContext());
+    unsigned suffix = 0;
+    auto name = SymbolTable::generateSymbolName<32>("mdir_dist_pairs",
+        [&](StringRef s) { return SymbolTable::lookupSymbolIn(module, s); }, suffix);
+    auto domain = outlineSingleBlockRegion(rewriter, loc, loop.getRegion(), name);
+    assert(succeeded(domain) && "the parallel domain region has one block");
+    (*domain).setPrivate();
+  } else {
+    scf::ForOp::create(b, loc, first, past, one, ValueRange(),
+        [&](OpBuilder &bd, Location, Value d, ValueRange) {
+          visitDomain(bd, d);
+          scf::YieldOp::create(bd, loc);
+        });
+  }
 }
 
 LogicalResult Lowering::lowerSumPairs(SumPairsOp op) {
@@ -1276,8 +1325,7 @@ LogicalResult Lowering::lowerSumPairs(SumPairsOp op) {
   // Over a directed relation every pair is visited at both of its owners.
   double weight = directed ? 0.5 : 1.0;
   emitPairs(
-      op, loc, domains, storage, sumType(type),
-      imageShifts.lookup(op.getGhosts()),
+      op, loc, domainBound(b, false), domainBound(b, true), parallelDomains, storage, sumType(type), imageShifts.lookup(op.getGhosts()),
       [&](OpBuilder &at, Value a, Value v) { return add(at, a, v); },
       [&](OpBuilder &at, Type t) { return zero(at, t); },
       [&](OpBuilder &at, Value buffer, Value d, Value row, Type t) {
@@ -1357,8 +1405,7 @@ LogicalResult Lowering::lowerGatherPairs(GatherPairsOp op) {
     return arith::MulFOp::create(at, loc, value, s);
   };
   emitPairs(
-      op, loc, domains, storage, sumType(type),
-      imageShifts.lookup(op.getGhosts()),
+      op, loc, domainBound(b, false), domainBound(b, true), parallelDomains, storage, sumType(type), imageShifts.lookup(op.getGhosts()),
       [&](OpBuilder &at, Value a, Value v) { return add(at, a, v); },
       [&](OpBuilder &at, Type t) { return zero(at, t); },
       [&](OpBuilder &at, Value buffer, Value d, Value row, Type t) {
@@ -1418,7 +1465,7 @@ LogicalResult Lowering::lowerSumParticles(SumParticlesOp op) {
       allocate(b, partialType, {index(b, domains), index(b, length)});
   Storage &rows = rowsOf(op.getGathered()[0]);
   scf::ForOp::create(
-      b, loc, index(b, 0), index(b, domains), index(b, 1), ValueRange(),
+      b, loc, domainBound(b, false), domainBound(b, true), index(b, 1), ValueRange(),
       [&](OpBuilder &bd, Location, Value d, ValueRange) {
         Value count = toIndex(
             bd, memref::LoadOp::create(bd, loc, rows.rows, ValueRange{d}));
@@ -1513,7 +1560,7 @@ LogicalResult Lowering::lowerMapParticles(MapParticlesOp op) {
     fieldWords[op.getResult()] = raw;
   }
   scf::ForOp::create(
-      b, loc, index(b, 0), index(b, domains), index(b, 1), ValueRange(),
+      b, loc, domainBound(b, false), domainBound(b, true), index(b, 1), ValueRange(),
       [&](OpBuilder &bd, Location, Value d, ValueRange) {
         Value count = toIndex(
             bd, memref::LoadOp::create(bd, loc, rows.rows, ValueRange{d}));
@@ -1560,6 +1607,10 @@ LogicalResult Lowering::lowerAllReduce(AllReduceOp op) {
   auto vector = dyn_cast<VectorType>(type);
   int64_t length = vector ? vector.getNumElements() : 1;
   Value partial = storage[op.getPartial()].buffer;
+  if (mpi)
+    func::CallOp::create(b, loc,
+        declare(fixedPoint ? "mdrtMPIShareWords" : "mdrtMPISharePartials", b.getFunctionType({partial.getType()}, {}), true),
+        ValueRange{partial});
   // The partial sums are added in the order of the domains.
   auto loop = scf::ForOp::create(
       b, loc, index(b, 0), index(b, domains), index(b, 1),
@@ -2538,7 +2589,7 @@ public:
   using ConvertMDDistToLoopsBase::ConvertMDDistToLoopsBase;
   void runOnOperation() final {
     ModuleOp module = getOperation();
-    Lowering lowering(module, false, 64, 3, haloEvents);
+    Lowering lowering(module, false, 64, 3, haloEvents || mpi, mpi, parallelDomains);
     lowering.fixedPoint = fixedPoint;
     SmallVector<func::FuncOp> functions(module.getOps<func::FuncOp>());
     for (func::FuncOp function : functions)

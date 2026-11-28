@@ -8,6 +8,9 @@
 #include "DistributionLog.h"
 #include "Manifest.h"
 #include "TowersShape.h"
+#ifdef MDIR_ENABLE_MPI
+#include "mdrt_mpi.h"
+#endif
 
 #include "mdir/Compiler/Compile.h"
 #include "mdir/Compiler/JITEngine.h"
@@ -118,6 +121,9 @@ struct Buffer {
 
 static int fail(llvm::Error error) {
   llvm::errs() << "mdir: " << llvm::toString(std::move(error)) << "\n";
+#ifdef MDIR_ENABLE_MPI
+  if (mdrtMPIActive() && mdrtMPISize() > 1) mdrtMPIAbort("rank failed during setup or execution");
+#endif
   return 1;
 }
 
@@ -129,6 +135,9 @@ static void warn(const llvm::Twine &message) {
 
 static int fail(const llvm::Twine &message) {
   llvm::errs() << "mdir: " << message << "\n";
+#ifdef MDIR_ENABLE_MPI
+  if (mdrtMPIActive() && mdrtMPISize() > 1) mdrtMPIAbort("rank failed during setup or execution");
+#endif
   return 1;
 }
 
@@ -466,6 +475,10 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // the trajectory, and the checkpoints are not overwritten.
   auto refuse = [&](const Control &c, llvm::Error e) {
     std::string reason = llvm::toString(std::move(e));
+#ifdef MDIR_ENABLE_MPI
+      if (emit == Emit::Run && c.distribution && c.distribution->transport == "mpi" && mdrtMPIRank() != 0)
+        return 1;
+#endif
     if (emit == Emit::Run && (!c.logFile.empty() || !c.manifestFile.empty())) {
       auto inputs = getManifestInputs(controlFile, c, System{});
       auto diagnosticPath = [&](const std::string &path,
@@ -518,6 +531,20 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // What the run writes (D149). Its log goes to the standard output from
   // here, and to the file of [output] as well once that is open.
   Output output;
+  bool writer = true;
+  int ranks = 1;
+#ifdef MDIR_ENABLE_MPI
+  if (emit == Emit::Run && control->distribution && control->distribution->transport == "mpi") {
+    writer = mdrtMPIRank() == 0;
+    ranks = mdrtMPISize();
+    output.log.quiet = !writer;
+    output.checkpointVote = mdrtMPIMax;
+    const auto &d = *control->distribution;
+    auto domains = d.domains ? d.domains : d.grid[0]*d.grid[1]*d.grid[2];
+    if (domains < ranks)
+      return writer ? refuse(*control, llvm::createStringError("each rank needs at least one domain")) : 1;
+  }
+#endif
   if (trial) {
     // An independent invocation owns its state, callbacks and banks. Use the
     // production shape and checkpoint, with no files or checkpoints to write.
@@ -1319,7 +1346,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // A run that is not continued keeps the outputs of an earlier run that
   // has the same names as `#<name>.<n>#` before it writes its own (D149);
   // those of a continued run are its own.
-  if (!options.continues) {
+  if (writer && !options.continues) {
     std::vector<std::string> written = {control->logFile, control->energyFile,
                                         control->pullFile, control->manifestFile,
                                         control->profileMapFile,
@@ -1350,14 +1377,14 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // The log file holds what the run has printed so far; a continued run
   // appends to it. Without one the log keeps nothing from here on: this
   // is the only place where its file opens (#304).
-  if (!control->logFile.empty()) {
+  if (writer && !control->logFile.empty()) {
     if (llvm::Error error =
             output.log.open(getOutputPath(control->logFile), own.has_value()))
       return fail(std::move(error));
   } else {
     output.log.keepNothing();
   }
-  if (!control->profileMapFile.empty())
+  if (writer && !control->profileMapFile.empty())
     if (llvm::Error error = writeProfileMap(control->profileMapFile))
       return fail(std::move(error));
 
@@ -1567,7 +1594,10 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   for (double &value : startValues)
     arguments.push_back(&value);
 
-  int distRank = 0, distRanks = 1;
+  int distRank = 0, distRanks = ranks;
+#ifdef MDIR_ENABLE_MPI
+  if (ranks > 1) distRank = mdrtMPIRank();
+#endif
   llvm::json::Object distribution;
   if (const auto &dist = control->distribution) {
     const auto &grid = program->domainGrid;
@@ -1610,7 +1640,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
         control->pairlistDistance, control->cutoffDistance,
         control->pairlistDistance - control->cutoffDistance);
   }
-  if (!control->manifestFile.empty()) {
+  if (writer && !control->manifestFile.empty()) {
     auto device = getManifestDevice(control->target);
     if (!device)
       return fail(device.takeError());
@@ -1821,12 +1851,12 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   std::optional<int64_t> keepThrough;
   if (own)
     keepThrough = own->step;
-  if (!control->energyFile.empty())
+  if (writer && !control->energyFile.empty())
     if (llvm::Error error =
             output.energies.open(getOutputPath(control->energyFile),
                                  getEnergyColumns(output), keepThrough))
       return fail(std::move(error));
-  if (control->framePeriod > 0) {
+  if (writer && control->framePeriod > 0) {
     // The cell in Å, from the system: a topology gives it with the
     // coordinates, not the control file.
     double cell[3];
@@ -1917,7 +1947,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // component and the difference of the energy to each state, the input of
   // thermodynamic integration and of MBAR. With one state the differences
   // are identically 0 and are left out (D190).
-  if (!control->freeEnergyFile.empty()) {
+  if (writer && !control->freeEnergyFile.empty()) {
     std::vector<ColumnFile::Column> columns = {{"step", "-", true},
                                                {"time", "ps"}};
     for (const auto &[name, values] : control->freeEnergy.lambdas)
@@ -1937,7 +1967,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   // [output] observe (D189): the energy of a term, `<term>.energy`, or its
   // derivative in a constant of its, `<term>.d_<constant>`, per unit of the
   // constant, at every energy of the log.
-  if (!control->observablesFile.empty()) {
+  if (writer && !control->observablesFile.empty()) {
     std::vector<ColumnFile::Column> columns = {{"step", "-", true},
                                                {"time", "ps"}};
     for (const auto &[name, unit] : control->getObservableColumns())
@@ -1946,7 +1976,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
             getOutputPath(control->observablesFile), columns, keepThrough))
       return fail(std::move(error));
   }
-  if (!control->pullFile.empty()) {
+  if (writer && !control->pullFile.empty()) {
     std::vector<ColumnFile::Column> columns = {{"step", "-", true},
                                                {"time", "ps"}};
     for (const TupleTerm &term : system->topology->tupleTerms) {
@@ -1973,7 +2003,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
             getOutputPath(control->pullFile), columns, keepThrough))
       return fail(std::move(error));
   }
-  if (writesCheckpoints) {
+  if (writer && writesCheckpoints) {
     output.checkpointPath = control->restartOutput;
     Checkpoint &checkpoint = output.checkpoint;
     checkpoint.omitObjectTimes = output.distributedWordEnergy;
@@ -2261,14 +2291,27 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   Observe observe = nullptr;
   if (control->distribution) {
     const auto &g = program->domainGrid;
-    distLog.emplace(output.log, manifest, distRank, distRanks,
-                    g[0] * g[1] * g[2], firstStep, control->energyPeriod,
-                    control->pairlistDistance);
-    bool opened = distLog->open(std::getenv("MDIR_DIST_STEP_TRACE"),
-                                control->restartOutput);
+    distLog.emplace(output.log, manifest, distRank, distRanks, g[0]*g[1]*g[2],
+                    firstStep, control->energyPeriod, control->pairlistDistance);
+    const char *prefix = std::getenv("MDIR_DIST_STEP_TRACE");
+#ifdef MDIR_ENABLE_MPI
+    if (control->distribution->transport == "mpi") {
+      bool any = mdrtMPIMax(prefix && *prefix);
+      bool all = mdrtMPIAllTrue(prefix && *prefix);
+      if (any != all)
+        distLog->error = "distributed step tracing must be enabled alike on every rank";
+    }
+#endif
+    bool opened = distLog->error.empty() && distLog->open(prefix, control->restartOutput);
+#ifdef MDIR_ENABLE_MPI
+    if (control->distribution->transport == "mpi") {
+      distLog->gather = mdrtMPIGatherTimes;
+      opened = mdrtMPIAllTrue(opened);
+    }
+#endif
     if (!opened) {
-      output.log.print("MDIR: distributed setup refused: %s\n",
-                       distLog->error.c_str());
+      if (distLog->error.empty()) distLog->error = "a peer could not create its distributed trace";
+      output.log.print("MDIR: distributed setup refused: %s\n", distLog->error.c_str());
       if (auto e = manifest.finish("refused", firstStep, distLog->error))
         return fail(std::move(e));
       return fail(distLog->error);
