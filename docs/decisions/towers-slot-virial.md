@@ -2,7 +2,7 @@
 
 Recorded at its merge.
 
-**Compute the TOWERS direct virial from staged slot forces.** Issue #1048, following [D[towers-virial]](towers-virial.md).
+**Compute the TOWERS direct virial from staged slot forces.** Issue #1048, following [D455](D455.md).
 
 Use the single sum over staged slots in the fused moving pressure traversal.
 NT ownership assigns each pair to one interaction box. Distribution of its
