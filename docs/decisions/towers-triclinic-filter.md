@@ -109,3 +109,7 @@ RTX 4090, 2 fs, mixed precision, two jobs with the arms interleaved in opposite 
 ## 7. AUTO
 
 [measured] With the branch the whole step under TOWERS is within 2% of the matrix in NVT on both Trp-cage inputs (1,246 against 1,274 and 1,531 against 1,546 ns/day, AUTO shape) and 8 to 11% below it in NPT. It does not beat the matrix, so this decision does not propose that AUTO time TOWERS on triclinic cells. The rule that keeps AUTO on the matrix for a triclinic cell belongs to #1007, not to `main`; it stays as it is. What remains on these grids is granularity: 90 tower blocks on 128 SMs at one block per SM, and a launch of about 65 µs against 41 µs for the sum of the block times spread over all SMs.
+
+## 8. The whole step outside the pairs
+
+[measured] ff19SB+OPC cell, NVT, Nsight Systems, two traces per arm, branch with its AUTO shape against the matrix of `main`, one stream each (µs per step): untraced step 139.4 against 138.0; TOWERS force + finish 66.9 against the matrix pair loop 43.3; the exclusion-correction pair loop 11.2 against 4.8; list upkeep 6.9 against 27.9; PME 23.2 against 23.4; bonded 7.5 against 6.8; integration 21.8 against 23.4; idle and host 11.7 against 15.0; the thermostat-step extra 8.8 against 12.9. The one term that grows outside the TOWERS kernels is the exclusion-correction pair loop, a kernel of the generic pair lowering, which takes 2.6 µs under TOWERS on the orthorhombic control. It is left to a follow-up issue.
