@@ -623,10 +623,52 @@ void mdir::kernels::TowersMovingRow::emit(OpBuilder &k, Location loc, Value i,
   auto first =
       arith::CmpIOp::create(k, loc, arith::CmpIPredicate::eq, i, axis(0));
   scf::IfOp::create(k, loc, first, [&](OpBuilder &at, Location l) {
-    for (auto [j, v] : llvm::enumerate(lattice))
-      memref::StoreOp::create(at, l, v, box, ValueRange{createIndex(at, l, j)});
-    if (g.cells() <= g.atoms)
-      emitTowersGeometry(at, l, g, box, status, geometry);
+    auto update = [&](OpBuilder &at, Location l) {
+      for (auto [j, v] : llvm::enumerate(lattice))
+        memref::StoreOp::create(at, l, v, box,
+                                ValueRange{createIndex(at, l, j)});
+      if (g.cells() <= g.atoms)
+        emitTowersGeometry(at, l, g, box, status, geometry);
+    };
+    if (!cachedGeometry) {
+      update(at, l);
+      scf::YieldOp::create(at, l);
+      return;
+    }
+    // The geometry is a function of the lattice words alone. The box keeps
+    // the words of the last geometry; NaN, as initialized, matches no cell.
+    // A cell equal bit for bit to those words therefore finds the same
+    // geometry in memory, and thread 0 skips its serial chain of divisions
+    // and square roots (D[towers-input-geometry]).
+    Type bits = at.getI64Type();
+    Value same = arith::ConstantIntOp::create(at, l, 1, 1);
+    for (auto [j, v] : llvm::enumerate(lattice)) {
+      Value old =
+          memref::LoadOp::create(at, l, box, ValueRange{createIndex(at, l, j)});
+      Value equal = arith::CmpIOp::create(
+          at, l, arith::CmpIPredicate::eq,
+          arith::BitcastOp::create(at, l, bits, old),
+          arith::BitcastOp::create(at, l, bits, v));
+      Value ordered =
+          arith::CmpFOp::create(at, l, arith::CmpFPredicate::ORD, old, old);
+      same = arith::AndIOp::create(
+          at, l, same, arith::AndIOp::create(at, l, equal, ordered));
+    }
+    scf::IfOp::create(
+        at, l, same,
+        [&](OpBuilder &t, Location l2) {
+          // The rebuild status is cleared at every evaluation, as the
+          // geometry does when it runs.
+          if (g.cells() <= g.atoms)
+            memref::StoreOp::create(
+                t, l2, arith::ConstantIntOp::create(t, l2, 0, 32), status,
+                ValueRange{createIndex(t, l2, 0)});
+          scf::YieldOp::create(t, l2);
+        },
+        [&](OpBuilder &e, Location l2) {
+          update(e, l2);
+          scf::YieldOp::create(e, l2);
+        });
     scf::YieldOp::create(at, l);
   });
   if (!cartesianPositions)

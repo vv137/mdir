@@ -13,6 +13,7 @@
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Transforms/RegionUtils.h"
+#include <limits>
 
 using namespace mlir;
 using namespace mdir;
@@ -104,8 +105,28 @@ struct Dispatch {
     int n = g.atoms, c = g.cells(), f = 5 + 2 * g.reach;
     if (!shape.cartesianPositions)
       raw = buffer("coordinates", mem({3, n}, dbl));
-    box = buffer("box", mem({g.boxSize()}, dbl));
-    geometry = buffer("geometry", mem({3, g.rawColumns()}, dbl));
+    // The moving rows keep the geometry of the last cell in these two
+    // buffers. Sites of one entry share them only when their grids agree,
+    // and the box starts as NaN, which matches no cell
+    // (D[towers-input-geometry]).
+    std::string grid =
+        (Twine(g.nx) + "x" + Twine(g.ny) + "x" + Twine(g.nz)).str();
+    box = buffer("box " + grid, mem({g.boxSize()}, dbl));
+    geometry = buffer("geometry " + grid, mem({3, g.rawColumns()}, dbl));
+    if (!box.getDefiningOp()->hasAttr("mdir.initialized")) {
+      OpBuilder init(box.getDefiningOp());
+      init.setInsertionPointAfter(box.getDefiningOp());
+      rows(init, loc, createIndex(init, loc, g.boxSize()),
+           [&](OpBuilder &k, Value i) {
+             memref::StoreOp::create(
+                 k, loc,
+                 arith::ConstantOp::create(
+                     k, loc, k.getF64FloatAttr(
+                                 std::numeric_limits<double>::quiet_NaN())),
+                 box, ValueRange{i});
+           });
+      box.getDefiningOp()->setAttr("mdir.initialized", init.getUnitAttr());
+    }
     counts = buffer("counts", mem({g.countWords()}, narrow));
     map = buffer("map", mem({c, f}, narrow));
     spans = buffer("spans", mem({c, f, 2}, narrow));
@@ -209,6 +230,7 @@ struct Dispatch {
                           raw, box, geometry, status, charge, types, counts,
                           keys, local, initialWords, initialState, initialFailed,
                           arrivals};
+    input.cachedGeometry = true;
     rows(b, loc, idx(g.atoms), [&](OpBuilder &k, Value i) {
       input.emit(k, loc, i, binsInfo, fields);
     });

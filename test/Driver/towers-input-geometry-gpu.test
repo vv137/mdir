@@ -1,0 +1,12 @@
+# The TOWERS input kernel recomputes the cell geometry only when the cell
+# changes (D[towers-input-geometry]): under a barostat that compresses the
+# cell, a run continued from a checkpoint, which starts without a geometry,
+# matches the uninterrupted run, in a rectangular and a triclinic cell, with
+# LAUNCH and GRAPH.
+# REQUIRES: cuda, towers-mma, hdf5, h5py
+# RUN: rm -rf %t && mkdir %t
+# RUN: %h5md_python %S/Inputs/check_towers_input_geometry.py %S/Inputs/dipeptide %t mdir | FileCheck %s
+# CHECK: rectangular: volume change
+# CHECK: triclinic: volume change
+# CHECK: triclinic graph: volume change
+# CHECK: towers input geometry: ok
