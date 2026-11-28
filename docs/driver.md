@@ -510,7 +510,7 @@ bin widths cover the ownership stencil. When an axis crosses its lower
 width boundary, the build uses the reserved count on that axis and
 rebuilds membership and the periodic stencil before evaluating the force.
 The device checks the resulting widths. Triclinic and sparse grids use
-the fixed reserve of D450 (D[towers-npt-grid]).
+the fixed reserve of D450 (D456).
 
 The effective manifest and checkpoint reserve `towers_cell_height` for the
 resolved height.

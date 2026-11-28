@@ -751,6 +751,7 @@ specification follow those made with it.
 | [D453](decisions/D453.md) | The lateral filter of the TOWERS tile visit on a triclinic cell keeps a target when the largest of four projected gaps, onto the two face normals and the two diagonal axes of the column's cross-section, is within the padded filter radius. The supports of the four axes come from the vertices of the cross-section. The geometry kernel computes the axes and the supports once per geometry. A traversal converts them, with the field offsets and the face normals, once into workgroup memory. | 2026-11-28 |
 | [D454](decisions/D454.md) | The parts of a split TOWERS tower take the column's sources in turn, by chunks of 32 consecutive sources: part $p$ of `split` takes the logical chunks $p, p + \texttt{split}, \dots$. They took contiguous halves, and only the first half meets the home targets. | 2026-11-28 |
 | [D455](decisions/D455.md) | **Reduce the cost of the fused TOWERS force and direct virial traversal on pressure-coupled steps.** Issue #1039. | 2026-11-28 |
+| [D456](decisions/D456.md) | Use the fine TOWERS grid in rectangular pressure-coupled dynamics, and rebuild at the reserved count on an axis when the current cell becomes too short. | 2026-11-28 |
 <!-- end decisions-table -->
 
 

@@ -524,7 +524,7 @@ are fixed at setup. For a rectangular grid with at most one cell per
 particle, the moving build uses the fine count on each axis while its bin
 width covers the cutoff stencil. On an axis that contracts below this
 width, the build uses one fewer bin where the periodic stencil still
-fits (D[towers-npt-grid]). Because the physical cutoff is unchanged under
+fits (D456). Because the physical cutoff is unchanged under
 cell rescaling, the membership, wrapped ownership stencil, and exclusion
 displacements use the same active counts. The force entry checks the
 active widths before publication.
