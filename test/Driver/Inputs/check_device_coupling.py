@@ -192,9 +192,11 @@ if wanted("continuation"):
 
 # GROUPS, which is not deterministic: as close to the host's coupling as two
 # runs of the host are to each other.
-if wanted("groups"):
-    runs = [run(f"groups-{c.lower()}-{k}", c, structure="GROUPS", deterministic=False,
-                steps=40, energy=20)
+for ensemble in ("NVT", "NPT"):
+    if not wanted("groups"):
+        break
+    runs = [run(f"groups-{ensemble}-{c.lower()}-{k}", c, structure="GROUPS",
+                deterministic=False, steps=40, energy=20, ensemble=ensemble)
             for c, k in (("HOST", 0), ("HOST", 1), ("DEVICE", 0))]
 
     def difference(a, b, key):
@@ -204,8 +206,8 @@ if wanted("groups"):
     for key in ("position/value", "velocity/value"):
         spread = difference(runs[0], runs[1], key)
         change = difference(runs[0], runs[2], key)
-        assert change <= max(10 * spread, 1e-5), (key, change, spread)
-    print("groups: close")
+        assert change <= max(10 * spread, 1e-5), (ensemble, key, change, spread)
+    print(f"groups-{ensemble.lower()}: close")
 
 # NPT, stochastic cell rescaling in each coupling: bitwise the host's.
 if wanted("npt"):
@@ -227,3 +229,67 @@ if wanted("reads-npt"):
     # What the host still reads at a scaling: the pressures, in one small
     # copy, which give the new cell that the next step's launches take.
     assert device.get(64, 0) == 20, device
+
+# TOWERS, which has no deterministic mode: within ten times the spread of
+# two runs of the host's coupling step with launches one by one, with spans
+# and with graph replay (D439, D450), in NVT and NPT. The copies of the
+# virial that the dispatch observes for a scaling are gone too.
+TOWERS = Path(__file__).with_name("step-graph.toml.in").read_text()
+
+
+def towers(name, coupling, mode, ensemble, steps=200, energy=100):
+    directory = work / name
+    directory.mkdir(parents=True)
+    control = TOWERS.format(inputs=inputs, mode=mode, steps=steps, period=10)
+    control = control.replace("energy_interval = 10", f"energy_interval = {energy}")
+    control = control.replace("checkpoint_interval = 10", f"checkpoint_interval = {energy}")
+    control = control.replace('step_graph = "', f'coupling_step = "{coupling}"\nstep_graph = "')
+    if ensemble == "NPT":
+        control = control.replace('ensemble    = "NVT"', 'ensemble    = "NPT"\npressure    = 500.0')
+        control += '\n[barostat]\nmethod = "C-RESCALE"\ntime_constant = 0.1\n'
+    (directory / "control.toml").write_text(control)
+    environment = dict(os.environ)
+    environment.pop("MDRT_SPANS", None)
+    environment["MDRT_HOST_READS"] = "1"
+    log = subprocess.run([mdir, "run", "control.toml"], cwd=directory, text=True,
+                         env=environment, capture_output=True)
+    assert log.returncode == 0, (name, log.stdout[-3000:], log.stderr[-3000:])
+    with h5py.File(directory / "state.h5") as f:
+        group = f["particles/all"]
+        state = {k: group[k + "/value"][()] for k in ("position", "velocity")}
+    rows = re.findall(r"^INFO: +(\d+) ", log.stdout, re.M)
+    sizes = dict((int(a), int(b)) for a, b in
+                 re.findall(r"host reads of (\d+) bytes: (\d+)", log.stderr))
+    return dict(state=state, rows=rows, sizes=sizes)
+
+
+if wanted("towers"):
+    for ensemble in ("NVT", "NPT"):
+        reference = towers(f"towers-{ensemble}-host-0", "HOST", "LAUNCH", ensemble)
+        again = towers(f"towers-{ensemble}-host-1", "HOST", "LAUNCH", ensemble)
+        for mode in ("LAUNCH", "SPANS", "GRAPH"):
+            device = towers(f"towers-{ensemble}-device-{mode}", "DEVICE", mode, ensemble)
+            assert device["rows"] == reference["rows"], (ensemble, mode)
+            report = []
+            for key in ("position", "velocity"):
+                x = reference["state"][key]
+                spread = np.linalg.norm(again["state"][key] - x) / np.linalg.norm(x)
+                change = np.linalg.norm(device["state"][key] - x) / np.linalg.norm(x)
+                assert change <= max(10 * spread, 1e-5), (ensemble, mode, key, change, spread)
+                report.append(f"{key} {change:.1e} (spread {spread:.1e})")
+            print(f"towers-{ensemble.lower()}-{mode.lower()}: close; " + ", ".join(report))
+        # Per coupling, from runs of 200 and 400 steps with one row: the
+        # sums (8 kB), the observed virial (24 bytes) and the reciprocal
+        # virial of PME (56 bytes) stay on the device; a scaling reads its
+        # pressures (64 bytes).
+        grown = {}
+        for coupling in ("HOST", "DEVICE"):
+            pair = [towers(f"towers-{ensemble}-{coupling}-{steps}", coupling, "SPANS",
+                           ensemble, steps=steps, energy=steps) for steps in (200, 400)]
+            sizes = set(pair[0]["sizes"]) | set(pair[1]["sizes"])
+            grown[coupling] = {k: pair[1]["sizes"].get(k, 0) - pair[0]["sizes"].get(k, 0)
+                               for k in sizes if pair[1]["sizes"].get(k, 0) != pair[0]["sizes"].get(k, 0)}
+        print(f"towers-{ensemble.lower()} reads for 20 more couplings: host "
+              f"{dict(sorted(grown['HOST'].items()))}, device {dict(sorted(grown['DEVICE'].items()))}")
+        assert grown["DEVICE"] == ({64: 20} if ensemble == "NPT" else {}), grown
+        assert grown["HOST"].get(8192, 0) >= 20, grown

@@ -52,6 +52,9 @@ llvm::Expected<std::string> mdir::tool::getExecutionPins(StringRef path) {
   if (auto *streams = choices->getObject("term_streams"))
     if (auto value = streams->getString("value"))
       os << "term_streams = \"" << *value << "\"\n";
+  if (auto *coupling = choices->getObject("coupling_step"))
+    if (auto value = coupling->getString("value"))
+      os << "coupling_step = \"" << *value << "\"\n";
   if (auto *shape = choices->getObject("towers_shape")) {
     os << "neighbor_structure = \"TOWERS\"\ntowers_shape = { ";
     for (StringRef key : {"threads", "blocks_per_sm", "panel", "stripe", "records", "split"}) {

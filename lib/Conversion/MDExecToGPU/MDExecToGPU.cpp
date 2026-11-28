@@ -11288,7 +11288,15 @@ static void deferReadbacks(func::FuncOp function) {
 }
 
 LogicalResult Lowering::inlineFrameReadbacks(func::FuncOp function) {
-  if (!function->hasAttr("mdir.frame_batch")) return success();
+  // A coupling step on the device under a barostat takes the reciprocal
+  // virial that the helpers of PME read back as well (D[device-coupling]).
+  bool coupling = deviceCoupling &&
+      function.walk([](func::CallOp call) {
+        return call.getCallee().starts_with("mdrtBarostatStrain")
+                   ? WalkResult::interrupt()
+                   : WalkResult::advance();
+      }).wasInterrupted();
+  if (!function->hasAttr("mdir.frame_batch") && !coupling) return success();
   auto numericalCopy = [](gpu::MemcpyOp copy) {
     auto host = dyn_cast<MemRefType>(copy.getDst().getType());
     auto device = dyn_cast<MemRefType>(copy.getSrc().getType());
@@ -11303,6 +11311,18 @@ LogicalResult Lowering::inlineFrameReadbacks(func::FuncOp function) {
     bool readsNumbers = false;
     callee.walk([&](gpu::MemcpyOp copy) { readsNumbers |= numericalCopy(copy); });
     if (!readsNumbers) continue;
+    if (!function->hasAttr("mdir.frame_batch")) {
+      // Outside a device frame, only a helper whose readbacks this can
+      // snapshot, and the call stays otherwise.
+      bool small = llvm::hasSingleElement(callee.getBody());
+      callee.walk([&](gpu::MemcpyOp copy) {
+        auto host = cast<MemRefType>(copy.getDst().getType());
+        if (numericalCopy(copy) && (host.getRank() != 1 || !host.hasStaticShape() ||
+                                    host.getNumElements() > 16))
+          small = false;
+      });
+      if (!small) continue;
+    }
     if (!llvm::hasSingleElement(callee.getBody()))
       return call.emitOpError("device frame numerical helper must have one return block");
     OpBuilder at(call);

@@ -450,6 +450,20 @@ give the request, the value, the reason, the inputs and
 `Execution.term_streams`. The streams are forked and joined by events, so a
 step graph (`step_graph`) captures them as parallel branches.
 
+The `[execution] coupling_step` key chooses where the arithmetic of the
+coupling step on the sums of the step runs (D[device-coupling]).
+`"DEVICE"`, the default, computes the factor of V-rescale, the heat of the
+bath and the pressures of C-rescale on the device, by one thread, from the
+draws that the host makes from the seed and the step; the kernels that
+scale read the factor there, the bath stays on the device until a row, a
+checkpoint or the return, and a scaling of the cell copies only its
+pressures to the host. `"HOST"` copies the sums and computes on the host,
+as before. Both give the same trajectory. On the CPU target, under a
+Nose–Hoover chain and under Langevin dynamics the key resolves to
+`"HOST"`. The setup log line `MDIR: coupling_step` and the manifest's
+`resolved_choices.coupling_step` give the request, the value and the
+reason; `mdir pin MANIFEST` writes the key.
+
 For periodic TOWERS preflight, `[execution] towers_shape` accepts an
 inline table such as `{threads = 512, blocks_per_sm = 2, panel = 352,
 stripe = 384, records = 1536, split = 1, cell_height = "HALF"}` on one
