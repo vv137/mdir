@@ -104,7 +104,7 @@ def check(directory, gpu, reach, workers):
     r.types[:] = [0] * n
     geom = r.geometry
     if gpu:
-        geom = e.array(rebuild.F, 22 + 3 * r.fields)
+        geom = e.array(rebuild.F, 22 + 3 * r.fields + 10)
         e.run("prepare_force", 1, r.geometry, geom)
     table = e.array(rebuild.F, 4)
     table[:] = [8] * 4
