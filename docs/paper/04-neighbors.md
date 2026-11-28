@@ -1367,10 +1367,10 @@ $$
 
 The left side bounds the distance $d(\mathbf p, P_\perp)$ of the target
 to the column from below. A component of $\mathbf p$ along the axis does not
-change $\mathbf e\cdot\mathbf p$. On an orthorhombic cell the two face
-normals are orthogonal and the sum of the two squared face gaps
-$\max(0, \lvert\mathbf e\cdot\mathbf p\rvert - w_P(\mathbf e))$ is
-$d(\mathbf p, P_\perp)^2$. On a triclinic cell the sum can exceed it: a
+change $\mathbf e\cdot\mathbf p$. For a face normal $\mathbf e =
+\hat{\mathbf f}_a$ the left side is the face gap. On an orthorhombic cell
+the two face normals are orthogonal, and the sum of the squares of the two
+face gaps is $d(\mathbf p, P_\perp)^2$. On a triclinic cell the sum can exceed it: a
 target at the distance $t$ outside a vertex along
 $\hat{\mathbf g}_+ = (\hat{\mathbf f}_0 + \hat{\mathbf f}_1)/\lVert\hat{\mathbf
 f}_0 + \hat{\mathbf f}_1\rVert$ has the face gaps
