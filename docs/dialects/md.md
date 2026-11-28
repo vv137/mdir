@@ -1125,8 +1125,10 @@ Syntax:
 
 ```
 operation ::= `md.neighborhood` $positions `,` $cell `cutoff` `(` $cutoff `)`
-              (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)? attr-dict
-              `:` qualified(type($positions)) `->` qualified(type($result))
+              (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)?
+              (`anchors` `(` $anchor_members^ `,` $anchor_radii `,` $max_anchor_radius `:`
+              qualified(type($anchor_members)) `,` qualified(type($anchor_radii)) `)`)?
+              attr-dict `:` qualified(type($positions)) `->` qualified(type($result))
 ```
 
 ```text
@@ -1153,7 +1155,7 @@ N(x, h) = { {i, j} : i ≠ j, r_ij < r_c } \ E
        : !md.field<@atoms, 3 x f64> -> !md.relation<@atoms, 2, unordered>
 ```
 
-Traits: `AlwaysSpeculatableImplTrait`
+Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`
 
 Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
 
@@ -1163,6 +1165,7 @@ Effects: `MemoryEffects::Effect{}`
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>max_anchor_radius</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
 <tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
 </table>
 
@@ -1173,6 +1176,8 @@ Effects: `MemoryEffects::Effect{}`
 | `positions` | field at the reference precision, with elements of type f64, i32, or i64 |
 | `cell` | A simulation cell |
 | `excluded` | A set of tuples of distinct particles |
+| `anchor_members` | A set of tuples of distinct particles |
+| `anchor_radii` | A per-particle field |
 
 #### Results:
 

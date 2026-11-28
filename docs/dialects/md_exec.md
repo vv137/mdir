@@ -230,6 +230,8 @@ operation ::= `md_exec.build_neighbors` $cells `,` $positions `,` $cell (`center
               `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
               `kind` `(` $kind `)` `width` `(` $width `)`
               (`images` `(` $images^ `)`)?
+              (`anchors` `(` $anchor_members^ `,` $anchor_radii `,` $max_anchor_radius `:`
+              qualified(type($anchor_members)) `,` qualified(type($anchor_radii)) `)`)?
               (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)? attr-dict
               `:` qualified(type($cells)) `,` qualified(type($positions))
               `->` qualified(type($result))
@@ -286,6 +288,7 @@ Effects: `MemoryEffects::Effect{}`
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>max_anchor_radius</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
 <tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
 <tr><td><code>skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
 <tr><td><code>kind</code></td><td>::mdir::md_exec::NeighborKindAttr</td><td>physical form of a neighbor structure</td></tr>
@@ -302,6 +305,8 @@ Effects: `MemoryEffects::Effect{}`
 | `cell` | A simulation cell |
 | `excluded` | For every particle, the tuples that it is a member of or buffer of the tuples of each particle |
 | `centers` | index |
+| `anchor_members` | A set of tuples of distinct particles or buffer of the members of tuples |
+| `anchor_radii` | A per-particle field or buffer of a field |
 
 #### Results:
 
@@ -1484,6 +1489,8 @@ operation ::= `md_exec.refresh_neighbors` $neighbors `,` $positions `,` $cell
               (`prune_skin` `(` $prune_skin^ `)`)?
               `cell_width` `(` $cell_width `)` (`interval` `(` $interval^ `)`)?
               (`images` `(` $images^ `)`)?
+              (`anchors` `(` $anchor_members^ `,` $anchor_radii `,` $max_anchor_radius `:`
+              qualified(type($anchor_members)) `,` qualified(type($anchor_radii)) `)`)?
               `policy` `(` $policy `)` attr-dict
               `:` qualified(type($neighbors)) `,` qualified(type($positions))
 ```
@@ -1602,6 +1609,7 @@ Interfaces: `MemoryEffectOpInterface`
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>max_anchor_radius</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
 <tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
 <tr><td><code>skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
 <tr><td><code>prune_skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
@@ -1622,6 +1630,8 @@ Interfaces: `MemoryEffectOpInterface`
 | `moved` | 1-bit signless integer |
 | `stale` | 1-bit signless integer |
 | `centers` | index |
+| `anchor_members` | A set of tuples of distinct particles or buffer of the members of tuples |
+| `anchor_radii` | A per-particle field or buffer of a field |
 
 #### Results:
 
