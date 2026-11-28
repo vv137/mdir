@@ -244,7 +244,7 @@ void TowersBuild::geometry(Value box, Value status, Value info) {
   // the column by projections onto the face normals and the two diagonal
   // axes. A support is the largest projection of the four vertices
   // +-step0/2 +-step1/2 of the column's cross-section, in the Cartesian
-  // frame of the staged positions (D[towers-triclinic-filter]).
+  // frame of the staged positions (D453).
   auto at = [&](int row, int column) {
     return load(info, {cx(row), cx(column)});
   };

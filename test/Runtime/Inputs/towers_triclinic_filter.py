@@ -1,4 +1,4 @@
-"""The lateral filter of TOWERS on sheared cells (D[towers-triclinic-filter]).
+"""The lateral filter of TOWERS on sheared cells (D453).
 
 Two sheared lattices whose lateral face normals are not orthogonal. Each
 holds random dyadic particles and one pair inside the cutoff whose lateral
@@ -217,7 +217,7 @@ if __name__ == "__main__":
                   f"{pairs} pairs; corner pair at {distance:.4f}, "
                   f"summed gap {summed:.4f}, four-axis bound {bound:.4f}")
     # Dense columns hold more than one chunk of 32 sources, so that the
-    # split parts take chunks in turn (D[towers-split-interleave]).
+    # split parts take chunks in turn (D454).
     lattice = cases[0][0]
     fractional = [
         tuple(rng.randrange(256) / 256 for _ in range(3)) for _ in range(1200)

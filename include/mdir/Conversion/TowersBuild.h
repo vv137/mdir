@@ -24,7 +24,7 @@ struct TowersLayout {
   // Rows 0 and 1 also hold the lateral diagonal axis (n0 + n1)/|n0 + n1|
   // and (n0 - n1)/|n0 - n1|, the support of the row's face normal and that
   // of the row's diagonal axis over the cross-section of a column
-  // (D[towers-triclinic-filter]).
+  // (D453).
   static constexpr int lattice = 3, step = 6, normal = 9, slab = 12,
                        diagonal = 13, support = 16;
   int rawColumns() const { return triclinic ? 18 : 3; }

@@ -1342,14 +1342,14 @@ block more: on a Trp-cage cell of 3 x 3 x 5 bins it held 9.2 times the
 screen passes of the second, and the launch, one wave of blocks, waited for
 it. The parts therefore take chunks of 32 sources in turn, part $p$ the chunks
 $p, p + 2, \dots$; a home target's sources stay a contiguous range of the
-part's indices (D[towers-split-interleave]). Newton's opposite forces
+part's indices (D454). Newton's opposite forces
 become opposite integer words, with a certificate on the final sums and
 exact recovery. Blind evaluation and exact cancellation handle exclusions.
 The triclinic extension uses perpendicular face heights. Setup chooses the cell height from the geometry and atom count, then
 times candidate launches at that height when a force-only region is available.
 
 The lateral filter keeps a target whose distance to the source column may
-be within the cutoff (D[towers-triclinic-filter]). Measured from the bin
+be within the cutoff (D453). Measured from the bin
 center, the column's cross-section $P_\perp$ in the plane normal to the
 tower axis is the parallelogram with the vertices
 $\pm\tfrac12\mathbf s_0 \pm \tfrac12\mathbf s_1$ projected onto that plane.

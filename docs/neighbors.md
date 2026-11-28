@@ -93,7 +93,7 @@ face normals and the two diagonals is within the padded filter radius; the
 supports $s(\mathbf u)$ are the largest projections of the cross-section's
 vertices, rounded up to binary32. An orthorhombic cell takes the sum of the
 two squared face gaps, which is exact there
-(D[towers-triclinic-filter], [Section 4.8 of the paper](paper/04-neighbors.md#48-rectangular-tower-and-plate-ownership-d428)).
+(D453, [Section 4.8 of the paper](paper/04-neighbors.md#48-rectangular-tower-and-plate-ownership-d428)).
 Screen features and the compacted target list share
 storage with the integer force planes across the prefix barrier.
 Small read-only coefficient tables can be staged with the tile.
@@ -140,7 +140,7 @@ atom-to-slot map, the three planes of binary64 input positions and the three
 box lengths. Captured parameters follow the per-atom inputs. Keep the frame,
 maps and topology fixed through publication.
 
-The GPU force grid has one or two source splits per tower (`force-split`). Part $p$ of a split takes the column's chunks of 32 logical sources $p, p + \texttt{split}, \dots$, so that each part holds the same mix of the home, lower and upper layers; only the home and lower layers meet the home targets (D[towers-split-interleave]).
+The GPU force grid has one or two source splits per tower (`force-split`). Part $p$ of a split takes the column's chunks of 32 logical sources $p, p + \texttt{split}, \dots$, so that each part holds the same mix of the home, lower and upper layers; only the home and lower layers meet the home targets (D454).
 Small exclusion lists follow the towers, one pair per lane. When the list
 fills at least 128 blocks at four pairs per lane, each exclusion block reads
 up to four consecutive block-width slices. The compact group starts after

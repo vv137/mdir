@@ -748,6 +748,8 @@ specification follow those made with it.
 | [D450](decisions/D450.md) | Graph replay of ordinary TOWERS steps (D439, `step_graph = "GRAPH"`) under stochastic cell rescaling. The kernels of a chunk read the arguments that the cell sets from a device mirror, which the host fills before each chunk. | 2026-11-28 |
 | [D451](decisions/D451.md) | **Use the five-pass Gaussian PME mesh transform (D435) across the measured mesh range on mixed-precision `sm_89` devices.**  AUTO uses the axis transform for order-four Gaussian PME in non-deterministic mixed precision on `sm_89`, including orthorhombic and triclinic cells. | 2026-11-28 |
 | [D452](decisions/D452.md) | On the GPU the arithmetic of the coupling step on the sums of the step runs on the device. `[execution] coupling_step = "DEVICE"`, the default on the GPU; `"HOST"` keeps the path of before. | 2026-11-28 |
+| [D453](decisions/D453.md) | The lateral filter of the TOWERS tile visit on a triclinic cell keeps a target when the largest of four projected gaps, onto the two face normals and the two diagonal axes of the column's cross-section, is within the padded filter radius. The supports of the four axes come from the vertices of the cross-section. The geometry kernel computes the axes and the supports once per geometry. A traversal converts them, with the field offsets and the face normals, once into workgroup memory. | 2026-11-28 |
+| [D454](decisions/D454.md) | The parts of a split TOWERS tower take the column's sources in turn, by chunks of 32 consecutive sources: part $p$ of `split` takes the logical chunks $p, p + \texttt{split}, \dots$. They took contiguous halves, and only the first half meets the home targets. | 2026-11-28 |
 <!-- end decisions-table -->
 
 

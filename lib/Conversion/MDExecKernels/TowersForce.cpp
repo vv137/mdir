@@ -137,7 +137,7 @@ private:
   Value pos, id, features, bias, records, totals, keptSlots, accum, coarse;
   Value tid, lane, scale, limit, cutoff2, filterLimit;
   // The split parts of a tower take its sources in turn by chunks of a warp
-  // (D[towers-split-interleave]): part p takes the logical chunks p,
+  // (D454): part p takes the logical chunks p,
   // p + split, ... of 32 consecutive sources, so that each warp stages one
   // contiguous chunk. A part-local index l = 32 c + r stands for the logical
   // index 32 (split c + p) + r.
@@ -166,7 +166,7 @@ private:
   Value lateralWord(Value info, int word, bool packedInfo);
   // A triclinic device entry that reads the binary64 geometry converts the
   // field offsets, the face normals and the lateral words once per
-  // traversal into workgroup memory (D[towers-triclinic-filter]). Layout:
+  // traversal into workgroup memory (D453). Layout:
   // the field offsets (3 per field), n0, n1, then the ten lateral words.
   Value blockGeometry;
   bool stagesGeometry() const {
