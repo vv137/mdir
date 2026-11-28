@@ -1341,6 +1341,55 @@ exact recovery. Blind evaluation and exact cancellation handle exclusions.
 The triclinic extension uses perpendicular face heights. Setup chooses the cell height from the geometry and atom count, then
 times candidate launches at that height when a force-only region is available.
 
+The lateral filter keeps a target whose distance to the source column may
+be within the cutoff (D[towers-triclinic-filter]). Measured from the bin
+center, the column's cross-section $P_\perp$ in the plane normal to the
+tower axis is the parallelogram with the vertices
+$\pm\tfrac12\mathbf s_0 \pm \tfrac12\mathbf s_1$ projected onto that plane.
+For a unit vector $\mathbf e$ normal to the axis, let
+$w_P(\mathbf e) = \max_{\mathbf x\in P_\perp}\mathbf e\cdot\mathbf x$ be the
+support. $P_\perp$ is centrally symmetric, so $\lvert\mathbf e\cdot\mathbf
+x\rvert \le w_P(\mathbf e)$ for every $\mathbf x \in P_\perp$, and for a
+target at $\mathbf p$
+
+$$
+\lvert\mathbf e\cdot\mathbf p\rvert - w_P(\mathbf e)
+\le \lvert\mathbf e\cdot(\mathbf p - \mathbf x)\rvert
+\le \lVert\mathbf p - \mathbf x\rVert .
+$$
+
+The left side bounds the distance $d(\mathbf p, P_\perp)$ of the target
+to the column from below. A component of $\mathbf p$ along the axis does not
+change $\mathbf e\cdot\mathbf p$. On an orthorhombic cell the two face
+normals are orthogonal and the sum of the two squared face gaps
+$\max(0, \lvert\mathbf e\cdot\mathbf p\rvert - w_P(\mathbf e))$ is
+$d(\mathbf p, P_\perp)^2$. On a triclinic cell the sum can exceed it: a
+target at the distance $t$ outside a vertex along
+$\hat{\mathbf g}_+ = (\hat{\mathbf f}_0 + \hat{\mathbf f}_1)/\lVert\hat{\mathbf
+f}_0 + \hat{\mathbf f}_1\rVert$ has the face gaps
+$t\,\sqrt{(1 + \hat{\mathbf f}_0\cdot\hat{\mathbf f}_1)/2}$, whose squares sum
+to $t^2(1 + \hat{\mathbf f}_0\cdot\hat{\mathbf f}_1)$. The filter therefore
+takes
+
+$$
+\Lambda(\mathbf p) = \max_{\mathbf e \in \{\hat{\mathbf f}_0, \hat{\mathbf f}_1,
+\hat{\mathbf g}_+, \hat{\mathbf g}_-\}}
+\max\bigl(0,\ \lvert\mathbf e\cdot\mathbf p\rvert - w_P(\mathbf e)\bigr)
+\le d(\mathbf p, P_\perp),
+$$
+
+with $\hat{\mathbf g}_-$ the normalized $\hat{\mathbf f}_0 - \hat{\mathbf f}_1$.
+Each diagonal lies in the normal cone of two opposite vertices, where the
+two face gaps are loosest. The face supports are $h_a/2$. The geometry
+kernel computes the diagonals and the four supports in binary64 from the
+vertices. The force entry rounds the axes to nearest and the supports up to
+binary32 and keeps ties. Rounding the axes, the dot product and the
+subtraction moves the bound by at most about $6\sqrt3\cdot2^{-24}B$, where
+$B$ is the coordinate bound of the screen. That is 1/48 of the staging
+allowance $2^{-15}B$ by which the filter radius already exceeds $r_c$.
+The exact distance, 0 inside $P_\perp$ and otherwise the least distance to
+its four edges, is the most that any such filter can remove.
+
 The rebuild orders atoms within each cell by the three two-bit quarter-cell
 coordinates and then by stable atom ID. The six spatial bits occupy the high
 end of an unsigned 32-bit key. Insertion reserves slots for atoms with the
