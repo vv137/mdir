@@ -20,3 +20,18 @@ The same Newton pair contributes the same two fixed-point force words
 under each split at a fixed height. The partition changes the order of
 integer additions. The same published words result when the sums fit,
 including after certified replay.
+
+## Validation
+
+On an 8,602-particle Trp-cage ff19SB+OPC frame, each split produced
+4,136,552 direct pairs and 25,806 identical force words on an RTX 4090.
+The exhaustive closest-image oracle used binary64 outside a $10^{-4}$ Å
+shell and independently reconstructed the binary32 staged displacement
+and D159 cutoff for the 177 pairs in the shell. All four splits had
+zero missing, extra, or duplicated pairs. The strict binary64 cutoff
+alone includes five additional pairs in the shell.
+
+The GPU regression checks all four splits against periodic all-pairs
+force words on a sheared frame, with packed and binary64 geometry, both
+insertion orders, and certified replay. The selector regression checks
+that both record capacities are timed with split 4 and split 8.
