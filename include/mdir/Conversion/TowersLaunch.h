@@ -3,6 +3,15 @@
 #include <cstdint>
 
 namespace mdir::kernels {
+inline constexpr int maxTowersSplit = 8;
+inline bool validTowersSplit(int64_t split) {
+  return split > 0 && split <= maxTowersSplit && (split & (split - 1)) == 0;
+}
+
+inline int64_t towersSourceBlocks(int cells, int split) {
+  return int64_t(cells) * split;
+}
+
 inline int towersExclusionRows(int exclusions, int workers) {
   // Smaller lists need the parallelism of one thread per pair (D431).
   return exclusions >= 128 * 4 * workers ? 4 : 1;
@@ -11,7 +20,7 @@ inline int towersExclusionRows(int exclusions, int workers) {
 inline int64_t towersForceBlocks(int cells, int split, int exclusions,
                                  int workers) {
   int64_t width = workers * towersExclusionRows(exclusions, workers);
-  return int64_t(cells) * split + (exclusions + width - 1) / width;
+  return towersSourceBlocks(cells, split) + (exclusions + width - 1) / width;
 }
 inline int64_t towersFinishBlocks(int64_t atoms, int workers) {
   return (atoms + workers - 1) / workers;

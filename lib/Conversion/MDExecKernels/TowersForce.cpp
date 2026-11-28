@@ -1,6 +1,7 @@
 // Rectangular particle traversal [Shaw2005]. The quantized screen, prefix
 // records and rank partition are the stage 4n GPU implementation of D428.
 #include "mdir/Conversion/TowersForce.h"
+#include "mdir/Conversion/TowersLaunch.h"
 #include "NeighborBuildCode.h"
 #include "mdir/Conversion/CompactionEmitter.h"
 #include "mdir/Conversion/MDExecKernels.h"
@@ -82,7 +83,7 @@ private:
   Value warpDown(Value v, int d);
   void observationEntries();
   int exclusions, split, exclusionRows;
-  int64_t towerBlocks() const { return int64_t(g.cells()) * split; }
+  int64_t towerBlocks() const { return towersSourceBlocks(g.cells(), split); }
   Value bonds, inverse, raw, box, exclusionIndex;
   bool excluding = false;
   Value isExcluded(Value a, Value c);
@@ -2368,7 +2369,9 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
 }
 
 LogicalResult Force::emit() {
-  if ((split != 1 && split != 2) || panel < 32 || panel > 512 || panel % 32 ||
+  if (!validTowersSplit(split))
+    return term.emitError("TOWERS source split must be 1, 2, 4, or 8");
+  if (panel < 32 || panel > 512 || panel % 32 ||
       workers < 32 || workers > 1024 || workers % 32 || stripe < 1 ||
       stripe > workers || stripe * panel >= (1 << 18) || recordCap < groups ||
       recordCap > groups * stripe || residency < 1 || residency > 4 ||

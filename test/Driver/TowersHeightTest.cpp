@@ -26,7 +26,7 @@ int main(int argc, char **argv) {
   using namespace mdir::tool;
   const double cube[] = {4, 4, 4}, flat[] = {4, 4, 2.75};
   for (const auto &height : {"", "FULL", "HALF"})
-    for (int pin : {0, 1, 2}) {
+    for (int pin : {0, 1, 2, 4, 8}) {
       auto cells = towersCells(cube, 1, height, pin);
       if (cells.size() != size_t((*height ? 1 : 2) * (pin ? 1 : 2)))
         return 1;
@@ -55,7 +55,8 @@ int main(int argc, char **argv) {
       return 1;
   }
   if (mdir::kernels::towersForceBlocks(13, 2, 65535, 128) != 26 + 512 ||
-      mdir::kernels::towersForceBlocks(13, 2, 65536, 128) != 26 + 128)
+      mdir::kernels::towersForceBlocks(13, 2, 65536, 128) != 26 + 128 ||
+      mdir::kernels::towersForceBlocks(13, 8, 65536, 128) != 104 + 128)
     return 1;
   struct Frame {
     const char *name;

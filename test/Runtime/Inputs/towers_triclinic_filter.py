@@ -131,10 +131,12 @@ def reference_rounded(lattice, fractional):
 
 
 def check(directory, lattice, fractional, reach, workers, packed,
-          capacity=16, expected=None):
+          capacity=16, expected=None, split=None):
     source = Path(__file__).with_name("towers-force.mlir").read_bytes()
     dims = (*dims_xy, 4 * reach)
-    n, split = len(fractional), workers // 32
+    n = len(fractional)
+    if split is None:
+        split = workers // 32
     opts = {
         "triclinic": 1,
         "certify-force": 1,
@@ -193,7 +195,7 @@ def check(directory, lattice, fractional, reach, workers, packed,
         e.run("publish", n, state, words, low, output)
         e.sync()
         assert state[0] == 0 and output[:] == expected, (
-            reach, workers, reverse,
+            reach, workers, split, reverse,
             [(i // 3, a, b) for i, (a, b) in enumerate(zip(output, expected))
              if a != b][:6])
     e.close()

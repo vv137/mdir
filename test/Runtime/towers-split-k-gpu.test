@@ -1,0 +1,7 @@
+# REQUIRES: cuda, towers-mma
+# RUN: rm -rf %t
+# RUN: %python %S/Inputs/towers_split_k.py %t mdir-opt | FileCheck %s
+# CHECK: split 1: {{[0-9]+}} pairs, 900 force words match
+# CHECK: split 2: {{[0-9]+}} pairs, 900 force words match
+# CHECK: split 4: {{[0-9]+}} pairs, 900 force words match
+# CHECK: split 8: {{[0-9]+}} pairs, 900 force words match

@@ -1,6 +1,7 @@
 // Device timing of a private, rebuilt and certified frame at a fixed grid.
 #include "TowersTrial.h"
 #include "TowersCell.h"
+#include "mdir/Conversion/TowersBuild.h"
 #include "mdir/Conversion/TowersLaunch.h"
 #include "mdir/Support/ForceWords.h"
 #if MDIR_HAS_CUDA
@@ -113,7 +114,8 @@ struct TowersTrial {
                  : check(api().cuMemsetD8(ptr, 0, bytes),
                          "initialize trial buffer");
   }
-  bool setup(const driver::System &system, const TowersBuffers &buffers) {
+  bool setup(const driver::System &system, const TowersBuffers &buffers,
+             int retrySplit) {
     TowersCell cell(system);
     cartesian = !cell.triclinic && cells <= atoms;
     std::array<double, 6> cellEdges{system.box[0],  system.box[1],
@@ -136,6 +138,8 @@ struct TowersTrial {
       edges.push_back(i);
       edges.push_back(j);
     }
+    kernels::TowersLayout layout{};
+    layout.triclinic = cell.triclinic;
     size_t n = atoms, c = cells, slots = c * capacity + n;
     size_t entries = c * (5 + 2 * reach);
     fields = buffers.fields;
@@ -153,7 +157,6 @@ struct TowersTrial {
                 "query cooperative grid size")) ||
         !check(api().cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING),
                "cuStreamCreate") ||
-        !allocate(retries, 2 * c * sizeof(int64_t)) ||
         !allocate(positions, 24 * n, system.positions.data()) ||
         !allocate(edgesBox, cell.triclinic ? 48 : 24, cellEdges.data()) ||
         !allocate(raw, 24 * n) ||
@@ -161,7 +164,7 @@ struct TowersTrial {
                   cell.triclinic ? cell.lattice.data() : system.box) ||
         !allocate(map, 4 * entries) || !allocate(counts, 4 * (2 * c + 1)) ||
         !allocate(rebuildStatus, 4) ||
-        !allocate(geometry, 24 * (cell.triclinic ? 13 : 3)) ||
+        !allocate(geometry, 3 * sizeof(double) * layout.rawColumns()) ||
         !allocate(charge, 4 * n) || !allocate(types, 4 * n) ||
         !allocate(keys, 4 * (slots + n)) || !allocate(local, 16 * n) ||
         !allocate(packed, 16 * slots) || !allocate(packedTypes, 4 * slots) ||
@@ -171,6 +174,10 @@ struct TowersTrial {
         !allocate(low, 24 * n) || !allocate(high, 24 * n) ||
         !allocate(arrivals, 4) || !allocate(virial, 72) ||
         !allocate(output, 24 * n))
+      return false;
+    if (retrySplit &&
+        !allocate(retries, kernels::towersSourceBlocks(cells, retrySplit) *
+                               sizeof(int64_t)))
       return false;
     if (exclusions && (!allocate(bonds, 8ULL * exclusions, edges.data()) ||
                        !allocate(index, 8 * n, indexRows.data())))
@@ -367,7 +374,7 @@ struct Sample {
           ms * (1000.0f / f.iterations);
     }
     if (canRetry) {
-      std::vector<int64_t> counts(size_t(f.cells) * split);
+      std::vector<int64_t> counts(kernels::towersSourceBlocks(f.cells, split));
       size_t bytes = counts.size() * sizeof(int64_t);
       if (!f.check(api().cuMemsetD8Async(f.retries, 0, bytes, f.stream),
                    "clear retry counts") ||
@@ -388,7 +395,8 @@ struct Sample {
 llvm::Expected<TrialFrame> createTowersTrial(int device,
                                              const driver::System &system,
                                              int cells, int reach, int capacity,
-                                             const TowersBuffers &buffers) {
+                                             const TowersBuffers &buffers,
+                                             int retrySplit) {
   if (!api().complete())
     return llvm::createStringError(
         "towers_shape: missing CUDA graph trial entry points");
@@ -403,7 +411,7 @@ llvm::Expected<TrialFrame> createTowersTrial(int device,
     CUcontext old;
     api().cuCtxPopCurrent(&old);
   });
-  if (!f->setup(system, buffers))
+  if (!f->setup(system, buffers, retrySplit))
     return llvm::createStringError("towers_shape: %s", f->error.c_str());
   return f;
 }

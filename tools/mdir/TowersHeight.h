@@ -24,10 +24,13 @@ inline std::vector<TowersCellChoice> towersCells(const double heights[3],
       double bins = std::floor(heights[a] * radius / cutoff);
       feasible &= bins >= 2 * radius + 1 && bins < INT32_MAX / 4;
     }
-    if (feasible)
-      for (int split : {1, 2})
-        if (!pinnedSplit || split == pinnedSplit)
+    if (feasible) {
+      if (pinnedSplit)
+        cells.push_back({reach, pinnedSplit});
+      else
+        for (int split : {1, 2})
           cells.push_back({reach, split});
+    }
   }
   return cells;
 }

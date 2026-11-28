@@ -51,9 +51,13 @@ print(diagnostic)
 explicit = check('{cell_height="FULL"}', text=template + '\nneighbor_structure = "TOWERS"')
 assert explicit["effective"]["cell_height"] == "FULL"
 check('"AUTO"', "mixed precision", template.replace('"MIXED"', '"DOUBLE"') + '\nneighbor_structure = "TOWERS"')
-partial = check('{split=2, cell_height="FULL"}')
-assert partial["effective"]["threads"] == 512 and partial["effective"]["split"] == 2
-assert partial["source"]["threads"] == "AUTO" and partial["source"]["split"] == "control"
+for split in (2, 4, 8):
+    partial = check(f'{{split={split}, cell_height="FULL"}}')
+    assert partial["effective"]["threads"] == 512 and partial["effective"]["split"] == split
+    assert partial["source"]["threads"] == "AUTO" and partial["source"]["split"] == "control"
+    assert partial["candidate_cells"] == [{"cell_height": "FULL", "split": split}]
+for split in (3, 6, 16):
+    check(f"{{split={split}}}", "split must be 1, 2, 4, or 8")
 
 # Feed the two explicit preflight layouts to the generated rectangular entry.
 from towers_exclusions import evaluate

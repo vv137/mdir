@@ -499,6 +499,8 @@ LogicalResult mdir::kernels::lowerTowersPair(
     return pair.emitError("invalid TOWERS grid or launch dimensions");
   auto grid = dims.asArrayRef();
   auto launch = tile.asArrayRef();
+  if (!validTowersSplit(launch[5]))
+    return pair.emitError("TOWERS source split must be 1, 2, 4, or 8");
   OpBuilder b(pair);
   TowersLayout g{
       int(grid[0]), int(grid[1]), int(grid[2]),

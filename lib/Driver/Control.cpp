@@ -1,6 +1,7 @@
 // The control file of a run.
 
 #include "mdir/Driver/Control.h"
+#include "mdir/Conversion/TowersLaunch.h"
 #include "mdir/Driver/Expression.h"
 #include "mdir/Driver/System.h"
 #include "mdir/Driver/Prolate.h"
@@ -3026,8 +3027,8 @@ Error Reader::readTowersShape(const toml::table &execution) {
   if (shape.stripe % 32 || shape.panel % 32 || shape.threads % 32)
     return fail(*table, "towers_shape stripe, panel and threads must be "
                         "multiples of a warp (32)");
-  if (shape.split > 2)
-    return fail(*table, "towers_shape split must be 1 or 2");
+  if (shape.split && !mdir::kernels::validTowersSplit(shape.split))
+    return fail(*table, "towers_shape split must be 1, 2, 4, or 8");
   if (shape.panel > 512)
     return fail(*table,
                 "towers_shape panel exceeds the 16 warp groups of a record");

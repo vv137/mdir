@@ -373,8 +373,15 @@ timeCandidates(const Control &control, const System &system,
     return firstImage.takeError();
   double cutoff = control.cutoffDistance * units::length;
   int reach = first.cellHeight == "HALF" ? 2 : 1;
+  // The retry diagnostic has one counter per source block and no counters
+  // for exclusion blocks. A single candidate does not run the diagnostic.
+  int retrySplit = 0;
+  if (candidates.size() > 1)
+    for (const auto &candidate : candidates)
+      if (candidate.records < candidate.stripe * (candidate.panel / 32))
+        retrySplit = std::max(retrySplit, int(candidate.split));
   auto frame = createTowersTrial(limits.device, system, spans.cells, reach,
-                                 spans.capacity, parameters);
+                                 spans.capacity, parameters, retrySplit);
   if (!frame)
     return frame.takeError();
   auto population = readTowersPopulation(**frame, *firstImage);

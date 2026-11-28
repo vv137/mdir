@@ -11,7 +11,8 @@ using TrialFrame = std::unique_ptr<TowersTrial, DropTowersTrial>;
 llvm::Expected<TrialFrame> createTowersTrial(int device,
                                              const driver::System &system,
                                              int cells, int reach, int capacity,
-                                             const TowersBuffers &parameters);
+                                             const TowersBuffers &parameters,
+                                             int retrySplit = 0);
 struct TowersPopulation {
   int maximum;
   double mean;
