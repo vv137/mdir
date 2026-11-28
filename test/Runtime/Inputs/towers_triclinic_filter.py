@@ -108,14 +108,14 @@ def reference(lattice, fractional):
     return result, pairs
 
 
-def check(directory, lattice, fractional, reach, workers):
+def check(directory, lattice, fractional, reach, workers, packed):
     source = Path(__file__).with_name("towers-force.mlir").read_bytes()
     dims = (*dims_xy, 4 * reach)
     n, split = len(fractional), workers // 32
     opts = {
         "triclinic": 1,
         "certify-force": 1,
-        "packed-charge-type": 1,
+        "packed-charge-type": packed,
         "force-workers": workers,
         "force-panel": 32,
         "force-stripe": 32,
@@ -129,21 +129,28 @@ def check(directory, lattice, fractional, reach, workers):
     e = rebuild.Entries(image, True)
     r = rebuild.Rebuild(e, dims, reach, n, capacity, True)
     r.box = e.array(C.c_double, 9)
-    r.geometry = e.array(C.c_double, 39)
+    r.geometry = e.array(C.c_double, 54)
     r.box[:] = [x for row in lattice for x in row]
     r.setup()
     r.raw[:] = [p[a] for a in range(3) for p in fractional]
     r.charge[:] = [1] * n
     r.types[:] = [0] * n
-    geom = e.array(rebuild.F, 22 + 3 * r.fields + 10)
-    e.run("prepare_force", 1, r.geometry, geom)
+    # The packed entry takes the binary32 geometry of towers_prepare_force;
+    # the other reads the binary64 geometry of the rebuild, as a run does.
+    geom = r.geometry
+    if packed:
+        geom = e.array(rebuild.F, 22 + 3 * r.fields + 10)
+        e.run("prepare_force", 1, r.geometry, geom)
     table = e.array(rebuild.F, 4)
     table[:] = [8] * 4
     state, failed = e.array(rebuild.I, 2), e.array(C.c_int64, 1)
     words, low, high, output = [e.array(C.c_int64, 3 * n) for _ in range(4)]
     items = r.cells * workers * split
     prefix = r.spans, r.packed, r.ids, geom
-    fields = (state, rebuild.F(scale), failed, r.packed_types, table)
+    # The packed entry reads the types by slot; the other reads the charges
+    # and the types by particle.
+    atoms = (r.packed_types,) if packed else (r.charge, r.types)
+    fields = (state, rebuild.F(scale), failed, *atoms, table)
     expected, pairs = reference(lattice, fractional)
     for reverse in (False, True):
         r.step(reverse)
@@ -181,9 +188,9 @@ if __name__ == "__main__":
         fractional = [target, source] + [
             tuple(rng.randrange(256) / 256 for _ in range(3)) for _ in range(150)
         ]
-        for reach, workers in itertools.product((1, 2), (32, 64)):
+        for reach, workers, packed in itertools.product((1, 2), (32, 64), (1, 0)):
             distance, summed, bound = premise(lattice, target, source, reach)
-            pairs = check(directory, lattice, fractional, reach, workers)
-            print(f"lattice {index} reach {reach} workers {workers}: "
+            pairs = check(directory, lattice, fractional, reach, workers, packed)
+            print(f"lattice {index} reach {reach} workers {workers} packed {packed}: "
                   f"{pairs} pairs; corner pair at {distance:.4f}, "
                   f"summed gap {summed:.4f}, four-axis bound {bound:.4f}")

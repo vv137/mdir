@@ -138,9 +138,7 @@ private:
   Value tid, lane, scale, limit, cutoff2, filterLimit;
   void bind(ValueRange args);
   Value width(int axis);
-  Values lateral;
-  Values lateralAxes(Value raw);
-  Value lateralWord(int word);
+  Value lateralWord(Value info, int word, bool packedInfo);
   Value validWidths(Value raw);
   void screenConstants(Value raw);
   void prepareGeometry();
@@ -1370,7 +1368,8 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
     for (int a = 0; a < 4; ++a) {
       auto axis = [&](int k) {
         if (a >= 2)
-          return lateralWord(3 * (a - 2) + k);
+          return lateralWord(geometry, 3 * (a - 2) + k,
+                             !g.host && packedChargeType);
         return packedChargeType
                    ? load(geometry, {cx(16 + 3 * a + k)})
                    : truncf(
@@ -1380,7 +1379,9 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
           b, loc, axis(0), extract(p, 0),
           math::FmaOp::create(b, loc, axis(1), extract(p, 1),
                               mulf(axis(2), extract(p, 2))));
-      bound = maxnumf(bound, subf(absf(projected), lateralWord(6 + a)));
+      bound = maxnumf(bound, subf(absf(projected),
+                                  lateralWord(geometry, 6 + a,
+                                              !g.host && packedChargeType)));
     }
     // Ties at the filter radius are kept.
     bound = maxnumf(cf(0), bound);
@@ -1834,68 +1835,25 @@ Value Force::width(int axis) {
       load(geometry, {cx(axis), cx(g.triclinic ? TowersLayout::slab : 1)}));
 }
 
-// The two diagonal lateral axes and the four supports of the column's
-// cross-section, from the face normals and the bin steps of the raw f64
-// geometry. A support is the largest projection of the four vertices
-// +-step0/2 +-step1/2 in the Cartesian frame of the staged positions,
-// rounded up to binary32. Components of the axes round to nearest. Their
-// error and that of the f32 dot product are below the padding of the filter
-// radius, 2^-15 of the coordinate bound (screenConstants). Layout: u+ (3),
-// u- (3), then the supports of n0, n1, u+ and u-.
-Values Force::lateralAxes(Value raw) {
-  auto entry = [&](int row, int column, int k) {
-    return load(raw, {cx(row), cx(column + k)});
-  };
-  SmallVector<Values> axes(4);
-  for (int k = 0; k < 3; ++k)
-    for (int a = 0; a < 2; ++a)
-      axes[a].push_back(entry(a, TowersLayout::normal, k));
-  for (int sign : {1, -1}) {
-    Values u;
-    Value norm2 = cd(0);
-    for (int k = 0; k < 3; ++k) {
-      Value n1 = entry(1, TowersLayout::normal, k);
-      u.push_back(addf(entry(0, TowersLayout::normal, k),
-                       sign > 0 ? n1 : subf(cd(0), n1)));
-      norm2 = addf(norm2, mulf(u.back(), u.back()));
-    }
-    Value norm = sqrt(norm2);
-    for (Value &x : u)
-      x = divf(x, norm);
-    axes[sign > 0 ? 2 : 3] = u;
-  }
-  auto roundUp = [&](Value x) {
-    Value nearest = truncf(x);
-    Value below = cmpf(CmpFPredicate::OLT,
-                       arith::ExtFOp::create(b, loc, f64, nearest), x);
-    Value next = bitcast(f32, addi(bitcast(i32, nearest), ci(1)));
-    return select(below, next, nearest);
-  };
-  Values out;
-  for (int a = 2; a < 4; ++a)
-    for (Value x : axes[a])
-      out.push_back(truncf(x));
-  for (auto &u : axes) {
-    Value support = cd(0);
-    for (int s0 : {1, -1})
-      for (int s1 : {1, -1}) {
-        Value projection = cd(0);
-        for (int k = 0; k < 3; ++k) {
-          Value vertex = mulf(cd(0.5), addf(mulf(cd(s0), entry(0, TowersLayout::step, k)),
-                                           mulf(cd(s1), entry(1, TowersLayout::step, k))));
-          projection = addf(projection, mulf(u[k], vertex));
-        }
-        support = maxnumf(support, projection);
-      }
-    out.push_back(roundUp(support));
-  }
-  return out;
-}
-
-Value Force::lateralWord(int word) {
-  if (!g.host && packedChargeType)
-    return load(geometry, {cx(g.lateralAxesOffset() + word)});
-  return lateral[word];
+// The diagonal lateral axes (words 0 to 5) and the supports of n0, n1, the
+// first and the second diagonal (words 6 to 9) of the column's cross-section
+// (TowersBuild::geometry). The components of the axes round to nearest; the
+// supports round up to binary32, so that the bound stays below the distance
+// computed with the same axes up to the f32 error of the dot product, which
+// the padding of the filter radius covers (screenConstants).
+Value Force::lateralWord(Value info, int word, bool packedInfo) {
+  if (packedInfo)
+    return load(info, {cx(g.lateralAxesOffset() + word)});
+  if (word < 6)
+    return truncf(
+        load(info, {cx(word / 3), cx(TowersLayout::diagonal + word % 3)}));
+  Value x = load(info, {cx(word % 2), cx(TowersLayout::support + (word - 6) / 2)});
+  Value nearest = truncf(x);
+  Value below = cmpf(CmpFPredicate::OLT,
+                     arith::ExtFOp::create(b, loc, f64, nearest), x);
+  // Supports are positive: the next binary32 is one unit of the last place up.
+  Value next = bitcast(f32, addi(bitcast(i32, nearest), ci(1)));
+  return select(below, next, nearest);
 }
 
 Value Force::validWidths(Value raw) {
@@ -1974,8 +1932,9 @@ void Force::prepareGeometry() {
           store(offsetComponent(shift, k, input, false), output,
                 {cx(22 + 3 * f + k)});
       }
-      for (auto [word, value] : llvm::enumerate(lateralAxes(input)))
-        store(value, output, {cx(g.lateralAxesOffset() + word)});
+      for (int word = 0; word < TowersLayout::lateralAxesWords; ++word)
+        store(lateralWord(input, word, false), output,
+              {cx(g.lateralAxesOffset() + word)});
     }
     store(scale, output, {cx(3)});
     store(filterLimit, output, {cx(4)});
@@ -2148,11 +2107,8 @@ void Force::device(LLVM::GlobalOp recordsGlobal, TypeRange entryTypes,
     scale = load(geometry, {cx(3)});
     filterLimit = load(geometry, {cx(4)});
     limit = load(geometry, {cx(5)});
-  } else {
+  } else
     screenConstants(geometry);
-    if (g.triclinic)
-      lateral = lateralAxes(geometry);
-  }
   owner = gpu::BlockIdOp::create(b, loc, gpu::Dimension::x);
   if (probe && !recovering) {
     trace = shared(fn, {11}, i64);
