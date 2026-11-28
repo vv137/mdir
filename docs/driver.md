@@ -1751,7 +1751,10 @@ plans and imports, and scratch. The PME field is zero for the fixed-cell
 distributed real-space path. Each named arena starts at the recorded
 size and remains allocated across list rebuilds. If a request exceeds
 the arena's capacity or its available contiguous range, the runtime
-reports the overflow and retains the added storage.
+reports the overflow and retains the added storage. When MATRIX entries
+outgrow their arena, the runtime releases wholly idle MATRIX entry
+arenas before allocating the larger block. The transport measurement
+includes gaps left by replay's arena placement.
 Distributed host transfers use reusable page-locked staging. Halo
 fallback transfers use the transport stream. Energy, coupling, and
 observer transfers wait on the stream that produced the data when the

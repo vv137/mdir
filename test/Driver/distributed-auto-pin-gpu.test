@@ -30,6 +30,7 @@
 # RUN: cd %t && sed -E 's/matrix_entries = [0-9]+/matrix_entries = 1/g' replay.toml > overflow.toml
 # RUN: cd %t && %mpiexec -n 2 mdir run overflow.toml > overflow.log 2>&1
 # RUN: FileCheck %s --check-prefix=OVERFLOW < %t/overflow.log
+# RUN: cd %t && %python -c 'import json,re; peaks=[[rank["matrix_entries"] for rank in json.loads(re.search(r"distributed buffer bytes by rank: (.*)",open(path).read())[1])] for path in ("replay.log", "overflow.log")]; assert peaks[0] == peaks[1], peaks'
 
 # PIN: [energy]
 # PIN: pairlist_distance =

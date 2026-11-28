@@ -1231,13 +1231,33 @@ static void *growList(void *list, size_t *room, size_t size) {
   return grown;
 }
 
+static void mergeIdle(void);
+static void releaseArena(struct Block arena, int gone, int waited);
+
+/* A later list rebuild can exceed the calibration by a few rows. Give back
+   idle MATRIX arenas before requesting their replacement. A split arena
+   with live entries must stay allocated. */
+static uint64_t releaseIdleMatrixEntries(void) {
+  uint64_t released = 0;
+  for (int i = numFree; i-- != 0;) {
+    struct Block piece = freeBlocks[i];
+    if (!piece.retained || piece.buffer != MdirMatrixEntries ||
+        piece.pointer != piece.base || piece.extent != piece.baseSize)
+      continue;
+    poolBytes -= piece.extent;
+    freeBlocks[i] = freeBlocks[--numFree];
+    releaseArena(piece, 0, 0);
+    released += piece.extent;
+  }
+  return released;
+}
+
 /* Stops the run if a block of the pool is allocated or freed on a stream
    other than the runtime's first one: while the second stream of
    mdrtSideBegin is current, or with a stream named that is not the first.
    The pool hands a freed piece to the next request without waiting, which
    is sound only because both are issued on the first stream, in order
    (D87, premise P4; D416). The lowering passes no stream. */
-static void mergeIdle(void);
 static void checkPoolStream(CUstream stream, const char *what) {
   if (!onSide && (!stream || stream == sharedStream))
     return;
@@ -1332,13 +1352,17 @@ static void *allocateBlock(uint64_t size, CUstream stream, bool isHostShared,
     block.retained = piece.retained;
     ++numFromPool;
   } else {
+    uint64_t released = 0;
+    if (pinnedBuffers && buffer == MdirMatrixEntries)
+      released = releaseIdleMatrixEntries();
     int64_t before = beginAccount();
     check(allocateDevice(&pointer, size), "cuMemAlloc");
     endAccount(ACCOUNT_BLOCKS, before, (int64_t)size);
     if (pinnedBuffers) {
       block.retained = true;
       fprintf(stderr, "mdrt: distributed buffer pin overflow for %s, grew by %llu bytes\n",
-              mdirDistributedBufferName(buffer), (unsigned long long)size);
+              mdirDistributedBufferName(buffer),
+              (unsigned long long)(size > released ? size - released : 0));
     }
     block.pointer = block.base = pointer;
     block.extent = block.baseSize = size;

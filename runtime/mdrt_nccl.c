@@ -80,14 +80,15 @@ struct TransportArena {
 };
 struct TransportBuffer {
   void *address;
-  size_t capacity;
+  size_t offset, capacity;
   struct TransportArena *arena;
   int role;
 };
 static struct TransportArena *transportArenas;
+/* Ordered by offset so first fit needs only one pass. */
 static struct TransportBuffer *transportBuffers;
 static size_t transportCount, transportRoom;
-static uint64_t transportLive[MdirDistributedBuffers], transportPeak[MdirDistributedBuffers];
+static uint64_t transportPeak[MdirDistributedBuffers];
 static int measureTransport, pinTransport;
 
 static struct TransportArena *transportArena(int role, size_t bytes) {
@@ -119,10 +120,17 @@ void mdrtNCCLBeginDistributedBuffers(const uint64_t *pin) {
   }
   measureTransport = 1;
   pinTransport = pin != NULL;
-  memcpy(transportPeak, transportLive, sizeof(transportPeak));
-  if (!pin) return;
+  memset(transportPeak, 0, sizeof(transportPeak));
+  if (!pin) {
+    for (size_t i = 0; i < transportCount; ++i) {
+      const struct TransportBuffer *buffer = &transportBuffers[i];
+      size_t end = buffer->offset + buffer->capacity;
+      if (end > transportPeak[buffer->role])
+        transportPeak[buffer->role] = end;
+    }
+    return;
+  }
   for (int role = MdirHaloPlans; role <= MdirTransportScratch; ++role) {
-    transportPeak[role] = 0;
     if (pin[role])
       transportArena(role, pin[role]);
   }
@@ -133,33 +141,37 @@ void mdrtNCCLReadDistributedBuffers(uint64_t *out) {
     out[role] += transportPeak[role];
 }
 
+/* Use the same placement for measured and retained buffers. During a
+   measurement, offsets describe where separately allocated buffers would
+   sit in a single arena of their role, including holes from earlier frees. */
+static size_t transportOffset(int role, const struct TransportArena *arena,
+                              size_t capacity, size_t bytes) {
+  if (bytes > capacity) return SIZE_MAX;
+  size_t offset = 0;
+  for (size_t i = 0; i < transportCount; ++i) {
+    const struct TransportBuffer *used = &transportBuffers[i];
+    if (used->arena != arena || used->role != role) continue;
+    if (used->offset >= offset + bytes) break;
+    size_t end = used->offset + used->capacity;
+    if (end > offset) offset = end;
+    if (offset > capacity - bytes) return SIZE_MAX;
+  }
+  return offset;
+}
+
 static void *transportAllocate(size_t bytes, int role, cudaStream_t queue, int pooled) {
   // Alignment of CUDA allocations also covers every interior address.
   size_t aligned = (bytes + 255) & ~(size_t)255;
   struct TransportBuffer buffer = {.capacity = aligned, .role = role};
   if (pinTransport) {
-    struct TransportArena *arena;
-    for (arena = transportArenas; arena; arena = arena->next) {
-      if (arena->role != role || arena->capacity < bytes) continue;
-      size_t offset = 0;
-      while (arena->capacity >= aligned && offset <= arena->capacity - aligned) {
-        size_t next = offset;
-        for (size_t i = 0; i < transportCount; ++i) {
-          const struct TransportBuffer *used = &transportBuffers[i];
-          if (used->arena != arena) continue;
-          size_t first = (char *)used->address - arena->base;
-          size_t end = first + used->capacity;
-          if (first < offset + aligned && end > next)
-            next = end;
-        }
-        if (next == offset) {
-          buffer.address = arena->base + offset;
-          buffer.arena = arena;
-          break;
-        }
-        offset = next;
-      }
-      if (buffer.arena) break;
+    for (struct TransportArena *arena = transportArenas; arena; arena = arena->next) {
+      if (arena->role != role) continue;
+      size_t offset = transportOffset(role, arena, arena->capacity, aligned);
+      if (offset == SIZE_MAX) continue;
+      buffer.offset = offset;
+      buffer.address = arena->base + offset;
+      buffer.arena = arena;
+      break;
     }
     if (!buffer.arena) {
       fprintf(stderr, "mdrt: distributed buffer pin overflow for %s, grew by %zu bytes\n",
@@ -173,16 +185,27 @@ static void *transportAllocate(size_t bytes, int role, cudaStream_t queue, int p
     checkCuda(cudaMalloc(&buffer.address, bytes));
   }
   if (measureTransport) {
+    if (!pinTransport) {
+      buffer.offset = transportOffset(role, NULL, SIZE_MAX, aligned);
+      if (buffer.offset == SIZE_MAX)
+        mdrtMPIAbort("distributed transport arena size overflow");
+      size_t end = buffer.offset + aligned;
+      if (end > transportPeak[role])
+        transportPeak[role] = end;
+    }
     if (transportCount == transportRoom) {
       transportRoom = transportRoom ? 2 * transportRoom : 64;
       struct TransportBuffer *grown = realloc(transportBuffers, transportRoom * sizeof(*grown));
       if (!grown) mdrtMPIAbort("out of memory recording transport buffers");
       transportBuffers = grown;
     }
-    transportBuffers[transportCount++] = buffer;
-    uint64_t live = (transportLive[role] += aligned);
-    if (!pinTransport && live > transportPeak[role])
-      transportPeak[role] = live;
+    size_t position = transportCount;
+    while (position && transportBuffers[position - 1].offset > buffer.offset)
+      --position;
+    memmove(&transportBuffers[position + 1], &transportBuffers[position],
+            (transportCount - position) * sizeof(*transportBuffers));
+    transportBuffers[position] = buffer;
+    ++transportCount;
   }
   return buffer.address;
 }
@@ -192,8 +215,9 @@ static void transportFree(void *address, cudaStream_t queue, int pooled) {
   for (size_t i = transportCount; i-- > 0;) {
     struct TransportBuffer buffer = transportBuffers[i];
     if (buffer.address != address) continue;
-    transportLive[buffer.role] -= buffer.capacity;
-    transportBuffers[i] = transportBuffers[--transportCount];
+    --transportCount;
+    memmove(&transportBuffers[i], &transportBuffers[i + 1],
+            (transportCount - i) * sizeof(*transportBuffers));
     if (buffer.arena) {
       if (buffer.role == MdirHaloPairIds)
         checkCuda(cudaStreamSynchronize(queue));
@@ -945,7 +969,6 @@ void mdrtNCCLFinish(void) {
   transportBuffers = NULL;
   transportCount = transportRoom = 0;
   measureTransport = pinTransport = 0;
-  memset(transportLive, 0, sizeof(transportLive));
   free(nodes);
   peers = NULL;
 }
