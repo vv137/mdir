@@ -96,7 +96,7 @@ def check(directory, gpu, reach, workers):
     e = rebuild.Entries(image, gpu)
     r = rebuild.Rebuild(e, dims, reach, n, 8, True)
     r.box = e.array(C.c_double, 9)
-    r.geometry = e.array(C.c_double, 39)
+    r.geometry = e.array(C.c_double, 54)
     r.box[:] = [x for row in lattice for x in row]
     r.setup()
     r.raw[:] = [p[a] for a in range(3) for p in fractional]
