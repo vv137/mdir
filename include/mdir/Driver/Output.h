@@ -602,6 +602,10 @@ double mdrtNoseHooverFactor(int64_t step, double kinetic);
 /// the log, of the velocities of the step and K_half, in kJ/mol
 /// (D203).
 void mdrtWriteSolvent(double kinetic, double half);
+/// The energy of the bath, which a coupling step on the device starts its
+/// own copy from, and the copy that it gives back (D[device-coupling]).
+double mdrtBath();
+void mdrtSetBath(double energy);
 /// The coordinates of the terms over centers of groups at the step `step`
 /// (D145), in Å and radians, and the energy and the forces of each term,
 /// in kcal/mol and per Å or radian.

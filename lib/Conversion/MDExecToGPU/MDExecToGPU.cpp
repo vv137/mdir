@@ -5,6 +5,7 @@
 
 #include "DevicePME.h"
 #include "TowersDispatch.h"
+#include "DeviceCoupling.h"
 #include "mdir/Conversion/AxisFFTEmitter.h"
 #include "mdir/Conversion/BondedUnits.h"
 #include "mdir/Conversion/Passes.h"
@@ -355,6 +356,9 @@ public:
       md_exec::policy::kDefaultGroups.columnParticles;
   /// An opt-in compiler strategy for the integer scans of the groups build.
   bool singlePassGroupScan = false;
+  /// Whether the arithmetic of the coupling step on the global sums runs on
+  /// the device (`device-coupling`, D[device-coupling]).
+  bool deviceCoupling = false;
   /// Whether the loops over tuples of the module may add to their members
   /// in the order of the threads: no loop over tuples states `fixed_order` for
   /// a value it reduces. The members of the tuples go to the device for such
@@ -997,6 +1001,8 @@ private:
   llvm::DenseMap<Type, Cell> resultCells;
   llvm::DenseMap<Type, int64_t> nextResult;
   int64_t numReadbacks = 0;
+  /// The places of the page-locked results of the host (mdrtHostResults).
+  int64_t numHostResults = 0;
   Cell getResults(Type element, Location loc);
   SmallVector<Flag, 2> flags;
   llvm::DenseSet<Type> matrixBuildTypes;
@@ -1163,8 +1169,27 @@ Cell Lowering::getResults(Type element, Location loc) {
   cell.capacity = resultCapacity;
   cell.device = createDeviceBuffer(
       builder, loc, getDeviceType({resultCapacity}, element), ValueRange());
-  cell.host = memref::AllocaOp::create(
-      builder, loc, MemRefType::get({resultCapacity}, element));
+  // Page-locked memory of the runtime for the f64 results, which the
+  // coupling step and the rows read (D[device-coupling]); the stack for
+  // the others.
+  if (element.isF64()) {
+    Type wide = builder.getI64Type();
+    func::FuncOp memory = getOrDeclare(
+        "mdrtHostResults",
+        builder.getFunctionType(
+            {wide, wide}, {MemRefType::get({resultCapacity}, element)}));
+    memory->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+    Value place = arith::ConstantOp::create(
+        builder, loc, wide, builder.getI64IntegerAttr(numHostResults++));
+    Value count = arith::ConstantOp::create(
+        builder, loc, wide, builder.getI64IntegerAttr(resultCapacity));
+    cell.host = func::CallOp::create(builder, loc, memory,
+                                     ValueRange{place, count})
+                    .getResult(0);
+  } else {
+    cell.host = memref::AllocaOp::create(
+        builder, loc, MemRefType::get({resultCapacity}, element));
+  }
   // A copy brings the whole buffer, the slots that no sum has written yet
   // too: they hold zeros.
   Value device = cell.device;
@@ -11765,6 +11790,54 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   expandPowers(function);
   if (failed(keepFrameParametersOnDevice(function)))
     return failure();
+  if (deviceCoupling) {
+    kernels::CouplingResults coupling;
+    Location at = function.getLoc();
+    Type f64 = Float64Type::get(context);
+    coupling.cells = [&]() -> std::pair<Value, Value> {
+      Cell cell = getResults(f64, at);
+      return {cell.device, cell.host};
+    };
+    coupling.slot = [&] { return nextResult[f64]++; };
+    coupling.readback = [&] { return numReadbacks++; };
+    coupling.bringIn = [&](gpu::LaunchOp launch) { bringIn(launch); };
+    coupling.room = [&] { return resultCapacity - nextResult[f64]; };
+    // The pressures of a scaling of the cell, which the host reads: a few
+    // numbers of their own, so that the copy is small.
+    std::optional<std::pair<Value, Value>> scalars;
+    coupling.scalars = [&]() -> std::pair<Value, Value> {
+      if (scalars)
+        return *scalars;
+      Block &entry = function.getBody().front();
+      OpBuilder builder(&entry, entry.begin());
+      Type wide = builder.getI64Type();
+      int64_t count = kernels::CouplingResults::numScalars;
+      Value device = createDeviceBuffer(builder, at,
+                                        getDeviceType({count}, f64), {});
+      func::FuncOp memory = getOrDeclare(
+          "mdrtHostResults",
+          builder.getFunctionType({wide, wide},
+                                  {MemRefType::get({resultCapacity}, f64)}));
+      memory->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+      Value place = arith::ConstantOp::create(
+          builder, at, wide, builder.getI64IntegerAttr(numHostResults++));
+      Value number = arith::ConstantOp::create(
+          builder, at, wide, builder.getI64IntegerAttr(resultCapacity));
+      Value whole = func::CallOp::create(builder, at, memory,
+                                         ValueRange{place, number})
+                        .getResult(0);
+      Value host = memref::SubViewOp::create(
+          builder, at, MemRefType::get({count}, f64), whole,
+          ArrayRef<int64_t>{0}, ArrayRef<int64_t>{count},
+          ArrayRef<int64_t>{1});
+      scalars = std::make_pair(device, host);
+      return *scalars;
+    };
+    std::string reason = kernels::placeCouplingOnDevice(function, coupling);
+    if (!reason.empty())
+      module->setAttr("mdir.coupling_host",
+                      StringAttr::get(context, reason));
+  }
   if (failed(keepReadbacksOnDevice(function)))
     return failure();
   deferReadbacks(function);
@@ -12006,6 +12079,7 @@ public:
     lowering.fusePruning = fusePruning;
     lowering.fusePruningGroups = fusePruningGroups;
     lowering.singlePassGroupScan = singlePassGroupScan;
+    lowering.deviceCoupling = deviceCoupling;
     if (failed(lowering.run()))
       return signalPassFailure();
     // The ops whose algebras the mark of the deterministic mode verifies

@@ -10,6 +10,9 @@
 #include <cstring>
 #include <vector>
 #include <unordered_map>
+
+// The count of the host's reads (MDRT_HOST_READS, runtime/mdrt_cuda.c).
+extern "C" void mdrtCountHostRead(size_t bytes, int waits, int flags);
 #include <map>
 
 extern "C" cudaStream_t mgpuStreamCreate();
@@ -317,6 +320,7 @@ extern "C" int64_t mdrtStepRead(intptr_t handle, int64_t expected) {
   mdrtSpansFlush();
   auto &c = *reinterpret_cast<Cache *>(handle);
   int64_t accepted = -1;
+  mdrtCountHostRead(sizeof(accepted), 1, 0);
   ck(cudaMemcpyAsync(&accepted, &c.state->accepted, sizeof(accepted), cudaMemcpyDeviceToHost, c.stream),
      "read absolute step for schedule boundary");
   ck(cudaStreamSynchronize(c.stream), "wait for absolute step");
@@ -342,6 +346,7 @@ extern "C" int64_t mdrtStepRun(intptr_t handle, int64_t start, int64_t k) {
     const int width = replay ? 1 : std::min<int64_t>(start + k - cursor, maxUnroll);
     auto exec = unroll(c, g, width, (cursor - start) % g.phases.size());
     ck(cudaGraphLaunch(exec, c.stream), "launch");
+    mdrtCountHostRead(sizeof(p), 1, 0);
     ck(cudaMemcpyAsync(&p, c.state, sizeof(p), cudaMemcpyDeviceToHost, c.stream), "read progress");
     ck(cudaStreamSynchronize(c.stream), "wait for progress");
     if (p.accepted < cursor || p.accepted > cursor + width ||
