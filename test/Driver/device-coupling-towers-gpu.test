@@ -1,0 +1,17 @@
+# REQUIRES: cuda, hdf5, h5py
+# The coupling step on the device (D[device-coupling]) with TOWERS, which
+# has no deterministic mode: within ten times the spread of two runs of the
+# host's coupling step under LAUNCH, with launches, spans and graph replay
+# (D439, D450), NVT and NPT; and the copies to the host per coupling: the
+# sums, the virial that the dispatch observes and the reciprocal virial of
+# PME stay on the device, a scaling copies its pressures.
+# RUN: rm -rf %t && mkdir %t
+# RUN: %h5md_python %S/Inputs/check_device_coupling.py %S/Inputs/dipeptide %t mdir towers | FileCheck %s
+# CHECK: towers-nvt-launch: close
+# CHECK: towers-nvt-spans: close
+# CHECK: towers-nvt-graph: close
+# CHECK: towers-nvt reads for 20 more couplings: host {8192: 20}, device {}
+# CHECK: towers-npt-launch: close
+# CHECK: towers-npt-spans: close
+# CHECK: towers-npt-graph: close
+# CHECK: towers-npt reads for 20 more couplings: host {24: 40, 56: 40, 8192: 80}, device {64: 20}

@@ -426,6 +426,20 @@ number $n$ is that of block $n$; the cosine branch of Box–Muller is taken.
 Since the ops lower to the same calls with the same arguments, they draw
 what the driver draws today.
 
+With the coupling step on the device (`[execution] coupling_step =
+"DEVICE"`, D[device-coupling]) the draws of `dyn.velocity_rescaling` stay
+on the host, where they need neither the state nor a wait:
+`mdrtBussiNormal` and `mdrtBussiRest` return the normal number and the sum
+of squares that `mdrtBussiFactor` draws, and the device evaluates the rest
+of the factor of [[Bussi2007]](references.md#bussi2007) (its appendix),
+$$\alpha^2 = \frac{1}{K}\Big(K + (1-c)\big(\tfrac{\bar K}{N_f}(R_1^2 + S) - K\big) + 2R_1\sqrt{\tfrac{K\bar K}{N_f}(1-c)c}\Big),$$
+with $c = e^{-\Delta t_T/\tau_T}$, $\bar K$ the mean kinetic energy at the
+temperature of the bath and $S$ the sum of $N_f - 1$ squared normal numbers,
+in the order of operations of the C
+code, so that the factor is the host's to the bit. The draws of
+`dyn.cell_rescaling` stay in the host's functions, which take the pressure
+that the device computed and copied back.
+
 #### 2.2.7 What each coupling covers, and its conserved energy
 
 The conserved energy of the log is $\tilde H = U + K + E_\text{bath}$

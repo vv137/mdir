@@ -238,6 +238,27 @@ explicit token does not by itself make a copy asynchronous to the host or
 license a read of an unfinished destination; moving waits or removing the
 runtime-wide synchronization requires a separate proof and measurement.
 
+**The coupling step on the device** (D[device-coupling]). The step that
+ends a period of coupling computed the factor of stochastic velocity
+rescaling [[Bussi2007]](references.md#bussi2007), the heat of the bath, and
+under a barostat the pressure and the strain of stochastic cell rescaling
+[[Bernetti2020]](references.md#bernetti2020) on the host, from global sums
+that it copied from the device and waited for. The random numbers of these
+couplings depend only on the seed and the step (Section 2.2.6 of
+`docs/dynamics.md`), so the host still draws them, without a wait. The
+arithmetic on the sums runs on the device, in one thread, in the host's
+order of operations and without contracted products, so the factor and the
+bath are those of the host to the bit. The kernels that scale the
+velocities read the factor from device memory, and the bath stays there
+until a row of the log, a checkpoint or the end of the program. A V-rescale
+step that writes no output then copies nothing to the host. A C-rescale
+step copies its pressures, at most 64 bytes, into page-locked memory and
+waits for them: the next step's launches and the builds of the neighbor
+structures take the new cell by value, and the strain takes logarithms and
+exponentials that the device would have to compute as the host's libm does
+to keep the trajectory. On JAC this removes per coupling period the copies
+and waits that Table 8.x lists.
+
 **A pool of device memory.** The runtime keeps freed blocks and hands them
 to later allocations without a call to the driver; buffers that a step
 allocates and frees cost a lookup. The pool is a best-fit allocator with

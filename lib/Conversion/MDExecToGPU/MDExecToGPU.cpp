@@ -1170,9 +1170,9 @@ Cell Lowering::getResults(Type element, Location loc) {
   cell.device = createDeviceBuffer(
       builder, loc, getDeviceType({resultCapacity}, element), ValueRange());
   // Page-locked memory of the runtime for the f64 results, which the
-  // coupling step and the rows read (D[device-coupling]); the stack for
-  // the others.
-  if (element.isF64()) {
+  // coupling step and the rows read, with the coupling step on the device
+  // (D[device-coupling]); the stack otherwise.
+  if (element.isF64() && deviceCoupling) {
     Type wide = builder.getI64Type();
     func::FuncOp memory = getOrDeclare(
         "mdrtHostResults",
@@ -10987,8 +10987,13 @@ static LogicalResult keepFrameParametersOnDevice(func::FuncOp function) {
 /// is left as it is for ordinary programs. Device batches join both queues
 /// after a side-stream reader, before storage assignment's old last use
 /// can release and reuse its source on another stream.
-static LogicalResult keepReadbacksOnDevice(func::FuncOp function) {
+static LogicalResult keepReadbacksOnDevice(func::FuncOp function,
+                                           bool joinSide = false) {
   const bool batch = function->hasAttr("mdir.frame_batch");
+  // With the coupling step on the device, a kernel of the main stream also
+  // reads the sums of the second stream, the reciprocal virial among them,
+  // after a join by event, as a device frame does (D[device-coupling]).
+  const bool sideSums = batch || joinSide;
   llvm::DenseMap<Value, Value> deviceOf;
   function.walk([&](gpu::MemcpyOp copy) {
     if (copy->hasAttr("mdir.readback"))
@@ -11019,7 +11024,7 @@ static LogicalResult keepReadbacksOnDevice(func::FuncOp function) {
   auto isSum = [&](Operation *op) {
     auto load = dyn_cast_or_null<memref::LoadOp>(op);
     return load && load->hasAttr("mdir.readback") &&
-           deviceOf.count(load.getMemRef()) && (batch || !side.contains(op));
+           deviceOf.count(load.getMemRef()) && (sideSums || !side.contains(op));
   };
   // Whether `value` is computed by pure ops from at least one load of the
   // sums.
@@ -11033,7 +11038,7 @@ static LogicalResult keepReadbacksOnDevice(func::FuncOp function) {
     bool result = false;
     if (isSum(def)) {
       result = true;
-    } else if (def && isPure(def) && (batch || !side.contains(def))) {
+    } else if (def && isPure(def) && (sideSums || !side.contains(def))) {
       for (Value operand : def->getOperands())
         result |= readsSums(operand);
     }
@@ -11093,7 +11098,7 @@ static LogicalResult keepReadbacksOnDevice(func::FuncOp function) {
       for (Value value : captured)
         if (failed(checkLifetime(value))) return failure();
     }
-    if (batch && !side.empty() && !side.contains(launch) &&
+    if (sideSums && !side.empty() && !side.contains(launch) &&
         llvm::any_of(captured, readsSums)) {
       // A device frame reads reciprocal sums on its caller stream. The
       // ordinary path keeps its existing host copy and stream behavior.
@@ -11858,7 +11863,7 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
       module->setAttr("mdir.coupling_host",
                       StringAttr::get(context, reason));
   }
-  if (failed(keepReadbacksOnDevice(function)))
+  if (failed(keepReadbacksOnDevice(function, deviceCoupling)))
     return failure();
   deferReadbacks(function);
 

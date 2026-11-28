@@ -1,0 +1,8 @@
+# Where the coupling step runs (D[device-coupling]): `[execution]
+# coupling_step` is DEVICE by default on the GPU, and the record names the
+# reason of each case that keeps the host path: a request, the CPU target,
+# a Nose-Hoover chain, Langevin dynamics, a run without coupling. A value
+# that is not a choice is refused.
+# RUN: rm -rf %t && mkdir %t
+# RUN: %python %S/Inputs/check_coupling_step_scope.py %S/Inputs/dipeptide %t mdir | FileCheck %s
+# CHECK: coupling_step: DEVICE by default; HOST on request, on the CPU, under a Nose-Hoover chain, under Langevin dynamics, without coupling; invalid refused
