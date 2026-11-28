@@ -7,7 +7,11 @@ Issue #1043.
 `[execution.towers_shape].split` accepts 1, 2, 4, or 8. The moving
 dispatch and the setup trial use one source block per part per tower,
 with the same exclusion schedule. The retry diagnostic allocates one
-counter per source block of the largest candidate that uses it.
+counter per source block of the largest candidate that uses it. Splits
+4 and 8 require an explicit split pin. Other unpinned launch fields
+remain eligible for the setup trial. AUTO proposes splits 1 and 2.
+The measured 2 fs sweep favored split 1 or 2 on whole-step rate and
+force-plus-finish time in every case.
 
 At split $k$, part $p$ takes chunks $p, p+k, \dots$ of 32 sources. The
 chunk assignment from D[towers-split-interleave] gives every logical
@@ -24,7 +28,7 @@ including after certified replay.
 ## Fixed-split measurements
 
 The RTX 4090 sweep uses Trp-cage ff19SB+OPC, Trp-cage ff14SB+TIP3P,
-TIP3P 10k, JAC, and Cellulose in both NVT and NPT. Each case starts from
+TIP3P 10k, JAC, and Cellulose in both NVT and NPT at a 2 fs timestep. Each case starts from
 the same frame and keeps its calibrated height, thread count, residency,
 panel, stripe, record capacity, pack, and screen across all four arms.
 Three repeats run in ascending split order and three in descending
@@ -38,13 +42,6 @@ and target staging through the staging barrier. The sum of block
 staging times measures staging work. Blocks can overlap in time, so the
 force launch span comes from the uninstrumented trace.
 
-The STMV guard uses the 4 fs NPT benchmark with a fixed initial velocity
-seed. It uses the same split orders, with 2,000 steps for throughput
-and 250 steps for each trace. All STMV arms share the shape calibrated
-on the STMV starting frame, apart from split.
-The split 4 and 8 pins also enter the setup trial when other launch
-settings remain unpinned. AUTO proposes splits 1 and 2.
-
 On Trp-cage ff19SB+OPC NVT, the six matched RTX 4090 repeats gave
 force launch spans of 129.00 ± 3.63, 67.86 ± 0.93, 71.24 ± 0.88,
 and 75.73 ± 1.58 µs for splits 1, 2, 4, and 8, respectively. Split 2
@@ -57,7 +54,7 @@ sample standard deviations.
 
 The prototype builds one queue item per tower and 32-source chunk.
 Persistent blocks claim items with an atomic ticket. On Trp-cage
-ff19SB+OPC NVT, six RTX 4090 repeats in two opposite arm orders gave
+ff19SB+OPC NVT at 2 fs, six RTX 4090 repeats in opposite arm orders gave
 102.12 ± 3.73 µs/step for queue construction, force, and finish, versus
 70.01 ± 1.63 µs/step for force and finish at split 2. Queue construction
 took 2.26 ± 0.10 µs/step. The force launch spans were 96.75 ± 3.52 µs

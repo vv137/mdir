@@ -290,7 +290,8 @@ derive(const TowersShape &given, const System &system, int reach,
 }
 
 // Enumerate at one already resolved height. A supplied field stays fixed
-// throughout, including partial pins. Resource rounding can make distinct
+// throughout, including partial pins of split 4 or 8. An unpinned split
+// proposes 1 and 2. Resource rounding can make distinct
 // proposals coincide, especially on small frames.
 std::vector<TowersShape> launchCandidates(const TowersShape &given,
                                           const System &system, int reach,
