@@ -12,7 +12,7 @@ def main():
     rebuild.MDIR_OPT = sys.argv[2]
     rng = random.Random(1043)
     lattice = cases[1][0]
-    # Five occupied layers share a column. Its middle tower reaches all five
+    # Four occupied layers share a column. A middle tower reaches all four
     # layers, so even the eighth part takes a full chunk. Uneven populations
     # put both ends of the home-target interval inside source chunks.
     populations = (53, 59, 61, 62, 65)
