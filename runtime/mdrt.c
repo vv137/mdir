@@ -400,6 +400,28 @@ double mdrtBussiFactor(int64_t seed, int64_t step, double kinetic,
   return sqrt(next / kinetic);
 }
 
+/* The random numbers of mdrtBussiFactor alone, for the coupling step on
+   the device (D[device-coupling]): the numbers depend only on the seed and
+   the step, so the host draws them without the kinetic energy, and the
+   device evaluates the expression of mdrtBussiFactor above in the same
+   order of operations. The first normal number of stream 0 at `step`. */
+double mdrtBussiNormal(int64_t seed, int64_t step) {
+  Draws draws;
+  initDraws(&draws, (uint64_t)seed, step, /*entity=*/0, /*stream=*/0);
+  return drawNormal(&draws);
+}
+
+/* The sum of the squares of freedom - 1 standard normals that
+   mdrtBussiFactor draws after the first normal number, or 0. */
+double mdrtBussiRest(int64_t seed, int64_t step, double freedom) {
+  if (!(freedom > 1.0))
+    return 0.0;
+  Draws draws;
+  initDraws(&draws, (uint64_t)seed, step, /*entity=*/0, /*stream=*/0);
+  (void)drawNormal(&draws);
+  return 2.0 * drawGamma(&draws, 0.5 * (freedom - 1.0));
+}
+
 /* The change of the logarithm of the volume that stochastic cell rescaling
    (Bernetti and Bussi 2020) makes over one period of the barostat. The
    square root of the volume, λ = √V, takes one step of Euler and Maruyama

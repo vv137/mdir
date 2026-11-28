@@ -1,4 +1,6 @@
-"""Fixed explicit CLI inputs for native model parity in MD units."""
+"""Fixed explicit CLI inputs for native model parity in MD units. The CLI
+asks for the coupling step on the host, which a simulation of the Python
+interface keeps (D[device-coupling]), so that the two pipelines agree."""
 import pathlib
 import sys
 root = pathlib.Path(sys.argv[1])
@@ -52,6 +54,7 @@ type = "PERIODIC"
 [execution]
 target = "{target}"
 precision = "{precision}"
+coupling_step = "HOST"
 {restraints}
 '''
         (root / f"{name}-{precision.lower()}.toml").write_text(text)

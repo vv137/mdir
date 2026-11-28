@@ -761,16 +761,30 @@ LogicalResult lowerTowersChunks(ModuleOp module, func::FuncOp fn, ArrayRef<scf::
   // clock there and give the observed accepted number to Philox and output.
   SmallVector<func::CallOp> calls;
   fn.walk([&](func::CallOp call) { calls.push_back(call); });
+  // The second draw of a coupling step on the device takes the step that the
+  // first read, which precedes it in its block (D[device-coupling]).
+  DenseMap<std::pair<Block *, Value>, Value> drawn;
   for (auto f : calls) {
     StringRef name = f.getCallee();
     if (name == "mdrtStopPending") {
       b.setInsertionPointAfter(f);
       func::CallOp::create(b, f.getLoc(), boundary, ValueRange{cache});
-    } else if (name == "mdrtBussiFactor" || name == "mdrtWriteEnergies") {
-      unsigned slot = name == "mdrtBussiFactor" ? 1 : 0;
+    } else if (name == "mdrtBussiFactor" || name == "mdrtBussiNormal" ||
+               name == "mdrtBussiRest" || name == "mdrtWriteEnergies") {
+      // The draws of a coupling step on the device take the step as the
+      // factor did (D[device-coupling]).
+      unsigned slot = name == "mdrtWriteEnergies" ? 0 : 1;
+      std::pair<Block *, Value> key{f->getBlock(), f.getOperand(slot)};
+      if (name == "mdrtBussiRest")
+        if (Value step = drawn.lookup(key)) {
+          f.setOperand(slot, step);
+          continue;
+        }
       b.setInsertionPoint(f);
       auto n = func::CallOp::create(b, f.getLoc(), read, ValueRange{cache, f.getOperand(slot)});
       f.setOperand(slot, n.getResult(0));
+      if (name == "mdrtBussiNormal")
+        drawn[key] = n.getResult(0);
     }
   }
   fn.walk([&](func::ReturnOp ret) {

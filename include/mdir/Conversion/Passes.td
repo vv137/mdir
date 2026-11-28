@@ -526,7 +526,11 @@ def ConvertMDExecToGPU
            /*default=*/"false",
            "Use the decoupled look-back scan for the three counting sorts "
            "of the group neighbor build (D321); "
-           "the default retains the three-launch scan">
+           "the default retains the three-launch scan">,
+    Option<"deviceCoupling", "device-coupling", "bool", /*default=*/"false",
+           "Compute the factor of stochastic velocity rescaling and the "
+           "bath of the coupling step on the device, so that the step "
+           "reads no sums on the host (D[device-coupling])">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",

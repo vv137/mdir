@@ -204,6 +204,45 @@
                 }
               }
             },
+            "coupling_step": {
+              "type": "object",
+              "required": [
+                "requested",
+                "category",
+                "value",
+                "reason",
+                "inputs",
+                "changes_rounding"
+              ],
+              "properties": {
+                "requested": {
+                  "enum": [
+                    "DEVICE",
+                    "HOST"
+                  ]
+                },
+                "value": {
+                  "enum": [
+                    "DEVICE",
+                    "HOST"
+                  ]
+                },
+                "category": {
+                  "enum": [
+                    "rule"
+                  ]
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "inputs": {
+                  "type": "object"
+                },
+                "changes_rounding": {
+                  "type": "boolean"
+                }
+              }
+            },
             "step_graph": {
               "type": "object",
               "required": [

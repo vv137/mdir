@@ -5,6 +5,7 @@
 
 #include "DevicePME.h"
 #include "TowersDispatch.h"
+#include "DeviceCoupling.h"
 #include "mdir/Conversion/AxisFFTEmitter.h"
 #include "mdir/Conversion/BondedUnits.h"
 #include "mdir/Conversion/Passes.h"
@@ -355,6 +356,9 @@ public:
       md_exec::policy::kDefaultGroups.columnParticles;
   /// An opt-in compiler strategy for the integer scans of the groups build.
   bool singlePassGroupScan = false;
+  /// Whether the arithmetic of the coupling step on the global sums runs on
+  /// the device (`device-coupling`, D[device-coupling]).
+  bool deviceCoupling = false;
   /// Whether the loops over tuples of the module may add to their members
   /// in the order of the threads: no loop over tuples states `fixed_order` for
   /// a value it reduces. The members of the tuples go to the device for such
@@ -997,6 +1001,8 @@ private:
   llvm::DenseMap<Type, Cell> resultCells;
   llvm::DenseMap<Type, int64_t> nextResult;
   int64_t numReadbacks = 0;
+  /// The places of the page-locked results of the host (mdrtHostResults).
+  int64_t numHostResults = 0;
   Cell getResults(Type element, Location loc);
   SmallVector<Flag, 2> flags;
   llvm::DenseSet<Type> matrixBuildTypes;
@@ -1163,8 +1169,27 @@ Cell Lowering::getResults(Type element, Location loc) {
   cell.capacity = resultCapacity;
   cell.device = createDeviceBuffer(
       builder, loc, getDeviceType({resultCapacity}, element), ValueRange());
-  cell.host = memref::AllocaOp::create(
-      builder, loc, MemRefType::get({resultCapacity}, element));
+  // Page-locked memory of the runtime for the f64 results, which the
+  // coupling step and the rows read, with the coupling step on the device
+  // (D[device-coupling]); the stack otherwise.
+  if (element.isF64() && deviceCoupling) {
+    Type wide = builder.getI64Type();
+    func::FuncOp memory = getOrDeclare(
+        "mdrtHostResults",
+        builder.getFunctionType(
+            {wide, wide}, {MemRefType::get({resultCapacity}, element)}));
+    memory->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+    Value place = arith::ConstantOp::create(
+        builder, loc, wide, builder.getI64IntegerAttr(numHostResults++));
+    Value count = arith::ConstantOp::create(
+        builder, loc, wide, builder.getI64IntegerAttr(resultCapacity));
+    cell.host = func::CallOp::create(builder, loc, memory,
+                                     ValueRange{place, count})
+                    .getResult(0);
+  } else {
+    cell.host = memref::AllocaOp::create(
+        builder, loc, MemRefType::get({resultCapacity}, element));
+  }
   // A copy brings the whole buffer, the slots that no sum has written yet
   // too: they hold zeros.
   Value device = cell.device;
@@ -10970,8 +10995,14 @@ static LogicalResult keepFrameParametersOnDevice(func::FuncOp function) {
 /// is left as it is for ordinary programs. Device batches join both queues
 /// after a side-stream reader, before storage assignment's old last use
 /// can release and reuse its source on another stream.
-static LogicalResult keepReadbacksOnDevice(func::FuncOp function) {
+static LogicalResult keepReadbacksOnDevice(func::FuncOp function,
+                                           bool joinSide = false) {
   const bool batch = function->hasAttr("mdir.frame_batch");
+  // With the coupling step on the device, its one-thread kernels on the
+  // main stream also read the sums of the second stream, the reciprocal
+  // virial among them, after a join by event, as a device frame does
+  // (D[device-coupling]). Other kernels keep their host values.
+  bool sideSums = batch;
   llvm::DenseMap<Value, Value> deviceOf;
   function.walk([&](gpu::MemcpyOp copy) {
     if (copy->hasAttr("mdir.readback"))
@@ -11002,7 +11033,7 @@ static LogicalResult keepReadbacksOnDevice(func::FuncOp function) {
   auto isSum = [&](Operation *op) {
     auto load = dyn_cast_or_null<memref::LoadOp>(op);
     return load && load->hasAttr("mdir.readback") &&
-           deviceOf.count(load.getMemRef()) && (batch || !side.contains(op));
+           deviceOf.count(load.getMemRef()) && (sideSums || !side.contains(op));
   };
   // Whether `value` is computed by pure ops from at least one load of the
   // sums.
@@ -11016,7 +11047,7 @@ static LogicalResult keepReadbacksOnDevice(func::FuncOp function) {
     bool result = false;
     if (isSum(def)) {
       result = true;
-    } else if (def && isPure(def) && (batch || !side.contains(def))) {
+    } else if (def && isPure(def) && (sideSums || !side.contains(def))) {
       for (Value operand : def->getOperands())
         result |= readsSums(operand);
     }
@@ -11030,6 +11061,11 @@ static LogicalResult keepReadbacksOnDevice(func::FuncOp function) {
       launches.push_back(launch);
   });
   for (gpu::LaunchOp launch : launches) {
+    bool coupling = joinSide && launch->hasAttr("mdir.coupling_step");
+    if (!batch && sideSums != coupling) {
+      sideSums = coupling;
+      fromSums.clear();
+    }
     Region &body = launch.getBody();
     llvm::SetVector<Value> captured;
     body.walk([&](Operation *op) {
@@ -11076,7 +11112,7 @@ static LogicalResult keepReadbacksOnDevice(func::FuncOp function) {
       for (Value value : captured)
         if (failed(checkLifetime(value))) return failure();
     }
-    if (batch && !side.empty() && !side.contains(launch) &&
+    if (sideSums && !side.empty() && !side.contains(launch) &&
         llvm::any_of(captured, readsSums)) {
       // A device frame reads reciprocal sums on its caller stream. The
       // ordinary path keeps its existing host copy and stream behavior.
@@ -11140,6 +11176,10 @@ static LogicalResult keepReadbacksOnDevice(func::FuncOp function) {
 
   // The host's chains of pure ops and loads that nothing uses any more,
   // and then the copies whose loads are all gone.
+  if (!batch && sideSums != joinSide) {
+    sideSums = joinSide;
+    fromSums.clear();
+  }
   bool erased = true;
   while (erased) {
     erased = false;
@@ -11271,7 +11311,15 @@ static void deferReadbacks(func::FuncOp function) {
 }
 
 LogicalResult Lowering::inlineFrameReadbacks(func::FuncOp function) {
-  if (!function->hasAttr("mdir.frame_batch")) return success();
+  // A coupling step on the device under a barostat takes the reciprocal
+  // virial that the helpers of PME read back as well (D[device-coupling]).
+  bool coupling = deviceCoupling &&
+      function.walk([](func::CallOp call) {
+        return call.getCallee().starts_with("mdrtBarostatStrain")
+                   ? WalkResult::interrupt()
+                   : WalkResult::advance();
+      }).wasInterrupted();
+  if (!function->hasAttr("mdir.frame_batch") && !coupling) return success();
   auto numericalCopy = [](gpu::MemcpyOp copy) {
     auto host = dyn_cast<MemRefType>(copy.getDst().getType());
     auto device = dyn_cast<MemRefType>(copy.getSrc().getType());
@@ -11286,6 +11334,18 @@ LogicalResult Lowering::inlineFrameReadbacks(func::FuncOp function) {
     bool readsNumbers = false;
     callee.walk([&](gpu::MemcpyOp copy) { readsNumbers |= numericalCopy(copy); });
     if (!readsNumbers) continue;
+    if (!function->hasAttr("mdir.frame_batch")) {
+      // Outside a device frame, only a helper whose readbacks this can
+      // snapshot, and the call stays otherwise.
+      bool small = llvm::hasSingleElement(callee.getBody());
+      callee.walk([&](gpu::MemcpyOp copy) {
+        auto host = cast<MemRefType>(copy.getDst().getType());
+        if (numericalCopy(copy) && (host.getRank() != 1 || !host.hasStaticShape() ||
+                                    host.getNumElements() > 16))
+          small = false;
+      });
+      if (!small) continue;
+    }
     if (!llvm::hasSingleElement(callee.getBody()))
       return call.emitOpError("device frame numerical helper must have one return block");
     OpBuilder at(call);
@@ -11773,8 +11833,71 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   expandPowers(function);
   if (failed(keepFrameParametersOnDevice(function)))
     return failure();
-  if (failed(keepReadbacksOnDevice(function)))
+  if (deviceCoupling) {
+    kernels::CouplingResults coupling;
+    Location at = function.getLoc();
+    Type f64 = Float64Type::get(context);
+    coupling.cells = [&]() -> std::pair<Value, Value> {
+      Cell cell = getResults(f64, at);
+      return {cell.device, cell.host};
+    };
+    coupling.slot = [&] { return nextResult[f64]++; };
+    coupling.readback = [&] { return numReadbacks++; };
+    coupling.bringIn = [&](gpu::LaunchOp launch) { bringIn(launch); };
+    coupling.room = [&] { return resultCapacity - nextResult[f64]; };
+    // Page-locked memory of the runtime for a small host buffer of f64.
+    coupling.pinned = [&](int64_t count) -> Value {
+      Block &entry = function.getBody().front();
+      OpBuilder builder(&entry, entry.begin());
+      Type wide = builder.getI64Type();
+      func::FuncOp memory = getOrDeclare(
+          "mdrtHostResults",
+          builder.getFunctionType({wide, wide},
+                                  {MemRefType::get({resultCapacity}, f64)}));
+      memory->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+      Value place = arith::ConstantOp::create(
+          builder, at, wide, builder.getI64IntegerAttr(numHostResults++));
+      Value number = arith::ConstantOp::create(
+          builder, at, wide, builder.getI64IntegerAttr(resultCapacity));
+      Value whole = func::CallOp::create(builder, at, memory,
+                                         ValueRange{place, number})
+                        .getResult(0);
+      return memref::SubViewOp::create(
+          builder, at, MemRefType::get({count}, f64), whole,
+          ArrayRef<int64_t>{0}, ArrayRef<int64_t>{count}, ArrayRef<int64_t>{1});
+    };
+    // The pressures of a scaling of the cell, which the host reads: a few
+    // numbers of their own, so that the copy is small.
+    std::optional<std::pair<Value, Value>> scalars;
+    coupling.scalars = [&]() -> std::pair<Value, Value> {
+      if (scalars)
+        return *scalars;
+      Block &entry = function.getBody().front();
+      OpBuilder builder(&entry, entry.begin());
+      Type wide = builder.getI64Type();
+      int64_t count = kernels::CouplingResults::numScalars;
+      (void)wide;
+      Value device = createDeviceBuffer(builder, at,
+                                        getDeviceType({count}, f64), {});
+      Value host = coupling.pinned(count);
+      scalars = std::make_pair(device, host);
+      return *scalars;
+    };
+    std::string reason = kernels::placeCouplingOnDevice(function, coupling);
+    // Not reached by the programs that the driver writes (D[device-coupling],
+    // Section 6), but said where it is.
+    if (!reason.empty())
+      function.emitWarning() << "coupling_step: the coupling step of this "
+                                "function stays on the host: "
+                             << reason;
+  }
+  if (failed(keepReadbacksOnDevice(function, deviceCoupling)))
     return failure();
+  // The observed virials of TOWERS stay where their dispatch read them.
+  function.walk([](Operation *op) {
+    if (op->removeAttr("mdir.observer_readback"))
+      op->removeAttr("mdir.readback");
+  });
   deferReadbacks(function);
 
   releaseStack(function);
@@ -12014,6 +12137,7 @@ public:
     lowering.fusePruning = fusePruning;
     lowering.fusePruningGroups = fusePruningGroups;
     lowering.singlePassGroupScan = singlePassGroupScan;
+    lowering.deviceCoupling = deviceCoupling;
     if (failed(lowering.run()))
       return signalPassFailure();
     // The ops whose algebras the mark of the deterministic mode verifies

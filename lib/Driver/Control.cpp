@@ -3049,8 +3049,14 @@ Error Reader::readExecution(const toml::table &table) {
                                    "neighbor_capacity", "fast_math",
                                    "spatial_order", "deterministic",
                                    "neighbor_structure", "towers_shape", "step_graph",
-                                   "term_streams"}))
+                                   "term_streams", "coupling_step"}))
     return error;
+  StringRef coupling = "DEVICE";
+  if (Error error = readChoice<StringRef>(table, "coupling_step", coupling,
+          {{"DEVICE", "DEVICE"}, {"HOST", "HOST"}}))
+    return error;
+  control.couplingStep = coupling.str();
+  control.couplingStepGiven = table.contains("coupling_step");
   StringRef streams = "SINGLE";
   if (Error error = readChoice<StringRef>(table, "term_streams", streams,
           {{"SINGLE", "SINGLE"}, {"RECIPROCAL", "RECIPROCAL"},
@@ -3435,6 +3441,46 @@ llvm::json::Object mdir::driver::Control::termStreamsRecord() const {
       {"inputs", llvm::json::Object{{"target", target == Target::GPU ? "GPU" : "CPU"},
                                     {"deterministic", deterministic}}},
       {"changes_rounding", value == "TERMS"}};
+}
+
+std::pair<StringRef, StringRef>
+mdir::driver::Control::resolveCouplingStep() const {
+  if (couplingStep == "HOST")
+    return {"HOST", ""};
+  if (target != Target::GPU)
+    return {"HOST", "the CPU target has no device"};
+  if (pythonSimulation)
+    return {"HOST", "a simulation of the Python interface keeps the host path"};
+  if (!thermostat && !barostat)
+    return {"HOST", "the run has no coupling step"};
+  // The chain integrates its own state on the host (D163a); Langevin
+  // dynamics acts in the kernels of every step and has no factor.
+  if (isNoseHoover())
+    return {"HOST", "the Nose-Hoover chain runs on the host"};
+  if (isLangevin())
+    return {"HOST", "Langevin dynamics has no coupling factor"};
+  return {"DEVICE", ""};
+}
+
+llvm::json::Object mdir::driver::Control::couplingStepRecord() const {
+  auto [value, why] = resolveCouplingStep();
+  // A rule of the request, the target and the couplings (#952). The
+  // device evaluates the host's expressions in their order, without
+  // contraction, so the choice does not change the rounding.
+  const char *method = !thermostat              ? "none"
+                       : isNoseHoover()         ? "NOSE-HOOVER"
+                       : isLangevin()           ? "LANGEVIN"
+                                                : "V-RESCALE";
+  return llvm::json::Object{
+      {"requested", couplingStep},
+      {"value", value.str()},
+      {"category", "rule"},
+      {"reason", why.empty() ? "as requested" : why.str()},
+      {"inputs",
+       llvm::json::Object{{"target", target == Target::GPU ? "GPU" : "CPU"},
+                          {"thermostat", method},
+                          {"barostat", barostat}}},
+      {"changes_rounding", false}};
 }
 
 StringRef mdir::driver::Control::stepGraphRefusal(size_t constraints) const {

@@ -1,0 +1,24 @@
+# REQUIRES: cuda, hdf5, h5py
+# The coupling step on the device (D[device-coupling]) against the host's
+# (`coupling_step = "HOST"`, the path before): bitwise in the deterministic
+# mode with MATRIX, mixed and double, NVT and NPT in each coupling of the
+# barostat, with spans and with launches; a continuation; GROUPS within the
+# spread of the host's runs; and the copies to the host, which do not grow
+# with the couplings but for the pressures of a scaling. TOWERS:
+# device-coupling-towers-gpu.test.
+# RUN: rm -rf %t && mkdir %t
+# RUN: %h5md_python %S/Inputs/check_device_coupling.py %S/Inputs/dipeptide %t mdir record,nvt,reads-nvt,continuation,groups,npt,reads-npt | FileCheck %s
+# CHECK: record: DEVICE, HOST
+# CHECK: mixed-spans-nvt: bitwise
+# CHECK: mixed-launch-nvt: bitwise
+# CHECK: double-spans-nvt: bitwise
+# CHECK: double-launch-nvt: bitwise
+# CHECK: reads-nvt: 20 more couplings
+# CHECK: continuation: bitwise
+# CHECK: groups-nvt: close
+# CHECK: groups-npt: close
+# CHECK: mixed-isotropic-npt: bitwise
+# CHECK: mixed-semi-npt: bitwise
+# CHECK: mixed-anisotropic-npt: bitwise
+# CHECK: double-isotropic-npt: bitwise
+# CHECK: reads-npt: 20 more couplings

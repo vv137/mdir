@@ -323,6 +323,8 @@ static llvm::Expected<CompiledRun> compileEntry(mlir::ModuleOp module,
     add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
     add("mdrtNoseHooverFactor", (void *)&mdrtNoseHooverFactor);
     add("mdrtWriteSolvent", (void *)&mdrtWriteSolvent);
+    add("mdrtBath", (void *)&mdrtBath);
+    add("mdrtSetBath", (void *)&mdrtSetBath);
     add("_mlir_ciface_mdrtWritePull", (void *)&_mlir_ciface_mdrtWritePull);
     add("_mlir_ciface_mdrtWriteFreeEnergy",
         (void *)&_mlir_ciface_mdrtWriteFreeEnergy);
@@ -1718,6 +1720,7 @@ static int runControlImpl(StringRef controlFile, Emit emit,
       effective["towers_cell_height"] = towersCellHeight;
     resolvedChoices["step_graph"] = std::move(graphChoice);
     resolvedChoices["term_streams"] = control->termStreamsRecord();
+    resolvedChoices["coupling_step"] = control->couplingStepRecord();
     llvm::json::Object metadata{
         {"build", getManifestBuild()}, {"effective", std::move(effective)},
         {"resolved_choices", std::move(resolvedChoices)},
@@ -2123,6 +2126,11 @@ static int runControlImpl(StringRef controlFile, Emit emit,
   output.log.print(
       "MDIR: term_streams %s\n",
       llvm::formatv("{0}", llvm::json::Value(control->termStreamsRecord()))
+          .str()
+          .c_str());
+  output.log.print(
+      "MDIR: coupling_step %s\n",
+      llvm::formatv("{0}", llvm::json::Value(control->couplingStepRecord()))
           .str()
           .c_str());
   if (towersShapeReport.getAsObject())

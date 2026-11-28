@@ -782,6 +782,8 @@ compileEngine(const Control &control, const System &system,
     add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
     add("mdrtNoseHooverFactor", (void *)&mdrtNoseHooverFactor);
     add("mdrtWriteSolvent", (void *)&mdrtWriteSolvent);
+    add("mdrtBath", (void *)&mdrtBath);
+    add("mdrtSetBath", (void *)&mdrtSetBath);
     add("_mlir_ciface_mdrtWritePull", (void *)&_mlir_ciface_mdrtWritePull);
     add("_mlir_ciface_mdrtWriteFreeEnergy",
         (void *)&_mlir_ciface_mdrtWriteFreeEnergy);

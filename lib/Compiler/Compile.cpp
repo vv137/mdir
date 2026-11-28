@@ -504,6 +504,10 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // ... and builds them on the device where it does not take them
        // (D257).
        << "device-tuples=true "
+       // The coupling step on the device (D[device-coupling]).
+       << (control.resolveCouplingStep().first == "DEVICE"
+               ? "device-coupling=true "
+               : "")
        << (units ? "bonded-units=" + std::to_string(units) + " " : "")
        // A check of the pruning of the dual lists, for tests
        // (D268).

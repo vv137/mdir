@@ -29,7 +29,8 @@ static bool isOrdinaryLoop(scf::ForOp loop) {
   bool towers = false;
   for (Operation &op : *loop.getBody()) {
     if (auto call = dyn_cast<func::CallOp>(op)) {
-      if (call.getCallee() == "mdrtWriteEnergies" || call.getCallee() == "mdrtBussiFactor")
+      if (call.getCallee() == "mdrtWriteEnergies" || call.getCallee() == "mdrtBussiFactor" ||
+          call.getCallee() == "mdrtBussiNormal")
         return false;
       if (call.getCallee() == "mdrtFlagStart") {
         if (start)

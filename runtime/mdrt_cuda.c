@@ -131,6 +131,48 @@ static void report(void) {
               (long long)kernels[i].threads);
 }
 
+/* The copies from the device to the host and the waits of the host for the
+   device, counted with MDRT_HOST_READS set and reported at the exit
+   (D[device-coupling]): what the tests of the coupling step on the device
+   count, whatever submission path the run takes. */
+static int hostReads = -1;
+static long long readCopies, readBytes, readWaits, flagWaits;
+
+enum { READ_SIZES = 16 };
+static long long readSize[READ_SIZES], readSizeCount[READ_SIZES];
+
+static void reportHostReads(void) {
+  fprintf(stderr,
+          "mdrt: host reads: %lld copies to the host (%lld bytes), %lld "
+          "waits for the device, %lld waits for flags\n",
+          readCopies, readBytes, readWaits, flagWaits);
+  for (int i = 0; i != READ_SIZES && readSizeCount[i]; ++i)
+    fprintf(stderr, "mdrt: host reads of %lld bytes: %lld\n", readSize[i],
+            readSizeCount[i]);
+}
+
+void mdrtCountHostRead(size_t bytes, int waits, int flags) {
+  if (hostReads < 0) {
+    hostReads = getenv("MDRT_HOST_READS") != NULL;
+    if (hostReads)
+      atexit(reportHostReads);
+  }
+  if (!hostReads)
+    return;
+  if (bytes) {
+    ++readCopies;
+    readBytes += (long long)bytes;
+    for (int i = 0; i != READ_SIZES; ++i)
+      if (!readSizeCount[i] || readSize[i] == (long long)bytes) {
+        readSize[i] = (long long)bytes;
+        ++readSizeCount[i];
+        break;
+      }
+  }
+  readWaits += waits;
+  flagWaits += flags;
+}
+
 /* Notes that `function` has the name `name`. */
 static void noteKernel(CUfunction function, const char *name) {
   for (int i = 0; i != numKernels; ++i)
@@ -1493,6 +1535,43 @@ struct Buffer1 {
   int64_t stride;
 };
 
+/* The host's copy of the results of the global sums of a function and of
+   its coupling step, page-locked so that the copy from the device is a
+   transfer of the device's engine (D[device-coupling]; the maintainer's
+   addition to #1026). Each place of the module that takes one has a number
+   of its own and keeps its memory for the process; a larger request
+   replaces it. */
+enum { HOST_RESULT_PLACES = 1024 };
+static void *hostResults[HOST_RESULT_PLACES];
+static int64_t hostResultBytes[HOST_RESULT_PLACES];
+
+void _mlir_ciface_mdrtHostResults(struct Buffer1 *result, int64_t place,
+                                  int64_t count) {
+  mgpuStreamCreate();
+  if (place < 0 || place >= HOST_RESULT_PLACES) {
+    fprintf(stderr, "mdrt: the module takes more than %d buffers of results\n",
+            HOST_RESULT_PLACES);
+    exit(1);
+  }
+  int64_t bytes = count * (int64_t)sizeof(double);
+  if (hostResultBytes[place] < bytes) {
+    if (hostResults[place]) {
+      finish();
+      check(cuMemFreeHost(hostResults[place]), "cuMemFreeHost");
+    }
+    void *host = NULL;
+    check(cuMemHostAlloc(&host, (size_t)bytes, 0), "cuMemHostAlloc");
+    memset(host, 0, (size_t)bytes);
+    hostResults[place] = host;
+    hostResultBytes[place] = bytes;
+  }
+  result->allocated = hostResults[place];
+  result->aligned = hostResults[place];
+  result->offset = 0;
+  result->size = count;
+  result->stride = 1;
+}
+
 /* A memref of rank 2 as the C interface of MLIR passes it. */
 struct Buffer2 {
   void *allocated;
@@ -1598,6 +1677,7 @@ int64_t mdrtFlagStart(void *device) {
     mdrtSpansFlush();
     flagSources[slot] = NULL;
     if (copyAudit) copyAudit->metadataDownloads += sizeof(*flagSlots);
+    mdrtCountHostRead(sizeof(*flagSlots), 0, 0);
     check(cuMemcpyDtoHAsync(&flagSlots[slot], address, sizeof(*flagSlots),
                             sharedStream),
           "cuMemcpyDtoHAsync");
@@ -1610,6 +1690,7 @@ int64_t mdrtFlagStart(void *device) {
 
 int32_t mdrtFlagFinish(int64_t slot) {
   mdrtSpansFlush();
+  mdrtCountHostRead(0, 0, 1);
   double start = begin();
   check(cuEventSynchronize(flagEventOf[slot]), "cuEventSynchronize");
   end(WAIT, start);
@@ -1644,6 +1725,7 @@ static void finish(void) {
   mdrtSpansFlush();
   if (!isPending || (!sharedStream && !borrowedStreamDepth))
     return;
+  mdrtCountHostRead(0, 1, 0);
   double start = begin();
   for (int lane = 0; lane != SIDE_LANES; ++lane)
     if (sideStreams[lane])
@@ -1690,6 +1772,7 @@ void mgpuEventDestroy(CUevent event) {
 
 void mgpuEventSynchronize(CUevent event) {
   mdrtSpansFlush();
+  mdrtCountHostRead(0, 1, 0);
   check(cuEventSynchronize(event), "cuEventSynchronize");
 }
 
@@ -2351,6 +2434,8 @@ void mgpuMemcpy(void *destination, void *source, size_t size,
     return;
   mdrtSpansFlush();
   auditGenericCopy(destination, source, size);
+  if (isOnDevice(source) && !isOnDevice(destination))
+    mdrtCountHostRead(size, 0, 0);
   double start = begin();
   check(cuMemcpyAsync((CUdeviceptr)destination, (CUdeviceptr)source, size,
                       stream),
@@ -2388,6 +2473,8 @@ void mdrtCudaMemcpyScoped(uintptr_t destination, uintptr_t source,
   if (size == 0)
     return;
   auditGenericCopy((void *)destination, (const void *)source, size);
+  if (isOnDevice((void *)source) && !isOnDevice((void *)destination))
+    mdrtCountHostRead(size, 0, 0);
   CUstream stream = mgpuStreamCreate();
   mdrtSpansFlush();
   double start = begin();

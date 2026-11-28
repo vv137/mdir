@@ -930,6 +930,7 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
     auto object = makeJSON(*control, *system, report);
     (*object.getObject("run"))["step_graph"] = std::move(graphChoice);
     (*object.getObject("run"))["term_streams"] = control->termStreamsRecord();
+    (*object.getObject("run"))["coupling_step"] = control->couplingStepRecord();
     if (towers)
       (*object.getObject("run")->getObject("neighbors"))["towers_shape"] =
           std::move(*towers);
@@ -942,6 +943,11 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
       auto streams = control->termStreamsRecord();
       llvm::outs() << "term_streams " << *streams.getString("value") << " ("
                    << *streams.getString("reason") << ")\n";
+    }
+    if (control->couplingStepGiven) {
+      auto coupling = control->couplingStepRecord();
+      llvm::outs() << "coupling_step " << *coupling.getString("value") << " ("
+                   << *coupling.getString("reason") << ")\n";
     }
     if (towers)
       llvm::outs() << "TOWERS launch shape "
