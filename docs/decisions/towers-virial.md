@@ -99,3 +99,16 @@ physical contribution in the stress case, but per-pair quantization and
 carry arithmetic make it slower overall even though it reduces the median
 JAC block flush from 6,211 to 4,056 SM cycles. The JAC fused kernel remains
 above the 1.2-times force-only target.
+
+## Maintainer ruling
+
+Virial accuracy is mandatory. The FP64 subtract-afterwards variant is
+rejected. It lost the entire physical contribution in the 0.05 Å
+excluded-pair stress case and propagates nonfinite provisional terms.
+
+Every excluded pair must be left out exactly. Keep the cached exact
+lookup with FP64 block reduction. Q32 cancellation may replace it if it
+becomes faster and meets the same accuracy requirements. Every further
+speedup must preserve exact exclusion in the 0.05 Å stress case and keep
+the direct virial within the $10^{-6}$ relative RMS tolerance against the
+CPU binary64 direct sum on all inputs.
