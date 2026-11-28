@@ -63,6 +63,8 @@ void emitTrialInputs(ModuleOp module, kernels::TowersLayout g,
                          mem({1}, narrow)};
   if (term)
     llvm::append_range(args, term.getIns().getTypes());
+  if (g.adaptiveCutoff)
+    args.push_back(mem({g.cells(), 5 + 2 * g.reach}, narrow));
   kernels::emitTowersEntry(
       b, loc, false, "towers_trial_inputs", args, g.atoms,
       [&](Value i, ValueRange a) {
@@ -71,9 +73,13 @@ void emitTrialInputs(ModuleOp module, kernels::TowersLayout g,
             b, loc, VectorType::get({edges}, dbl), a[1], ValueRange{zero});
         kernels::TowersMovingRow row{g,     cartesian, a[0],  cell,  a[2], a[3],
                                      a[4],  a[5],      a[6],  a[7],  a[8], a[9],
-                                     a[10], a[11],     a[12], a[13], a[14]};
+                                     a[10], a[11],     a[12], a[13], a[14],
+                                     g.adaptiveCutoff ? a.back() : Value()};
+        auto fields = a.drop_front(15);
+        if (g.adaptiveCutoff)
+          fields = fields.drop_back();
         row.emit(b, loc, i, kernels::towersMovingBinGeometry(b, loc, g, cell),
-                 a.drop_front(15));
+                 fields);
       });
 }
 llvm::Expected<std::string> compileTrialImage(ModuleOp image,
@@ -155,17 +161,22 @@ mdir::tool::prepareTowersSpecialization(const Control &control,
     return options.takeError();
   double rc = control.cutoffDistance * units::length;
   TowersCell geometry(system);
+  bool adaptive = control.barostat &&
+                  geometry.adaptiveGrid(reach, rc, system.getNumParticles());
+  bool reserve = control.barostat && !adaptive;
   kernels::TowersLayout layout{
       int(system.getNumParticles()),
-      int(geometry.bins(0, reach, rc, control.barostat)),
-      int(geometry.bins(1, reach, rc, control.barostat)),
-      int(geometry.bins(2, reach, rc, control.barostat)),
+      int(geometry.bins(0, reach, rc, reserve)),
+      int(geometry.bins(1, reach, rc, reserve)),
+      int(geometry.bins(2, reach, rc, reserve)),
       reach,
       capacity,
       false,
       true,
       geometry.triclinic,
       true};
+  if (adaptive)
+    layout.adaptiveCutoff = rc;
   if (!term) {
     OwningOpRef<ModuleOp> image(ModuleOp::create(module->getLoc()));
     if (failed(kernels::emitTowersBuild(*image, layout)))

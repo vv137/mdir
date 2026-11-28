@@ -236,6 +236,7 @@ struct TowersSetup {
   TowersShape launch;
   std::array<int, 3> bins{};
   int capacity = 0;
+  bool adaptiveGrid = false;
 };
 
 /// What a control file says. Lengths are in Å, energies in kcal/mol, times

@@ -83,7 +83,7 @@ struct TowersTrial {
   int device, atoms, cells, reach, capacity, exclusions;
   int sms = 1;
   size_t fields = 0;
-  bool cartesian = false;
+  bool adaptive, cartesian = false;
   CUcontext context{};
   CUstream stream{};
   static constexpr int iterations = 9;
@@ -161,7 +161,7 @@ struct TowersTrial {
                   cell.triclinic ? cell.lattice.data() : system.box) ||
         !allocate(map, 4 * entries) || !allocate(counts, 4 * (2 * c + 1)) ||
         !allocate(rebuildStatus, 4) ||
-        !allocate(geometry, 24 * (cell.triclinic ? 13 : 3)) ||
+        !allocate(geometry, 24 * (cell.triclinic ? 13 : adaptive ? 4 : 3)) ||
         !allocate(charge, 4 * n) || !allocate(types, 4 * n) ||
         !allocate(keys, 4 * (slots + n)) || !allocate(local, 16 * n) ||
         !allocate(packed, 16 * slots) || !allocate(packedTypes, 4 * slots) ||
@@ -229,6 +229,8 @@ struct Sample {
         &f.local,         &f.words,    &f.state, &f.failed, &f.arrivals};
     for (size_t i = 0; i < f.fields; ++i)
       args.push_back(&f.parameters[i]);
+    if (f.adaptive)
+      args.push_back(&f.map);
     if (!launch(Inputs, (f.atoms + 127) / 128, 128, args))
       return false;
     if (f.cells > f.atoms &&
@@ -388,13 +390,15 @@ struct Sample {
 llvm::Expected<TrialFrame> createTowersTrial(int device,
                                              const driver::System &system,
                                              int cells, int reach, int capacity,
-                                             const TowersBuffers &buffers) {
+                                             const TowersBuffers &buffers,
+                                             bool adaptive) {
   if (!api().complete())
     return llvm::createStringError(
         "towers_shape: missing CUDA graph trial entry points");
   TrialFrame f(new TowersTrial{
       device, int(system.getNumParticles()), cells, reach, capacity,
       system.topology ? int(system.topology->exclusions.size()) : 0});
+  f->adaptive = adaptive;
   if (!f->check(api().cuDevicePrimaryCtxRetain(&f->context, device),
                 "retain trial context") ||
       !f->check(api().cuCtxPushCurrent(f->context), "enter trial context"))

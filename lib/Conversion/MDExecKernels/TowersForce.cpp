@@ -188,6 +188,7 @@ private:
   void stageBlockGeometry();
   Value faceNormal(int axis, int component);
   Value lateral(int word);
+  Value activeBins(int axis, int nominal);
   Value validWidths(Value raw);
   void screenConstants(Value raw);
   void prepareGeometry();
@@ -706,17 +707,19 @@ void Force::exclusion(Value row) {
       delta.push_back(subi(gap, muli(image[axis], ci(bins))));
       continue;
     }
+    Value period = activeBins(axis, bins);
     Value mag = maxsi(gap, subi(ci(0), gap));
-    Value wrap =
-        select(cmpi(CmpIPredicate::slt, gap, ci(0)), ci(-bins), ci(bins));
+    Value backward = subi(ci(0), period);
+    Value wrap = select(cmpi(CmpIPredicate::slt, gap, ci(0)), backward,
+                        period);
     Value shift = ifElse(
         {i32},
-        cmpi(CmpIPredicate::slt, muli(addi(mag, ci(1)), ci(2)), ci(bins)),
+        cmpi(CmpIPredicate::slt, muli(addi(mag, ci(1)), ci(2)), period),
         [&] { return Values{ci(0)}; },
         [&] {
           return ifElse(
               {i32},
-              cmpi(CmpIPredicate::sgt, muli(subi(mag, ci(1)), ci(2)), ci(bins)),
+              cmpi(CmpIPredicate::sgt, muli(subi(mag, ci(1)), ci(2)), period),
               [&] { return Values{wrap}; },
               [&] {
                 Value length = load(box, {cx(axis)}),
@@ -751,7 +754,7 @@ void Force::exclusion(Value row) {
                 Value back = andi(andi(y[0], notNarrow(x[0])),
                                   cmpf(CmpFPredicate::OLT, x[1], y[1]));
                 return Values{
-                    select(forward, ci(bins), select(back, ci(-bins), ci(0)))};
+                    select(forward, period, select(back, backward, ci(0)))};
               });
         })[0];
     delta.push_back(subi(gap, shift));
@@ -2032,6 +2035,12 @@ void Force::stageBlockGeometry() {
       store(v, blockGeometry, {cx(w)});
     });
   gpu::BarrierOp::create(b, loc);
+}
+
+Value Force::activeBins(int axis, int nominal) {
+  if (!g.adaptiveCutoff)
+    return ci(nominal);
+  return fptosi(i32, load(geometry, {cx(axis), cx(TowersLayout::activeBins)}));
 }
 
 Value Force::validWidths(Value raw) {
