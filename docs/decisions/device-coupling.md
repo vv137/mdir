@@ -43,7 +43,7 @@ So in the deterministic mode the checkpoint and every row of the log are bitwise
 1. [derived] Under a barostat the next step's launches take the new cell by value. They are the PME wrappers, the builds of MATRIX and GROUPS, whose grids `mdrt_gpu_cell_count` sizes on the host from the cell, and the arguments that the TOWERS mirror of D450 fills. The host therefore needs the cell before it issues the next step. Removing that read needs grids fixed under a barostat (as TOWERS has, D450 Section 3.2) and launches that read the cell on the device.
 2. [derived] The strain takes $\ln(\lambda'/\lambda)$, $e^{\varepsilon/3}$ and, with a cell in f32, the logarithm of the rounded scale. To keep the trajectory, the device would have to compute these as this host's libm does, bit for bit. CUDA's `log` and `exp` are not correctly rounded and differ from glibc in the last bit for a share of arguments. This decision keeps the strain on the host and copies the pressures, which the device computes exactly as the host did.
 3. [measured] Under `step_graph = "GRAPH"` the coupling step still reads the accepted step of the chunks (`mdrtStepRead`, 8 B, D439), which the draws take. After this change both draws share one read (Section 4).
-4. Not covered: the Nose–Hoover chain, which integrates its own state on the host (D163a), and Langevin dynamics, whose thermostat acts in the kernels of every step and has no factor. For these the key resolves to `HOST`, and the record says why (Section 6). The CPU target has no device.
+4. Not covered: a simulation of the Python interface (Section 6); the Nose–Hoover chain, which integrates its own state on the host (D163a), and Langevin dynamics, whose thermostat acts in the kernels of every step and has no factor. For these the key resolves to `HOST`, and the record says why (Section 6). The CPU target has no device.
 
 ## 4. Copies and waits
 
@@ -69,11 +69,17 @@ TOWERS_TABLE
 
 | Value | Meaning |
 |---|---|
-| `"DEVICE"` (default) | The coupling step on the device, where the run allows it. Resolves to `HOST`, a rule recorded in `resolved_choices.coupling_step` with its reason: on the CPU target, under a Nose–Hoover chain, under Langevin dynamics, in a run without coupling. |
+| `"DEVICE"` (default) | The coupling step on the device, where the run allows it. Resolves to `HOST`, a rule recorded in `resolved_choices.coupling_step` with its reason: on the CPU target, in a simulation of the Python interface, under a Nose–Hoover chain, under Langevin dynamics, in a run without coupling. |
 | `"HOST"` | The sums are copied and the coupling step computed on the host, as before. |
 
-The setup log line `MDIR: coupling_step` and the manifest's `resolved_choices.coupling_step` give the request, the value, the category (`rule`), the reason, the inputs and `changes_rounding` (false). `mdir pin` writes the key. Python's `Execution` does not take it; a simulation follows the default. The pass also keeps the host path for a function whose buffer of results is full or which has a coupling inside a kernel. Neither happens in the programs that the driver writes.
+The setup log line `MDIR: coupling_step` and the manifest's `resolved_choices.coupling_step` give the request, the value, the category (`rule`), the reason, the inputs and `changes_rounding` (false). `mdir pin` writes the key. A simulation of the Python interface keeps the host path, a rule with its reason. With the device path its tests failed: the bath of a simulation continued from a checkpoint of `mdir run`, and the output of a barostat run in parts against the whole run, differed. The parts of a simulation keep and restore the bath and the cell between calls of the program (`lib/Compiler/Simulation.cpp`, D196, D238), and the device path has not been made to follow them. That is left open (Section 8). The pass also keeps the host path for a function whose buffer of results is full or which has a coupling inside a kernel. Neither happens in the programs that the driver writes.
 
 ## 7. Throughput
 
 TIMING
+
+## 8. What remains
+
+- The new cell of a scaling on the device, so that a C-rescale step reads nothing either. This needs grids fixed under a barostat for MATRIX and GROUPS, and launches that read the cell on the device (Section 3).
+- The coupling step on the device in a simulation of the Python interface (Section 6).
+- Under `GRAPH`, the read of the accepted step that the draws take (D439).

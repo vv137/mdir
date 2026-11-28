@@ -3449,6 +3449,8 @@ mdir::driver::Control::resolveCouplingStep() const {
     return {"HOST", ""};
   if (target != Target::GPU)
     return {"HOST", "the CPU target has no device"};
+  if (pythonSimulation)
+    return {"HOST", "a simulation of the Python interface keeps the host path"};
   if (!thermostat && !barostat)
     return {"HOST", "the run has no coupling step"};
   // The chain integrates its own state on the host (D163a); Langevin

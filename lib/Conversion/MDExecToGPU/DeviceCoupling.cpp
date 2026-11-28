@@ -26,6 +26,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 
 using namespace mlir;
@@ -209,33 +210,86 @@ std::string mdir::kernels::placeCouplingOnDevice(func::FuncOp function,
   // The virial that a TOWERS dispatch observes for a scaling arrives in a
   // buffer of its own (TowersDispatch.cpp), which the host copies: as a
   // readback, so that kernels read it on the device, as they read the sums.
+  // Each copy takes the loads that follow it in its block, up to the next
+  // copy into the same memory; memory with a load that no copy takes so is
+  // left as it is.
+  llvm::MapVector<Value, SmallVector<gpu::MemcpyOp>> observed;
   function.walk([&](gpu::MemcpyOp copy) {
     auto observer = copy.getSrc().getDefiningOp<gpu::AllocOp>();
     auto attr = observer ? observer->getAttrOfType<StringAttr>(
                                "mdir.towers_buffer")
                          : StringAttr();
-    if (!attr || attr.getValue() != "observer" || copy->hasAttr("mdir.readback") ||
-        !copy.getDst().getDefiningOp<memref::AllocaOp>())
-      return;
-    SmallVector<Operation *> group{copy};
-    for (Value token : copy.getAsyncDependencies())
-      if (auto wait = token.getDefiningOp<gpu::WaitOp>())
-        group.push_back(wait);
-    for (Operation *user : copy->getUsers())
-      if (isa<gpu::WaitOp>(user))
-        group.push_back(user);
-    for (Operation *user : copy.getDst().getUsers())
-      if (auto load = dyn_cast<memref::LoadOp>(user)) {
+    if (attr && attr.getValue() == "observer" && !copy->hasAttr("mdir.readback") &&
+        copy.getDst().getDefiningOp<memref::AllocaOp>())
+      observed[copy.getDst()].push_back(copy);
+  });
+  for (auto &[memory, copies] : observed) {
+    llvm::DenseMap<Operation *, SmallVector<Operation *>> groups;
+    llvm::DenseSet<Operation *> taken;
+    for (gpu::MemcpyOp copy : copies) {
+      SmallVector<Operation *> &group = groups[copy];
+      group.push_back(copy);
+      for (Value token : copy.getAsyncDependencies())
+        if (auto wait = token.getDefiningOp<gpu::WaitOp>())
+          group.push_back(wait);
+      for (Operation *user : copy->getUsers())
+        if (isa<gpu::WaitOp>(user))
+          group.push_back(user);
+      for (Operation *op = copy->getNextNode(); op; op = op->getNextNode()) {
+        if (auto other = dyn_cast<gpu::MemcpyOp>(op); other && other.getDst() == memory)
+          break;
+        auto load = dyn_cast<memref::LoadOp>(op);
+        if (!load || load.getMemRef() != memory)
+          continue;
+        taken.insert(load);
         group.push_back(load);
         for (Value i : load.getIndices())
           if (Operation *def = i.getDefiningOp();
               def && def->getNumOperands() == 0 && def->hasOneUse())
             group.push_back(def);
       }
-    IntegerAttr id = OpBuilder(copy).getI64IntegerAttr(results.readback());
-    for (Operation *op : group)
-      op->setAttr("mdir.readback", id);
-  });
+    }
+    bool all = llvm::all_of(memory.getUsers(), [&](Operation *user) {
+      return !isa<memref::LoadOp>(user) || taken.contains(user);
+    });
+    if (!all)
+      continue;
+    // Another evaluation of the step may write the buffer again before a
+    // kernel reads it (the virials before and after a scaling), so each copy
+    // takes a snapshot of its own on the device, which only it writes, as
+    // the helpers of device frames do. Marked apart as well: the copy stays
+    // where the dispatch put it.
+    auto type = cast<MemRefType>(memory.getType());
+    if (!type.hasStaticShape() || type.getRank() != 1 || type.getNumElements() > 16)
+      continue;
+    for (gpu::MemcpyOp copy : copies) {
+      OpBuilder top = OpBuilder::atBlockBegin(&function.getBody().front());
+      auto sourceType = cast<MemRefType>(copy.getSrc().getType());
+      Value stable = gpu::AllocOp::create(top, copy.getLoc(), sourceType, Type(),
+                                          ValueRange(), ValueRange(), ValueRange())
+                         .getMemref();
+      OpBuilder before(copy);
+      for (Value token : copy.getAsyncDependencies())
+        if (Operation *wait = token.getDefiningOp<gpu::WaitOp>())
+          before.setInsertionPoint(wait);
+      Value source = copy.getSrc();
+      auto snapshot = launchOne(before, copy.getLoc(), [&](OpBuilder &k) {
+        for (int64_t n = 0, e = sourceType.getNumElements(); n != e; ++n) {
+          Value i = arith::ConstantIndexOp::create(k, copy.getLoc(), n);
+          Value x = memref::LoadOp::create(k, copy.getLoc(), source, i);
+          memref::StoreOp::create(k, copy.getLoc(), x, stable, i);
+        }
+      });
+      results.bringIn(snapshot);
+      copy.getSrcMutable().assign(stable);
+      OpBuilder at(copy);
+      IntegerAttr id = at.getI64IntegerAttr(results.readback());
+      for (Operation *op : groups[copy]) {
+        op->setAttr("mdir.readback", id);
+        op->setAttr("mdir.observer_readback", at.getUnitAttr());
+      }
+    }
+  }
   Location loc = function.getLoc();
   OpBuilder b(function.getContext());
   Type f64 = b.getF64Type();

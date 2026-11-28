@@ -474,6 +474,9 @@ struct Control {
   /// sums, as before.
   std::string couplingStep = "DEVICE";
   bool couplingStepGiven = false;
+  /// A simulation of the Python interface, which keeps the coupling step on
+  /// the host: its activations and reporters read the bath between them.
+  bool pythonSimulation = false;
   /// Where the coupling step runs, and why it runs on the host where the
   /// request was `DEVICE` (empty otherwise).
   std::pair<llvm::StringRef, llvm::StringRef> resolveCouplingStep() const;

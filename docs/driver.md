@@ -458,8 +458,8 @@ draws that the host makes from the seed and the step; the kernels that
 scale read the factor there, the bath stays on the device until a row, a
 checkpoint or the return, and a scaling of the cell copies only its
 pressures to the host. `"HOST"` copies the sums and computes on the host,
-as before. Both give the same trajectory. On the CPU target, under a
-Nose–Hoover chain and under Langevin dynamics the key resolves to
+as before. Both give the same trajectory. On the CPU target, in a
+simulation of the Python interface, under a Nose–Hoover chain and under Langevin dynamics the key resolves to
 `"HOST"`. The setup log line `MDIR: coupling_step` and the manifest's
 `resolved_choices.coupling_step` give the request, the value and the
 reason; `mdir pin MANIFEST` writes the key.

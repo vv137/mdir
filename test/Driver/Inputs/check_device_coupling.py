@@ -237,13 +237,16 @@ if wanted("reads-npt"):
 TOWERS = Path(__file__).with_name("step-graph.toml.in").read_text()
 
 
-def towers(name, coupling, mode, ensemble, steps=200, energy=100):
+def towers(name, coupling, mode, ensemble, steps=200, energy=100, streams=None):
     directory = work / name
     directory.mkdir(parents=True)
     control = TOWERS.format(inputs=inputs, mode=mode, steps=steps, period=10)
     control = control.replace("energy_interval = 10", f"energy_interval = {energy}")
     control = control.replace("checkpoint_interval = 10", f"checkpoint_interval = {energy}")
     control = control.replace('step_graph = "', f'coupling_step = "{coupling}"\nstep_graph = "')
+    if streams:
+        control += f'term_streams = "{streams}"\n'
+
     if ensemble == "NPT":
         control = control.replace('ensemble    = "NVT"', 'ensemble    = "NPT"\npressure    = 500.0')
         control += '\n[barostat]\nmethod = "C-RESCALE"\ntime_constant = 0.1\n'
@@ -257,10 +260,20 @@ def towers(name, coupling, mode, ensemble, steps=200, energy=100):
     with h5py.File(directory / "state.h5") as f:
         group = f["particles/all"]
         state = {k: group[k + "/value"][()] for k in ("position", "velocity")}
-    rows = re.findall(r"^INFO: +(\d+) ", log.stdout, re.M)
+    rows = [row.split() for row in re.findall(r"^INFO: +(\d+ .+)$", log.stdout, re.M)]
     sizes = dict((int(a), int(b)) for a, b in
                  re.findall(r"host reads of (\d+) bytes: (\d+)", log.stderr))
     return dict(state=state, rows=rows, sizes=sizes)
+
+
+def same_rows(reference, device, what):
+    """The rows fall on the same steps, and their values agree within the
+    tolerances of check_term_streams_graph.py."""
+    assert [r[0] for r in device["rows"]] == [r[0] for r in reference["rows"]], what
+    assert len(device["rows"]) > 0, what
+    a = np.array([r[1:] for r in reference["rows"]], dtype=float)
+    b = np.array([r[1:] for r in device["rows"]], dtype=float)
+    np.testing.assert_allclose(b, a, rtol=1e-4, atol=0.05, err_msg=str(what))
 
 
 if wanted("towers"):
@@ -269,7 +282,7 @@ if wanted("towers"):
         again = towers(f"towers-{ensemble}-host-1", "HOST", "LAUNCH", ensemble)
         for mode in ("LAUNCH", "SPANS", "GRAPH"):
             device = towers(f"towers-{ensemble}-device-{mode}", "DEVICE", mode, ensemble)
-            assert device["rows"] == reference["rows"], (ensemble, mode)
+            same_rows(reference, device, (ensemble, mode))
             report = []
             for key in ("position", "velocity"):
                 x = reference["state"][key]
@@ -293,3 +306,31 @@ if wanted("towers"):
               f"{dict(sorted(grown['HOST'].items()))}, device {dict(sorted(grown['DEVICE'].items()))}")
         assert grown["DEVICE"] == ({64: 20} if ensemble == "NPT" else {}), grown
         assert grown["HOST"].get(8192, 0) >= 20, grown
+
+# The reciprocal sum on the second stream (term_streams, D449), whose
+# virial a scaling reads on the device after a join: NPT within the spread
+# of the host's coupling step, the rows' values too, and the copies.
+if wanted("towers-streams"):
+    for streams in ("RECIPROCAL", "TERMS"):
+        reference = towers(f"streams-{streams}-host-0", "HOST", "LAUNCH", "NPT", streams=streams)
+        again = towers(f"streams-{streams}-host-1", "HOST", "LAUNCH", "NPT", streams=streams)
+        for mode in ("LAUNCH", "SPANS"):
+            device = towers(f"streams-{streams}-device-{mode}", "DEVICE", mode, "NPT",
+                            streams=streams)
+            same_rows(reference, device, (streams, mode))
+            for key in ("position", "velocity"):
+                x = reference["state"][key]
+                spread = np.linalg.norm(again["state"][key] - x) / np.linalg.norm(x)
+                change = np.linalg.norm(device["state"][key] - x) / np.linalg.norm(x)
+                assert change <= max(10 * spread, 1e-5), (streams, mode, key, change, spread)
+            print(f"towers-npt-{streams.lower()}-{mode.lower()}: close")
+        grown = {}
+        for coupling in ("HOST", "DEVICE"):
+            pair = [towers(f"streams-{streams}-{coupling}-{steps}", coupling, "SPANS", "NPT",
+                           steps=steps, energy=steps, streams=streams) for steps in (200, 400)]
+            sizes = set(pair[0]["sizes"]) | set(pair[1]["sizes"])
+            grown[coupling] = {k: pair[1]["sizes"].get(k, 0) - pair[0]["sizes"].get(k, 0)
+                               for k in sizes if pair[1]["sizes"].get(k, 0) != pair[0]["sizes"].get(k, 0)}
+        print(f"towers-npt-{streams.lower()} reads for 20 more couplings: host "
+              f"{dict(sorted(grown['HOST'].items()))}, device {dict(sorted(grown['DEVICE'].items()))}")
+        assert grown["DEVICE"] == {64: 20}, grown

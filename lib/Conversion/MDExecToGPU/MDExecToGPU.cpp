@@ -10990,10 +10990,11 @@ static LogicalResult keepFrameParametersOnDevice(func::FuncOp function) {
 static LogicalResult keepReadbacksOnDevice(func::FuncOp function,
                                            bool joinSide = false) {
   const bool batch = function->hasAttr("mdir.frame_batch");
-  // With the coupling step on the device, a kernel of the main stream also
-  // reads the sums of the second stream, the reciprocal virial among them,
-  // after a join by event, as a device frame does (D[device-coupling]).
-  const bool sideSums = batch || joinSide;
+  // With the coupling step on the device, its one-thread kernels on the
+  // main stream also read the sums of the second stream, the reciprocal
+  // virial among them, after a join by event, as a device frame does
+  // (D[device-coupling]). Other kernels keep their host values.
+  bool sideSums = batch;
   llvm::DenseMap<Value, Value> deviceOf;
   function.walk([&](gpu::MemcpyOp copy) {
     if (copy->hasAttr("mdir.readback"))
@@ -11052,6 +11053,11 @@ static LogicalResult keepReadbacksOnDevice(func::FuncOp function,
       launches.push_back(launch);
   });
   for (gpu::LaunchOp launch : launches) {
+    bool coupling = joinSide && launch->hasAttr("mdir.coupling_step");
+    if (!batch && sideSums != coupling) {
+      sideSums = coupling;
+      fromSums.clear();
+    }
     Region &body = launch.getBody();
     llvm::SetVector<Value> captured;
     body.walk([&](Operation *op) {
@@ -11162,6 +11168,10 @@ static LogicalResult keepReadbacksOnDevice(func::FuncOp function,
 
   // The host's chains of pure ops and loads that nothing uses any more,
   // and then the copies whose loads are all gone.
+  if (!batch && sideSums != joinSide) {
+    sideSums = joinSide;
+    fromSums.clear();
+  }
   bool erased = true;
   while (erased) {
     erased = false;
@@ -11865,6 +11875,11 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   }
   if (failed(keepReadbacksOnDevice(function, deviceCoupling)))
     return failure();
+  // The observed virials of TOWERS stay where their dispatch read them.
+  function.walk([](Operation *op) {
+    if (op->removeAttr("mdir.observer_readback"))
+      op->removeAttr("mdir.readback");
+  });
   deferReadbacks(function);
 
   releaseStack(function);
