@@ -31,3 +31,19 @@ The block can reuse the tile's shared force planes after their last use.
 It publishes one atomic addition per populated tensor component. The
 exclusion blocks continue to cancel integer force words and conversion
 votes in their original arithmetic.
+
+## Accumulator range
+
+An independent binary64 direct sum on the four initial pressure frames
+found a largest physical diagonal term of $751$ kJ/mol and a largest
+excluded term of $4.31\times10^6$ kJ/mol. The greatest component sum of
+absolute terms was $2.52\times10^7$ kJ/mol over physical pairs and
+$2.10\times10^9$ kJ/mol over excluded pairs. An accumulator for
+add-then-subtract must cover the large excluded terms and partial sums.
+Allowing both signs, a signed 64-bit Q32 pair word covers magnitudes below
+$2^{31}$ kJ/mol. Two 64-bit limbs cover the sum of all such words, including
+one cancellation per excluded pair. TOWERS admits fewer than $2^{26}$
+atoms, so the number of additions and cancellations to each component is
+less than $2^{52}$ and even the sum of their absolute word magnitudes is
+less than $2^{115}$. Round-to-nearest Q32 gives an absolute quantization
+bound of $2^{-33}$ kJ/mol per included pair.
