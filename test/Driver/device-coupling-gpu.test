@@ -1,5 +1,5 @@
 # REQUIRES: cuda, hdf5, h5py
-# The coupling step on the device (D[device-coupling]) against the host's
+# The coupling step on the device (D452) against the host's
 # (`coupling_step = "HOST"`, the path before): bitwise in the deterministic
 # mode with MATRIX, mixed and double, NVT and NPT in each coupling of the
 # barostat, with spans and with launches; a continuation; GROUPS within the

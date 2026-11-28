@@ -238,7 +238,7 @@ explicit token does not by itself make a copy asynchronous to the host or
 license a read of an unfinished destination; moving waits or removing the
 runtime-wide synchronization requires a separate proof and measurement.
 
-**The coupling step on the device** (D[device-coupling]). The step that
+**The coupling step on the device** (D452). The step that
 ends a period of coupling computed the factor of stochastic velocity
 rescaling [[Bussi2007]](references.md#bussi2007), the heat of the bath, and
 under a barostat the pressure and the strain of stochastic cell rescaling

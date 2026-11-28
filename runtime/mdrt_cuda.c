@@ -133,7 +133,7 @@ static void report(void) {
 
 /* The copies from the device to the host and the waits of the host for the
    device, counted with MDRT_HOST_READS set and reported at the exit
-   (D[device-coupling]): what the tests of the coupling step on the device
+   (D452): what the tests of the coupling step on the device
    count, whatever submission path the run takes. */
 static int hostReads = -1;
 static long long readCopies, readBytes, readWaits, flagWaits;
@@ -1537,7 +1537,7 @@ struct Buffer1 {
 
 /* The host's copy of the results of the global sums of a function and of
    its coupling step, page-locked so that the copy from the device is a
-   transfer of the device's engine (D[device-coupling]; the maintainer's
+   transfer of the device's engine (D452; the maintainer's
    addition to #1026). Each place of the module that takes one has a number
    of its own and keeps its memory for the process; a larger request
    replaces it. */

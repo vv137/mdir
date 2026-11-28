@@ -1,4 +1,4 @@
-"""Where the coupling step runs (D[device-coupling]): the record of
+"""Where the coupling step runs (D452): the record of
 `[execution] coupling_step` from `mdir check --json`, for each case that
 keeps the host path, and the refusal of a value that is not a choice."""
 import json

@@ -88,7 +88,7 @@ for name in ("amber", "gromacs", "constraints", "triclinic", "nvt", "npt", "char
         assert program.ir == cli_ir, f"{name}/{precision}: " + "".join(difflib.unified_diff(cli_ir.splitlines(True), program.ir.splitlines(True)))
         assert program.pipeline == subprocess.check_output([cli, "emit", "--stage=pipeline", str(control)], text=True).strip()
         # A simulation of the Python interface keeps the coupling step on
-        # the host (D[device-coupling]), on the GPU too.
+        # the host (D452), on the GPU too.
         assert "device-coupling" not in program.pipeline, program.pipeline
         assert "llvm.func" in program.lowered_ir
         assert program.plan["target"] == target

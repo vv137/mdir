@@ -1,6 +1,6 @@
 """Fixed explicit CLI inputs for native model parity in MD units. The CLI
 asks for the coupling step on the host, which a simulation of the Python
-interface keeps (D[device-coupling]), so that the two pipelines agree."""
+interface keeps (D452), so that the two pipelines agree."""
 import pathlib
 import sys
 root = pathlib.Path(sys.argv[1])

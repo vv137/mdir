@@ -1,4 +1,4 @@
-// The coupling step on the device (D[device-coupling], issue #1026).
+// The coupling step on the device (D452, issue #1026).
 //
 // The host computes the factor of stochastic velocity rescaling, the heat
 // that goes to the bath, and (under a barostat) the strain and the cell

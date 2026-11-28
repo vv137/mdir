@@ -401,7 +401,7 @@ double mdrtBussiFactor(int64_t seed, int64_t step, double kinetic,
 }
 
 /* The random numbers of mdrtBussiFactor alone, for the coupling step on
-   the device (D[device-coupling]): the numbers depend only on the seed and
+   the device (D452): the numbers depend only on the seed and
    the step, so the host draws them without the kinetic energy, and the
    device evaluates the expression of mdrtBussiFactor above in the same
    order of operations. The first normal number of stream 0 at `step`. */

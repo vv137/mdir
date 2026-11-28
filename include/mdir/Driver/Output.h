@@ -603,7 +603,7 @@ double mdrtNoseHooverFactor(int64_t step, double kinetic);
 /// (D203).
 void mdrtWriteSolvent(double kinetic, double half);
 /// The energy of the bath, which a coupling step on the device starts its
-/// own copy from, and the copy that it gives back (D[device-coupling]).
+/// own copy from, and the copy that it gives back (D452).
 double mdrtBath();
 void mdrtSetBath(double energy);
 /// The coordinates of the terms over centers of groups at the step `step`

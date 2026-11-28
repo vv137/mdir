@@ -530,7 +530,7 @@ def ConvertMDExecToGPU
     Option<"deviceCoupling", "device-coupling", "bool", /*default=*/"false",
            "Compute the factor of stochastic velocity rescaling and the "
            "bath of the coupling step on the device, so that the step "
-           "reads no sums on the host (D[device-coupling])">
+           "reads no sums on the host (D452)">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",

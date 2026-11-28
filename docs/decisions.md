@@ -747,6 +747,7 @@ specification follow those made with it.
 | [D449](decisions/D449.md) | **The force terms of a step may run on three device streams, chosen by `[execution] term_streams`.** `SINGLE` (the default) issues every force term on one stream. | 2026-11-27 |
 | [D450](decisions/D450.md) | Graph replay of ordinary TOWERS steps (D439, `step_graph = "GRAPH"`) under stochastic cell rescaling. The kernels of a chunk read the arguments that the cell sets from a device mirror, which the host fills before each chunk. | 2026-11-28 |
 | [D451](decisions/D451.md) | **Use the five-pass Gaussian PME mesh transform (D435) across the measured mesh range on mixed-precision `sm_89` devices.**  AUTO uses the axis transform for order-four Gaussian PME in non-deterministic mixed precision on `sm_89`, including orthorhombic and triclinic cells. | 2026-11-28 |
+| [D452](decisions/D452.md) | On the GPU the arithmetic of the coupling step on the sums of the step runs on the device. `[execution] coupling_step = "DEVICE"`, the default on the GPU; `"HOST"` keeps the path of before. | 2026-11-28 |
 <!-- end decisions-table -->
 
 

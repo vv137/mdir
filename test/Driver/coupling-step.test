@@ -1,4 +1,4 @@
-# Where the coupling step runs (D[device-coupling]): `[execution]
+# Where the coupling step runs (D452): `[execution]
 # coupling_step` is DEVICE by default on the GPU, and the record names the
 # reason of each case that keeps the host path: a request, the CPU target,
 # a Nose-Hoover chain, Langevin dynamics, a run without coupling. A value

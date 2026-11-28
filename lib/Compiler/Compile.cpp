@@ -504,7 +504,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // ... and builds them on the device where it does not take them
        // (D257).
        << "device-tuples=true "
-       // The coupling step on the device (D[device-coupling]).
+       // The coupling step on the device (D452).
        << (control.resolveCouplingStep().first == "DEVICE"
                ? "device-coupling=true "
                : "")

@@ -1,7 +1,7 @@
 """Compare runs whose coupling step runs on the device
 (`[execution] coupling_step = "DEVICE"`, the default) with runs whose
 coupling step runs on the host (`"HOST"`, the path before
-D[device-coupling]), and count the copies to the host."""
+D452), and count the copies to the host."""
 import json
 import os
 from pathlib import Path

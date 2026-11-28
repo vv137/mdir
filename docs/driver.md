@@ -451,7 +451,7 @@ give the request, the value, the reason, the inputs and
 step graph (`step_graph`) captures them as parallel branches.
 
 The `[execution] coupling_step` key chooses where the arithmetic of the
-coupling step on the sums of the step runs (D[device-coupling]).
+coupling step on the sums of the step runs (D452).
 `"DEVICE"`, the default, computes the factor of V-rescale, the heat of the
 bath and the pressures of C-rescale on the device, by one thread, from the
 draws that the host makes from the seed and the step; the kernels that

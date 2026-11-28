@@ -1,5 +1,5 @@
 # REQUIRES: cuda, hdf5, h5py
-# The coupling step on the device (D[device-coupling]) with TOWERS, which
+# The coupling step on the device (D452) with TOWERS, which
 # has no deterministic mode: within ten times the spread of two runs of the
 # host's coupling step under LAUNCH, with launches, spans and graph replay
 # (D439, D450), NVT and NPT; and the copies to the host per coupling: the

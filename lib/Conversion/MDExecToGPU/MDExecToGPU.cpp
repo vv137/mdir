@@ -357,7 +357,7 @@ public:
   /// An opt-in compiler strategy for the integer scans of the groups build.
   bool singlePassGroupScan = false;
   /// Whether the arithmetic of the coupling step on the global sums runs on
-  /// the device (`device-coupling`, D[device-coupling]).
+  /// the device (`device-coupling`, D452).
   bool deviceCoupling = false;
   /// Whether the loops over tuples of the module may add to their members
   /// in the order of the threads: no loop over tuples states `fixed_order` for
@@ -1171,7 +1171,7 @@ Cell Lowering::getResults(Type element, Location loc) {
       builder, loc, getDeviceType({resultCapacity}, element), ValueRange());
   // Page-locked memory of the runtime for the f64 results, which the
   // coupling step and the rows read, with the coupling step on the device
-  // (D[device-coupling]); the stack otherwise.
+  // (D452); the stack otherwise.
   if (element.isF64() && deviceCoupling) {
     Type wide = builder.getI64Type();
     func::FuncOp memory = getOrDeclare(
@@ -11001,7 +11001,7 @@ static LogicalResult keepReadbacksOnDevice(func::FuncOp function,
   // With the coupling step on the device, its one-thread kernels on the
   // main stream also read the sums of the second stream, the reciprocal
   // virial among them, after a join by event, as a device frame does
-  // (D[device-coupling]). Other kernels keep their host values.
+  // (D452). Other kernels keep their host values.
   bool sideSums = batch;
   llvm::DenseMap<Value, Value> deviceOf;
   function.walk([&](gpu::MemcpyOp copy) {
@@ -11312,7 +11312,7 @@ static void deferReadbacks(func::FuncOp function) {
 
 LogicalResult Lowering::inlineFrameReadbacks(func::FuncOp function) {
   // A coupling step on the device under a barostat takes the reciprocal
-  // virial that the helpers of PME read back as well (D[device-coupling]).
+  // virial that the helpers of PME read back as well (D452).
   bool coupling = deviceCoupling &&
       function.walk([](func::CallOp call) {
         return call.getCallee().starts_with("mdrtBarostatStrain")
@@ -11884,7 +11884,7 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
       return *scalars;
     };
     std::string reason = kernels::placeCouplingOnDevice(function, coupling);
-    // Not reached by the programs that the driver writes (D[device-coupling],
+    // Not reached by the programs that the driver writes (D452,
     // Section 6), but said where it is.
     if (!reason.empty())
       function.emitWarning() << "coupling_step: the coupling step of this "

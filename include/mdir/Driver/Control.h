@@ -467,7 +467,7 @@ struct Control {
   /// request, the value, the category (a rule), the reason, its inputs,
   /// and whether it changes the rounding of the sum of the forces.
   llvm::json::Object termStreamsRecord() const;
-  /// `[execution] coupling_step` (D[device-coupling]): `DEVICE`, the
+  /// `[execution] coupling_step` (D452): `DEVICE`, the
   /// default, computes the arithmetic of the coupling step on the global
   /// sums of the step on the device, so that a step that writes no output
   /// reads nothing on the host; `HOST`, on the host, after a copy of the

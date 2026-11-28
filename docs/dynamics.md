@@ -427,7 +427,7 @@ Since the ops lower to the same calls with the same arguments, they draw
 what the driver draws today.
 
 With the coupling step on the device (`[execution] coupling_step =
-"DEVICE"`, D[device-coupling]) the draws of `dyn.velocity_rescaling` stay
+"DEVICE"`, D452) the draws of `dyn.velocity_rescaling` stay
 on the host, where they need neither the state nor a wait:
 `mdrtBussiNormal` and `mdrtBussiRest` return the normal number and the sum
 of squares that `mdrtBussiFactor` draws, and the device evaluates the rest

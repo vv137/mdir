@@ -1022,7 +1022,7 @@ void _mlir_ciface_mdrtWriteTunableGradientField(int64_t index, void *values,
 
 void _mlir_ciface_mdrtAddBath(double energy) { current->bath += energy; }
 
-// The bath of a coupling step on the device (D[device-coupling]): the
+// The bath of a coupling step on the device (D452): the
 // device adds to its own copy, which starts from this value, and the host
 // takes the copy back before every row, checkpoint and return.
 double mdrtBath() { return current->bath; }

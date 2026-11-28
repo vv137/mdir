@@ -1,4 +1,4 @@
-// The coupling step on the device (D[device-coupling], issue #1026).
+// The coupling step on the device (D452, issue #1026).
 #pragma once
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"

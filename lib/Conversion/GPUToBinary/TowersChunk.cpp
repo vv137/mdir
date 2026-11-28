@@ -762,7 +762,7 @@ LogicalResult lowerTowersChunks(ModuleOp module, func::FuncOp fn, ArrayRef<scf::
   SmallVector<func::CallOp> calls;
   fn.walk([&](func::CallOp call) { calls.push_back(call); });
   // The second draw of a coupling step on the device takes the step that the
-  // first read, which precedes it in its block (D[device-coupling]).
+  // first read, which precedes it in its block (D452).
   DenseMap<std::pair<Block *, Value>, Value> drawn;
   for (auto f : calls) {
     StringRef name = f.getCallee();
@@ -772,7 +772,7 @@ LogicalResult lowerTowersChunks(ModuleOp module, func::FuncOp fn, ArrayRef<scf::
     } else if (name == "mdrtBussiFactor" || name == "mdrtBussiNormal" ||
                name == "mdrtBussiRest" || name == "mdrtWriteEnergies") {
       // The draws of a coupling step on the device take the step as the
-      // factor did (D[device-coupling]).
+      // factor did (D452).
       unsigned slot = name == "mdrtWriteEnergies" ? 0 : 1;
       std::pair<Block *, Value> key{f->getBlock(), f.getOperand(slot)};
       if (name == "mdrtBussiRest")
