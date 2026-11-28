@@ -7,13 +7,17 @@ measured mesh range on mixed-precision `sm_89` devices.**
 
 AUTO uses the axis transform for order-four Gaussian PME in
 non-deterministic mixed precision on `sm_89`, including orthorhombic
-and triclinic cells. Each axis must be 40–224 points long and the mesh
-must contain 64,000–2,612,736 points, inclusive. The transform also
+and triclinic cells. Each axis must be 18–224 points long and the mesh
+must contain 7,200–2,612,736 points, inclusive. The transform also
 requires even Z and supported factorizations of X, Y, and Z/2. The
-range spans the paired benchmark meshes 40³, 54³, 120 × 70 × 70, and
-224 × 108 × 108. The rule applies across neighbor traversals and
-supersedes the earlier Gaussian mesh lists, including the smaller D435
-folding grids.
+range covers the D435 folding meshes, starting at 18 × 20 × 20,
+and extends through the paired benchmark mesh of 224 × 108 × 108.
+The rule applies across neighbor traversals.
+
+For the D445 prolate split, AUTO selects the triclinic axis plan on
+the four D435 folding meshes (18 × 20 × 20, 22 × 24 × 24, 28 × 28 × 30,
+and 32³). The existing target, precision, traversal, and split checks
+apply to those plans.
 
 The setup log and the manifest's `effective.pme.fft_plans` give the
 mesh, selected backend, and reason for each evaluation. Gaussian AUTO

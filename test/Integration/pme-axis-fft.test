@@ -23,12 +23,18 @@
 # RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --tilted --grid 72 64 60 | mdir-opt --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=IN-RANGE --implicit-check-not=mdrtCudaFFT
 # IN-RANGE: backend = "axis"
 # IN-RANGE-SAME: influence = "axis tables and triclinic Gaussian"
-# IN-RANGE-SAME: reason = "supported Gaussian FFT with axes 40-224 and 64000-2612736 total points"
+# IN-RANGE-SAME: reason = "supported Gaussian FFT with axes 18-224 and 7200-2612736 total points"
 # IN-RANGE: call @mdrt_gpu_pme_axis_fft_72x64x60_triclinic_observed
 # RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --grid 144 144 144 | mdir-opt --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=OUTSIDE --implicit-check-not=fft_stage
-# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --tilted --grid 22 24 24 | mdir-opt --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=OUTSIDE --implicit-check-not=fft_stage
+# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --grid 18 18 20 | mdir-opt --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=OUTSIDE --implicit-check-not=fft_stage
+# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --grid 16 24 24 | mdir-opt --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=OUTSIDE --implicit-check-not=fft_stage
+# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --tilted --grid 18 20 20 | mdir-opt --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=FOLDING --implicit-check-not=mdrtCudaFFT
+# FOLDING: backend = "axis"
+# FOLDING-SAME: grid = array<i64: 18, 20, 20>
+# FOLDING-SAME: reason = "supported Gaussian FFT with axes 18-224 and 7200-2612736 total points"
+# FOLDING: call @mdrt_gpu_pme_axis_fft_18x20x20_triclinic_observed
 # OUTSIDE: backend = "cufft"
-# OUTSIDE-SAME: reason = "outside Gaussian FFT timing range (axes 40-224, 64000-2612736 total points)"
+# OUTSIDE-SAME: reason = "outside Gaussian FFT timing range (axes 18-224, 7200-2612736 total points)"
 # OUTSIDE: call @mdrtCudaFFTForward3DF32
 # OUTSIDE: call @mdrtCudaFFTBackward3DF32
 # AUTO: call @mdrt_gpu_pme_axis_fft_40x40x40_observed

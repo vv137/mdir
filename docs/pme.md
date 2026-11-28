@@ -1335,11 +1335,12 @@ Unoccupied lanes skip the loads and products but reach every block barrier.
 
 On `sm_89`, D[axis-fft-gaussian] automatically selects the emitter
 for non-deterministic mixed-precision order-four Gaussian PME, with
-either an orthorhombic or triclinic cell. Each axis must be 40–224 points
-long, the grid must contain 64,000–2,612,736 points in total, and its axis
+either an orthorhombic or triclinic cell. Each axis must be 18–224 points
+long, the grid must contain 7,200–2,612,736 points in total, and its axis
 lengths must meet the factorization requirements above. The paired
-benchmarks span 40³, 54³, 120 × 70 × 70, and 224 × 108 × 108. The range
-applies across neighbor traversals. Outside the measured range, AUTO
+benchmarks include the D435 folding meshes, starting at 18 × 20 × 20,
+and extend through 224 × 108 × 108. The range applies across neighbor
+traversals. Outside the measured range, AUTO
 keeps cuFFT and reports the range in its reason.
 
 Use `MDIR_PME_AXIS_FFT=off` to pin cuFFT or `on` to request the
@@ -1398,13 +1399,14 @@ setup log and manifest record the backend and reason. AUTO uses the axis
 plan only for mixed TOWERS on `sm_89` with `continuity = 2`,
 `basis_terms = 8` and `window = "BSPLINE"` (four points), on the
 orthorhombic meshes where it was faster in both timing orders: 30³, 48³
-and 105 × 60 × 60. It keeps cuFFT on 189 × 90 × 90, where the axis plan
-was slower, and on every other mesh, split, precision or target, each
-with its reason. The prolate window (`window = "PROLATE"`, of any order)
-was not timed: AUTO keeps cuFFT for it, and
-`MDIR_PME_AXIS_FFT=on` selects the axis plan for it. A tilted cell keeps
-cuFFT under AUTO (`unqualified triclinic mesh`); the override runs the
-triclinic axis plan, which the tests compare with cuFFT. The automatic
+and 105 × 60 × 60. On a triclinic cell the same target and split
+qualify the four D435 folding meshes (18 × 20 × 20, 22 × 24 × 24,
+28 × 28 × 30, and 32³), as recorded in D[axis-fft-gaussian]. AUTO keeps
+cuFFT on 189 × 90 × 90, where the axis plan was slower, and reports its
+reason when a mesh, split, precision or target falls outside the rule.
+The prolate window (`window = "PROLATE"`, of any order) uses cuFFT under
+AUTO. The override can request the axis plan for this window and other
+supported meshes. The automatic
 grids of the B-spline window are not in the list yet (#1003). The
 override also permits measuring unqualified meshes and double precision.
 Unsupported lengths such as 188 (prime factor 47) keep cuFFT. The split bandwidth comes from `bandwidth` or the usual

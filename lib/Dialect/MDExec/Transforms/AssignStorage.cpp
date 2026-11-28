@@ -1450,9 +1450,12 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
     // the four-point B-spline window was timed; the prolate window keeps
     // cuFFT under AUTO.
     bool cubic = op.getSplineAssignment() && op.getOrder() == 4;
+    // Reserve pitched storage for the folding meshes so lowering can
+    // select the triclinic plan (D435, #961).
     measuredMesh = cubic && (grid == ArrayRef<int64_t>({30, 30, 30}) ||
                              grid == ArrayRef<int64_t>({48, 48, 48}) ||
-                             grid == ArrayRef<int64_t>({105, 60, 60}));
+                             grid == ArrayRef<int64_t>({105, 60, 60}) ||
+                             kernels::isFoldingFFTMesh(grid));
     measuredCuFFT = cubic && grid == ArrayRef<int64_t>({189, 90, 90});
   }
   bool requestAxis = axisFFT == "on" ||

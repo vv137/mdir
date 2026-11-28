@@ -4,7 +4,7 @@ D435 and D[axis-fft-gaussian] use the Gaussian PME mesh selected by
 `[pme]`, and D445 uses the prolate PME mesh. The setup log and manifest
 report the device convolution backend and the reason for its selection.
 Gaussian AUTO qualifies supported meshes on mixed-precision `sm_89`
-with 40–224 points per axis and 64,000–2,612,736 points in total.
+with 18–224 points per axis and 7,200–2,612,736 points in total.
 See the PME reference for [Gaussian](../pme.md#five-pass-gaussian-convolution-on-a-device)
 and [prolate](../pme.md#cutoff-continuity-of-the-prolate-splitting) choices.
 

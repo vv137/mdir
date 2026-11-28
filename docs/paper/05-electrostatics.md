@@ -455,7 +455,7 @@ each complex index. These are f32 in mixed precision. With
 D[axis-fft-gaussian], an explicit double-precision run uses f64 for the
 mesh, the butterflies, and the exchange and real-fold phases. Automatic
 selection on `sm_89` uses the mixed transform for supported Gaussian
-meshes with 40–224 points per axis and 64,000–2,612,736 points overall
+meshes with 18–224 points per axis and 7,200–2,612,736 points overall
 in both orthorhombic and triclinic cells. Pairing
 the scalars groups the real and imaginary components
 in one vector access while preserving the butterfly evaluation order. In X, the inverse follows the same

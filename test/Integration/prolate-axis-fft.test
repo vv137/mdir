@@ -27,6 +27,14 @@
 # RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --tilted --grid 30 30 30 | sed -E '/md_exec.reciprocal/s/(coulomb\([^)]+\))/\1 prolate spline_assignment/' | mdir-opt --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=TILTED --implicit-check-not=fft_stage
 # TILTED: backend = "cufft"
 # TILTED-SAME: reason = "unqualified triclinic mesh"
+# The 18 × 20 × 20 Trp-cage folding mesh qualifies for a triclinic cell.
+# RUN: %mdir_python %S/reciprocal-grid.py emit --mixed --tilted --grid 18 20 20 | sed -E '/md_exec.reciprocal/s/(coulomb\([^)]+\))/\1 prolate spline_assignment/' | mdir-opt --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=FOLDING --implicit-check-not=mdrtCudaFFT
+# FOLDING: backend = "axis"
+# FOLDING-SAME: grid = array<i64: 18, 20, 20>
+# FOLDING-SAME: influence = "prolate radial spectrum and window deconvolution"
+# FOLDING-SAME: reason = "qualified triclinic prolate folding mesh"
+# FOLDING: call @mdrt_gpu_pme_axis_fft_18x20x20_prolate_triclinic_observed
+# RUN: sed 's/grid(\[30, 30, 30\])/grid([18, 20, 20])/' %t | mdir-opt --md-exec-assign-algebra --md-exec-assign-storage="memory=device pme-axis-fft=auto" --convert-md-exec-to-gpu --symbol-dce | FileCheck %s --check-prefix=MESH --implicit-check-not=fft_stage
 # RUN: not mdir-opt %t --md-exec-assign-storage="memory=device pme-axis-fft=bogus" 2>&1 | FileCheck %s --check-prefix=BAD
 # BAD: expected pme-axis-fft to be auto, auto-cufft, on, or off
 # OFF: backend = "cufft"

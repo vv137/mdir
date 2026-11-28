@@ -6205,8 +6205,10 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     fallback = "unqualified spline order";
   else if (op.getDispersion() || op.getP3m())
     fallback = "requires Gaussian influence";
-  else if (tilted && radial && request != "on")
+  else if (radial && request != "on" && tilted && !isFoldingFFTMesh(grid))
     fallback = "unqualified triclinic mesh";
+  else if (radial && request == "auto" && !tilted && isFoldingFFTMesh(grid))
+    fallback = "no qualified prolate axis timing for this mesh";
   else if (op.getPotential())
     fallback = "charge derivative";
   else if (op->hasAttr("md_exec.fft_measured_cufft"))
@@ -6244,7 +6246,8 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     StringRef reason = "supported mixed-radix mesh";
     if (request == "auto") {
       if (radial)
-        reason = "prolate axis faster in both timing orders";
+        reason = tilted ? "qualified triclinic prolate folding mesh"
+                        : "prolate axis faster in both timing orders";
       else
         reason = kGaussianAxisFFTRange;
     }
