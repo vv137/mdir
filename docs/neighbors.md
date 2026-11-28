@@ -158,7 +158,7 @@ window with the target fields of each record. Sources covered by the
 window use an exact bit test. A source outside the window can require the
 forward index and sorted lookup. Each block reduces its binary64 warp
 totals in tile scratch before issuing its virial additions
-(D[towers-virial]).
+(D455).
 
 On the GPU, a single block of `towers_recover_once` can replace the clear,
 recover and check launches. Its arguments and shared record reservation

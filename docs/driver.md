@@ -501,7 +501,7 @@ hit reuses that record. A single feasible launch skips candidate timing. A progr
 without an eligible pair region uses the derived shape. An explicit TOWERS run then rebuilds from the current positions at each direct evaluation and certifies the forces before integration. Pressure steps accumulate direct force and virial together. On force-only steps, eligible moving pair loops select zero words outside the cutoff (D430).
 For a topology with exclusions, setup allocates 16 bytes per atom for the
 forward exclusion index and the exclusion window that pressure evaluation
-caches with each target record (D[towers-virial]).
+caches with each target record (D455).
 The effective manifest and checkpoint reserve `towers_cell_height` for the
 resolved height.
 See [Appendix A](paper/A-control-file.md) for AUTO fields.

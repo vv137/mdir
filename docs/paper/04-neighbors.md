@@ -1315,7 +1315,7 @@ contiguous interval, and a flag identifies windows with excluded partners
 outside that interval. The forward index and sorted exclusion list resolve
 these cases. The accepted physical pairs contribute their direct virial
 to binary64 thread sums, which reduce to one total per tower block
-(D[towers-virial]).
+(D455).
 
 For a square lateral base the two tower extensions contribute
 $2r_c b_{xy}^2$. The plate contributes two lateral face strips and
