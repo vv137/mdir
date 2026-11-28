@@ -140,7 +140,7 @@ atom-to-slot map, the three planes of binary64 input positions and the three
 box lengths. Captured parameters follow the per-atom inputs. Keep the frame,
 maps and topology fixed through publication.
 
-The GPU force grid has one or two source splits per tower (`force-split`).
+The GPU force grid has one or two source splits per tower (`force-split`). Part $p$ of a split takes the column's logical sources $p, p + \texttt{split}, \dots$, so that each part holds the same mix of the home, lower and upper layers; only the home and lower layers meet the home targets (D[towers-split-interleave]).
 Small exclusion lists follow the towers, one pair per lane. When the list
 fills at least 128 blocks at four pairs per lane, each exclusion block reads
 up to four consecutive block-width slices. The compact group starts after
