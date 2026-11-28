@@ -4,6 +4,16 @@ Recorded 2026-11-28.
 
 **The lateral filter of the TOWERS tile visit on a triclinic cell keeps a target when the largest of four projected gaps, onto the two face normals and the two diagonal axes of the column's cross-section, is within the padded filter radius. The supports of the four axes come from the vertices of the cross-section. The geometry kernel computes the axes and the supports once per geometry. A traversal converts them, with the field offsets and the face normals, once into workgroup memory.** Issue #1035.
 
+## 0. Two changes and their effects
+
+This decision and D[towers-split-interleave] come from one measurement (Section 4) and land together. Their effects are separate:
+
+1. **The interleaved source split (D[towers-split-interleave]) is the main gain on every cell with split 2.** A block's time follows its screen passes (correlation 0.99 to 1.00), not its screened slots (0.02 to 0.14), because a pass costs a pair evaluation (about 70% of the slowest block) while a screened slot costs a share of one tensor-core instruction. With contiguous halves the first part of a tower held 9.2 times the passes of the second on the Trp-cage cell and 4.4 times on its orthorhombic control; interleaved, 1.00 on both. TOWERS force + finish on the ff19SB+OPC cell: 90.5 → 65.0 µs per step (Section 6).
+2. **The four-axis filter (this decision) is the small triclinic gain**, and it stays on for triclinic cells beside the interleaved split (the maintainer, 2026-11-28):
+   - Never more work: $L$ is the two-axis bound with two more axes, so up to the outward rounding of the supports the targets it keeps are a subset of those the two-axis filter keeps; the pairs within the cutoff are the same (Section 5).
+   - Measured gain: with the interleaved split on both arms, force + finish 67.1 ± 0.4 → 64.9 ± 0.2 µs on the ff19SB+OPC cell and 47.4 ± 0.7 → 46.6 ± 1.0 on ff14SB+TIP3P (Section 6, item 3); no arm was slower beyond its spread.
+   - Cost: two more dot products and maxima per filtered target. Orthorhombic cells keep the exact sum.
+
 ## 1. What changes
 
 - `Force::visitTile` (`lib/Conversion/MDExecKernels/TowersForce.cpp`), triclinic cells: the filter took the larger of the two squared face gaps. It now takes the square of the four-axis bound of Section 2. Orthorhombic cells keep the sum of the two squared face gaps, which is the exact distance to a rectangular cross-section.
@@ -94,7 +104,7 @@ RTX 4090, 2 fs, mixed precision, two jobs with the arms interleaved in opposite 
 | Orthorhombic control | 56.3 ± 1.5 | 55.9 ± 1.8 | 42.6 ± 1.0 |
 
 3. [measured] The filter alone, with the interleaved split on both arms (the instrumented build run without counters and with the two-axis filter, against the branch; n = 3): force + finish 67.1 ± 0.4 against 64.9 ± 0.2 µs on the ff19SB cell, 47.4 ± 0.7 against 46.6 ± 1.0 on ff14SB.
-4. [measured] The orthorhombic controls JAC (split 1) and TIP3P 10k NVT (split 1) are unchanged within one standard deviation. TIP3P 10k NPT takes split 2: 1,814 ± 32 against 1,841 ± 65 ns/day on `main`, 1.5% lower, within the spread of `main`; against the filter arm (1,868 ± 29) 2.9% lower. Its tower parts were nearly balanced before; the strided staging of D[towers-split-interleave] costs there.
+4. [measured] The orthorhombic controls JAC NVT and NPT and TIP3P 10k NVT are unchanged within one standard deviation: their pinned shapes, those the setup trial chose on `main`, take split 1, where the interleaved split is the identity and the filter does not apply. TIP3P 10k NPT takes split 2: 1,814 ± 32 against 1,841 ± 65 ns/day on `main`, 1.5% lower, within the spread of `main`; against the filter arm (1,868 ± 29) 2.9% lower. Its tower parts were nearly balanced before; the strided staging of D[towers-split-interleave] costs there.
 
 ## 7. AUTO
 
