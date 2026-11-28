@@ -1531,8 +1531,12 @@ pairs and accumulates the six independent components of the minimum-image
 displacement times the target force in binary64. On moving pressure steps,
 the force traversal uses the single sum from Section 4.8. It rounds the
 staged position to Q32 in nm and takes the exact integer outer product
-with a Q28 slot force. The tile accumulates the original Q18 word and the
-additional signed residual in one packed word per slot and component.
+with a Q28 slot force. The tile accumulates the original Q18 word in
+the force planes and the additional signed residual in 32-bit shared
+planes. A lane accumulates its target residual in registers while it
+processes records for that slot. Tiles that exceed the shared-memory
+budget for the separate planes pack the Q18 and residual sums into a
+single 64-bit word per slot and component.
 An exclusion block subtracts the same endpoint products before rounding.
 The signed three-limb reduction preserves all 28 guard bits until the
 total is rounded to Q32. A common translation of the Q32 positions

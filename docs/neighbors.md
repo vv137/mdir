@@ -158,7 +158,10 @@ reduced its binary64 pair virial once per block.
 
 On moving pressure steps, the force flush forms the virial outer product
 of each Q32 staged position and its accumulated Q28 slot force. The staged
-position includes the image shift into the interaction box. An exclusion
+position includes the image shift into the interaction box. The tile
+keeps the difference between Q28 and scaled Q18 in separate 32-bit
+shared planes where the tile budget permits, with packed words for
+larger tiles. An exclusion
 block subtracts the two endpoint products in the same images. Both feed
 the same three-limb sum with 28 guard bits. The forward exclusion index
 and sorted lookup serve wide force replay, which visits physical pairs

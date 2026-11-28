@@ -14,13 +14,17 @@ pair traversal and the exclusion blocks keep their original force words.
 
 Each staged coordinate uses Q32 in nm. A fused pressure step keeps both
 the original Q18 force word and the Q28 virial force in kJ/(mol nm). It
-packs the signed Q18 word into the low 43 bits and the signed difference
-between the Q28 word and the scaled Q18 word into the high bits. At most
-1,024 opposite slots contribute to a tile slot. Each contributes at most
-$2^{31}$ base units and $2^9$ residual units, so both accumulated fields
-fit. The fused kernel uses the same shared-memory footprint as the
-force-only kernel. At the slot flush, it publishes the original Q18 force
-and uses the Q28 word for the outer product.
+accumulates the Q18 word in the force-only kernel's low and coarse planes,
+and the signed difference between Q28 and scaled Q18 in three separate
+32-bit shared planes. Each lane holds its target residual in registers
+until the target changes. At most 1,024 opposite slots contribute to a
+tile slot. Each contributes at most $2^{31}$ base units and $2^9$
+residual units, so the residual sum fits in a signed 32-bit word.
+When the extra planes exceed the tile's shared-memory budget, the kernel
+uses a 64-bit packed word per slot and component. The low 43 bits recover
+the signed Q18 sum. Subtracting it from the packed word before extracting
+the high field recovers the signed residual. Both layouts publish the
+same Q18 force and reconstruct the Q28 word for the outer product.
 
 Three 64-bit limbs hold the signed Q60 virial through the tile, warp, and
 grid sums. The complete sum rounds once to Q32, ties to even. For a
