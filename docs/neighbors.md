@@ -76,9 +76,24 @@ packed position lane and a single slot-indexed type array in place of both
 atom-indexed arrays. On the GPU, after each box setup, launch one block of
 `towers_prepare_force` with the geometry and an output sized for the compiled layout.
 The rectangular layout uses seven floats for the widths, quantization
-scale, screen thresholds and validity flag. The triclinic layout uses 43
-floats at FULL or 49 at HALF for the transformed geometry, slab normals
-and stencil shifts. Pass the prepared geometry until the box changes.
+scale, screen thresholds and validity flag. The triclinic layout uses 53
+floats at FULL or 59 at HALF for the transformed geometry, slab normals,
+stencil shifts, the two diagonal lateral axes and the four supports of the
+column's cross-section. Pass the prepared geometry until the box changes.
+The binary64 geometry of a triclinic rebuild has 18 columns per axis row:
+the fractional bin geometry, the lattice row, the Cartesian bin step, the
+unit face normal, the slab height, and in rows 0 and 1 the diagonal axis
+$(\mathbf n_0 \pm \mathbf n_1)/\lVert\mathbf n_0 \pm \mathbf n_1\rVert$ and the
+supports of the face normal and of the diagonal. An entry that reads it, as
+a run's does, converts the field offsets, the face normals and the lateral
+words to binary32 once per traversal into workgroup memory.
+On a triclinic cell the lateral filter keeps a target when the largest gap
+$\max(0, \lvert\mathbf u\cdot\mathbf p\rvert - s(\mathbf u))$ over the two
+face normals and the two diagonals is within the padded filter radius; the
+supports $s(\mathbf u)$ are the largest projections of the cross-section's
+vertices, rounded up to binary32. An orthorhombic cell takes the sum of the
+two squared face gaps, which is exact there
+(D[towers-triclinic-filter], [Section 4.8 of the paper](paper/04-neighbors.md#48-rectangular-tower-and-plate-ownership-d428)).
 Screen features and the compacted target list share
 storage with the integer force planes across the prefix barrier.
 Small read-only coefficient tables can be staged with the tile.
@@ -125,7 +140,7 @@ atom-to-slot map, the three planes of binary64 input positions and the three
 box lengths. Captured parameters follow the per-atom inputs. Keep the frame,
 maps and topology fixed through publication.
 
-The GPU force grid has one or two source splits per tower (`force-split`).
+The GPU force grid has one or two source splits per tower (`force-split`). Part $p$ of a split takes the column's chunks of 32 logical sources $p, p + \texttt{split}, \dots$, so that each part holds the same mix of the home, lower and upper layers; only the home and lower layers meet the home targets (D[towers-split-interleave]).
 Small exclusion lists follow the towers, one pair per lane. When the list
 fills at least 128 blocks at four pairs per lane, each exclusion block reads
 up to four consecutive block-width slices. The compact group starts after

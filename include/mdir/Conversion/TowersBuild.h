@@ -21,11 +21,20 @@ struct TowersLayout {
   // Triclinic entries take fractional coordinates and the row-major lattice.
   // Setup stores fractional bin geometry, the lattice, Cartesian bin vectors,
   // the unit face normals and perpendicular bin widths in each axis row.
-  static constexpr int lattice = 3, step = 6, normal = 9, slab = 12;
-  int rawColumns() const { return triclinic ? 13 : 3; }
+  // Rows 0 and 1 also hold the lateral diagonal axis (n0 + n1)/|n0 + n1|
+  // and (n0 - n1)/|n0 - n1|, the support of the row's face normal and that
+  // of the row's diagonal axis over the cross-section of a column
+  // (D[towers-triclinic-filter]).
+  static constexpr int lattice = 3, step = 6, normal = 9, slab = 12,
+                       diagonal = 13, support = 16;
+  int rawColumns() const { return triclinic ? 18 : 3; }
   int boxSize() const { return triclinic ? 9 : 3; }
+  // A packed triclinic force geometry ends with the two diagonal lateral axes
+  // and the four supports of the cross-section, rounded up to binary32.
+  int lateralAxesOffset() const { return 22 + 3 * (5 + 2 * reach); }
+  static constexpr int lateralAxesWords = 10;
   int packedGeometrySize() const {
-    return triclinic ? 22 + 3 * (5 + 2 * reach) : 7;
+    return triclinic ? lateralAxesOffset() + lateralAxesWords : 7;
   }
   int cells() const { return nx * ny * nz; }
 };

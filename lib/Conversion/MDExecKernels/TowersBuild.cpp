@@ -238,6 +238,50 @@ void TowersBuild::geometry(Value box, Value status, Value info) {
     store(width, info, {cx(axis), cx(1)});
     store(divf(cd(4), width), info, {cx(axis), cx(2)});
   }
+  if (!g.triclinic)
+    return;
+  // The lateral filter of the force traversal bounds a target's distance to
+  // the column by projections onto the face normals and the two diagonal
+  // axes. A support is the largest projection of the four vertices
+  // +-step0/2 +-step1/2 of the column's cross-section, in the Cartesian
+  // frame of the staged positions (D[towers-triclinic-filter]).
+  auto at = [&](int row, int column) {
+    return load(info, {cx(row), cx(column)});
+  };
+  SmallVector<Values> axes(4);
+  for (int row = 0; row < 2; ++row) {
+    Values u;
+    Value norm2 = cd(0);
+    for (int k = 0; k < 3; ++k) {
+      Value n1 = at(1, TowersLayout::normal + k);
+      axes[row].push_back(at(row, TowersLayout::normal + k));
+      u.push_back(addf(at(0, TowersLayout::normal + k),
+                       row == 0 ? n1 : subf(cd(0), n1)));
+      norm2 = addf(norm2, mulf(u.back(), u.back()));
+    }
+    Value norm = sqrt(norm2);
+    for (int k = 0; k < 3; ++k) {
+      u[k] = divf(u[k], norm);
+      store(u[k], info, {cx(row), cx(TowersLayout::diagonal + k)});
+    }
+    axes[2 + row] = u;
+  }
+  for (auto [index, u] : llvm::enumerate(axes)) {
+    Value support = cd(0);
+    for (int e0 : {1, -1})
+      for (int e1 : {1, -1}) {
+        Value projection = cd(0);
+        for (int k = 0; k < 3; ++k) {
+          Value vertex =
+              mulf(cd(0.5), addf(mulf(cd(e0), at(0, TowersLayout::step + k)),
+                                 mulf(cd(e1), at(1, TowersLayout::step + k))));
+          projection = addf(projection, mulf(u[k], vertex));
+        }
+        support = maxnumf(support, projection);
+      }
+    store(support, info,
+          {cx(index % 2), cx(TowersLayout::support + int(index) / 2)});
+  }
 }
 
 void TowersBuild::initializeCell(Value cell, Value map, Value counts) {

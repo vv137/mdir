@@ -21,7 +21,7 @@ for tilted in (False, True):
     edge = C.c_float(8.00000042).value
     if tilted:
         r.box = e.array(C.c_double, 9)
-        r.geometry = e.array(C.c_double, 39)
+        r.geometry = e.array(C.c_double, 54)
         r.box[:] = [edge, 0, 0, 1, edge, 0, 0.5, -0.25, edge]
     else:
         r.box[:] = [edge] * 3

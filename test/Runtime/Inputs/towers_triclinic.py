@@ -96,7 +96,7 @@ def check(directory, gpu, reach, workers):
     e = rebuild.Entries(image, gpu)
     r = rebuild.Rebuild(e, dims, reach, n, 8, True)
     r.box = e.array(C.c_double, 9)
-    r.geometry = e.array(C.c_double, 39)
+    r.geometry = e.array(C.c_double, 54)
     r.box[:] = [x for row in lattice for x in row]
     r.setup()
     r.raw[:] = [p[a] for a in range(3) for p in fractional]
@@ -104,7 +104,7 @@ def check(directory, gpu, reach, workers):
     r.types[:] = [0] * n
     geom = r.geometry
     if gpu:
-        geom = e.array(rebuild.F, 22 + 3 * r.fields)
+        geom = e.array(rebuild.F, 22 + 3 * r.fields + 10)
         e.run("prepare_force", 1, r.geometry, geom)
     table = e.array(rebuild.F, 4)
     table[:] = [8] * 4
