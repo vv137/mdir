@@ -36,6 +36,10 @@ struct TowersMovingRow {
   bool cartesianPositions;
   mlir::Value positions, cell, raw, box, geometry, status, charge, types,
       counts, keys, local, initialWords, initialState, initialFailed, arrivals;
+  // The caller initializes `box` to NaN once and keeps `box` and `geometry`
+  // to this layout: thread 0 then recomputes the geometry only when the
+  // lattice words change (D[towers-input-geometry]).
+  bool cachedGeometry = false;
   void emit(mlir::OpBuilder &b, mlir::Location loc, mlir::Value atom,
             mlir::ValueRange binsInfo, mlir::ValueRange fields) const;
 };
