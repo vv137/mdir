@@ -136,7 +136,9 @@ struct Dispatch {
       if (!members)
         return op.emitError("missing input-order TOWERS exclusion pairs");
       edges = buffer("excluded", mem({shape.exclusions, 2}, narrow));
-      exclusionIndex = buffer("exclusion index", mem({g.atoms, 2}, narrow));
+      using Index = TowersExclusionIndex;
+      exclusionIndex =
+          buffer("exclusion index", mem({g.atoms, Index::Columns}, narrow));
       shape.indexedExclusions = true;
       // Tuple members are sorted by input identity. Physical tuple loops
       // still evaluate their topology corrections once.
@@ -146,10 +148,15 @@ struct Dispatch {
         transfer(init, loc, edges, members);
         rows(init, loc, createIndex(init, loc, g.atoms),
              [&](OpBuilder &k, Value i) {
-               for (int column = 0; column < 2; ++column)
+               for (int column = 0; column < Index::Columns; ++column) {
+                 Value value =
+                     column == Index::Anchor
+                         ? Value(arith::IndexCastOp::create(k, loc, narrow, i))
+                         : createZero(k, loc, narrow);
                  memref::StoreOp::create(
-                     k, loc, createZero(k, loc, narrow), exclusionIndex,
+                     k, loc, value, exclusionIndex,
                      ValueRange{i, createIndex(k, loc, column)});
+               }
              });
         rows(init, loc, createIndex(init, loc, shape.exclusions),
              [&](OpBuilder &k, Value i) {
@@ -172,12 +179,45 @@ struct Dispatch {
                    word(31));
                Value bit = arith::ShLIOp::create(k, loc, word(1), shift);
                Value mask = arith::SelectOp::create(k, loc, near, bit, word(0));
-               memref::AtomicRMWOp::create(k, loc, arith::AtomicRMWKind::ori,
-                                           mask, exclusionIndex,
-                                           ValueRange{row, zero});
-               memref::AtomicRMWOp::create(k, loc, arith::AtomicRMWKind::maxu,
-                                           second, exclusionIndex,
-                                           ValueRange{row, one});
+               memref::AtomicRMWOp::create(
+                   k, loc, arith::AtomicRMWKind::ori, mask, exclusionIndex,
+                   ValueRange{row, createIndex(k, loc, Index::ForwardMask)});
+               memref::AtomicRMWOp::create(
+                   k, loc, arith::AtomicRMWKind::maxu, second, exclusionIndex,
+                   ValueRange{row, createIndex(k, loc, Index::Maximum)});
+               Value other = arith::IndexCastOp::create(
+                   k, loc, k.getIndexType(), second);
+               memref::AtomicRMWOp::create(
+                   k, loc, arith::AtomicRMWKind::minu, first, exclusionIndex,
+                   ValueRange{other, createIndex(k, loc, Index::Anchor)});
+             });
+        rows(init, loc, createIndex(init, loc, shape.exclusions),
+             [&](OpBuilder &k, Value i) {
+               auto atom = [&](int column) {
+                 return memref::LoadOp::create(
+                     k, loc, edges, ValueRange{i, createIndex(k, loc, column)})
+                     .getResult();
+               };
+               Value first = atom(0), second = atom(1);
+               // Bit 31 requests an exact lookup for candidates outside the
+               // window. The lower bits remain exact for pairs within it.
+               for (auto [target, partner] :
+                    {std::pair{first, second}, std::pair{second, first}}) {
+                 Value row = arith::IndexCastOp::create(
+                     k, loc, k.getIndexType(), target);
+                 Value anchor = memref::LoadOp::create(
+                     k, loc, exclusionIndex,
+                     ValueRange{row, createIndex(k, loc, Index::Anchor)});
+                 Value gap = arith::SubIOp::create(k, loc, partner, anchor);
+                 Value shift = arith::MinUIOp::create(
+                     k, loc, gap, arith::ConstantIntOp::create(
+                                      k, loc, Index::windowSize, 32));
+                 Value bit = arith::ShLIOp::create(
+                     k, loc, arith::ConstantIntOp::create(k, loc, 1, 32), shift);
+                 memref::AtomicRMWOp::create(
+                     k, loc, arith::AtomicRMWKind::ori, bit, exclusionIndex,
+                     ValueRange{row, createIndex(k, loc, Index::Window)});
+               }
              });
         edges.getDefiningOp()->setAttr("mdir.initialized", init.getUnitAttr());
       }
