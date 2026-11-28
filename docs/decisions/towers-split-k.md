@@ -21,6 +21,23 @@ under each split at a fixed height. The partition changes the order of
 integer additions. The same published words result when the sums fit,
 including after certified replay.
 
+## Fixed-split measurements
+
+The RTX 4090 sweep uses Trp-cage ff19SB+OPC, Trp-cage ff14SB+TIP3P,
+TIP3P 10k, JAC, and Cellulose in both NVT and NPT. Each case starts from
+the same frame and keeps its calibrated height, thread count, residency,
+panel, stripe, record capacity, pack, and screen across all four arms.
+Three repeats run in ascending split order and three in descending
+order. A repeat pairs all four splits on the same device. The
+whole-step rate uses the latter half of 6,000 steps, or 2,000 for
+Cellulose. Separate 1,000-step traces measure the direct-force launch
+span and the sum of the force and finish times per step.
+
+Instrumented runs count screen passes by source part and time source
+and target staging through the staging barrier. The sum of block
+staging times measures staging work. Blocks can overlap in time, so the
+force launch span comes from the uninstrumented trace.
+
 ## Persistent work queue
 
 The prototype builds one queue item per tower and 32-source chunk.
