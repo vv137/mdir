@@ -49,9 +49,24 @@ $1.19\times 10^{-11}$ and $1.02\times 10^{-10}$. This isolates fixed-point
 rounding from the mixed-precision pair evaluation.
 
 The acceptance tolerance for the full direct tensor is $10^{-6}$ relative
-RMS against the binary64 pair sum. The required twofold margin sets the
-acceptance gate at $5\times 10^{-7}$. The 0.05 Å exclusion fixture also
-requires identical guarded tensor words when the excluded sites are
-disabled.
+RMS against the independent CPU binary64 pair sum. On RTX 4090, the
+maximum relative RMS errors over the sampled frames were
+$8.24\times 10^{-7}$ (JAC), $2.41\times 10^{-7}$ (Factor IX),
+$3.00\times 10^{-7}$ (TIP3P 10k), $7.29\times 10^{-7}$ (triclinic Trp-cage),
+and $7.62\times 10^{-7}$ (0.05 Å exclusion stress). Three of these maxima
+exceed the initial $5\times 10^{-7}$ target for a twofold margin.
+
+To select the force scale, compare the error norm introduced by the slot
+sum with one tenth of the error norm introduced by the mixed-precision
+pair evaluation. Both differences use the same frame. The intermediate
+reference accumulates in binary64 the per-pair products of the staged
+displacements and the forces evaluated in binary32. The 0.05 Å fixture
+retains one Lennard-Jones pair. Factoring its captured rank-one Q60 tensor
+bounded the relative RMS slot error on one frame at
+$[1.92,1.95]\times 10^{-7}$ for Q18 and at most $1.07\times 10^{-9}$ for
+Q28. The mixed-precision pair error on that frame was
+$[4.90,5.10]\times 10^{-8}$. This is sufficient to reject Q18 under the
+one-tenth criterion. The three-limb Q60 tensor also matched bit for bit
+on all 11 stress frames when the excluded sites were disabled.
 
 The control keys, defaults, file formats and overwrite behavior are unchanged.

@@ -1535,7 +1535,14 @@ with a Q28 slot force. The tile accumulates the original Q18 word and the
 additional signed residual in one packed word per slot and component.
 An exclusion block subtracts the same endpoint products before rounding.
 The signed three-limb reduction preserves all 28 guard bits until the
-total is rounded to Q32. Wide replay adds the missing physical pair
+total is rounded to Q32. A common translation of the Q32 positions
+cancels exactly because the two endpoints receive opposite force words.
+The exclusion debit uses the same endpoint images and cancels
+independently of traversal order. On the 0.05 Å exclusion fixture,
+rounding the retained pair's force to Q18 would add about
+$1.9\times 10^{-7}$ relative tensor error on one frame, compared with
+about $5\times 10^{-8}$ from the mixed-precision pair evaluation on that
+frame (D[towers-slot-virial]). Wide replay adds the missing physical pair
 products. The replay indexes each excluded pair by the smaller permanent
 atom ID. A 32-bit mask resolves
 the next 32 IDs exactly. A more distant partner above the greatest
