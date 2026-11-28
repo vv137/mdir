@@ -10647,8 +10647,14 @@ LogicalResult Lowering::lowerOp(Operation *op) {
   // built there.
   if (isa_and_nonnull<md_exec::MDExecDialect>(op->getDialect()) &&
       !isa<md_exec::BuildIncidenceOp, md_exec::RenumberOp>(op)) {
-    bool onHost = llvm::any_of(op->getOperandTypes(), [](Type type) {
-      return isa<MemRefType>(type) && !isDeviceType(type);
+    // Anchor membership is a topology relation. The build uses the
+    // renumbered device copy or transfers the host relation as needed.
+    auto refresh = dyn_cast<md_exec::RefreshNeighborsOp>(op);
+    Value anchorMembers = refresh ? refresh.getAnchorMembers() : Value();
+    bool onHost = llvm::any_of(op->getOperands(), [&](Value operand) {
+      Type type = operand.getType();
+      return operand != anchorMembers && isa<MemRefType>(type) &&
+             !isDeviceType(type);
     });
     if (auto empty = dyn_cast<md_exec::EmptyNeighborsOp>(op))
       if (auto positions = empty.getPositions())
