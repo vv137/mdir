@@ -61,23 +61,41 @@ block additions propagate the carry between the two limbs. The low limb
 of a global atomic addition returns its previous value, which supplies
 the carry to the corresponding high-limb addition.
 
-On the four initial pressure frames on the RTX 5090, the greatest
-FP64 subtraction residue relative to exact lookup was
-$2.28\times10^{-6}$ kJ/mol, or $1.79\times10^{-12}$ relative RMS on
-Factor IX. The four frames meet the $10^{-6}$ relative RMS bound against
-the independent binary64 direct sum. The Q32 sums obtained by subtracting
-exclusions agree word for word with the Q32 sums obtained by looking up
-exclusions before adding. The force words also agree through publication.
+The RTX 4090 timings are mean fused-kernel durations in µs over nine
+launches for each input, with 21 launches for triclinic Trp-cage. Q32
+subtraction also launches a decode kernel (1.30 µs on JAC).
 
-On RTX 4090 JAC, the mean fused kernel over nine launches was
-$67.67$ µs with lookup, $54.08$ µs with FP64 subtraction, and $82.07$ µs
-with Q32 subtraction. The Q32 decode took another $1.30$ µs. Median
-instrumented flush costs were $6{,}211$ cycles for FP64 subtraction and
-$4{,}056$ for Q32 subtraction. The cheaper integer flush did not offset
-per-pair rounding and carry arithmetic. Q32 would make this direct sum
-independent of accumulation order, but its total cost exceeded both
-FP64 variants on this frame. The implementation keeps the exact cached
-lookup and the FP64 block reduction. Lookup also keeps arbitrarily
-large or nonfinite excluded terms out of the accumulation, which FP64
-add-then-subtract cannot guarantee. The JAC fused kernel remains above
-the 1.2-times force-only target.
+| System | Cached lookup | FP64 subtraction | Q32 subtraction |
+| --- | ---: | ---: | ---: |
+| JAC | 67.67 | 54.08 | 82.07 |
+| Factor IX | 218.30 | 178.28 | 292.82 |
+| TIP3P 10k | 50.86 | 47.65 | 73.36 |
+| Triclinic Trp-cage | 135.60 | 98.49 | 172.61 |
+
+The residue columns give the largest absolute component and relative RMS
+differences from FP64 lookup over the four initial RTX 5090 pressure frames.
+The last column gives the physical diagonal component from the RTX 4090
+stress case with a same-tower excluded Lennard-Jones pair at 0.05 Å. The
+analytic value is −0.53154494 kcal/mol with an absolute tolerance of
+$2\times10^{-5}$ kcal/mol.
+
+| Variant | Component residue (kJ/mol) | Relative RMS residue | 0.05 Å virial (kcal/mol) |
+| --- | ---: | ---: | ---: |
+| Cached lookup (reference) | 0 | 0 | −0.531545 |
+| FP64 subtraction | $2.28\times10^{-6}$ | $1.78\times10^{-12}$ | 0.000000 |
+| Q32 subtraction | $1.20\times10^{-7}$ | $7.37\times10^{-13}$ | −0.531545 |
+
+The initial-frame virials meet the $10^{-6}$ relative RMS tolerance against
+the independent CPU binary64 direct sum. Q32 subtraction and Q32 lookup
+produce identical integer words on all four frames on both GPU models, with
+zero outstanding range votes. Both subtraction variants preserve the
+provisional and published force words.
+
+The implementation keeps cached lookup and the FP64 block reduction. FP64
+subtraction is faster on these four inputs, but it loses the entire physical
+contribution in the 0.05 Å case and can propagate a nonfinite provisional
+term. Lookup excludes those terms before summation. Q32 preserves the
+physical contribution in the stress case, but per-pair quantization and
+carry arithmetic make it slower overall even though it reduces the median
+JAC block flush from 6,211 to 4,056 SM cycles. The JAC fused kernel remains
+above the 1.2-times force-only target.
