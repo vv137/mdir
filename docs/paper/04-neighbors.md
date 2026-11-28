@@ -1309,13 +1309,18 @@ coordinate, first in $x$, then in $y$. For equal lateral bases the smaller
 $z$ supplies the plate. Either assignment works inside one home box.
 After evaluation the box exports opposite forces to both home boxes.
 
-On a pressure step a target record carries an exclusion window keyed by
-permanent atom ID. Its bits give exact exclusion membership for a
-contiguous interval, and a flag identifies windows with excluded partners
-outside that interval. The forward index and sorted exclusion list resolve
-these cases. The accepted physical pairs contribute their direct virial
-to binary64 thread sums, which reduce to one total per tower block
-(D455).
+On a pressure step, consider the direct virial from the energy derivative
+with respect to strain (Section 3.6). Each uniquely owned pair contributes
+its displacement times its target force. Let $\mathbf x_s$ be the position
+relative to the center of the staged slot's cell. In the interaction box,
+the pair endpoints occupy $\mathbf x_s+\mathbf S_{c(s)}$ and
+$\mathbf x_t+\mathbf S_{c(t)}$. The antisymmetric pair force contributes
+$\mathbf f_{ij}$ to its target slot and $-\mathbf f_{ij}$ to its source
+slot. Distributing their displacement outer product and collecting terms
+of each slot gives $\sum_s(\mathbf x_s+\mathbf S_{c(s)})\otimes\mathbf F_s$.
+The box origin drops out because the pair forces sum to zero. Tiling
+partitions the same sum and can repeat a slot with a partial force
+(D[towers-slot-virial]).
 
 For a square lateral base the two tower extensions contribute
 $2r_c b_{xy}^2$. The plate contributes two lateral face strips and
@@ -1521,11 +1526,14 @@ ownership rule among separately requested force, energy and direct virial
 kernels. The energy kernel rounds each pair energy to Q32 and sums the
 words with signed two-limb arithmetic. The tensor kernel visits physical
 pairs and accumulates the six independent components of the minimum-image
-displacement times the target force in binary64. On moving pressure steps, the force traversal sums the pair
-region's binary64 virial term and omits excluded direct pairs from this sum.
-The two outputs share the displacement and pair evaluation. Each endpoint
-receives the same quantized force word as in a force-only step. The moving traversal indexes each
-excluded pair by the smaller permanent atom ID. A 32-bit mask resolves
+displacement times the target force in binary64. On moving pressure steps,
+the force traversal uses the single sum from Section 4.8. It rounds the
+staged position to Q32 in nm and takes the exact integer outer product
+with the Q18 force words. An exclusion block subtracts the same endpoint
+products before any rounding. The signed two-limb reduction preserves all
+18 guard bits until the total is rounded to Q32. Wide replay adds only the
+missing physical pair products. It indexes each excluded pair by the
+smaller permanent atom ID. A 32-bit mask resolves
 the next 32 IDs exactly. A more distant partner above the greatest
 excluded ID in that row is outside the exclusion set. The remaining
 queries use the sorted topology pairs. This index also serves physical
