@@ -136,6 +136,20 @@ private:
   void stageParameters(gpu::GPUFuncOp fn);
   Value pos, id, features, bias, records, totals, keptSlots, accum, coarse;
   Value tid, lane, scale, limit, cutoff2, filterLimit;
+  // The split parts of a tower take its sources in turn
+  // (D[towers-split-interleave]): part p takes the logical sources p,
+  // p + split, ... A part-local index l stands for the logical p + split l.
+  Value sourcePart;
+  Value logicalSource(Value local) {
+    return split == 1 ? local : addi(sourcePart, muli(local, cx(split)));
+  }
+  // The number of part-local sources whose logical index is below x.
+  Value localSourcesBelow(Value x) {
+    if (split == 1)
+      return x;
+    return select(cmpi(CmpIPredicate::ule, x, sourcePart), cx(0),
+                  divui(addi(subi(x, sourcePart), cx(split - 1)), cx(split)));
+  }
   void bind(ValueRange args);
   Value width(int axis);
   Value lateralWord(Value info, int word, bool packedInfo);
@@ -1165,8 +1179,9 @@ void Force::stage(ArrayRef<Value> starts, ArrayRef<Value> counts, Value begin,
   // Each lane imports one slot. Resolve its descriptor in registers instead
   // of reusing the front of every warp for each (usually short) span.
   auto import = [&](Value laneSlot) {
-    Value logical = indexCast(i32, addi(begin, laneSlot)), first = ci(0),
-          field = ci(0);
+    Value local = addi(begin, laneSlot);
+    Value logical = indexCast(i32, source ? logicalSource(local) : local),
+          first = ci(0), field = ci(0);
     Value addr32 = addi(indexCast(i32, starts[0]), logical);
     int columns = 2 * g.reach + 1;
     for (int k = 0; k < (source ? columns : 5); ++k) {
@@ -1428,8 +1443,13 @@ Value Force::visitTile(Value sc, Value tc, Value sb, Value tb, Value home,
       cmpi(CmpIPredicate::ult, subi(tid, indexCast(index, lane)), kept);
   Value orig = addi(tb, target);
   Value atHome = cmpi(CmpIPredicate::ult, orig, home);
-  Value high = select(atHome, minui(addi(sb, sc), lower), addi(sb, sc));
-  Value low = select(atHome, maxui(addi(orig, cx(1)), sb), sb);
+  // A home target takes the sources of the lower layers and of home above
+  // its own slot: logical indices in (orig, lower), a contiguous range of
+  // part-local indices.
+  Value high = select(atHome, minui(addi(sb, sc), localSourcesBelow(lower)),
+                      addi(sb, sc));
+  Value low = select(atHome,
+                     maxui(localSourcesBelow(addi(orig, cx(1))), sb), sb);
   mark(1);
   // Empty warps take no target loads, matrix instructions or mask counts.
   auto screen = [&]() {
@@ -1686,8 +1706,13 @@ void Force::traversal(Value block) {
     if (i == g.reach)
       lower = ns;
   }
-  begin = divui(muli(ns, part), cx(split));
-  end = divui(muli(ns, addi(part, cx(1))), cx(split));
+  // Contiguous halves of the column would give the first part the home and
+  // lower layers, the only sources that meet home targets: up to nine times
+  // the screen passes of the second on a Trp-cage cell. Taking the sources
+  // in turn gives each part the same mix of layers.
+  sourcePart = part;
+  begin = cx(0);
+  end = localSourcesBelow(ns);
   for (int i = columns; i < columns + 4; ++i)
     nt = addi(nt, counts[i]);
   // Keep a single compiled copy of the pair body for both single and
