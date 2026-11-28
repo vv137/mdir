@@ -16,12 +16,14 @@ template = template.replace("= 2000", "= 100")
 template = template.replace("[execution]", '[execution]\nneighbor_structure = "TOWERS"')
 environment = {**os.environ, "MDIR_COMPILE_CACHE_DIR": str(work / "cache"),
                "MDIR_COMPILE_CACHE": "on"}
-pins = "threads=128, blocks_per_sm=1, panel=32, stripe=32, split=1"
+pins = "threads=128, blocks_per_sm=1, panel=32, stripe=32"
 
 
-def run(height=None, text=template, pack=None):
+def run(height=None, text=template, pack=None, split=1):
     control = work / "run.toml"
-    settings = pins + f', cell_height="{height}"' if height else pins.replace(", split=1", "")
+    settings = pins
+    if height:
+        settings += f', split={split}, cell_height="{height}"'
     if pack:
         settings += f', pack="{pack}"'
     control.write_text(text.replace("[output]", '[output]\nmanifest = "run.jsonl"') +
@@ -62,6 +64,19 @@ for height in ["HALF", "FULL"]:
     second = run(height)
     assert second["cells"] == first["cells"]
     assert second["selection"] == "grid cache" and second["effective"] == first["effective"]
+
+# A partial pin still times both record capacities. The smaller record
+# capacity runs the retry diagnostic across every source block.
+for split in (4, 8):
+    record = run("HALF", split=split)
+    assert record["selection"] == "setup trial" and record["timed_candidates"] == 2
+    assert record["effective"]["split"] == split
+    candidates = record["cells"][0]["candidates"]
+    assert {(c["shape"]["split"], c["shape"]["records"]) for c in candidates} == {
+        (split, 16), (split, 32)
+    }
+    assert all(isinstance(c["stripe_retries"], int) and c["stripe_retries"] >= 0
+               for c in candidates)
 
 auto = run()
 cells = auto["cells"]
