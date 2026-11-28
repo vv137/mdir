@@ -57,7 +57,7 @@ def run(name, mode, steps, source, checkpoint=None, barostat=True):
         edges = (edges["value"] if isinstance(edges, h5py.Group) else edges)[()]
         return {"position": group["position/value"][()], "velocity": group["velocity/value"][()],
                 "edges": np.asarray(edges, dtype=float).ravel(),
-                "step": int(group["position/step"][()])}
+                "step": int(np.asarray(group["position/step"][()]).ravel()[-1])}
 
 
 def compare(whole, again, resumed, label):

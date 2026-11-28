@@ -33,17 +33,33 @@ Two variants of the main program, traced with Nsight Systems on RTX 4090 over 4,
 2. [measured] The divisions of the conversion cost at most 0.4 µs on top (`recip` + `skip` against `skip`). Hypothesis (a) is the smaller part.
 3. [measured] On the rectangular cell the geometry is three pairs of divisions and the kernel does not change.
 
-## 3. Why the divisions stay
+## 3. The input kernel with this change
+
+The same traces from the built change against main (input kernel median over the graph launches; 3,564 in NVT, 3,168 in NPT, 4,000 steps):
+
+| Input | Cell | main (µs) | this change (µs) |
+|---|---|---:|---:|
+| Trp-cage ff19SB+OPC, NVT | triclinic | 10.30 | 4.58 |
+| Trp-cage ff19SB+OPC, NPT | triclinic | 9.60 | 4.54 |
+| Trp-cage ff14SB+TIP3P, NVT | triclinic | 10.50 | 4.32 |
+| Trp-cage ff14SB+TIP3P, NPT | triclinic | 10.50 | 4.45 |
+| JAC, NVT | rectangular | 4.00 | 3.68 |
+| TIP3P 10k, NVT | rectangular | 3.36 | 3.01 |
+
+1. [measured] In NPT the launches over 8 µs, those that recompute the geometry, are the 396 launches of the evaluation that follows each scaling (one per coupling period of 10 steps), and 4 to 6 of the 3,168 graph launches. On main every launch takes over 8 µs on the triclinic cells.
+2. [measured] The kernel that writes NaN into the box runs once per run: the kernels launched once in the trace grow by one (190 to 191, ff19SB NPT; 159 to 160, ff14SB NPT).
+
+## 4. Why the divisions stay
 
 1. [derived] The quotient of the fractional conversion is stored in the coordinates that the force kernel reads (`raw`) and enters the binary32 local coordinates through the lattice product. A product by a rounded reciprocal differs from the correctly rounded quotient in the last bit for some positions. Such a difference changes the binary32 coordinates only rarely, so a few frames could agree by chance; the force words would not be bitwise those of main by construction.
 2. [derived] A correctly rounded quotient from a stored reciprocal takes a product and a residual correction (two fused multiply-adds per correction). It saves less than the 0.4 µs that the plain product saved.
 3. This decision keeps the divisions. The 0.4 µs is recorded as measured and not taken.
 
-## 4. What remains
+## 5. What remains
 
 [measured] With the geometry skipped, the input kernel on the triclinic cells is bimodal: about 15% of the launches take 3.1–3.6 µs, the rest 4.9–5.1 µs. The pack kernel that follows (`towers_pack`) is bimodal in the same steps (4.7 against 7.2 µs median, ff19SB) on main as well, and not on the rectangular cell (2.6 µs). Both kernels take a longer path on the same steps, which points to the population of the cells (members beyond the capacity go to the overflow lists of the build), not to the geometry. It is left to a separate issue.
 
-## 5. Validation
+## 6. Validation
 
 See the pull request for the numbers: the trajectories of main and of this change in a configuration where main repeats itself bit for bit, NVT and NPT, on both Trp-cage inputs, a Trp-cage substitute in a truncated octahedron and the rectangular controls; and the test below.
 

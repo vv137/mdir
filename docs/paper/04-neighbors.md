@@ -1490,3 +1490,12 @@ initial image of length $R$ bounds the translations worth testing along
 axis $i$ by $|u_i-n_i| \le R/h_i$, where $h_i$ is the perpendicular face
 height. The same endpoint orientation is used to cancel a blind direct
 term and its conversion vote.
+
+The geometry of the bins depends only on the lattice $H$ and the bin
+counts. In a run, thread 0 of the per-atom input kernel compares the words
+of $H$ with those of the last geometry and recomputes it only when one
+differs (D[towers-input-geometry]). On a triclinic cell the computation is
+a serial chain of 27 binary64 divisions and three square roots. On RTX
+4090, in NVT, the kernel's median went from 10.3 to 4.6 µs on Trp-cage
+ff19SB+OPC (8,602 atoms) and from 10.5 to 4.3 µs on Trp-cage ff14SB+TIP3P
+(6,545 atoms), and from 3.4 to 3.0 µs on the rectangular TIP3P 10k cell.

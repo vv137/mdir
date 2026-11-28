@@ -64,6 +64,13 @@ its primary allocation, insertion chains the excess particle keys on the
 device. Pack allocates a span of the required size and rebuilds its sorted
 contents from both sets of keys before publishing its descriptors. The host reference and device
 entries can also enumerate candidate multiplicities for validation.
+In the moving dispatch of a run, the per-atom input kernel also derives
+the geometry of the bins from the cell (the bin widths, and for a triclinic
+cell the lattice rows, bin steps, unit face normals and slab heights). Its
+thread 0 recomputes it only when the lattice words differ, bit for bit,
+from those of the last geometry, which it keeps in the box buffer; the
+buffer starts as NaN, so the first evaluation and every evaluation after a
+scaling compute it (D[towers-input-geometry]).
 [Rectangular ownership](paper/04-neighbors.md#48-rectangular-tower-and-plate-ownership-d428)
 
 The optional `force-body` pass argument names a function containing a mixed
