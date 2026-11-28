@@ -256,8 +256,10 @@ step copies its pressures, at most 64 bytes, into page-locked memory and
 waits for them: the next step's launches and the builds of the neighbor
 structures take the new cell by value, and the strain takes logarithms and
 exponentials that the device would have to compute as the host's libm does
-to keep the trajectory. On JAC this removes per coupling period the copies
-and waits that Table 8.x lists.
+to keep the trajectory. On JAC with TOWERS and three streams (RTX 4090,
+2 fs), a period of 25 NPT steps went from 11 copies to the host and 11
+waits to one of each, and the run became 9.3% faster; an NVT period of 10
+steps went from one copy and one wait to none, 1.6% faster.
 
 **A pool of device memory.** The runtime keeps freed blocks and hands them
 to later allocations without a call to the driver; buffers that a step
